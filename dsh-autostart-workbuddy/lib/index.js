@@ -13,6 +13,11 @@
  *   - 失败不阻断 DSH 启动：写日志并继续，DSH 本身仍可用；
  *   - DSH 退出时，只停止「本插件自己拉起」的进程，用户手动起的服务不受影响。
  *
+ * 除了拉起后端，本插件还接管 WorkBuddy 的**模型列表**（config.models.enabled）：
+ * 后端就绪后拉一次 `/v1/models`，把「后端真实提供的模型」写回 profile 的
+ * `llm-pi-ai.providers.workbuddy.models`，名字统一成 `<CN|GL> <上游名> <倍率>`。
+ * 细节与取舍见 lib/models.js 顶部注释；默认关闭，不会擅自改用户的 profile。
+ *
  * 本插件刻意只依赖 node: 内置模块，理由见 lib/services.js 顶部注释。
  *
  * 与 dsh-autostart-websearch 是同级插件：两者都托管一个本地 HTTP 上游，
@@ -22,6 +27,7 @@
  */
 
 import { resolvePluginConfig } from './config.js';
+import { syncModels } from './models.js';
 import { ManagedService } from './services.js';
 
 /** 插件名（日志前缀）。 */
@@ -59,6 +65,10 @@ export function apply(ctx, config) {
   // 后台启动：不 await，避免拖慢插件树加载。
   const startup = start(service, logger);
 
+  // 模型列表同步：等后端就绪后再拉 `/v1/models` 回写 profile（见 lib/models.js）。
+  // 同样不 await：拉取可能耗时数十秒，不能拖住插件树加载。
+  syncAfterStartup(startup, resolved, hostEnv, logger);
+
   ctx.effect(() => {
     // exit 钩子只做同步发信号：进程退出阶段不允许异步等待，异步等待在下面的 disposer 里。
     const onExit = () => {
@@ -95,6 +105,39 @@ async function start(service, logger) {
   if (result.state === 'failed') {
     logger.error(`[${name}] ${service.title} 启动失败：${result.reason}`);
   }
+  return result;
+}
+
+/**
+ * 后端就绪后同步一次模型列表。
+ *
+ * 后端没起来就跳过：此时 `/v1/models` 不可信，保持 profile 里现有的清单更好。
+ * 同步结果只记日志——模型列表没更新不该影响 DSH 启动（下一次启动会再试）。
+ */
+function syncAfterStartup(startup, resolved, hostEnv, logger) {
+  if (!resolved.models.enabled) return;
+
+  startup
+    .then((result) => {
+      if (result?.state === 'failed') {
+        logger.warn(`[${name}] 后端未就绪，跳过模型列表同步`);
+        return undefined;
+      }
+      return syncModels({ spec: resolved.spec, models: resolved.models, env: hostEnv });
+    })
+    .then((result) => {
+      if (!result) return;
+      if (result.state === 'updated') {
+        logger.info(`[${name}] 模型列表已同步 ${result.entries.length} 个模型 → ${result.patchPath}（下次启动生效）`);
+      } else if (result.state === 'unchanged') {
+        logger.info(`[${name}] 模型列表已是最新（${result.entries.length} 个模型）`);
+      } else if (result.state !== 'disabled' && result.state !== 'dry-run') {
+        logger.warn(`[${name}] 模型列表未同步：${result.reason ?? result.state}`);
+      }
+    })
+    .catch((error) => {
+      logger.warn(`[${name}] 模型列表同步出错：${error instanceof Error ? error.message : String(error)}`);
+    });
 }
 
 /**

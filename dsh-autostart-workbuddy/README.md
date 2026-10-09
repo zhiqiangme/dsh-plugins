@@ -19,6 +19,31 @@ DSH 启动时自动拉起 **WorkBuddy Panel**（`wb2api.exe`），替代手动�
 
 与手动运行 `WorkBuddy Panel.ps1` 的差异：不再经过那层 pwsh 编排（也就没有临时日志目录），并去掉了自动弹浏览器这一步。
 
+## 接管模型列表
+
+除了拉服务，本插件还能接管 WorkBuddy 的**模型列表**（`config.models.enabled: true` 时）：
+
+- 后端就绪后拉一次 `GET /v1/models`，把**后端真实提供的模型**写回 profile 的
+  `cordis.patch.yml` → `llm-pi-ai.providers.workbuddy.models`，下次启动（或配置热加载）生效。
+- 展示名统一成 `<CN|GL> <上游名> <倍率>`：`cn:` → `CN`、`global:` → `GL`；
+  倍率取上游的 `credits`（`x0.11` → `0.11`，`x0.00` 或缺失 → `Free`）。
+- 每个模型默认给**低/高/最大**三个思考档位（`efforts: auto` 则按上游声明的档位）。
+- `models.only` 是白名单：留空 = 同步后端全部模型；填了就只保留列出的 id，并按列出顺序展示。
+- 后端返回空列表（面板在上游故障时就是这么降级的）或请求失败时**不动现有配置**；
+  结构认不出来也拒绝写入——宁可不同步，也不能改坏 profile。
+- 写入前会备份成 `<配置>.bak-before-model-sync-<时间戳>`，只保留最近 `keepBackups`（默认 3）份。
+- 不想让它改文件就别开 `models.enabled`（默认关闭）。
+
+手动同步一次（配置来源与自动同步完全相同，都读 profile 里本插件那一行）：
+
+```powershell
+node lib/sync-cli.js --dry-run   # 只看将要写入什么
+node lib/sync-cli.js             # 真写入（带备份）
+```
+
+⚠️ 一个上游行为要知道：`kimi-k3-1` 这类模型上游只支持 `medium` 档，默认三档是照你的要求统一给的；
+要严格对齐上游就配 `efforts: auto`。
+
 ## 安装到 profile
 
 在 `~/.dsh/profiles/desktop/package.json` 里加一条依赖和一个 bundle：
@@ -56,6 +81,11 @@ DSH 启动时自动拉起 **WorkBuddy Panel**（`wb2api.exe`），替代手动�
     exe: D:\Portable\Crack\workbuddy2api-panel\wb2api.exe
     args: ['-config', 'config.json']
     cwd: D:\Portable\Crack\workbuddy2api-panel
+    models:
+      enabled: true
+      only:                     # 留空 = 后端全部模型
+        - cn:deepseek-v4.1-flash
+        - global:deepseek-v4.1-flash
 ```
 
 | 字段 | 说明 |
@@ -72,16 +102,35 @@ DSH 启动时自动拉起 **WorkBuddy Panel**（`wb2api.exe`），替代手动�
 | `readinessTimeoutMs` | 等待端口就绪的上限，默认 30000 |
 | `stopTimeoutMs` | 停止时等待退出的上限，默认 5000；超时后强制结束 |
 
+`models` 段的字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `enabled` | 是否接管模型列表，默认 **false**（不开就不碰 profile） |
+| `only` | 白名单，按列出顺序写；空 = 后端全部模型 |
+| `exclude` | 黑名单，优先级高于 `only` |
+| `efforts` | 每个模型的思考档位，默认 `[low, high, max]`；填 `auto` 用上游声明的档位 |
+| `profilePatch` | 目标配置路径，默认由 `DSH_PROFILE_DIR`（或 `DSH_HOME` + `DSH_PROFILE`）推导 |
+| `panelConfig` | 读网关密钥的面板配置，默认 `<cwd>/config.json` |
+| `apiKey` | 显式指定网关密钥，默认依次尝试 `WORKBUDDY_PROXY_KEY`、面板 `config.json` 的 `api_key` |
+| `baseURL` | 模型接口地址，默认 `http://<host>:<port>` |
+| `timeoutMs` | 拉取超时，默认 60000（面板的模型列表缓存 1h，冷缓存要等上游） |
+| `keepBackups` | 保留的备份份数，默认 3 |
+
 任何非法值都会退回默认值，不会让插件加载失败。
 
 ## 排障
 
 ```powershell
-# 看插件解析出的实际规格（只读，不启动任何东西）
+# 看插件解析出的实际规格与模型同步配置（只读，不启动任何东西、不联网）
 node lib/cli.js
 
-# 额外校验可执行文件是否存在、端口当前状态
+# 额外校验可执行文件 / profile 配置是否存在、端口当前状态
 node lib/cli.js --check
+
+# 手动同步一次模型列表（唯一会写文件的入口）
+node lib/sync-cli.js --dry-run
+node lib/sync-cli.js
 ```
 
 日志按时间戳分文件写在 `logDir`：`wb2api.<时间戳>.out.log` / `.err.log`。

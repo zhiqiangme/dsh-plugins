@@ -6,8 +6,18 @@
  * 因此这里用显式白名单 + 类型校正，任何非法输入都退回默认值而不是让插件加载失败。
  */
 
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { DEFAULT_EFFORTS } from './models.js';
 import { SERVICE_DEFAULTS, resolveDshHome } from './services.js';
+
+/** models 段默认值：默认关闭（不擅自改用户的 profile），开启后默认同步后端全部模型。 */
+const MODELS_DEFAULTS = Object.freeze({
+  enabled: false,
+  provider: 'workbuddy',
+  // 面板的模型列表是缓存 1h 的；冷缓存时要等上游，给它 60s（面板自己那侧上限是 120s）。
+  timeoutMs: 60_000,
+  keepBackups: 3,
+});
 
 /** 布尔字段的宽容解析：只有显式 false 才关闭（与 DSH 配置里 enabled 的 opt-out 语义一致）。 */
 function bool(value, fallback) {
@@ -72,11 +82,40 @@ function buildSpec(config, common, hostEnv) {
 }
 
 /**
+ * 解析 models 段（模型列表同步）。
+ *
+ * `enabled` 默认 false：插件默认只负责拉起后端，改 profile 是显式选择。
+ * 一旦开启，`only` 为空表示同步后端全部模型，非空则只保留列出的 id（按列出顺序展示）。
+ *
+ * @param {unknown} raw config.models
+ * @param {object} spec 已解析的服务规格（用来推 /v1/models 与面板 config.json 的默认路径）
+ */
+function resolveModelsConfig(raw, spec) {
+  const models = plainObject(raw);
+  return {
+    enabled: bool(models.enabled, MODELS_DEFAULTS.enabled),
+    only: stringArray(models.only, []),
+    exclude: stringArray(models.exclude, []),
+    // `auto` = 按上游声明的档位生成；否则用给定档位（默认低/高/最大三档）。
+    efforts: models.efforts === 'auto' ? 'auto' : stringArray(models.efforts, DEFAULT_EFFORTS),
+    provider: stringOr(models.provider, MODELS_DEFAULTS.provider),
+    // 空字符串 = 由 DSH_PROFILE_DIR / DSH_PROFILE 推导。
+    profilePatch: stringOr(models.profilePatch, ''),
+    panelConfig: stringOr(models.panelConfig, spec.cwd ? join(spec.cwd, 'config.json') : ''),
+    // 空 = 依次尝试 WORKBUDDY_PROXY_KEY 与面板 config.json 的 api_key。
+    apiKey: stringOr(models.apiKey, ''),
+    baseURL: stringOr(models.baseURL, `http://${spec.host}:${spec.port}`),
+    timeoutMs: positiveNumber(models.timeoutMs, MODELS_DEFAULTS.timeoutMs),
+    keepBackups: positiveNumber(models.keepBackups, MODELS_DEFAULTS.keepBackups),
+  };
+}
+
+/**
  * 解析完整插件配置。
  *
  * @param {unknown} raw profile 里该插件行的 config
  * @param {NodeJS.ProcessEnv} hostEnv
- * @returns {{ enabled: boolean, logDir: string, spec: object }}
+ * @returns {{ enabled: boolean, logDir: string, spec: object, models: object }}
  */
 export function resolvePluginConfig(raw, hostEnv = process.env) {
   const config = plainObject(raw);
@@ -96,7 +135,7 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
     hostEnv,
   );
 
-  return { enabled: spec.enabled, logDir, spec };
+  return { enabled: spec.enabled, logDir, spec, models: resolveModelsConfig(config.models, spec) };
 }
 
 /** 供 `node lib/cli.js` 之类的排障入口使用（不启动任何东西）。 */

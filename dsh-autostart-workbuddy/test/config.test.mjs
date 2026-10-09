@@ -73,6 +73,41 @@ test('超时参数可覆盖，非法值退回默认（30000 / 5000）', () => {
   assert.equal(resolved.spec.stopTimeoutMs, 5000);
 });
 
+test('models 段：默认关闭、默认三档、默认接口指向本机后端', () => {
+  const resolved = resolvePluginConfig({}, { PATH: '' });
+  assert.equal(resolved.models.enabled, false, '默认不擅自改用户的 profile');
+  assert.deepEqual(resolved.models.efforts, ['low', 'high', 'max']);
+  assert.deepEqual(resolved.models.only, []);
+  assert.equal(resolved.models.provider, 'workbuddy');
+  assert.equal(resolved.models.baseURL, 'http://127.0.0.1:7863');
+  // 面板 config.json 默认就在 wb2api 的工作目录下。
+  assert.equal(resolved.models.panelConfig, join(resolve(SERVICE_DEFAULTS.cwd), 'config.json'));
+});
+
+test('models 段：白名单、排除、档位与超时可覆盖，非法值退回默认', () => {
+  const resolved = resolvePluginConfig(
+    {
+      models: {
+        enabled: true,
+        only: ['cn:a', 'global:b'],
+        exclude: ['cn:c'],
+        efforts: 'auto',
+        baseURL: 'http://127.0.0.1:9999/v1/',
+        timeoutMs: 'abc',
+      },
+    },
+    { PATH: '' },
+  );
+  assert.equal(resolved.models.enabled, true);
+  assert.deepEqual(resolved.models.only, ['cn:a', 'global:b']);
+  assert.deepEqual(resolved.models.exclude, ['cn:c']);
+  assert.equal(resolved.models.efforts, 'auto');
+  assert.equal(resolved.models.baseURL, 'http://127.0.0.1:9999/v1/');
+  assert.equal(resolved.models.timeoutMs, 60_000, '非法超时退回默认');
+  // 非数组的 only 视为没配（= 全部模型），而不是解析失败。
+  assert.deepEqual(resolvePluginConfig({ models: { only: 'cn:a' } }, { PATH: '' }).models.only, []);
+});
+
 test('describeConfig 给出排障所需的概要', () => {
   const info = describeConfig(resolvePluginConfig({}, { PATH: '' }));
   assert.equal(info.key, 'workbuddy');

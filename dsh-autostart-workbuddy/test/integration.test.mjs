@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,6 +88,16 @@ async function waitForLog(ctx, needle, timeoutMs = 10_000) {
   return false;
 }
 
+/** 轮询等待任意条件（用于"文件被回写"这类异步落盘结果）。 */
+async function waitFor(predicate, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
 test('apply 立即返回（后台启动），disposer 能停掉自己拉起的服务', async (t) => {
   const port = await freePort();
   const ctx = fakeContext();
@@ -140,4 +150,70 @@ test('启动失败不抛异常：只记录错误，不影响宿主', async (t) =
   apply(ctx, fakeServiceConfig(port, { exe: 'Z:\\nope\\missing.exe' }));
 
   assert.ok(await waitForLog(ctx, '启动失败'), ctx.lines.join('\n'));
+});
+
+/** 与真实 profile 同构的最小 patch，用于验证"启动即同步模型列表"这条链路。 */
+const PATCH_FIXTURE = `- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      workbuddy:
+        displayName: WorkBuddy
+        baseURL: http://127.0.0.1:7863/v1/
+        models:
+          - id: cn:stale
+            name: 过期条目
+- id: locale
+  name: "@deepseek-ai/dsh-client-locale"
+`;
+
+test('开启模型同步后：apply 会在后端就绪后回写 profile 的 models 段', async (t) => {
+  const port = await freePort();
+  const dir = mkdtempSync(join(tmpdir(), 'autostart-wb-sync-'));
+  const patchPath = join(dir, 'cordis.patch.yml');
+  writeFileSync(patchPath, PATCH_FIXTURE, 'utf8');
+
+  const ctx = fakeContext();
+  t.after(() => ctx.disposeAll());
+
+  const began = Date.now();
+  apply(
+    ctx,
+    fakeServiceConfig(port, {
+      // 假后端同时提供 /v1/models，才能把"拉起服务 → 拉模型 → 回写配置"整条链路跑通。
+      env: dummyEnv(port, 'http-models'),
+      models: { enabled: true, profilePatch: patchPath, apiKey: 'test-key', timeoutMs: 5_000 },
+    }),
+  );
+  const elapsed = Date.now() - began;
+  // 模型同步是后台动作，不能拖住插件树加载。
+  assert.ok(elapsed < 200, `apply 应立刻返回，实际耗时 ${elapsed}ms`);
+
+  assert.ok(
+    await waitFor(() => readFileSync(patchPath, 'utf8').includes('name: CN Alpha 0.11')),
+    `models 段应被回写：\n${readFileSync(patchPath, 'utf8')}`,
+  );
+
+  const after = readFileSync(patchPath, 'utf8');
+  assert.ok(after.includes('          - id: cn:alpha'));
+  assert.ok(after.includes('          - id: global:beta'));
+  assert.ok(after.includes('            name: GL Beta Free'), '国际版模型要带 GL 前缀与 Free 倍率');
+  assert.ok(after.includes('            reasoningEfforts:'), '默认给低/高/最大三档');
+  assert.ok(after.includes('- id: locale'), '其余配置不能被改动');
+  assert.ok(await waitForLog(ctx, '模型列表已同步'), ctx.lines.join('\n'));
+});
+
+test('模型同步未开启时：不碰 profile 文件', async (t) => {
+  const port = await freePort();
+  const dir = mkdtempSync(join(tmpdir(), 'autostart-wb-nosync-'));
+  const patchPath = join(dir, 'cordis.patch.yml');
+  writeFileSync(patchPath, PATCH_FIXTURE, 'utf8');
+
+  const ctx = fakeContext();
+  t.after(() => ctx.disposeAll());
+
+  apply(ctx, fakeServiceConfig(port, { env: dummyEnv(port, 'http-models') }));
+  assert.ok(await waitForLog(ctx, '已启动'), ctx.lines.join('\n'));
+
+  assert.equal(readFileSync(patchPath, 'utf8'), PATCH_FIXTURE);
 });

@@ -30,6 +30,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "sync-models": "node lib/sync-cli.js",
     "print-config": "node -e \"import('./lib/config.js').then(({ resolvePluginConfig, describeConfig }) => console.log(JSON.stringify(describeConfig(resolvePluginConfig({}, process.env)), null, 2)))\""
   },
   "license": "MIT"
