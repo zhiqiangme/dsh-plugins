@@ -320,13 +320,12 @@ function parseScalar(raw) {
 }
 
 /**
- * 读 profile patch 里本插件那一行的 `config.models`。
+ * 定位 profile patch 里本插件那一行的 `config.models` 段。
  *
- * 为什么需要它：models 配置是 DSH 启动时由宿主传给插件的，命令行里没有宿主；
- * 手动同步（lib/sync-cli.js）直接从同一个文件里读，保证"手动跑一次"和"启动时自动同步"
- * 用的是同一份配置，不会各说各话。
+ * 读（readPluginModelsConfig）与写（updatePluginOnlyList）共用这一份定位逻辑，
+ * 避免两处对"哪一段是 models"产生分歧。
  *
- * 只认文档化的形状，认不出就返回 undefined：
+ * 只认一种形状（也就是本机 profile 的实际形状）：
  *
  *     - id: dsh-autostart-workbuddy
  *       name: dsh-autostart-workbuddy
@@ -335,14 +334,15 @@ function parseScalar(raw) {
  *           enabled: true
  *           only:
  *             - cn:xxx
+ *
+ * 认不出就返回 ok:false，让调用方放弃——宁可不动，也不能猜错位置改坏 profile。
  */
-export function readPluginModelsConfig(text, entryId = 'dsh-autostart-workbuddy') {
-  const lines = String(text).split(/\r?\n/);
+function locatePluginModelsBlock(lines, entryId) {
   const entryIndex = lines.findIndex((line) => {
     const match = /^(\s*)-\s*id:\s*(.+?)\s*$/.exec(line);
     return Boolean(match) && parseScalar(match[2]) === entryId;
   });
-  if (entryIndex < 0) return undefined;
+  if (entryIndex < 0) return { ok: false, reason: `profile 里没有 ${entryId} 这一行` };
 
   const entryIndent = indentOf(lines[entryIndex]);
   let entryEnd = lines.length;
@@ -357,17 +357,44 @@ export function readPluginModelsConfig(text, entryId = 'dsh-autostart-workbuddy'
   const configIndex = lines.findIndex(
     (line, i) => i > entryIndex && i < entryEnd && /^\s*config:\s*(#.*)?$/.test(line),
   );
-  if (configIndex < 0) return undefined;
-  const configIndent = indentOf(lines[configIndex]);
+  if (configIndex < 0) return { ok: false, reason: `${entryId} 没有 config 段` };
 
   const modelsIndex = lines.findIndex(
-    (line, i) => i > configIndex && i < entryEnd && indentOf(line) === configIndent + 2 && /^\s*models:\s*(#.*)?$/.test(line),
+    (line, i) =>
+      i > configIndex &&
+      i < entryEnd &&
+      indentOf(line) === indentOf(lines[configIndex]) + 2 &&
+      /^\s*models:\s*(#.*)?$/.test(line),
   );
-  if (modelsIndex < 0) return undefined;
+  if (modelsIndex < 0) return { ok: false, reason: `${entryId} 没有 config.models 段` };
 
   const modelsIndent = indentOf(lines[modelsIndex]);
-  const keyIndent = modelsIndent + 2;
-  const itemIndent = modelsIndent + 4;
+  return {
+    ok: true,
+    entryIndex,
+    entryEnd,
+    modelsIndex,
+    modelsIndent,
+    keyIndent: modelsIndent + 2,
+    itemIndent: modelsIndent + 4,
+  };
+}
+
+/**
+ * 读 profile patch 里本插件那一行的 `config.models`。
+ *
+ * 为什么需要它：models 配置是 DSH 启动时由宿主传给插件的，命令行里没有宿主；
+ * 手动同步（lib/sync-cli.js）与 Web 面板（lib/web.js）都直接从同一个文件里读，
+ * 保证"手动跑一次"和"启动时自动同步"用的是同一份配置，不会各说各话。
+ *
+ * 形状见 locatePluginModelsBlock；认不出就返回 undefined。
+ */
+export function readPluginModelsConfig(text, entryId = 'dsh-autostart-workbuddy') {
+  const lines = String(text).split(/\r?\n/);
+  const located = locatePluginModelsBlock(lines, entryId);
+  if (!located.ok) return undefined;
+
+  const { modelsIndex, entryEnd, modelsIndent, keyIndent, itemIndent } = located;
 
   const out = {};
   for (let i = modelsIndex + 1; i < entryEnd; i += 1) {
@@ -381,7 +408,10 @@ export function readPluginModelsConfig(text, entryId = 'dsh-autostart-workbuddy'
     if (!key) continue;
     const [, name, rest] = key;
     if (rest.trim() && !rest.trim().startsWith('#')) {
-      out[name] = parseScalar(rest);
+      // `only: []` 是"显式清空"的写法（Web 面板保存空勾选时会这么写）。YAML 里它就是
+      // 空列表，不能落到 parseScalar 变成字符串 "[]"——否则调用方会以为白名单里
+      // 有一个叫 "[]" 的模型，或者误判成"没配白名单"。
+      out[name] = rest.trim() === '[]' ? [] : parseScalar(rest);
       continue;
     }
     // 值是缩进列表（only / exclude / efforts）。
@@ -400,8 +430,76 @@ export function readPluginModelsConfig(text, entryId = 'dsh-autostart-workbuddy'
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * 用新的白名单替换本插件那一行的 `config.models.only`，其余内容逐字节保留。
+ *
+ * 与 updatePatchText 的分工：那个改的是 llm-pi-ai 里 workbuddy provider 的模型清单
+ * （内容由后端决定），这个改的是本插件自己的白名单（内容由用户在 Web 面板里勾选）。
+ *
+ * 空数组写成 `only: []` 而不是删掉整段：`only` 留空本来就等于"同步后端全部模型"，
+ * 写成空数组语义相同，但用户下次打开面板能看出"这里被显式清空过"。
+ *
+ * @returns {{ ok: boolean, changed?: boolean, text?: string, reason?: string }}
+ */
+export function updatePluginOnlyList(text, only, entryId = 'dsh-autostart-workbuddy') {
+  if (!Array.isArray(only) || only.some((id) => typeof id !== 'string')) {
+    return { ok: false, reason: 'only 不是字符串数组' };
+  }
+  const ids = only.map((id) => id.trim()).filter(Boolean);
+
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  const located = locatePluginModelsBlock(lines, entryId);
+  if (!located.ok) return { ok: false, reason: located.reason };
+
+  const { modelsIndex, entryEnd, modelsIndent, keyIndent, itemIndent } = located;
+
+  // 找现有的 only: 键，以及它名下的列表项范围。
+  let onlyIndex = -1;
+  let onlyEnd = -1;
+  for (let i = modelsIndex + 1; i < entryEnd; i += 1) {
+    if (isBlank(lines[i])) continue;
+    const indent = indentOf(lines[i]);
+    if (indent <= modelsIndent) break;
+    if (indent !== keyIndent) continue;
+    const key = /^\s*([A-Za-z0-9_.-]+):\s*(.*)$/.exec(lines[i]);
+    if (!key || key[1] !== 'only') continue;
+
+    onlyIndex = i;
+    onlyEnd = entryEnd;
+    for (let j = i + 1; j < entryEnd; j += 1) {
+      if (isBlank(lines[j])) continue;
+      if (indentOf(lines[j]) <= keyIndent) {
+        onlyEnd = j;
+        break;
+      }
+    }
+    while (onlyEnd > i + 1 && isBlank(lines[onlyEnd - 1])) onlyEnd -= 1;
+    break;
+  }
+
+  const pad = (n) => ' '.repeat(n);
+  const rendered =
+    ids.length === 0
+      ? [`${pad(keyIndent)}only: []`]
+      : [`${pad(keyIndent)}only:`, ...ids.map((id) => `${pad(itemIndent)}- ${yamlScalar(id)}`)];
+
+  let next;
+  if (onlyIndex >= 0) {
+    const current = lines.slice(onlyIndex, onlyEnd);
+    if (current.length === rendered.length && current.every((line, i) => line === rendered[i])) {
+      return { ok: true, changed: false, text };
+    }
+    next = [...lines.slice(0, onlyIndex), ...rendered, ...lines.slice(onlyEnd)];
+  } else {
+    // 没有 only: 就插在 models: 之后，缩进与同级键一致。
+    next = [...lines.slice(0, modelsIndex + 1), ...rendered, ...lines.slice(modelsIndex + 1)];
+  }
+  return { ok: true, changed: true, text: next.join(eol) };
+}
+
 /** 改配置前先落备份，并只保留最近 N 份自己产生的备份，避免越积越多。 */
-function backupPatchFile(path, keep) {
+export function backupPatchFile(path, keep) {
   const stamp = (() => {
     const d = new Date();
     const p = (n) => String(n).padStart(2, '0');

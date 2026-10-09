@@ -29,13 +29,17 @@
 import { resolvePluginConfig } from './config.js';
 import { syncModels } from './models.js';
 import { ManagedService } from './services.js';
+import { registerPanelRoutes } from './web.js';
 
 /** 插件名（日志前缀）。 */
 export const name = 'dsh-autostart-workbuddy';
 
 /**
- * 不注入任何 Host Service：本插件的工作（spawn 外部进程 + 探测端口）只用 node 内置模块，
- * 不依赖加载顺序，也不会因为某个 Service 缺席而整个插件不激活。
+ * 不注入任何 Host Service：本插件的核心工作（spawn 外部进程 + 探测端口 + 改 profile）
+ * 只用 node 内置模块，不依赖加载顺序，也不会因为某个 Service 缺席而整个插件不激活。
+ *
+ * Web 面板要用宿主 webserver，但那是"用得上就用"：在 apply 里软取（见 web.js 的
+ * resolveWebServer），拿不到只少一个面板，不影响拉起后端与同步模型列表。
  */
 export const inject = [];
 
@@ -61,6 +65,10 @@ export function apply(ctx, config) {
   logger.info(
     `[${name}] 准备托管 ${service.title} (${service.port})；日志目录 ${resolved.logDir}`,
   );
+
+  // Web 面板路由（浏览器半侧 lib/client.js 的取数口）。与后端启动无关，先挂上：
+  // 这样后端还没起来时打开面板也能看到"后端不可达"的具体原因。
+  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv });
 
   // 后台启动：不 await，避免拖慢插件树加载。
   const startup = start(service, logger);
