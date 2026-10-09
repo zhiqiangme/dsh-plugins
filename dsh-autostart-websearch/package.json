@@ -1,0 +1,36 @@
+{
+  "name": "dsh-autostart-websearch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH 启动时自动拉起 tavily-anthropic-search（联网搜索上游, 127.0.0.1:8787），幂等、静默、退出时只停自己拉起的进程。",
+  "type": "module",
+  "main": "lib/index.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "print-config": "node -e \"import('./lib/config.js').then(({ resolvePluginConfig, describeConfig }) => console.log(JSON.stringify(describeConfig(resolvePluginConfig({}, process.env)), null, 2)))\""
+  },
+  "license": "MIT"
+}
