@@ -66,6 +66,10 @@ node lib/sync-cli.js             # 真写入（带备份）
 
 然后在该目录执行 `pnpm install`（用 DSH 自带的 pnpm），重启 DSH 生效。
 
+⚠️ `file:` 依赖在 profile 里是**拷贝**，不是软链：改了本插件的源码后 `pnpm install` 会认为"已是最新"而不重新拷贝，
+需要先把 `node_modules/dsh-autostart-workbuddy` 挪走再 `pnpm add "dsh-autostart-workbuddy@file:<目录>"`，
+否则 DSH 跑的还是旧代码。
+
 ## 配置
 
 在 profile 的 `cordis.patch.yml` 里按行 id 覆盖：
