@@ -24,6 +24,11 @@
 window.__ModuleLoader__.load({
   id: 'dsh-autostart-workbuddy',
   factory: (require) => {
+    // ModuleLoader 的 factory 只注入 require；这里自行建立 CommonJS 导出对象，
+    // 与 DSH 其它客户端 bundle 的包装约定一致。
+    const module = { exports: {} };
+    const exports = module.exports;
+
     const React = require('react');
     const h = React.createElement;
     const { useCallback, useEffect, useMemo, useState } = React;
@@ -62,6 +67,9 @@ window.__ModuleLoader__.load({
 .dsm-wb-path{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;word-break:break-all}
 `;
 
+    // 字典值必须是**字符串**：DSH 的 t(key, params) 用 `{name}` 占位符插值
+    // （见 @deepseek-ai/dsh-client-locale 的 bind）。放函数会让 t() 返回函数本身，
+    // React 拿它当 child 直接抛错，整块卡片从页面上消失——这个坑已经踩过一次。
     const zh = {
       title: 'WorkBuddy 模型列表',
       description: '勾选要出现在 DSH 模型列表里的模型；倍率取自后端 /v1/models。',
@@ -73,15 +81,15 @@ window.__ModuleLoader__.load({
       refresh: '刷新',
       save: '保存',
       saving: '保存中…',
-      count: (total, picked) => `后端共 ${total} 个模型，已勾选 ${picked} 个`,
+      count: '后端共 {total} 个模型，已勾选 {picked} 个',
       vision: '视觉',
       emptyBackend: '后端没有返回任何模型。',
       emptyHint: '一个都没勾 = 同步后端全部模型（白名单留空的既有语义）。',
       disabledHint: 'profile 里 models.enabled 不是 true：保存只改白名单，不会重新生成模型清单。',
-      savedSync: (count) => `已保存，并已重新生成模型清单：${count} 个模型。`,
-      savedNoSync: (state) => `已保存白名单；模型清单未更新（${state}）。`,
+      savedSync: '已保存，并已重新生成模型清单：{count} 个模型。',
+      savedNoSync: '已保存白名单；模型清单未更新（{state}）。',
       saveFailed: '保存失败。',
-      patchPath: (path) => `写入目标：${path}`,
+      patchPath: '写入目标：{path}',
     };
 
     const en = {
@@ -95,15 +103,15 @@ window.__ModuleLoader__.load({
       refresh: 'Refresh',
       save: 'Save',
       saving: 'Saving…',
-      count: (total, picked) => `${total} models on the backend, ${picked} selected`,
+      count: '{total} models on the backend, {picked} selected',
       vision: 'vision',
       emptyBackend: 'The backend returned no models.',
       emptyHint: 'Selecting nothing means “sync every backend model” (the existing meaning of an empty allow-list).',
       disabledHint: 'profile has models.enabled !== true: saving only rewrites the allow-list, it will not regenerate the model list.',
-      savedSync: (count) => `Saved and regenerated the model list: ${count} models.`,
-      savedNoSync: (state) => `Allow-list saved; the model list was not updated (${state}).`,
+      savedSync: 'Saved and regenerated the model list: {count} models.',
+      savedNoSync: 'Allow-list saved; the model list was not updated ({state}).',
       saveFailed: 'Save failed.',
-      patchPath: (path) => `Written to: ${path}`,
+      patchPath: 'Written to: {path}',
     };
 
     function ensureStyle() {
@@ -224,9 +232,9 @@ window.__ModuleLoader__.load({
           }
           const sync = payload.sync ?? {};
           if (sync.state === 'updated' || sync.state === 'unchanged') {
-            setNotice({ kind: 'ok', text: t('savedSync', sync.count ?? 0) });
+            setNotice({ kind: 'ok', text: t('savedSync', { count: sync.count ?? 0 }) });
           } else {
-            setNotice({ kind: 'ok', text: t('savedNoSync', sync.reason ?? sync.state ?? '') });
+            setNotice({ kind: 'ok', text: t('savedNoSync', { state: sync.reason ?? sync.state ?? '' }) });
           }
           await load();
         } catch (error) {
@@ -260,7 +268,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { key: 'toolbar', className: 'dsm-wb-toolbar' },
-            h('span', { className: 'dsm-wb-count' }, t('count', sorted.length, picked.size)),
+            h('span', { className: 'dsm-wb-count' }, t('count', { total: sorted.length, picked: picked.size })),
             h(
               'button',
               {
@@ -356,7 +364,7 @@ window.__ModuleLoader__.load({
         );
       }
       if (meta.patchPath) {
-        body.push(h('p', { key: 'path', className: 'dsm-wb-path' }, t('patchPath', meta.patchPath)));
+        body.push(h('p', { key: 'path', className: 'dsm-wb-path' }, t('patchPath', { path: meta.patchPath })));
       }
 
       return h(
