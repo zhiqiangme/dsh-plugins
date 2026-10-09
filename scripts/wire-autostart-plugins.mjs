@@ -12,8 +12,8 @@ const PROFILE =
 
 /** 要接入的插件：包名 + 本地目录（file: 协议，DSH profile 的既有做法）。 */
 const PLUGINS = [
-  { name: 'dsh-autostart-workbuddy', dir: 'D:\\Project\\Test\\dsh-autostart-workbuddy' },
-  { name: 'dsh-autostart-websearch', dir: 'D:\\Project\\Test\\dsh-autostart-websearch' },
+  { name: 'dsh-autostart-workbuddy', dir: 'D:\\Project\\DeepSeek Harness\\dsh-autostart-workbuddy' },
+  { name: 'dsh-autostart-websearch', dir: 'D:\\Project\\DeepSeek Harness\\dsh-autostart-websearch' },
 ];
 
 const pkg = JSON.parse(readFileSync(PROFILE, 'utf8'));

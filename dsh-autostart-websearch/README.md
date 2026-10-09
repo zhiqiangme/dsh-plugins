@@ -27,7 +27,7 @@ WorkBuddy Panel 那个上游（wb2api, 7863）由同级插件 [dsh-autostart-wor
 ```jsonc
 {
   "dependencies": {
-    "dsh-autostart-websearch": "file:D:\\Project\\Test\\dsh-autostart-websearch"
+    "dsh-autostart-websearch": "file:D:\\Project\\DeepSeek Harness\\dsh-autostart-websearch"
   },
   "dsh": {
     "profile": {

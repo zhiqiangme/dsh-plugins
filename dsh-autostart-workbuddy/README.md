@@ -51,7 +51,7 @@ node lib/sync-cli.js             # 真写入（带备份）
 ```jsonc
 {
   "dependencies": {
-    "dsh-autostart-workbuddy": "file:D:\\Project\\Test\\dsh-autostart-workbuddy"
+    "dsh-autostart-workbuddy": "file:D:\\Project\\DeepSeek Harness\\dsh-autostart-workbuddy"
   },
   "dsh": {
     "profile": {
