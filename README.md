@@ -26,13 +26,18 @@
 
 | 原 SHA（Test 仓库） | 本仓库 SHA | 提交信息 |
 | --- | --- | --- |
-| `002a7a3fbb0adc39b03be6f62215819b3c2d5a08` | `c44876006da199af43e755cffa5f5b53651a0500` | 新增(repo)：拆分 autostart 插件为 WorkBuddy 与联网搜索两个独立插件 |
-| `3e3dcb27e01900898b73b0fca8304288d4210bbc` | `30b538b9cb7b57eb16de48661ced6a9d634b3594` | 新增(workbuddy)：WorkBuddy 插件接管模型列表 |
-| `e1ebda70ea4b4aad8ce96c581399dbb3bc1cf265` | `350e71d994bb93f398b50a8373444055f95b1acb` | 文档(workbuddy)：补充 file: 依赖是拷贝、改代码后需强制刷新的注意事项 |
+| `002a7a3fbb0adc39b03be6f62215819b3c2d5a08` | `ad45994a22ca38f616479aff5e12fee2775f43ad` | 新增(workbuddy)：从 autostart 插件拆出 WorkBuddy 独立插件 |
+| ↑ 同一个提交拆成两条 | `f3028acf87f6338045664124163bbc2c5fad6555` | 新增(websearch)：从 autostart 插件拆出联网搜索独立插件，并加入接线脚本 |
+| `3e3dcb27e01900898b73b0fca8304288d4210bbc` | `8a1ac0244330e9c1671bb28aaa07598c5c3b37b2` | 新增(workbuddy)：WorkBuddy 插件接管模型列表 |
+| `e1ebda70ea4b4aad8ce96c581399dbb3bc1cf265` | `7727a8202ee646a6bfe116aeb54ffb15d043a9a2` | 文档(workbuddy)：补充 file: 依赖是拷贝、改代码后需强制刷新的注意事项 |
 
-> ⚠️ 2026-10-10 又重写过一次历史：给全部提交信息加上范围前缀（见下节），因此本仓库的 SHA 与最初导入时不同。
+> ⚠️ 2026-10-10 对历史做过两次重写，所以本仓库的 SHA 与最初导入时不同：
+> 1. 给全部提交信息加范围前缀（见下节）；
+> 2. 把首个提交（同时创建了两个插件 + 接线脚本）**拆成两条**：workbuddy 一条、websearch + 脚本一条。
+>    两条都**保留了原作者与原始提交时间**（`zhiqiangme`，`2026-10-09T06:39:46-07:00`）。
+>
+> 两次重写都只动提交对象，**所有文件的 blob 与最终 tree 逐字节未变**（已比对 tree SHA 一致）。
 > 重写前的完整历史保存在 `D:\Project\DeepSeek-Harness-backup-<时间戳>.bundle`（`git bundle create --all`），需要时可从中恢复。
-> 重写只改提交信息，**所有文件的 blob 与 tree 逐字节未变**（已比对 tree SHA 一致）。
 
 迁出后在本仓库新增的提交只做两件事：修正随迁移失效的本地绝对路径引用、补这份来源说明。
 
