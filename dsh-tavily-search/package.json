@@ -5,13 +5,13 @@
   "description": "用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内提供 127.0.0.1:8787/v1 搜索接口，API Key 存在 DSH 凭据库。",
   "type": "module",
   "main": "lib/index.js",
-  "icon": "./icon.svg",
+  "icon": "icons/tavily.png",
   "engines": {
     "node": ">=22.12.0"
   },
   "files": [
     "lib",
-    "icon.svg",
+    "icons",
     "locale/*.json",
     "cordis.patch.yml",
     "README.md"
