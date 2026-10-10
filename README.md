@@ -26,11 +26,32 @@
 
 | 原 SHA（Test 仓库） | 本仓库 SHA | 提交信息 |
 | --- | --- | --- |
-| `002a7a3fbb0adc39b03be6f62215819b3c2d5a08` | `89ad10830ec586e7d3db3a8d9e0aa05f8f01ec18` | 新增：拆分 autostart 插件为 WorkBuddy 与联网搜索两个独立插件 |
-| `3e3dcb27e01900898b73b0fca8304288d4210bbc` | `90f3c19c5838e3a8941321a9f7c5986994a2e2b2` | 新增：WorkBuddy 插件接管模型列表 |
-| `e1ebda70ea4b4aad8ce96c581399dbb3bc1cf265` | `d2126e6a0e98cdcfec25ab01d0e8c896fc0e6719` | 文档：补充 file: 依赖是拷贝、改代码后需强制刷新的注意事项 |
+| `002a7a3fbb0adc39b03be6f62215819b3c2d5a08` | `c44876006da199af43e755cffa5f5b53651a0500` | 新增(repo)：拆分 autostart 插件为 WorkBuddy 与联网搜索两个独立插件 |
+| `3e3dcb27e01900898b73b0fca8304288d4210bbc` | `30b538b9cb7b57eb16de48661ced6a9d634b3594` | 新增(workbuddy)：WorkBuddy 插件接管模型列表 |
+| `e1ebda70ea4b4aad8ce96c581399dbb3bc1cf265` | `350e71d994bb93f398b50a8373444055f95b1acb` | 文档(workbuddy)：补充 file: 依赖是拷贝、改代码后需强制刷新的注意事项 |
+
+> ⚠️ 2026-10-10 又重写过一次历史：给全部提交信息加上范围前缀（见下节），因此本仓库的 SHA 与最初导入时不同。
+> 重写前的完整历史保存在 `D:\Project\DeepSeek-Harness-backup-<时间戳>.bundle`（`git bundle create --all`），需要时可从中恢复。
+> 重写只改提交信息，**所有文件的 blob 与 tree 逐字节未变**（已比对 tree SHA 一致）。
 
 迁出后在本仓库新增的提交只做两件事：修正随迁移失效的本地绝对路径引用、补这份来源说明。
+
+## 提交信息约定
+
+两条插件线共用一个仓库，提交信息统一带范围前缀，`git log --oneline` 里一眼分得清是哪条线在动：
+
+```
+新增(workbuddy)：插件页的模型勾选面板
+修复(websearch)：…
+文档(repo)：更新提交映射表
+```
+
+- **范围 = 改动涉及的插件目录名**：`workbuddy` / `websearch`
+- 只涉及仓库级文件（根 `README.md`、`scripts/`），或**同时**涉及两个插件时，用 `repo`
+- 格式为 `类型(范围)：描述`，类型沿用既有的 `新增 / 修复 / 文档 / 移除 / 调整 / 改进 / 测试 / 修正`
+
+约定是靠 `git filter-repo --commit-callback` 按"改动路径"自动套用的（脚本逻辑：取该提交改动路径的顶层目录，
+若恰好命中一个插件目录就用它，否则用 `repo`），所以历史里没有漏网的提交。
 
 ## 仍然指向 Test 仓库的依赖
 
