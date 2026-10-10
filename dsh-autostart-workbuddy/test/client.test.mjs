@@ -368,6 +368,9 @@ test('后端区（已安装）：显示 更新/卸载/回滚，不显示 安装�
   assert.ok(labels.includes('回滚'), '已安装应显示回滚');
   assert.equal(labels.includes('安装'), false, '已安装不该显示安装（与卸载互斥）');
 
+  // 顺序：更新 → 回滚 → 卸载（卸载放最后，离"检查更新"最远，减少误点）
+  assert.deepEqual(labels.slice(-4), ['检查更新', '更新', '回滚', '卸载'], '后端按钮顺序应为 更新 → 回滚 → 卸载');
+
   const uninstall = collectByType(tree, 'button').find((node) => collectText(node).join('') === '卸载');
   assert.match(uninstall.props.className, /dsm-wb-btn-danger/, '卸载按钮用危险色');
 });
@@ -381,6 +384,7 @@ test('后端区（未安装）：显示 安装，不显示 更新/卸载/回滚'
   assert.equal(labels.includes('更新'), false, '未安装没有可更新的东西');
   assert.equal(labels.includes('回滚'), false, '未安装没有可回滚的版本');
   assert.ok(labels.includes('检查更新'), '检查更新始终可用');
+  assert.deepEqual(labels.slice(-2), ['检查更新', '安装'], '未安装时后端按钮应为 检查更新 → 安装');
 });
 
 test('卸载二次确认：弹出 Modal，含确认与取消两个按钮', () => {

@@ -599,6 +599,7 @@ window.__ModuleLoader__.load({
               backendBusy === 'check' ? t('backendWorking') : t('backendCheck'),
             ),
             // 安装与卸载互斥：没装才显示"安装"，装了才显示"卸载"。
+            // 顺序按使用频率排：更新 → 回滚 → 卸载（卸载放最后，离"检查更新"最远，减少误点）。
             installed
               ? h(
                   'button',
@@ -625,11 +626,11 @@ window.__ModuleLoader__.load({
                   'button',
                   {
                     type: 'button',
-                    className: 'dsm-wb-btn dsm-wb-btn-danger',
+                    className: 'dsm-wb-btn dsm-wb-btn-outline',
                     disabled: Boolean(backendBusy),
-                    onClick: () => setConfirming(true),
+                    onClick: () => runBackend('rollback'),
                   },
-                  t('backendUninstall'),
+                  backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'),
                 )
               : null,
             installed
@@ -637,11 +638,11 @@ window.__ModuleLoader__.load({
                   'button',
                   {
                     type: 'button',
-                    className: 'dsm-wb-btn dsm-wb-btn-outline',
+                    className: 'dsm-wb-btn dsm-wb-btn-danger',
                     disabled: Boolean(backendBusy),
-                    onClick: () => runBackend('rollback'),
+                    onClick: () => setConfirming(true),
                   },
-                  backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'),
+                  t('backendUninstall'),
                 )
               : null,
           ),
