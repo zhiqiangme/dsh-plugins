@@ -39,11 +39,21 @@ window.__ModuleLoader__.load({
     /** 与 lib/web.js 的两个端点必须一致。 */
     const MODELS_PATH = '/plugins/dsh-autostart-workbuddy/models';
     const BACKEND_PATH = '/plugins/dsh-autostart-workbuddy/backend';
+    /**
+     * 后端管理面板地址的兜底值。宿主会在 /backend 的应答里给出真实地址
+     * （host/port 可被 profile 覆盖），拿不到时才用这个。
+     */
+    const DEFAULT_PANEL_URL = 'http://127.0.0.1:7863/panel';
 
     const CSS = `
 .dsm-wb-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;padding:14px 16px}
 .dsm-wb-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:15px;font-weight:600;line-height:1.4}
 .dsm-wb-desc{margin:4px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
+.dsm-wb-panel{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
+/* 外链用 DSH 自己那套：http(s) + target=_blank，宿主主窗口的 setWindowOpenHandler
+   会把它交给 shell.openExternal，即默认浏览器打开。 */
+.dsm-wb-link{color:var(--dsw-alias-state-business-primary,#5686fe);text-decoration:none;cursor:pointer}
+.dsm-wb-link:hover{text-decoration:underline}
 .dsm-wb-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 0 8px}
 .dsm-wb-count{flex:1;min-width:120px;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
 .dsm-wb-btn{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 14px;font-size:13px;line-height:1.5}
@@ -108,6 +118,7 @@ window.__ModuleLoader__.load({
       savedNoSync: '已保存白名单；模型清单未更新（{state}）。',
       saveFailed: '保存失败。',
       patchPath: '写入目标：{path}',
+      panelHint: '后端面板：',
       backendTitle: '后端版本',
       backendCurrent: '当前 {version}',
       backendLatest: '上游 {tag}',
@@ -145,6 +156,7 @@ window.__ModuleLoader__.load({
       savedNoSync: 'Allow-list saved; the model list was not updated ({state}).',
       saveFailed: 'Save failed.',
       patchPath: 'Written to: {path}',
+      panelHint: 'Panel: ',
       backendTitle: 'Backend version',
       backendCurrent: 'current {version}',
       backendLatest: 'upstream {tag}',
@@ -559,11 +571,31 @@ window.__ModuleLoader__.load({
         body.push(h('div', { key: 'backend', className: 'dsm-wb-backend' }, section));
       }
 
+      // 后端管理面板地址：宿主在 /backend 应答里给（端口可配），拿不到就用兜底值。
+      const panelUrl = backend?.panelUrl ?? DEFAULT_PANEL_URL;
+      const panelLabel = String(panelUrl).replace(/^https?:\/\//, '');
+
       return h(
         'div',
         { className: 'dsm-wb-card' },
         h('div', { className: 'dsm-wb-title' }, t('title')),
         h('p', { className: 'dsm-wb-desc' }, t('description')),
+        h(
+          'p',
+          { className: 'dsm-wb-panel' },
+          t('panelHint'),
+          h(
+            'a',
+            {
+              href: panelUrl,
+              target: '_blank',
+              rel: 'noopener noreferrer',
+              className: 'dsm-wb-link',
+              title: panelUrl,
+            },
+            panelLabel,
+          ),
+        ),
         body,
       );
     }

@@ -56,6 +56,9 @@ node lib/sync-cli.js             # 真写入（带备份）
 - **一个都不勾**再保存 = 白名单留空 = 同步后端全部模型（既有语义），面板里有提示。
 - 后端不可达时面板照常打开并显示原因，此时**不写任何文件**。
 - 只有勾选/保存/全选这些动作会写 profile，且写前照例备份（同一套 `.bak-before-model-sync-<时间戳>`）。
+- 卡片顶部有一行 **后端面板：`127.0.0.1:7863/panel`** 的可点击外链，点了用**默认浏览器**打开。
+  地址由宿主按服务规格给出（端口可配），不是写死的。链接用 `<a target="_blank" rel="noopener noreferrer">`，
+  宿主主窗口的 `setWindowOpenHandler` 对 http(s) 会调 `shell.openExternal`——这也是 DSH 里外链的既有做法。
 
 数据通路：卡片 `fetch('/plugins/dsh-autostart-workbuddy/models')`，宿主半侧
 （[lib/web.js](lib/web.js)）负责拉后端与读写 profile。必须过宿主是因为：页面够不到

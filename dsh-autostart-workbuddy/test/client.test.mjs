@@ -60,6 +60,20 @@ function collectText(node, out = []) {
   return out;
 }
 
+/** 按元素类型收集节点（用于检查链接的 href/target 这类属性）。 */
+function collectByType(node, type, out = []) {
+  if (!node || typeof node !== 'object') return out;
+  if (Array.isArray(node)) {
+    for (const item of node) collectByType(item, type, out);
+    return out;
+  }
+  if (node.type === type) out.push(node);
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) collectByType(child, type, out);
+  }
+  return out;
+}
+
 /** 按 DSH 的约定插值；值不是字符串就原样返回，好让测试看出这类错误。 */
 function interpolate(value, params) {
   if (typeof value !== 'string') return value;
@@ -149,8 +163,8 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'backendLatest', 'backendNoHistory', 'backendRollback', 'backendTitle', 'backendUnmanaged',
     'backendUpdate', 'backendUpdated', 'backendUpToDate', 'backendWorking', 'backendRolledBack',
     'clearAll', 'count', 'description', 'disabledHint', 'emptyBackend', 'emptyHint', 'loading',
-    'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'savedNoSync', 'savedSync', 'saving',
-    'selectAll', 'summary', 'title', 'vision',
+    'panelHint', 'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'savedNoSync', 'savedSync',
+    'saving', 'selectAll', 'summary', 'title', 'vision',
   ];
   assert.deepEqual(Object.keys(entry.zh).sort(), expected.sort());
 });
@@ -275,4 +289,30 @@ test('样式：颜色一律走主题令牌，不写死白/黑，主按钮禁用�
 
   // 主按钮走反色：label-primary 当底、bg-layer-3 当字。
   assert.match(css, /\.dsm-wb-btn-primary\{[^}]*background:var\(--dsw-alias-label-primary/);
+});
+
+test('渲染：后端面板地址是外链（target=_blank，宿主会交给默认浏览器）', () => {
+  const { cards, t } = boot([
+    'ready', ROWS, {}, '', new Set(), new Set(), false, undefined,
+    { version: { tag: 'v1.13.0', revision: 'd'.repeat(40) }, history: [], panelUrl: 'http://127.0.0.1:7863/panel' },
+    undefined, undefined, undefined,
+  ]);
+
+  const anchors = collectByType(cards[0].component({ t, view: 'page' }), 'a');
+  assert.equal(anchors.length, 1, '应渲染一个链接');
+  assert.equal(anchors[0].props.href, 'http://127.0.0.1:7863/panel');
+  assert.equal(anchors[0].props.target, '_blank', '外链必须走 target=_blank 才会被宿主 openExternal');
+  assert.match(anchors[0].props.rel ?? '', /noopener/);
+  // 显示文本去掉协议头，和用户看到的写法一致
+  assert.deepEqual(collectText(anchors[0]), ['127.0.0.1:7863/panel']);
+});
+
+test('渲染：宿主没给面板地址时回退到默认值', () => {
+  const { cards, t } = boot([
+    'ready', ROWS, {}, '', new Set(), new Set(), false, undefined,
+    { version: { tag: 'v1.13.0', revision: 'd'.repeat(40) }, history: [] },
+    undefined, undefined, undefined,
+  ]);
+  const anchors = collectByType(cards[0].component({ t, view: 'page' }), 'a');
+  assert.equal(anchors[0].props.href, 'http://127.0.0.1:7863/panel');
 });

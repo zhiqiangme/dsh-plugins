@@ -2,7 +2,7 @@
   "name": "dsh-autostart-workbuddy",
   "version": "0.1.0",
   "private": true,
-  "description": "DSH 启动时自动拉起 WorkBuddy Panel（wb2api, 127.0.0.1:7863），幂等、静默、退出时只停自己拉起的进程。",
+  "description": "DSH 启动时自动拉起 WorkBuddy Panel（wb2api, 127.0.0.1:7863/panel），幂等、静默、退出时只停自己拉起的进程。",
   "type": "module",
   "main": "lib/index.js",
   "engines": {

@@ -225,12 +225,14 @@ let backendBusy = false;
 async function handleBackend(req, res, { logger, resolved, env, service }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
+  // 面板地址由服务规格推出来（端口可被 profile 覆盖），浏览器半侧拿它渲染可点击链接。
+  const panelUrl = `http://${resolved.spec?.host ?? '127.0.0.1'}:${resolved.spec?.port ?? 7863}/panel`;
+  const snapshot = () => ({ ...describeBackend(paths), panelUrl });
 
   if (req.method === 'GET') {
-    const snapshot = describeBackend(paths);
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (url.searchParams.get('check') !== '1' || resolved.backend?.enabled === false) {
-      json(res, 200, { ok: true, backend: snapshot, check: null });
+      json(res, 200, { ok: true, backend: snapshot(), check: null });
       return;
     }
     try {
@@ -241,12 +243,12 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
         ttlMs: resolved.backend.checkTtlMs,
         force: true,
       });
-      json(res, 200, { ok: true, backend: describeBackend(paths), check });
+      json(res, 200, { ok: true, backend: snapshot(), check });
     } catch (error) {
       // 查不到更新不是错误：面板照常显示本地版本，把原因放在 check.error 里
       json(res, 200, {
         ok: true,
-        backend: snapshot,
+        backend: snapshot(),
         check: { error: error instanceof Error ? error.message : String(error) },
       });
     }
@@ -273,7 +275,7 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
       ttlMs: resolved.backend?.checkTtlMs,
       force: true,
     });
-    json(res, 200, { ok: true, check, backend: describeBackend(paths) });
+    json(res, 200, { ok: true, check, backend: snapshot() });
     return;
   }
 
@@ -299,7 +301,7 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
             keepVersions: resolved.backend?.keepVersions,
           })
         : await rollbackBackend({ paths, service, logger });
-    json(res, result.ok ? 200 : 400, { ...result, backend: describeBackend(paths) });
+    json(res, result.ok ? 200 : 400, { ...result, backend: snapshot() });
   } finally {
     backendBusy = false;
   }
