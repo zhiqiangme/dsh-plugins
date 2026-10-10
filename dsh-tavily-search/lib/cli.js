@@ -1,46 +1,76 @@
 /**
- * 排障入口：不开 DSH 也能看到插件"将要做什么"。
+ * 独立运行入口：不开 DSH 也能起一个同样的搜索接口（排障、给别的客户端用）。
  *
- *   node lib/cli.js            打印解析后的服务规格
- *   node lib/cli.js --check    额外校验 node / server.js / .env 是否存在、TAVILY_API_KEY 是否就绪、端口当前状态
+ *   node lib/cli.js                 前台监听，Ctrl+C 退出
+ *   node lib/cli.js --print-config  只打印解析出的配置，不监听
  *
- * 只读：绝不 spawn 任何进程，也不会停止已在运行的服务。
+ * 独立运行时没有 DSH 凭据库，key 从环境变量读。环境变量沿用旧 tavily-anthropic-search 的命名，
+ * 以前的 .env / 启动命令可以原样复用：
+ *   TAVILY_API_KEY（必填）、LISTEN（host:port）或 LISTEN_HOST / LISTEN_PORT、TAVILY_BASE_URL、
+ *   TAVILY_MAX_RESULTS、TAVILY_SEARCH_DEPTH、SEARCH_TIMEOUT_MS、MAX_QUERY_CHARS、SHIM_API_KEY
  */
 
-import { resolvePluginConfig, describeConfig } from './config.js';
-import { isFile, probeTcp } from './services.js';
+import { pathToFileURL } from 'node:url';
 
-const check = process.argv.includes('--check');
-const resolved = resolvePluginConfig({}, process.env);
-const info = describeConfig(resolved);
-const exists = (path) => (path ? isFile(path) : false);
-const mark = (path) => (check ? (exists(path) ? '  [存在]' : '  [缺失]') : '');
+import { resolvePluginConfig } from './config.js';
+import { createShimServer } from './shim.js';
 
-console.log(`插件启用: ${resolved.enabled}`);
-console.log(`日志目录: ${resolved.logDir}`);
-console.log('');
-console.log(`── ${info.title} (${info.key})`);
-console.log(`   端点    : ${info.endpoint}`);
-console.log(`   node    : ${info.exe}${mark(info.exe)}`);
-console.log(`   脚本    : ${info.script}${mark(info.script)}`);
-console.log(`   .env    : ${info.envFile}${mark(info.envFile)}`);
-console.log(`   工作目录: ${info.cwd}`);
-console.log(`   argv    : ${JSON.stringify(info.args)}`);
-console.log(
-  `   必需变量: TAVILY_API_KEY${info.missing.length ? `  [缺失: ${info.missing.join(', ')}]` : '  [已就绪]'}`,
-);
-if (check) {
-  const listening = await probeTcp(resolved.spec.port, resolved.spec.host);
-  console.log(`   端口状态: ${listening ? '已在监听（插件会跳过启动）' : '空闲（插件会拉起）'}`);
+/** 把旧版环境变量翻成插件 config 的形状，复用同一套校验与默认值。 */
+export function configFromEnv(env = process.env) {
+  const listen = (env.LISTEN || '').trim();
+  const cut = listen.lastIndexOf(':');
+  const [listenHost, listenPort] = cut > 0 ? [listen.slice(0, cut), listen.slice(cut + 1)] : ['', ''];
+  return {
+    host: env.LISTEN_HOST || listenHost || undefined,
+    port: env.LISTEN_PORT || listenPort || undefined,
+    tavilyBaseUrl: env.TAVILY_BASE_URL,
+    maxResults: env.TAVILY_MAX_RESULTS,
+    searchDepth: env.TAVILY_SEARCH_DEPTH,
+    timeoutMs: env.SEARCH_TIMEOUT_MS,
+    maxQueryChars: env.MAX_QUERY_CHARS,
+    shimApiKey: env.SHIM_API_KEY,
+  };
 }
-console.log('');
 
-// .env 缺失不算问题：宿主环境里直接导出 TAVILY_API_KEY 同样可用。
-const problems =
-  (exists(info.exe) ? 0 : 1) + (exists(info.script) ? 0 : 1) + info.missing.length;
-if (check && problems > 0) {
-  console.log(`检查发现 ${problems} 处问题，服务将无法启动。`);
-  process.exitCode = 1;
-} else {
-  console.log('检查通过。');
+async function main() {
+  const resolved = resolvePluginConfig(configFromEnv(process.env));
+  const ref = resolved.apiKeyRef;
+
+  if (process.argv.includes('--print-config')) {
+    console.log(
+      JSON.stringify(
+        {
+          endpoint: resolved.endpoint,
+          apiKeyRef: ref,
+          apiKeyConfigured: Boolean(process.env[ref]?.trim()),
+          ...resolved.shim,
+          shimApiKey: resolved.shim.shimApiKey ? '(已设置)' : '',
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  if (!process.env[ref]?.trim()) {
+    console.error(`[dsh-tavily-search] 缺少 ${ref}，无法启动。`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const server = createShimServer({
+    ...resolved.shim,
+    resolveApiKey: () => process.env[ref],
+    missingKeyHint: `请设置环境变量 ${ref}。`,
+  });
+  server.listen(resolved.port, resolved.host, () => {
+    console.log(`[dsh-tavily-search] listening on ${resolved.endpoint}`);
+    console.log(`[dsh-tavily-search] Tavily endpoint: ${resolved.shim.tavilyBaseUrl}/search`);
+  });
+}
+
+// 被测试 import 时不启动服务
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
 }

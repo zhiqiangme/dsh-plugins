@@ -1,8 +1,8 @@
 {
   "name": "dsh-tavily-search",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "DSH 启动时自动拉起 tavily-anthropic-search（联网搜索上游, 127.0.0.1:8787），幂等、静默、退出时只停自己拉起的进程。",
+  "description": "用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内提供 127.0.0.1:8787/v1 搜索接口，API Key 存在 DSH 凭据库。",
   "type": "module",
   "main": "lib/index.js",
   "engines": {
@@ -30,7 +30,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "print-config": "node -e \"import('./lib/config.js').then(({ resolvePluginConfig, describeConfig }) => console.log(JSON.stringify(describeConfig(resolvePluginConfig({}, process.env)), null, 2)))\""
+    "serve": "node lib/cli.js",
+    "print-config": "node lib/cli.js --print-config"
   },
   "license": "MIT"
 }

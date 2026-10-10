@@ -1,102 +1,97 @@
 /**
- * dsh-tavily-search —— DSH 启动时自动拉起 tavily-anthropic-search（联网搜索上游）。
+ * dsh-tavily-search —— 用 Tavily 给 DSH 的「网页搜索」供数。
  *
- * 背景：本机的 tavily-anthropic-search（Node 服务，127.0.0.1:8787）是 DSH 自己的上游依赖——
- * profile 的 cordis.patch.yml 里 web-search-deepseek 的 baseURL 指向
- * `http://127.0.0.1:8787/v1`。原先它要靠手动运行
- * tavily-anthropic-search/start.ps1（或 scripts/Start All.ps1）拉起，
- * 本插件把这一步并入 DSH 的启动过程。
+ * DSH 自带的搜索提供方（@deepseek-ai/dsh-web-search-deepseek）向 `{接口地址}/messages`
+ * 发 Anthropic Messages 请求；本插件在 DSH 进程内监听 127.0.0.1:8787，把这类请求转成
+ * Tavily 检索并合成提供方能解析的响应（细节见 lib/shim.js）。DSH 网页搜索的接口地址
+ * 指向 `http://127.0.0.1:8787/v1` 即接入。
  *
- * 行为约定（与手动运行脚本对齐）：
- *   - 直接用 node 跑 server.js，不再经过 pwsh 脚本，省掉一层进程与临时目录；
- *   - 静默启动，不弹控制台窗口；
- *   - 幂等：启动前先探测端口，已在监听就跳过，绝不拉起第二个实例；
- *   - 缺 TAVILY_API_KEY 时直接失败并说明原因，不去起一个必然不可用的服务；
- *   - 失败不阻断 DSH 启动：写日志并继续，DSH 本身仍可用；
- *   - DSH 退出时，只停止「本插件自己拉起」的进程，用户手动起的服务不受影响。
+ * 行为约定：
+ *   - 随插件加载监听，随插件卸载关闭；不再有外部进程；
+ *   - 幂等：端口上已有同类适配服务（例如手动起的旧 server.js）时只记日志，不抢端口；
+ *   - 失败不阻断 DSH 启动：监听不上只写日志，DSH 本身照常可用；
+ *   - Tavily API Key 存在 DSH 凭据库（引用名默认 TAVILY_API_KEY），每次请求现取，
+ *     改 key 不用重启；缺 key 时请求返回明确的错误，而不是服务起不来。
  *
- * 本插件刻意只依赖 node: 内置模块，理由见 lib/services.js 顶部注释。
- *
- * 与 dsh-autostart-workbuddy 是同级插件：两者都托管一个本地 HTTP 上游，
- * 但各自独立开关、独立日志。这里的进程托管原语是刻意各自持有一份而非抽公共包——
- * 两个包都走 file: 协议挂载，引入第三个包会带来传递依赖解析与加载顺序的不确定性，
- * 而这份原语不到 200 行，复制一份比引入一层依赖更稳。
+ * 本插件刻意只依赖 node: 内置模块；Host Service 一律软取（见 lib/runtime.js）。
  */
 
-import { resolvePluginConfig } from './config.js';
-import { ManagedService } from './services.js';
+import { parseEnvFile, resolvePluginConfig } from './config.js';
+import { createKeyResolver, importLegacyKey, ShimRuntime, whenService } from './runtime.js';
 
 /** 插件名（日志前缀）。 */
 export const name = 'dsh-tavily-search';
 
 /**
- * 不注入任何 Host Service：本插件的工作（spawn 外部进程 + 探测端口）只用 node 内置模块，
- * 不依赖加载顺序，也不会因为某个 Service 缺席而整个插件不激活。
+ * 不声明任何 Host Service 依赖：credentials 在请求时软取，缺席时退回环境变量，
+ * 不会因为某个 Service 未就绪而整个插件不激活。
  */
 export const inject = [];
 
 /**
- * Cordis 入口。注意本函数必须尽快返回：启动就绪探测最多要等 30s，放在这里会拖住
- * 整个插件树的加载，所以拉起动作在后台进行，apply 只负责登记生命周期。
+ * Cordis 入口。监听在后台进行（EADDRINUSE 时最多重试约 2s），apply 只负责登记生命周期。
  *
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {unknown} config profile 中该插件行的 config
  */
 export function apply(ctx, config) {
-  const hostEnv = process.env;
   const logger = normalizeLogger(ctx);
-  const resolved = resolvePluginConfig(config, hostEnv);
+  const resolved = resolvePluginConfig(config);
 
   if (!resolved.enabled) {
-    logger.info(`[${name}] 已禁用（enabled: false），不启动 tavily-anthropic-search`);
+    logger.info(`[${name}] 已禁用（enabled: false），不监听搜索接口`);
     return;
   }
 
-  const service = new ManagedService(resolved.spec, logger);
+  const runtime = new ShimRuntime({
+    ...resolved,
+    resolveApiKey: createKeyResolver(ctx, resolved.apiKeyRef),
+    // 这句会经由 DSH 的搜索错误原样交给模型/用户，所以写清楚去哪里补
+    missingKeyHint: `请在 DSH「插件」页的 Tavily 联网搜索卡片里填写（凭据引用 ${resolved.apiKeyRef}）。`,
+    logger,
+    label: name,
+  });
 
-  logger.info(
-    `[${name}] 准备托管 ${service.title} (${service.port})；日志目录 ${resolved.logDir}`,
-  );
+  const startup = runtime.start();
 
-  // 后台启动：不 await，避免拖慢插件树加载。
-  const startup = start(service, logger);
+  if (resolved.importEnvFile) importKeyOnce(ctx, resolved, logger);
 
-  ctx.effect(() => {
-    // exit 钩子只做同步发信号：进程退出阶段不允许异步等待，异步等待在下面的 disposer 里。
-    const onExit = () => {
-      service.stopSync();
-    };
-    process.once('exit', onExit);
-
-    let disposed = false;
-    return async () => {
-      if (disposed) return;
-      disposed = true;
-      process.removeListener('exit', onExit);
-      // 先等启动流程落地，避免「正在启动」与「正在停止」互相打架。
+  ctx.effect(
+    () => async () => {
+      // 先等监听流程落地，避免"正在监听"与"正在关闭"互相打架
       await startup.catch(() => undefined);
       try {
-        await service.stop('插件卸载');
+        await runtime.stop();
       } catch (error) {
-        logger.warn(
-          `[${name}] 停止 ${service.title} 时出错：${error instanceof Error ? error.message : String(error)}`,
-        );
+        logger.warn(`[${name}] 关闭搜索接口时出错：${error instanceof Error ? error.message : String(error)}`);
       }
-    };
-  }, `${name}: lifecycle`);
+    },
+    `${name}: search endpoint`,
+  );
 }
 
-/** 启动失败只记日志：一个上游起不来不应该让 DSH 启动失败。 */
-async function start(service, logger) {
-  let result;
-  try {
-    result = await service.ensureRunning();
-  } catch (error) {
-    result = { state: 'failed', reason: error instanceof Error ? error.message : String(error) };
-  }
-  if (result.state === 'failed') {
-    logger.error(`[${name}] ${service.title} 启动失败：${result.reason}`);
-  }
+/** 等凭据服务就绪后做一次旧 key 导入；任何失败只记日志。 */
+function importKeyOnce(ctx, resolved, logger) {
+  const file = resolved.importEnvFile;
+  whenService(ctx, 'credentials', (credentials) => {
+    const value = parseEnvFile(file)[resolved.apiKeyRef];
+    importLegacyKey(credentials, { ref: resolved.apiKeyRef, value })
+      .then((result) => {
+        if (result === 'imported') {
+          logger.info(
+            `[${name}] 已把 ${file} 里的 ${resolved.apiKeyRef} 导入 DSH 凭据库；之后可以删掉该文件里的明文 key，并移除 importEnvFile 配置`,
+          );
+        } else if (result === 'read-only') {
+          logger.info(`[${name}] ${resolved.apiKeyRef} 由启动环境变量提供（只读），跳过从 ${file} 导入`);
+        } else if (result === 'unavailable') {
+          logger.warn(`[${name}] 凭据服务不可用，无法从 ${file} 导入 ${resolved.apiKeyRef}`);
+        }
+        // configured / absent：已经有 key 或文件里没有，都无需提示
+      })
+      .catch((error) => {
+        logger.warn(`[${name}] 导入 ${resolved.apiKeyRef} 失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+  });
 }
 
 /**

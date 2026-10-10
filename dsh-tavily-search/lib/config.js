@@ -1,143 +1,113 @@
 /**
- * 配置解析：把 profile 里的插件 config 与内置默认值合并成一个"绝对完整"的服务规格。
+ * 配置解析：把 profile 里的插件 config 与内置默认值合并成一份"绝对完整"的规格。
  *
  * 不依赖 schemastery：本插件的配置面很小，且少一个外部模块就少一份加载期风险
  * （profile 里的 @deepseek-ai/* 解析依赖 DSH 的模块表，而本插件刻意只依赖 node: 内置模块）。
  * 因此这里用显式白名单 + 类型校正，任何非法输入都退回默认值而不是让插件加载失败。
+ *
+ * API Key 不在这里：配置只携带凭据**引用名**（apiKeyRef，默认 TAVILY_API_KEY），
+ * 值存在 DSH 凭据库（~/.dsh/.credentials.yaml），由插件页卡片写入。
  */
 
-import { resolve } from 'node:path';
-import {
-  SERVICE_DEFAULTS,
-  parseEnvFile,
-  resolveDshHome,
-  resolveNodeRuntime,
-} from './services.js';
+import { existsSync, readFileSync } from 'node:fs';
+
+import { SHIM_DEFAULTS } from './shim.js';
+
+/** 凭据引用名的文法：与 @deepseek-ai/dsh-credentials 的 REF_PATTERN 一致（POSIX 环境变量名）。 */
+const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Tavily 只认这两档；其它值（含空串）都按"不传，交给 Tavily 默认"处理。 */
+const SEARCH_DEPTHS = new Set(['basic', 'advanced']);
+
+export const PLUGIN_DEFAULTS = Object.freeze({
+  enabled: true,
+  host: '127.0.0.1',
+  /** DSH 网页搜索的接口地址就指向这个端口（http://127.0.0.1:8787/v1），改了要同步改那边。 */
+  port: 8787,
+  apiKeyRef: 'TAVILY_API_KEY',
+});
 
 /** 布尔字段的宽容解析：只有显式 false 才关闭（与 DSH 配置里 enabled 的 opt-out 语义一致）。 */
 function bool(value, fallback) {
   return typeof value === 'boolean' ? value : fallback;
 }
 
-/** 正数解析：非法值（含 0、NaN、字符串）一律退回默认。 */
-function positiveNumber(value, fallback) {
+/** 正整数解析：非法值（含 0、NaN、小数以外的字符串）一律退回默认。 */
+function positiveInt(value, fallback) {
   const n = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+/** 端口额外限制在 1–65535：超范围的数字 listen 会直接抛。 */
+function port(value, fallback) {
+  const n = positiveInt(value, fallback);
+  return n <= 65535 ? n : fallback;
 }
 
 function stringOr(value, fallback) {
-  return typeof value === 'string' && value.trim() ? value : fallback;
-}
-
-function stringArray(value, fallback) {
-  return Array.isArray(value) && value.every((v) => typeof v === 'string') ? value : fallback;
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
 function plainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {};
 }
 
-/** 只保留字符串值的键值对：子进程 env 不接受非字符串。 */
-function stringMap(value) {
+/**
+ * 读取 .env（KEY=VALUE，`#` 开头为注释）。只取第一个 `=` 之前作为键，键为空则跳过。
+ * 仅用于"一次性导入旧 key"，结果绝不写回 process.env。
+ */
+export function parseEnvFile(path) {
   const out = {};
-  for (const [key, item] of Object.entries(plainObject(value))) {
-    if (typeof item === 'string') out[key] = item;
+  if (!path || !existsSync(path)) return out;
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return out;
+  }
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const idx = line.indexOf('=');
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key) out[key] = value;
   }
   return out;
-}
-
-/**
- * 合并服务规格。
- *
- * 与旧的多服务版本不同，这里把配置面摊平到顶层（`port` / `script` / `envFile` / …）
- * 而不是 `services.tavily.*` 再套一层——一个插件只托管一个服务，多一层嵌套只会让
- * profile 里的配置更难读。
- *
- * @param {object} config 插件行的 config（已确认是对象）
- * @param {{ logDir: string, readinessTimeoutMs: number, stopTimeoutMs: number }} common
- * @param {NodeJS.ProcessEnv} hostEnv 宿主环境
- */
-function buildSpec(config, common, hostEnv) {
-  const script = stringOr(config.script, SERVICE_DEFAULTS.script);
-  const envFile = stringOr(config.envFile, SERVICE_DEFAULTS.envFile);
-
-  // 子进程环境：默认继承宿主环境，只叠加本插件的覆盖项，宿主 process.env 不被改写。
-  const env = { ...hostEnv, ...stringMap(config.env) };
-
-  // .env 只在「宿主环境里没有该键」时补位，语义与 start.ps1 的
-  // `Set-Item Env:` 一致：显式导出的环境变量优先。
-  for (const [name, value] of Object.entries(parseEnvFile(envFile))) {
-    if (!env[name]) env[name] = value;
-  }
-
-  const node = resolveNodeRuntime(hostEnv);
-  // server.js 走 node；DSH Desktop 的 execPath 是 Electron，兜底时需 ELECTRON_RUN_AS_NODE。
-  const exe = stringOr(config.nodePath, node.exe);
-  Object.assign(env, node.env);
-
-  return {
-    key: SERVICE_DEFAULTS.key,
-    enabled: bool(config.enabled, SERVICE_DEFAULTS.enabled),
-    title: stringOr(config.title, SERVICE_DEFAULTS.title),
-    host: stringOr(config.host, SERVICE_DEFAULTS.host),
-    port: positiveNumber(config.port, SERVICE_DEFAULTS.port),
-    cwd: resolve(stringOr(config.cwd, SERVICE_DEFAULTS.cwd)),
-    script,
-    envFile,
-    exe,
-    // 我们代替 start.ps1 拉起 server.js：node <script> [附加参数]。
-    args: [script, ...stringArray(config.args, SERVICE_DEFAULTS.args)],
-    // 没有 key 的 shim 起得来但从上游拿不到结果，属于"看起来正常"的故障，所以前置拦下。
-    requiredEnv: ['TAVILY_API_KEY'],
-    logName: stringOr(config.logName, SERVICE_DEFAULTS.logName),
-    logDir: common.logDir,
-    readinessTimeoutMs: common.readinessTimeoutMs,
-    stopTimeoutMs: common.stopTimeoutMs,
-    env,
-  };
 }
 
 /**
  * 解析完整插件配置。
  *
  * @param {unknown} raw profile 里该插件行的 config
- * @param {NodeJS.ProcessEnv} hostEnv
- * @returns {{ enabled: boolean, logDir: string, spec: object }}
  */
-export function resolvePluginConfig(raw, hostEnv = process.env) {
+export function resolvePluginConfig(raw) {
   const config = plainObject(raw);
+  const host = stringOr(config.host, PLUGIN_DEFAULTS.host);
+  const listenPort = port(config.port, PLUGIN_DEFAULTS.port);
+  const ref = stringOr(config.apiKeyRef, PLUGIN_DEFAULTS.apiKeyRef);
+  const depth = typeof config.searchDepth === 'string' ? config.searchDepth.trim() : '';
 
-  const dshHome = resolveDshHome(hostEnv);
-  // 日志落在 DSH home 下：与宿主同生命周期，卸载/清理时一眼能找到。
-  // 目录名与 dsh-autostart-workbuddy 分开，两个插件的日志不混在一起。
-  const logDir = resolve(stringOr(config.logDir, resolve(dshHome, 'autostart-websearch', 'logs')));
-
-  const spec = buildSpec(
-    config,
-    {
-      logDir,
-      readinessTimeoutMs: positiveNumber(config.readinessTimeoutMs, 30_000),
-      stopTimeoutMs: positiveNumber(config.stopTimeoutMs, 5_000),
-    },
-    hostEnv,
-  );
-
-  return { enabled: spec.enabled, logDir, spec };
-}
-
-/** 供 `node lib/cli.js` 之类的排障入口使用（不启动任何东西）。 */
-export function describeConfig(resolved) {
-  const spec = resolved.spec;
   return {
-    key: spec.key,
-    title: spec.title,
-    endpoint: `${spec.host}:${spec.port}`,
-    exe: spec.exe,
-    script: spec.script,
-    envFile: spec.envFile,
-    cwd: spec.cwd,
-    args: spec.args,
-    logDir: spec.logDir,
-    missing: spec.requiredEnv.filter((name) => !spec.env[name]),
+    enabled: bool(config.enabled, PLUGIN_DEFAULTS.enabled),
+    host,
+    port: listenPort,
+    /** DSH 网页搜索的"接口地址"应当填的值；卡片据此判断是否已接入。 */
+    endpoint: `http://${host}:${listenPort}/v1`,
+    apiKeyRef: CREDENTIAL_REF_PATTERN.test(ref) ? ref : PLUGIN_DEFAULTS.apiKeyRef,
+    /**
+     * 一次性导入：凭据库里还没有 key 时，从这个 .env 里取同名变量写进凭据库。
+     * 默认不导入；迁移旧的 tavily-anthropic-search 时在 profile 里显式配置。
+     */
+    importEnvFile: stringOr(config.importEnvFile, ''),
+    shim: {
+      tavilyBaseUrl: stringOr(config.tavilyBaseUrl, SHIM_DEFAULTS.tavilyBaseUrl).replace(/\/+$/, ''),
+      maxResults: positiveInt(config.maxResults, SHIM_DEFAULTS.maxResults),
+      searchDepth: SEARCH_DEPTHS.has(depth) ? depth : '',
+      timeoutMs: positiveInt(config.timeoutMs, SHIM_DEFAULTS.timeoutMs),
+      maxQueryChars: positiveInt(config.maxQueryChars, SHIM_DEFAULTS.maxQueryChars),
+      shimApiKey: typeof config.shimApiKey === 'string' ? config.shimApiKey : SHIM_DEFAULTS.shimApiKey,
+    },
   };
 }
