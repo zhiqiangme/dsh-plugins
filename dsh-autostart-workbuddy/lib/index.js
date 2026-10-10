@@ -20,10 +20,9 @@
  *
  * 本插件刻意只依赖 node: 内置模块，理由见 lib/services.js 顶部注释。
  *
- * 与 dsh-autostart-websearch 是同级插件：两者都托管一个本地 HTTP 上游，
- * 但各自独立开关、独立日志。这里的进程托管原语是刻意各自持有一份而非抽公共包——
- * 两个包都走 file: 协议挂载，引入第三个包会带来传递依赖解析与加载顺序的不确定性，
- * 而这份原语不到 200 行，复制一份比引入一层依赖更稳。
+ * 与 dsh-tavily-search 是同级插件：两者都给 DSH 提供一个本地 HTTP 上游，各自独立开关。
+ * 那边的适配服务直接在 DSH 进程内监听，不托管外部进程，所以 lib/services.js 这套
+ * 进程托管原语只有本插件在用（wb2api.exe 是独立程序，必须 spawn）。
  */
 
 import { checkForUpdate } from './backend.js';

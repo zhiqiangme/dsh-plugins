@@ -6,7 +6,7 @@ DSH 启动时自动拉起 **WorkBuddy Panel**（`wb2api.exe`），替代手动�
 | --- | --- | --- |
 | WorkBuddy Panel（`wb2api.exe`） | `127.0.0.1:7863` | profile 里 `workbuddy` provider 的上游（`http://127.0.0.1:7863/v1/`） |
 
-联网搜索那个上游（tavily-anthropic-search, 8787）由同级插件 [dsh-autostart-websearch](../dsh-autostart-websearch/) 负责：两个服务各自独立开关、独立日志，任何一个出问题都不影响另一个。
+联网搜索那个上游（Tavily 适配服务, 8787）由同级插件 [dsh-tavily-search](../dsh-tavily-search/) 负责：两个插件各自独立开关，任何一个出问题都不影响另一个。
 
 ## 行为
 

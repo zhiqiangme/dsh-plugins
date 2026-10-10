@@ -142,7 +142,7 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
 
   const dshHome = resolveDshHome(hostEnv);
   // 日志落在 DSH home 下：与宿主同生命周期，卸载/清理时一眼能找到。
-  // 目录名与 dsh-autostart-websearch 分开，两个插件的日志不混在一起。
+  // 目录名带插件名，与 DSH home 下其它插件的数据目录不混在一起。
   const logDir = resolve(stringOr(config.logDir, resolve(dshHome, 'autostart-workbuddy', 'logs')));
 
   // 后端自管的目录布局（程序 / 数据 / 缓存分离）；默认 exe 与 cwd 都落在这里。
