@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Tavily 联网搜索",
+    "description": "用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内提供搜索接口，API Key 存在 DSH 凭据库。"
+  }
+}

@@ -5,11 +5,14 @@
   "description": "用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内提供 127.0.0.1:8787/v1 搜索接口，API Key 存在 DSH 凭据库。",
   "type": "module",
   "main": "lib/index.js",
+  "icon": "./icon.svg",
   "engines": {
     "node": ">=22.12.0"
   },
   "files": [
     "lib",
+    "icon.svg",
+    "locale/*.json",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -17,12 +20,23 @@
     ".": {
       "default": "./lib/index.js"
     },
+    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "platform": "web"
     }
   },
   "peerDependencies": {

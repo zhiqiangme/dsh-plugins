@@ -18,6 +18,7 @@
 
 import { parseEnvFile, resolvePluginConfig } from './config.js';
 import { createKeyResolver, importLegacyKey, ShimRuntime, whenService } from './runtime.js';
+import { registerPanelRoutes } from './web.js';
 
 /** 插件名（日志前缀）。 */
 export const name = 'dsh-tavily-search';
@@ -40,6 +41,8 @@ export function apply(ctx, config) {
 
   if (!resolved.enabled) {
     logger.info(`[${name}] 已禁用（enabled: false），不监听搜索接口`);
+    // 卡片仍要能显示"已禁用"，而不是一直转圈读不到状态
+    registerPanelRoutes(ctx, { logger, resolved, runtime: undefined });
     return;
   }
 
@@ -51,6 +54,9 @@ export function apply(ctx, config) {
     logger,
     label: name,
   });
+
+  // 卡片的状态 / 测试路由：与监听结果无关，先挂上，端口冲突时打开卡片也能看到原因
+  registerPanelRoutes(ctx, { logger, resolved, runtime });
 
   const startup = runtime.start();
 

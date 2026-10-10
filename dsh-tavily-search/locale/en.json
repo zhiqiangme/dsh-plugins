@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Tavily web search",
+    "description": "Feeds DSH web search with Tavily: a search endpoint inside DSH, with the API key kept in the DSH credential store."
+  }
+}

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- 放大镜 + 三道"检索结果"横线：表达"联网搜索"，不借用 Tavily 的商标图形 -->
+  <circle cx="27" cy="27" r="16" stroke="#3B82F6" stroke-width="6"/>
+  <path d="M39 39 L54 54" stroke="#3B82F6" stroke-width="7" stroke-linecap="round"/>
+  <path d="M20 22h14M20 28h14M20 34h9" stroke="#22D3EE" stroke-width="3.5" stroke-linecap="round"/>
+</svg>
