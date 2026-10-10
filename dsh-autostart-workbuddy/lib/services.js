@@ -20,7 +20,14 @@ import { connect } from 'node:net';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 
-/** 被托管服务的默认规格；任何字段都可以被 profile 的 config 覆盖。 */
+/**
+ * 被托管服务的默认规格；任何字段都可以被 profile 的 config 覆盖。
+ *
+ * 这里**没有** exe / cwd：后端的安装位置由插件自己管理，默认值是
+ * `<DSH home>/autostart-workbuddy/backend/current/...`，要 hostEnv 才推导得出来，
+ * 所以由 config.js 用 backend.js 的 backendPaths() 填（services.js 不能反向依赖它们，
+ * 否则 backend.js → services.js → backend.js 成环）。
+ */
 export const SERVICE_DEFAULTS = Object.freeze({
   enabled: true,
   title: 'WorkBuddy Panel',
@@ -28,8 +35,6 @@ export const SERVICE_DEFAULTS = Object.freeze({
   /** wb2api 的固定监听端口；config.json 里已收紧到 127.0.0.1:7863。 */
   port: 7863,
   host: '127.0.0.1',
-  cwd: 'D:\\Portable\\Crack\\workbuddy2api-panel',
-  exe: 'D:\\Portable\\Crack\\workbuddy2api-panel\\wb2api.exe',
   args: ['-config', 'config.json'],
   logName: 'wb2api',
 });

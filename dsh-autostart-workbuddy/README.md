@@ -104,14 +104,17 @@ node lib/sync-cli.js             # 真写入（带备份）
     readinessTimeoutMs: 30000
     stopTimeoutMs: 5000
     port: 7863
-    exe: D:\Portable\Crack\workbuddy2api-panel\wb2api.exe
+    # exe / cwd 默认指向插件自管的后端目录，通常不用写：
+    #   $DSH_HOME/autostart-workbuddy/backend/current/{wb2api.exe,config.json}
     args: ['-config', 'config.json']
-    cwd: D:\Portable\Crack\workbuddy2api-panel
     models:
       enabled: true
       only:                     # 留空 = 后端全部模型
         - cn:deepseek-v4.1-flash
         - global:deepseek-v4.1-flash
+    backend:
+      checkOnStart: true        # 启动时查一次上游 release（只提示，不自动安装）
+      keepVersions: 3           # 保留几个历史版本供回滚
 ```
 
 | 字段 | 说明 |
@@ -119,9 +122,9 @@ node lib/sync-cli.js             # 真写入（带备份）
 | `enabled` | 总开关；`false` 时完全不拉起（默认 true） |
 | `title` | 日志里显示的服务名，默认 `WorkBuddy Panel` |
 | `host` / `port` | 就绪探测目标，默认 `127.0.0.1:7863` |
-| `exe` | 可执行文件，默认 `D:\Portable\Crack\workbuddy2api-panel\wb2api.exe` |
+| `exe` | 可执行文件，默认 `$DSH_HOME/autostart-workbuddy/backend/current/wb2api.exe` |
 | `args` | 附加参数，默认 `['-config', 'config.json']` |
-| `cwd` | 子进程工作目录，默认 `D:\Portable\Crack\workbuddy2api-panel` |
+| `cwd` | 子进程工作目录，默认 `$DSH_HOME/autostart-workbuddy/backend/current` |
 | `env` | 追加到子进程环境的键值对（不会改写 DSH 自己的环境） |
 | `logDir` | 日志目录，默认 `$DSH_HOME/autostart-workbuddy/logs` |
 | `logName` | 日志文件名前缀，默认 `wb2api` |
@@ -142,6 +145,67 @@ node lib/sync-cli.js             # 真写入（带备份）
 | `baseURL` | 模型接口地址，默认 `http://<host>:<port>` |
 | `timeoutMs` | 拉取超时，默认 60000（面板的模型列表缓存 1h，冷缓存要等上游） |
 | `keepBackups` | 保留的备份份数，默认 3 |
+
+`backend` 段的字段（后端版本管理）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `enabled` | 是否允许查更新 / 更新 / 回滚，默认 true |
+| `checkOnStart` | DSH 启动时查一次上游 release 并写日志，默认 true（**只提示**） |
+| `checkTtlMs` | 查询结果缓存时长，默认 6 小时（GitHub 匿名 API 只有 60 次/小时） |
+| `keepVersions` | 保留几个历史版本供回滚，默认 3 |
+| `apiBase` | 覆盖 GitHub API 基址（镜像 / 测试用），默认官方 `api.github.com` |
+
+## 后端版本管理
+
+后端（`wb2api.exe`）由插件自己管理安装位置与更新，目录布局在 `$DSH_HOME/autostart-workbuddy/`：
+
+```
+backend/current/     正在用的 wb2api.exe + config.json + installed.json（版本清单）
+backend/versions/    历史版本，回滚用（保留最近 keepVersions 个）
+data/                账号凭证与状态：auths/ · state.json · usage.json · request-logs/
+cache/               下载的 release 包与查询缓存
+logs/                后端 stdout/stderr
+```
+
+**程序与数据分离**是刻意的：`config.json` 里的 `auth_dir` / `state_file` 指向 `data/` 的绝对路径，
+所以切换版本时凭证与状态原地不动，更新永远不碰账号。
+
+### 版本怎么认
+
+后端没有 PE 版本号，`/healthz` 也不报版本；但 exe 里嵌了 Go buildinfo：
+
+```
+vcs.revision=d66384d9e3d69655f799d7d8f2e5fba1946e00ab
+vcs.time=2026-10-08T00:49:09Z
+```
+
+所以"本地版本" = 从 exe 里读 `vcs.revision`，"上游最新" = GitHub **Releases** 最新 tag 对应的 commit
+（不看 main 分支：release 才有打包产物与校验和）。两者不等即提示可更新。
+
+### 更新流程（只在面板里点，不自动装）
+
+1. 取最新 release → 选中 `*-windows-amd64.zip`
+2. 下载到 `cache/`，算 sha256 与 release 的 `checksums.txt` 比对——**没有校验和就拒绝安装**
+3. 解压出 `wb2api.exe`，校验它自称的 `vcs.revision` 等于目标 tag 的 commit
+4. 停后端（Windows 下运行中的 exe 被锁）→ 旧版本归档到 `backend/versions/<旧版本>/` → 新 exe 落到 `current/`
+5. 起后端 → 探 `/healthz`（必须返回 `service: workbuddy2api`）
+6. 失败自动回滚到上一版本并重启
+
+只停**本插件自己拉起**的进程：如果 7863 上是你手动启动的实例，会拒绝更新并提示先停掉它，绝不误杀。
+
+### CLI
+
+```powershell
+node lib/backend-cli.js                  # 看本地布局与版本（不联网）
+node lib/backend-cli.js --check          # 再查一次上游最新 release
+node lib/backend-cli.js --update         # 下载并安装最新版
+node lib/backend-cli.js --rollback       # 回滚到上一版本
+node lib/backend-cli.js --adopt v1.13.0  # 把现场已有的 exe 纳管（写 installed.json）
+```
+
+`--update` / `--rollback` 用的 ManagedService 是 CLI 自己创建的，因此只能停它自己拉起的进程；
+后端由 DSH 拉起时请改用面板里的按钮。
 
 任何非法值都会退回默认值，不会让插件加载失败。
 

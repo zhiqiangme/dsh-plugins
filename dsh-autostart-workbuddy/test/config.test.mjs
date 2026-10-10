@@ -7,15 +7,21 @@ import assert from 'node:assert/strict';
 import { join, resolve } from 'node:path';
 
 import { resolvePluginConfig, describeConfig } from '../lib/config.js';
+import { backendPaths } from '../lib/backend.js';
 import { SERVICE_DEFAULTS } from '../lib/services.js';
 
-test('默认配置：启用、端口 7863、指向 wb2api.exe', () => {
-  const resolved = resolvePluginConfig({}, { PATH: '' });
+/** 固定一个后端根目录，让"默认路径"的断言与真实的 home 目录无关。 */
+const ENV = { PATH: '', DSH_WORKBUDDY_BACKEND_ROOT: 'C:\\tmp\\wb-root' };
+const PATHS = backendPaths(ENV);
+
+test('默认配置：启用、端口 7863、指向插件自管的 wb2api.exe', () => {
+  const resolved = resolvePluginConfig({}, ENV);
   assert.equal(resolved.enabled, true);
   assert.equal(resolved.spec.key, 'workbuddy');
   assert.equal(resolved.spec.port, 7863);
   assert.equal(resolved.spec.host, '127.0.0.1');
-  assert.equal(resolved.spec.exe, SERVICE_DEFAULTS.exe);
+  assert.equal(resolved.spec.exe, PATHS.exe);
+  assert.equal(resolved.spec.cwd, PATHS.current);
   assert.deepEqual(resolved.spec.args, ['-config', 'config.json']);
 });
 
@@ -41,9 +47,9 @@ test('exe / args / cwd / title 可覆盖，非法类型退回默认值', () => {
   assert.equal(resolved.spec.cwd, resolve('C:\\tmp'));
   assert.equal(resolved.spec.title, '假服务');
 
-  const bad = resolvePluginConfig({ args: 'not-an-array', cwd: '   ' }, { PATH: '' });
+  const bad = resolvePluginConfig({ args: 'not-an-array', cwd: '   ' }, ENV);
   assert.deepEqual(bad.spec.args, SERVICE_DEFAULTS.args);
-  assert.equal(bad.spec.cwd, resolve(SERVICE_DEFAULTS.cwd));
+  assert.equal(bad.spec.cwd, PATHS.current);
 });
 
 test('cwd 相对路径会被解析成绝对路径（子进程 cwd 不接受相对路径）', () => {
@@ -74,14 +80,32 @@ test('超时参数可覆盖，非法值退回默认（30000 / 5000）', () => {
 });
 
 test('models 段：默认关闭、默认三档、默认接口指向本机后端', () => {
-  const resolved = resolvePluginConfig({}, { PATH: '' });
+  const resolved = resolvePluginConfig({}, ENV);
   assert.equal(resolved.models.enabled, false, '默认不擅自改用户的 profile');
   assert.deepEqual(resolved.models.efforts, ['low', 'high', 'max']);
   assert.deepEqual(resolved.models.only, []);
   assert.equal(resolved.models.provider, 'workbuddy');
   assert.equal(resolved.models.baseURL, 'http://127.0.0.1:7863');
   // 面板 config.json 默认就在 wb2api 的工作目录下。
-  assert.equal(resolved.models.panelConfig, join(resolve(SERVICE_DEFAULTS.cwd), 'config.json'));
+  assert.equal(resolved.models.panelConfig, join(PATHS.current, 'config.json'));
+});
+
+test('backend 段：默认开启启动检查、保留 3 个版本，各字段可覆盖', () => {
+  const resolved = resolvePluginConfig({}, ENV);
+  assert.equal(resolved.backend.enabled, true);
+  assert.equal(resolved.backend.checkOnStart, true);
+  assert.equal(resolved.backend.keepVersions, 3);
+  assert.equal(resolved.backend.apiBase, '');
+  assert.equal(resolved.backend.paths.exe, PATHS.exe);
+
+  const custom = resolvePluginConfig(
+    { backend: { checkOnStart: false, keepVersions: 5, checkTtlMs: 1000, apiBase: 'http://127.0.0.1:1' } },
+    ENV,
+  );
+  assert.equal(custom.backend.checkOnStart, false);
+  assert.equal(custom.backend.keepVersions, 5);
+  assert.equal(custom.backend.checkTtlMs, 1000);
+  assert.equal(custom.backend.apiBase, 'http://127.0.0.1:1');
 });
 
 test('models 段：白名单、排除、档位与超时可覆盖，非法值退回默认', () => {

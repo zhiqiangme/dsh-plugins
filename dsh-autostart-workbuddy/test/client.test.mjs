@@ -145,11 +145,60 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
+    'backendAvailable', 'backendBuilt', 'backendCheck', 'backendCurrent', 'backendHistory',
+    'backendLatest', 'backendNoHistory', 'backendRollback', 'backendTitle', 'backendUnmanaged',
+    'backendUpdate', 'backendUpdated', 'backendUpToDate', 'backendWorking', 'backendRolledBack',
     'clearAll', 'count', 'description', 'disabledHint', 'emptyBackend', 'emptyHint', 'loading',
     'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'savedNoSync', 'savedSync', 'saving',
     'selectAll', 'summary', 'title', 'vision',
   ];
   assert.deepEqual(Object.keys(entry.zh).sort(), expected.sort());
+});
+
+test('渲染（含后端版本区）：显示当前/上游/历史版本，三个操作按钮都在', () => {
+  const { cards, t } = boot([
+    'ready', // phase
+    ROWS, // rows
+    { enabled: true, patchPath: '' }, // meta
+    '', // reason
+    new Set(['cn:alpha']), // picked
+    new Set(['cn:alpha']), // savedPicked
+    false, // saving
+    undefined, // notice
+    {
+      version: { tag: 'v1.13.0', revision: 'd66384d9e3d69655f799d7d8f2e5fba1946e00ab', builtAt: '2026-10-08T00:49:09Z' },
+      history: [{ name: 'v1.12.0' }],
+    }, // backend
+    { upToDate: false, latest: { tag: 'v1.14.0' } }, // check
+    undefined, // backendBusy
+    undefined, // backendNotice
+  ]);
+
+  const texts = collectText(cards[0].component({ t, view: 'page' }));
+  for (const text of texts) {
+    assert.equal(typeof text, 'string', `渲染出了非字符串文本：${String(text)}`);
+  }
+  assert.ok(texts.includes('后端版本'), '应有后端版本标题');
+  assert.ok(texts.some((text) => text.includes('当前 v1.13.0')), '应显示当前版本');
+  assert.ok(texts.some((text) => text.includes('上游 v1.14.0')), '应显示上游版本');
+  assert.ok(texts.some((text) => text.includes('历史版本：v1.12.0')), '应显示历史版本');
+  assert.ok(texts.includes('可更新到 v1.14.0'), '应提示可更新');
+  assert.ok(texts.includes('检查更新'));
+  assert.ok(texts.includes('更新'));
+  assert.ok(texts.includes('回滚'));
+});
+
+test('渲染（后端区已是最新 + 无历史）：徽章显示已是最新', () => {
+  const { cards, t } = boot([
+    'ready', ROWS, {}, '', new Set(), new Set(), false, undefined,
+    { version: { tag: 'v1.13.0', revision: 'd'.repeat(40) }, history: [] },
+    { upToDate: true, latest: { tag: 'v1.13.0' } },
+    undefined,
+    undefined,
+  ]);
+  const texts = collectText(cards[0].component({ t, view: 'page' }));
+  assert.ok(texts.includes('已是最新'));
+  assert.ok(texts.includes('历史版本：无'));
 });
 
 test('渲染（ready 态）：所有文本都是字符串，且带出模型名、倍率与计数', () => {

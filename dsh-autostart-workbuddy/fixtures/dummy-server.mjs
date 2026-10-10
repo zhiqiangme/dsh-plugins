@@ -1,13 +1,25 @@
 /**
- * 测试用假服务：读环境变量决定行为，便于验证"就绪 / 提前退出 / 不监听 / 提供模型列表"。
+ * 测试用假服务：读环境变量决定行为，便于验证"就绪 / 提前退出 / 不监听 / 提供模型列表 /
+ * 健康探针 / 假 GitHub Release"。
  *
  *   TEST_MODE   listen（默认，只监听 TCP）| exit（立刻退出，模拟启动失败）
  *               | http-models（HTTP 服务，GET /v1/models 返回模型列表）
  *               | http-empty（返回空列表，模拟上游故障时面板的降级行为）
  *               | http-error（返回 500）
+ *               | http-health（后端健康探针：GET /healthz）
+ *               | http-release（假 GitHub Release：releases/latest、commits/<tag>、资产下载）
  *   TEST_PORT   监听端口（缺省 0 = 随机端口，用于"永远不会就绪"的失败用例）
  *   TEST_MODELS_JSON  自定义 /v1/models 响应体（原始 JSON 文本）
  *   TEST_TOKEN  需要校验的 Bearer 令牌；给了就校验 Authorization 头
+ *
+ * http-release 专用：
+ *   TEST_RELEASE_TAG           默认 v9.9.9
+ *   TEST_RELEASE_COMMIT        默认 40 位假 sha（全 f）
+ *   TEST_RELEASE_EXE_REVISION  包内 exe 自称的 revision（默认 = COMMIT；
+ *                              设成别的值可模拟"资产与 tag 对不上"）
+ *   TEST_RELEASE_BAD_CHECKSUM=1  故意给错的 sha256
+ *   TEST_RELEASE_NO_CHECKSUMS=1  不提供 checksums.txt
+ *   TEST_RELEASE_FAIL_DOWNLOAD=1 资产下载返回 500
  *
  * 注意：本文件放在 fixtures/ 而不是 test/ 下。Node 的测试运行器会把 test 目录下的
  * 所有 .mjs 全部当成测试文件收集，若放在 test/ 里，它会被当作一个用例执行，
@@ -48,7 +60,117 @@ const DEFAULT_MODELS = {
   ],
 };
 
-if (mode.startsWith('http-')) {
+/** 假 GitHub Release：release 元数据、commit 解析、资产下载都塞进一个服务器。 */
+async function startFakeRelease() {
+  const { createServer } = await import('node:http');
+  const { createHash } = await import('node:crypto');
+  const { buildZip } = await import('./zip-builder.mjs');
+
+  const tag = process.env.TEST_RELEASE_TAG || 'v9.9.9';
+  const commit = process.env.TEST_RELEASE_COMMIT || 'f'.repeat(40);
+  const exeRevision = process.env.TEST_RELEASE_EXE_REVISION || commit;
+  const assetName = `wb2api-panel-${tag}-windows-amd64.zip`;
+
+  const exe = Buffer.from(
+    `MZ fake wb2api\nvcs.revision=${exeRevision}\nvcs.time=2026-10-09T00:00:00Z\nvcs.modified=false\n`,
+    'utf8',
+  );
+  const zip = buildZip([
+    { name: 'wb2api.exe', data: exe, method: 8 },
+    { name: 'config.example.json', data: Buffer.from('{}'), method: 8 },
+    { name: 'README.md', data: Buffer.from('# fake panel'), method: 8 },
+  ]);
+  const realSha = createHash('sha256').update(zip).digest('hex');
+  const servedSha = process.env.TEST_RELEASE_BAD_CHECKSUM === '1' ? 'a'.repeat(64) : realSha;
+  const checksums = `${servedSha}  ${assetName}\n`;
+
+  const server = createServer((req, res) => {
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const url = req.url ?? '/';
+    const json = (status, body) => {
+      const payload = JSON.stringify(body);
+      res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) });
+      res.end(payload);
+    };
+
+    if (url.endsWith('/releases/latest')) {
+      const assets = [
+        { name: assetName, size: zip.length, browser_download_url: `${origin}/assets/${assetName}` },
+        { name: `wb2api-panel-${tag}-linux-amd64.tar.gz`, size: 11, browser_download_url: `${origin}/assets/linux` },
+      ];
+      if (process.env.TEST_RELEASE_NO_CHECKSUMS !== '1') {
+        assets.push({
+          name: 'checksums.txt',
+          size: checksums.length,
+          browser_download_url: `${origin}/assets/checksums.txt`,
+        });
+      }
+      json(200, {
+        tag_name: tag,
+        published_at: '2026-10-09T00:00:00Z',
+        target_commitish: 'main',
+        body: '假 release',
+        assets,
+      });
+      return;
+    }
+
+    if (url.includes('/commits/')) {
+      json(200, { sha: commit });
+      return;
+    }
+
+    if (url === `/assets/${assetName}`) {
+      if (process.env.TEST_RELEASE_FAIL_DOWNLOAD === '1') {
+        json(500, { error: 'boom' });
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/zip', 'content-length': zip.length });
+      res.end(zip);
+      return;
+    }
+
+    if (url === '/assets/checksums.txt') {
+      res.writeHead(200, {
+        'content-type': 'text/plain; charset=utf-8',
+        'content-length': Buffer.byteLength(checksums),
+      });
+      res.end(checksums);
+      return;
+    }
+
+    json(404, { error: 'not found' });
+  });
+
+  server.listen(port, '127.0.0.1', () => {
+    process.stdout.write(`dummy http listening ${server.address().port}\n`);
+  });
+}
+
+/** 后端健康探针：/healthz 返回 workbuddy2api 的固定形状。 */
+async function startFakeHealth() {
+  const { createServer } = await import('node:http');
+  const healthy = Number(process.env.TEST_HEALTHY ?? 3);
+  const server = createServer((req, res) => {
+    if (!req.url?.startsWith('/healthz')) {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{"error":"not found"}');
+      return;
+    }
+    const body = JSON.stringify({ healthy, total: healthy, service: 'workbuddy2api' });
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
+    res.end(body);
+  });
+  server.listen(port, '127.0.0.1', () => {
+    process.stdout.write(`dummy http listening ${server.address().port}\n`);
+  });
+}
+
+if (mode === 'http-release') {
+  await startFakeRelease();
+} else if (mode === 'http-health') {
+  await startFakeHealth();
+} else if (mode.startsWith('http-')) {
   const { createServer } = await import('node:http');
   const body = process.env.TEST_MODELS_JSON ?? JSON.stringify(DEFAULT_MODELS);
 

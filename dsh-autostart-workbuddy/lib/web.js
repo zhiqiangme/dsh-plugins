@@ -19,6 +19,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 
+import { applyUpdate, checkForUpdate, describeBackend, rollbackBackend } from './backend.js';
 import {
   backupPatchFile,
   creditsLabel,
@@ -40,6 +41,9 @@ export const PANEL_BASE = `/plugins/${PLUGIN_ID}`;
 
 /** 模型清单与勾选结果的读写端点（GET 读 / POST 写）。 */
 export const MODELS_PATH = `${PANEL_BASE}/models`;
+
+/** 后端版本与更新端点（GET 读状态 / POST 执行 check|update|rollback）。 */
+export const BACKEND_PATH = `${PANEL_BASE}/backend`;
 
 /** 请求体上限：白名单最多几十个 id，64KB 足够，防止有人往 loopback 路由灌大包。 */
 const MAX_BODY_BYTES = 64 * 1024;
@@ -207,6 +211,101 @@ export async function applySelection({ spec, models, env = process.env, only }) 
 }
 
 /**
+ * 同一时刻只允许一个更新/回滚：下载 + 换文件 + 重启后端不是幂等操作，
+ * 两个请求并发进来会把 current 目录搅乱。
+ */
+let backendBusy = false;
+
+/**
+ * 后端版本端点。
+ *
+ * GET 默认**不联网**（首屏要快，GitHub 也可能慢甚至不通），带 `?check=1` 才真去查 release。
+ * POST 只接受 check / update / rollback 三个动作；update 与 rollback 互斥。
+ */
+async function handleBackend(req, res, { logger, resolved, env, service }) {
+  const paths = resolved.backend?.paths ?? resolved.paths;
+  const apiBase = resolved.backend?.apiBase || undefined;
+
+  if (req.method === 'GET') {
+    const snapshot = describeBackend(paths);
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    if (url.searchParams.get('check') !== '1' || resolved.backend?.enabled === false) {
+      json(res, 200, { ok: true, backend: snapshot, check: null });
+      return;
+    }
+    try {
+      const check = await checkForUpdate({
+        paths,
+        env,
+        apiBase,
+        ttlMs: resolved.backend.checkTtlMs,
+        force: true,
+      });
+      json(res, 200, { ok: true, backend: describeBackend(paths), check });
+    } catch (error) {
+      // 查不到更新不是错误：面板照常显示本地版本，把原因放在 check.error 里
+      json(res, 200, {
+        ok: true,
+        backend: snapshot,
+        check: { error: error instanceof Error ? error.message : String(error) },
+      });
+    }
+    return;
+  }
+
+  if (req.method !== 'POST') {
+    json(res, 405, { ok: false, reason: 'method not allowed' });
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  if (!body.ok) {
+    json(res, 400, { ok: false, reason: body.reason });
+    return;
+  }
+  const action = typeof body.value.action === 'string' ? body.value.action : '';
+
+  if (action === 'check') {
+    const check = await checkForUpdate({
+      paths,
+      env,
+      apiBase,
+      ttlMs: resolved.backend?.checkTtlMs,
+      force: true,
+    });
+    json(res, 200, { ok: true, check, backend: describeBackend(paths) });
+    return;
+  }
+
+  if (action !== 'update' && action !== 'rollback') {
+    json(res, 400, { ok: false, reason: `不认识的动作：${action || '(空)'}` });
+    return;
+  }
+
+  if (backendBusy) {
+    json(res, 409, { ok: false, reason: '已有更新操作在进行中，请稍候再试' });
+    return;
+  }
+  backendBusy = true;
+  try {
+    const result =
+      action === 'update'
+        ? await applyUpdate({
+            paths,
+            env,
+            apiBase,
+            service,
+            logger,
+            keepVersions: resolved.backend?.keepVersions,
+          })
+        : await rollbackBackend({ paths, service, logger });
+    json(res, result.ok ? 200 : 400, { ...result, backend: describeBackend(paths) });
+  } finally {
+    backendBusy = false;
+  }
+}
+
+/**
  * 取宿主 webserver 服务。
  *
  * 不写进 `inject`：本插件的核心职责（拉起后端、同步模型列表）不依赖任何 Host Service，
@@ -228,7 +327,7 @@ function resolveWebServer(ctx) {
 }
 
 /** 注册面板路由；宿主没有 webServer 时只记一条 warn。 */
-export function registerPanelRoutes(ctx, { logger, resolved, env = process.env }) {
+export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service }) {
   const mount = (scoped) => {
     const holder = scoped ?? ctx;
     const webServer = holder?.webServer ?? resolveWebServer(holder);
@@ -237,47 +336,61 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env }
       return;
     }
 
+    /** 来源校验与异常兜底：两条路由共用，避免各写一遍。 */
+    const guard = (handler) => async (req, res) => {
+      if (!loopbackOrigin(req)) {
+        json(res, 403, { ok: false, reason: 'origin-not-trusted' });
+        return;
+      }
+      try {
+        await handler(req, res);
+      } catch (error) {
+        logger.warn(`[${PLUGIN_ID}] 面板请求处理失败：${error instanceof Error ? error.message : String(error)}`);
+        json(res, 500, { ok: false, reason: error instanceof Error ? error.message : String(error) });
+      }
+    };
+
     ctx.effect(() => {
-      const dispose = webServer.register({
+      const disposeModels = webServer.register({
         kind: 'exact',
         path: MODELS_PATH,
-        handler: async (req, res) => {
-          if (!loopbackOrigin(req)) {
-            json(res, 403, { ok: false, reason: 'origin-not-trusted' });
+        handler: guard(async (req, res) => {
+          if (req.method === 'GET') {
+            json(res, 200, await describeModels({ spec: resolved.spec, models: resolved.models, env }));
             return;
           }
-          try {
-            if (req.method === 'GET') {
-              json(res, 200, await describeModels({ spec: resolved.spec, models: resolved.models, env }));
+          if (req.method === 'POST') {
+            const body = await readJsonBody(req);
+            if (!body.ok) {
+              json(res, 400, { ok: false, reason: body.reason });
               return;
             }
-            if (req.method === 'POST') {
-              const body = await readJsonBody(req);
-              if (!body.ok) {
-                json(res, 400, { ok: false, reason: body.reason });
-                return;
-              }
-              const result = await applySelection({
-                spec: resolved.spec,
-                models: resolved.models,
-                env,
-                only: body.value.only,
-              });
-              json(res, result.ok ? 200 : 400, result);
-              return;
-            }
-            json(res, 405, { ok: false, reason: 'method not allowed' });
-          } catch (error) {
-            logger.warn(`[${PLUGIN_ID}] 面板请求处理失败：${error instanceof Error ? error.message : String(error)}`);
-            json(res, 500, { ok: false, reason: error instanceof Error ? error.message : String(error) });
+            const result = await applySelection({
+              spec: resolved.spec,
+              models: resolved.models,
+              env,
+              only: body.value.only,
+            });
+            json(res, result.ok ? 200 : 400, result);
+            return;
           }
-        },
+          json(res, 405, { ok: false, reason: 'method not allowed' });
+        }),
       });
+
+      const disposeBackend = webServer.register({
+        kind: 'exact',
+        path: BACKEND_PATH,
+        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service })),
+      });
+
       return () => {
-        try {
-          dispose?.();
-        } catch {
-          /* 卸载阶段的释放失败不影响 DSH 退出 */
+        for (const dispose of [disposeModels, disposeBackend]) {
+          try {
+            dispose?.();
+          } catch {
+            /* 卸载阶段的释放失败不影响 DSH 退出 */
+          }
         }
       };
     }, `${PLUGIN_ID}: panel routes`);

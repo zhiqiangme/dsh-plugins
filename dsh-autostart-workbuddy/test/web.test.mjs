@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolvePluginConfig } from '../lib/config.js';
-import { MODELS_PATH, applySelection, describeModels, loopbackOrigin, registerPanelRoutes } from '../lib/web.js';
+import { BACKEND_PATH, MODELS_PATH, applySelection, describeModels, loopbackOrigin, registerPanelRoutes } from '../lib/web.js';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
 
@@ -273,10 +273,13 @@ test('路由：来源、方法与请求体边界', async () => {
   const ctx = fakeCtx();
   try {
     registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env });
-    assert.equal(ctx.routes.length, 1);
-    assert.equal(ctx.routes[0].path, MODELS_PATH);
-    assert.equal(ctx.routes[0].kind, 'exact');
-    const handler = ctx.routes[0].handler;
+    assert.equal(ctx.routes.length, 2);
+    const modelsRoute = ctx.routes.find((route) => route.path === MODELS_PATH);
+    const backendRoute = ctx.routes.find((route) => route.path === BACKEND_PATH);
+    assert.ok(modelsRoute, '应注册模型路由');
+    assert.ok(backendRoute, '应注册后端版本路由');
+    assert.equal(modelsRoute.kind, 'exact');
+    const handler = modelsRoute.handler;
 
     // 外部来源直接拒绝
     const foreign = fakeRes();
@@ -356,9 +359,40 @@ test('路由：用 ctx.inject 等 webServer 就绪，而不是在 apply 时直�
       },
     },
   });
-  assert.equal(routes.length, 1);
-  assert.equal(routes[0].path, MODELS_PATH);
-  assert.equal(routes[0].kind, 'exact');
+  assert.equal(routes.length, 2);
+  assert.deepEqual(
+    routes.map((route) => route.path).sort(),
+    [BACKEND_PATH, MODELS_PATH].sort(),
+  );
+  for (const route of routes) assert.equal(route.kind, 'exact');
+});
+
+test('后端路由：GET 给版本快照且默认不联网，POST 校验动作，其它方法 405', async () => {
+  const { path } = tempPatch();
+  const resolved = configFor(await freePort(), path);
+  const ctx = fakeCtx();
+  registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env });
+  const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;
+
+  const status = fakeRes();
+  await handler(fakeReq('GET'), status);
+  assert.equal(status.status, 200);
+  assert.equal(status.body.ok, true);
+  assert.ok(status.body.backend, '应带 backend 快照');
+  assert.equal(status.body.check, null, '首屏那次 GET 不应联网');
+
+  const foreign = fakeRes();
+  await handler(fakeReq('GET', { origin: 'http://evil.example' }), foreign);
+  assert.equal(foreign.status, 403);
+
+  const wrongMethod = fakeRes();
+  await handler(fakeReq('PUT'), wrongMethod);
+  assert.equal(wrongMethod.status, 405);
+
+  const unknownAction = fakeRes();
+  await handler(fakeReq('POST', { body: JSON.stringify({ action: 'nope' }) }), unknownAction);
+  assert.equal(unknownAction.status, 400);
+  assert.match(unknownAction.body.reason, /不认识的动作/);
 });
 
 test('loopbackOrigin：无 Origin 放行，loopback 放行，其它拒绝', () => {

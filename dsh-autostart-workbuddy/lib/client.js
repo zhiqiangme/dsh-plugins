@@ -36,8 +36,9 @@ window.__ModuleLoader__.load({
     const name = 'dsh-autostart-workbuddy-client';
     const inject = ['slots', 'locale'];
     const namespace = 'settings.dsh-autostart-workbuddy';
-    /** 与 lib/web.js 的 MODELS_PATH 必须一致。 */
+    /** 与 lib/web.js 的两个端点必须一致。 */
     const MODELS_PATH = '/plugins/dsh-autostart-workbuddy/models';
+    const BACKEND_PATH = '/plugins/dsh-autostart-workbuddy/backend';
 
     const CSS = `
 .dsm-wb-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;padding:14px 16px}
@@ -74,6 +75,14 @@ window.__ModuleLoader__.load({
 .dsm-wb-notice-error{color:var(--dsw-alias-state-error-primary,#d92d20)}
 .dsm-wb-empty{padding:12px 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px}
 .dsm-wb-path{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;word-break:break-all}
+.dsm-wb-backend{margin-top:14px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px}
+.dsm-wb-backend-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dsm-wb-backend-title{flex:1;min-width:100px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
+.dsm-wb-backend-line{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6;word-break:break-all}
+.dsm-wb-backend-line strong{color:var(--dsw-alias-label-secondary,#c6c9d0);font-weight:500}
+.dsm-wb-badge{flex:none;border-radius:6px;padding:1px 6px;font-size:12px;border:1px solid var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-tertiary,#999)}
+.dsm-wb-badge-new{color:var(--dsw-alias-state-warning-primary,#d29922);border-color:currentColor}
+.dsm-wb-badge-ok{color:var(--dsw-alias-state-success-primary,#3fb950);border-color:currentColor}
 `;
 
     // 字典值必须是**字符串**：DSH 的 t(key, params) 用 `{name}` 占位符插值
@@ -99,6 +108,21 @@ window.__ModuleLoader__.load({
       savedNoSync: '已保存白名单；模型清单未更新（{state}）。',
       saveFailed: '保存失败。',
       patchPath: '写入目标：{path}',
+      backendTitle: '后端版本',
+      backendCurrent: '当前 {version}',
+      backendLatest: '上游 {tag}',
+      backendUpToDate: '已是最新',
+      backendAvailable: '可更新到 {tag}',
+      backendCheck: '检查更新',
+      backendUpdate: '更新',
+      backendRollback: '回滚',
+      backendWorking: '处理中…',
+      backendUpdated: '已更新到 {tag}，健康检查通过。',
+      backendRolledBack: '已回滚到 {tag}。',
+      backendUnmanaged: '未纳管',
+      backendNoHistory: '历史版本：无',
+      backendHistory: '历史版本：{list}',
+      backendBuilt: '构建于 {time}',
     };
 
     const en = {
@@ -121,6 +145,21 @@ window.__ModuleLoader__.load({
       savedNoSync: 'Allow-list saved; the model list was not updated ({state}).',
       saveFailed: 'Save failed.',
       patchPath: 'Written to: {path}',
+      backendTitle: 'Backend version',
+      backendCurrent: 'current {version}',
+      backendLatest: 'upstream {tag}',
+      backendUpToDate: 'up to date',
+      backendAvailable: 'update to {tag} available',
+      backendCheck: 'Check',
+      backendUpdate: 'Update',
+      backendRollback: 'Roll back',
+      backendWorking: 'Working…',
+      backendUpdated: 'Updated to {tag}; health check passed.',
+      backendRolledBack: 'Rolled back to {tag}.',
+      backendUnmanaged: 'unmanaged',
+      backendNoHistory: 'History: none',
+      backendHistory: 'History: {list}',
+      backendBuilt: 'built {time}',
     };
 
     function ensureStyle() {
@@ -133,9 +172,9 @@ window.__ModuleLoader__.load({
       document.head.appendChild(tag);
     }
 
-    /** 调宿主半侧的两条路由；HTTP 层的失败也翻成 Error，交给卡片显示。 */
-    async function request(method, body) {
-      const response = await fetch(MODELS_PATH, {
+    /** 调宿主半侧的路由；HTTP 层的失败也翻成 Error，交给卡片显示。 */
+    async function request(path, method, body) {
+      const response = await fetch(path, {
         method,
         headers: body === undefined ? undefined : { 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -185,7 +224,7 @@ window.__ModuleLoader__.load({
         setPhase('loading');
         setNotice(undefined);
         try {
-          const payload = await request('GET');
+          const payload = await request(MODELS_PATH, 'GET');
           if (!payload.ok) {
             setRows([]);
             setPicked(new Set());
@@ -234,7 +273,7 @@ window.__ModuleLoader__.load({
         setSaving(true);
         setNotice(undefined);
         try {
-          const payload = await request('POST', { only: [...picked] });
+          const payload = await request(MODELS_PATH, 'POST', { only: [...picked] });
           if (!payload.ok) {
             setNotice({ kind: 'error', text: payload.reason ?? t('saveFailed') });
             return;
@@ -252,6 +291,54 @@ window.__ModuleLoader__.load({
           setSaving(false);
         }
       }, [picked, load, t]);
+
+      // ---- 后端版本（更新检查 / 手动更新 / 回滚）----
+      const [backend, setBackend] = useState(undefined);
+      const [check, setCheck] = useState(undefined);
+      const [backendBusy, setBackendBusy] = useState(undefined);
+      const [backendNotice, setBackendNotice] = useState(undefined);
+
+      const loadBackend = useCallback(async () => {
+        try {
+          const payload = await request(BACKEND_PATH, 'GET');
+          setBackend(payload.backend ?? {});
+        } catch (error) {
+          setBackend({ error: error instanceof Error ? error.message : String(error) });
+        }
+      }, []);
+
+      useEffect(() => {
+        loadBackend();
+      }, [loadBackend]);
+
+      const runBackend = useCallback(
+        async (action) => {
+          setBackendBusy(action);
+          setBackendNotice(undefined);
+          try {
+            const payload = await request(BACKEND_PATH, 'POST', { action });
+            if (payload.backend) setBackend(payload.backend);
+            if (action === 'check') {
+              setCheck(payload.check?.error ? { error: payload.check.error } : payload.check);
+            } else if (payload.ok) {
+              setCheck(undefined);
+              setBackendNotice({
+                kind: 'ok',
+                text: t(action === 'update' ? 'backendUpdated' : 'backendRolledBack', {
+                  tag: payload.latest?.tag ?? payload.local?.tag ?? '',
+                }),
+              });
+            } else {
+              setBackendNotice({ kind: 'error', text: payload.reason ?? payload.state ?? '' });
+            }
+          } catch (error) {
+            setBackendNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) });
+          } finally {
+            setBackendBusy(undefined);
+          }
+        },
+        [t],
+      );
 
       // 行详情页在缺少包描述时才用 summary 视图；本包有 description，正常走 page。
       if (view === 'summary') {
@@ -374,6 +461,102 @@ window.__ModuleLoader__.load({
       }
       if (meta.patchPath) {
         body.push(h('p', { key: 'path', className: 'dsm-wb-path' }, t('patchPath', { path: meta.patchPath })));
+      }
+
+      // 后端版本区：只提示 + 手动更新。数据来自宿主半侧的 /backend 端点，
+      // 首屏那次 GET 不联网（快），点"检查更新"才真去查 release。
+      if (backend) {
+        const version = backend.version ?? {};
+        const currentTag =
+          version.tag ?? (version.revision ? version.revision.slice(0, 7) : null) ?? t('backendUnmanaged');
+        const history = Array.isArray(backend.history) ? backend.history : [];
+        const latestTag = check?.latest?.tag ?? '';
+
+        const section = [
+          h(
+            'div',
+            { key: 'head', className: 'dsm-wb-backend-head' },
+            h('span', { className: 'dsm-wb-backend-title' }, t('backendTitle')),
+            check && !check.error
+              ? h(
+                  'span',
+                  { className: `dsm-wb-badge ${check.upToDate ? 'dsm-wb-badge-ok' : 'dsm-wb-badge-new'}` },
+                  check.upToDate ? t('backendUpToDate') : t('backendAvailable', { tag: latestTag }),
+                )
+              : null,
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsm-wb-btn dsm-wb-btn-outline',
+                disabled: Boolean(backendBusy),
+                onClick: () => runBackend('check'),
+              },
+              backendBusy === 'check' ? t('backendWorking') : t('backendCheck'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsm-wb-btn dsm-wb-btn-primary',
+                disabled: Boolean(backendBusy),
+                onClick: () => runBackend('update'),
+              },
+              backendBusy === 'update' ? t('backendWorking') : t('backendUpdate'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsm-wb-btn dsm-wb-btn-outline',
+                disabled: Boolean(backendBusy),
+                onClick: () => runBackend('rollback'),
+              },
+              backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'),
+            ),
+          ),
+          h(
+            'p',
+            { key: 'current', className: 'dsm-wb-backend-line' },
+            h('strong', null, t('backendCurrent', { version: currentTag })),
+            version.builtAt ? ` · ${t('backendBuilt', { time: version.builtAt })}` : '',
+          ),
+        ];
+
+        if (check?.error) {
+          section.push(h('p', { key: 'checkError', className: 'dsm-wb-backend-line' }, check.error));
+        } else if (check) {
+          section.push(
+            h(
+              'p',
+              { key: 'latest', className: 'dsm-wb-backend-line' },
+              h('strong', null, t('backendLatest', { tag: latestTag })),
+            ),
+          );
+        }
+
+        section.push(
+          h(
+            'p',
+            { key: 'history', className: 'dsm-wb-backend-line' },
+            history.length ? t('backendHistory', { list: history.map((item) => item.name).join(', ') }) : t('backendNoHistory'),
+          ),
+        );
+
+        if (backendNotice) {
+          section.push(
+            h(
+              'p',
+              {
+                key: 'backendNotice',
+                className: `dsm-wb-notice ${backendNotice.kind === 'error' ? 'dsm-wb-notice-error' : 'dsm-wb-notice-ok'}`,
+              },
+              backendNotice.text,
+            ),
+          );
+        }
+
+        body.push(h('div', { key: 'backend', className: 'dsm-wb-backend' }, section));
       }
 
       return h(

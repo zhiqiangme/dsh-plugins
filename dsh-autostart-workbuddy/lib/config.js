@@ -7,6 +7,7 @@
  */
 
 import { join, resolve } from 'node:path';
+import { backendPaths, DEFAULT_CHECK_TTL_MS, DEFAULT_KEEP_VERSIONS } from './backend.js';
 import { DEFAULT_EFFORTS } from './models.js';
 import { SERVICE_DEFAULTS, resolveDshHome } from './services.js';
 
@@ -59,7 +60,7 @@ function stringMap(value) {
  * profile 里的配置更难读。
  *
  * @param {object} config 插件行的 config（已确认是对象）
- * @param {{ logDir: string, readinessTimeoutMs: number, stopTimeoutMs: number }} common
+ * @param {{ logDir: string, paths: object, readinessTimeoutMs: number, stopTimeoutMs: number }} common
  * @param {NodeJS.ProcessEnv} hostEnv 宿主环境
  */
 function buildSpec(config, common, hostEnv) {
@@ -69,8 +70,9 @@ function buildSpec(config, common, hostEnv) {
     title: stringOr(config.title, SERVICE_DEFAULTS.title),
     host: stringOr(config.host, SERVICE_DEFAULTS.host),
     port: positiveNumber(config.port, SERVICE_DEFAULTS.port),
-    cwd: resolve(stringOr(config.cwd, SERVICE_DEFAULTS.cwd)),
-    exe: stringOr(config.exe, SERVICE_DEFAULTS.exe),
+    // 默认指向插件自管的后端目录（布局见 backend.js），profile 里可以覆盖。
+    cwd: resolve(stringOr(config.cwd, common.paths.current)),
+    exe: stringOr(config.exe, common.paths.exe),
     args: stringArray(config.args, SERVICE_DEFAULTS.args),
     logName: stringOr(config.logName, SERVICE_DEFAULTS.logName),
     logDir: common.logDir,
@@ -111,11 +113,29 @@ function resolveModelsConfig(raw, spec) {
 }
 
 /**
+ * 解析 backend 段（后端版本管理）。
+ *
+ * 默认"启动时检查一次、只提示"：安装动作永远由用户点，插件不会自己换二进制。
+ */
+function resolveBackendConfig(raw, paths) {
+  const backend = plainObject(raw);
+  return {
+    enabled: bool(backend.enabled, true),
+    checkOnStart: bool(backend.checkOnStart, true),
+    checkTtlMs: positiveNumber(backend.checkTtlMs, DEFAULT_CHECK_TTL_MS),
+    keepVersions: positiveNumber(backend.keepVersions, DEFAULT_KEEP_VERSIONS),
+    /** 覆盖 GitHub API 基址（镜像 / 测试用）；空 = 官方 api.github.com。 */
+    apiBase: stringOr(backend.apiBase, ''),
+    paths,
+  };
+}
+
+/**
  * 解析完整插件配置。
  *
  * @param {unknown} raw profile 里该插件行的 config
  * @param {NodeJS.ProcessEnv} hostEnv
- * @returns {{ enabled: boolean, logDir: string, spec: object, models: object }}
+ * @returns {{ enabled: boolean, logDir: string, paths: object, spec: object, models: object, backend: object }}
  */
 export function resolvePluginConfig(raw, hostEnv = process.env) {
   const config = plainObject(raw);
@@ -125,17 +145,28 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
   // 目录名与 dsh-autostart-websearch 分开，两个插件的日志不混在一起。
   const logDir = resolve(stringOr(config.logDir, resolve(dshHome, 'autostart-workbuddy', 'logs')));
 
+  // 后端自管的目录布局（程序 / 数据 / 缓存分离）；默认 exe 与 cwd 都落在这里。
+  const paths = backendPaths(hostEnv);
+
   const spec = buildSpec(
     config,
     {
       logDir,
+      paths,
       readinessTimeoutMs: positiveNumber(config.readinessTimeoutMs, 30_000),
       stopTimeoutMs: positiveNumber(config.stopTimeoutMs, 5_000),
     },
     hostEnv,
   );
 
-  return { enabled: spec.enabled, logDir, spec, models: resolveModelsConfig(config.models, spec) };
+  return {
+    enabled: spec.enabled,
+    logDir,
+    paths,
+    spec,
+    models: resolveModelsConfig(config.models, spec),
+    backend: resolveBackendConfig(config.backend, paths),
+  };
 }
 
 /** 供 `node lib/cli.js` 之类的排障入口使用（不启动任何东西）。 */

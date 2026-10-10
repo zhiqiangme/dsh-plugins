@@ -26,6 +26,7 @@
  * 而这份原语不到 200 行，复制一份比引入一层依赖更稳。
  */
 
+import { checkForUpdate } from './backend.js';
 import { resolvePluginConfig } from './config.js';
 import { syncModels } from './models.js';
 import { ManagedService } from './services.js';
@@ -68,7 +69,10 @@ export function apply(ctx, config) {
 
   // Web 面板路由（浏览器半侧 lib/client.js 的取数口）。与后端启动无关，先挂上：
   // 这样后端还没起来时打开面板也能看到"后端不可达"的具体原因。
-  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv });
+  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service });
+
+  // 启动时查一次后端更新（**只提示**，安装永远由用户在面板里点）。
+  checkBackendUpdateOnStart(resolved, hostEnv, logger);
 
   // 后台启动：不 await，避免拖慢插件树加载。
   const startup = start(service, logger);
@@ -145,6 +149,37 @@ function syncAfterStartup(startup, resolved, hostEnv, logger) {
     })
     .catch((error) => {
       logger.warn(`[${name}] 模型列表同步出错：${error instanceof Error ? error.message : String(error)}`);
+    });
+}
+
+/**
+ * 启动时查一次后端更新，**只写日志提示**，不下载也不安装。
+ *
+ * 结果走 release 查询缓存（默认 6 小时），所以频繁重启 DSH 不会反复打 GitHub API。
+ * 任何失败都只记一条 warn：查更新失败不该影响 DSH 启动。
+ */
+function checkBackendUpdateOnStart(resolved, hostEnv, logger) {
+  const backend = resolved.backend;
+  if (!backend?.enabled || !backend.checkOnStart) return;
+
+  checkForUpdate({
+    paths: backend.paths,
+    env: hostEnv,
+    apiBase: backend.apiBase || undefined,
+    ttlMs: backend.checkTtlMs,
+  })
+    .then((check) => {
+      const current = check.local.tag ?? check.local.revision?.slice(0, 7) ?? '未知';
+      if (check.updateAvailable) {
+        logger.info(
+          `[${name}] 后端有新版本：${current} → ${check.latest.tag}（在插件页点"更新"安装，不会自动替换）`,
+        );
+      } else {
+        logger.info(`[${name}] 后端已是最新（${check.latest.tag}）`);
+      }
+    })
+    .catch((error) => {
+      logger.warn(`[${name}] 检查后端更新失败：${error instanceof Error ? error.message : String(error)}`);
     });
 }
 

@@ -39,6 +39,8 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "sync-models": "node lib/sync-cli.js",
+    "backend": "node lib/backend-cli.js",
+    "backend-check": "node lib/backend-cli.js --check",
     "print-config": "node -e \"import('./lib/config.js').then(({ resolvePluginConfig, describeConfig }) => console.log(JSON.stringify(describeConfig(resolvePluginConfig({}, process.env)), null, 2)))\""
   },
   "license": "MIT"
