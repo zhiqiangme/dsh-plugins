@@ -45,11 +45,20 @@ window.__ModuleLoader__.load({
 .dsm-wb-desc{margin:4px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
 .dsm-wb-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 0 8px}
 .dsm-wb-count{flex:1;min-width:120px;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
-.dsm-wb-btn{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 14px;font-size:13px;line-height:1.5;transition:opacity .16s}
-.dsm-wb-btn:disabled{opacity:.45;cursor:default}
-.dsm-wb-btn-primary{background:var(--dsw-alias-brand-primary,#5686fe);color:#fff}
+.dsm-wb-btn{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 14px;font-size:13px;line-height:1.5}
+.dsm-wb-btn:disabled{cursor:default}
+/* 主按钮用"反色"配色，不用 --dsw-alias-brand-primary 当底色：本主题把
+   brand-primary 定义成 --dsw-alias-label-primary（深色模式下 #f9fafb，接近纯白），
+   拿它当背景再配白字就是白底白字。label-primary 当底 + bg-layer-3 当字，
+   明暗两种主题都成立（Trae 的 .dsm-btn-primary 也是这个写法）。 */
+.dsm-wb-btn-primary{background:var(--dsw-alias-label-primary,#e6e6e6);color:var(--dsw-alias-bg-layer-3,#202126)}
+.dsm-wb-btn-primary:hover:not(:disabled){opacity:.88}
 .dsm-wb-btn-outline{background:transparent;border-color:var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-secondary,#c6c9d0)}
-.dsm-wb-btn-outline:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed,#777)}
+.dsm-wb-btn-outline:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed,#777);color:var(--dsw-alias-label-primary,#e6e6e6)}
+/* 禁用态给明确的弱化配色，而不是整体降透明度——降透明度会把文字一起洗掉，
+   深色主题下就变成"看不清字"的灰块。 */
+.dsm-wb-btn-primary:disabled{background:var(--dsw-alias-bg-layer-2,#25262b);color:var(--dsw-alias-label-dimmed,#8a8f99);border-color:var(--dsw-alias-border-l2,#36373b)}
+.dsm-wb-btn-outline:disabled{color:var(--dsw-alias-label-dimmed,#8a8f99)}
 .dsm-wb-list{display:flex;flex-direction:column;gap:2px;max-height:340px;overflow:auto;padding:2px 0}
 .dsm-wb-row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;cursor:pointer}
 .dsm-wb-row:hover{background:var(--dsw-alias-bg-layer-2,#25262b)}
@@ -57,11 +66,11 @@ window.__ModuleLoader__.load({
 .dsm-wb-label{flex:1;min-width:0;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsm-wb-meta{flex:none;display:flex;align-items:center;gap:6px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px}
 .dsm-wb-credits{flex:none;font-variant-numeric:tabular-nums;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;padding:1px 6px;font-size:12px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
-.dsm-wb-credits-free{color:var(--dsw-alias-brand-primary,#5686fe);border-color:currentColor}
+.dsm-wb-credits-free{color:var(--dsw-alias-state-success-primary,#3fb950);border-color:currentColor}
 .dsm-wb-tag{flex:none;border-radius:6px;padding:1px 6px;font-size:12px;border:1px solid var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-tertiary,#999)}
 .dsm-wb-hint{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
 .dsm-wb-notice{margin:8px 0 0;font-size:13px;line-height:1.6}
-.dsm-wb-notice-ok{color:var(--dsw-alias-brand-primary,#5686fe)}
+.dsm-wb-notice-ok{color:var(--dsw-alias-state-success-primary,#3fb950)}
 .dsm-wb-notice-error{color:var(--dsw-alias-state-error-primary,#d92d20)}
 .dsm-wb-empty{padding:12px 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px}
 .dsm-wb-path{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;word-break:break-all}

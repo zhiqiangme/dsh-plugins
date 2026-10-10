@@ -15,19 +15,20 @@ import { readFileSync } from 'node:fs';
 const SOURCE = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
 const NAMESPACE = 'settings.dsh-autostart-workbuddy';
 
-/** 把 bundle 放进沙箱执行，拿回它注册进 __ModuleLoader__ 的 registration。 */
+/** 把 bundle 放进沙箱执行，拿回它注册进 __ModuleLoader__ 的 registration 与注入的样式。 */
 function loadBundle() {
   let registration;
+  const styles = [];
   const window = { __ModuleLoader__: { load: (value) => { registration = value; } } };
   const document = {
     querySelector: () => null,
     createElement: () => ({ dataset: {}, textContent: '' }),
-    head: { appendChild() {} },
+    head: { appendChild: (element) => styles.push(element) },
   };
   // eslint-disable-next-line no-new-func -- 故意在沙箱里跑浏览器 bundle
   new Function('window', 'document', 'console', SOURCE)(window, document, console);
   assert.ok(registration, 'bundle 应调用 window.__ModuleLoader__.load');
-  return registration;
+  return { registration, styles };
 }
 
 /** 替身 React：createElement 产出普通对象；useState 按调用顺序喂预设状态。 */
@@ -71,7 +72,7 @@ function interpolate(value, params) {
  * @param {unknown[]} states 组件渲染时 useState 按顺序返回的值
  */
 function boot(states = []) {
-  const registration = loadBundle();
+  const { registration, styles } = loadBundle();
   const dicts = new Map();
   const cards = [];
   const React = makeReact(states);
@@ -101,7 +102,13 @@ function boot(states = []) {
   };
 
   module.apply(ctx);
-  return { module, dicts, cards, t: ctx.locale.bind(NAMESPACE) };
+  return {
+    module,
+    dicts,
+    cards,
+    t: ctx.locale.bind(NAMESPACE),
+    css: styles.map((style) => style.textContent).join('\n'),
+  };
 }
 
 const ROWS = [
@@ -194,4 +201,29 @@ test('渲染（summary 视图）：给行详情页的一句话，不抛错', () 
   const texts = collectText(cards[0].component({ t, view: 'summary' }));
   assert.equal(texts.length, 1);
   assert.equal(typeof texts[0], 'string');
+});
+
+test('样式：颜色一律走主题令牌，不写死白/黑，主按钮禁用态有明确配色', () => {
+  const { css } = boot();
+  assert.ok(css.length > 0, '应注入样式');
+
+  // 写死的白/黑文字色是"深色模式下看不清"的经典来源（本主题把
+  // --dsw-alias-brand-primary 定义成 label-primary，深色下接近纯白，
+  // 拿它当底色再配白字就是白底白字）。
+  const hardcodedTextColor = /(^|[;{\s])color:\s*(#fff|#ffffff|white|#000|#000000|black)\b/i;
+  assert.equal(hardcodedTextColor.test(css), false, '文字色必须走 --dsw-* 令牌');
+
+  // brand-primary 在本主题里会退化成 label-primary，不能当背景色用。
+  assert.equal(
+    /background:\s*var\(--dsw-alias-brand-primary/.test(css),
+    false,
+    'brand-primary 不能当背景（本主题里它等于 label-primary）',
+  );
+
+  // 禁用态必须是显式配色，而不是整体降透明度——降透明度会把文字一起洗掉。
+  assert.match(css, /\.dsm-wb-btn-primary:disabled\{[^}]*color:var\(--dsw-alias-label-dimmed/);
+  assert.equal(/\.dsm-wb-btn:disabled\{[^}]*opacity/.test(css), false, '禁用态不要只靠 opacity');
+
+  // 主按钮走反色：label-primary 当底、bg-layer-3 当字。
+  assert.match(css, /\.dsm-wb-btn-primary\{[^}]*background:var\(--dsw-alias-label-primary/);
 });
