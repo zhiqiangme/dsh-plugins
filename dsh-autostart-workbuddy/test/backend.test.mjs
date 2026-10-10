@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,14 +20,17 @@ import {
   backendPaths,
   checkForUpdate,
   describeBackend,
+  installBackend,
   localVersion,
   pruneVersions,
   probeHealthz,
   readBuildInfo,
   readManifest,
   rollbackBackend,
+  uninstallBackend,
   versionDirName,
 } from '../lib/backend.js';
+import { isFile } from '../lib/services.js';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
 
@@ -359,4 +362,84 @@ test('pruneVersions：只保留最近 N 个历史版本', () => {
   const removed = pruneVersions(paths, 2);
   assert.equal(removed.length, 2);
   assert.equal(readdirSync(paths.versions).length, 2);
+});
+
+test('installBackend：已安装时拒绝，一个字节都不动', async () => {
+  const { paths } = tempBackendRoot();
+  const before = readFileSync(paths.exe);
+
+  const result = await installBackend({ paths, env: {}, service: fakeService(await freePort()) });
+  assert.equal(result.ok, false);
+  assert.equal(result.state, 'already-installed');
+  assert.match(result.reason, /已安装/);
+  assert.deepEqual(readFileSync(paths.exe), before);
+});
+
+test('installBackend：未安装时从 release 装上、启动并写清单', async () => {
+  const release = startFixture({ TEST_MODE: 'http-release' });
+  const health = startFixture({ TEST_MODE: 'http-health' });
+  const apiBase = `http://127.0.0.1:${await release.ready}`;
+  const port = await health.ready;
+  const { paths } = tempBackendRoot();
+  rmSync(paths.exe); // 模拟"还没装"
+  const service = fakeService(port);
+  try {
+    const result = await installBackend({ paths, env: {}, apiBase, service });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.state, 'installed');
+    assert.equal(readBuildInfo(paths.exe).revision, NEW_COMMIT);
+    assert.equal(readManifest(paths).tag, 'v9.9.9');
+    assert.deepEqual(service.calls, [['stop', '更新后端'], ['start']]);
+  } finally {
+    release.stop();
+    health.stop();
+  }
+});
+
+test('uninstallBackend：没装时明确拒绝', async () => {
+  const { paths } = tempBackendRoot();
+  rmSync(paths.exe);
+  const result = await uninstallBackend({ paths, service: fakeService(await freePort()) });
+  assert.equal(result.ok, false);
+  assert.equal(result.state, 'not-installed');
+});
+
+test('uninstallBackend：删程序文件与缓存，但保留 config.json 与 data/', async () => {
+  const { paths } = tempBackendRoot();
+  // 造点历史版本、缓存与数据，验证删除边界
+  mkdirSync(join(paths.versions, 'v1.0.0'), { recursive: true });
+  writeFileSync(join(paths.versions, 'v1.0.0', 'wb2api.exe'), fakeExe('e'.repeat(40)));
+  mkdirSync(paths.data, { recursive: true });
+  writeFileSync(join(paths.data, 'state.json'), '{}');
+  mkdirSync(paths.cache, { recursive: true });
+  writeFileSync(join(paths.cache, 'wb2api-panel-v9.9.9-windows-amd64.zip'), 'zip');
+
+  const result = await uninstallBackend({ paths, service: fakeService(await freePort()) });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.state, 'uninstalled');
+
+  assert.equal(isFile(paths.exe), false, 'exe 应被删除');
+  assert.equal(readManifest(paths), null, '清单应被删除');
+  assert.equal(readdirSync(paths.versions).length, 0, '历史版本应被清空');
+  assert.equal(readdirSync(paths.cache).length, 0, '下载缓存应被清空');
+
+  assert.equal(isFile(paths.config), true, 'config.json 必须保留');
+  assert.equal(isFile(join(paths.data, 'state.json')), true, 'data/ 必须保留');
+  assert.ok(result.kept.some((item) => item.includes('config.json')));
+});
+
+test('uninstallBackend：端口被非本插件进程占用时拒绝，什么都不删', async () => {
+  const occupied = startFixture({ TEST_MODE: 'listen' });
+  const port = await occupied.ready;
+  const { paths } = tempBackendRoot();
+  try {
+    const service = fakeService(port, { stopResult: { stopped: false, skipped: true } });
+    const result = await uninstallBackend({ paths, service });
+    assert.equal(result.ok, false);
+    assert.equal(result.state, 'not-owned');
+    assert.equal(isFile(paths.exe), true, '拒绝时不能删任何文件');
+    assert.equal(isFile(paths.config), true);
+  } finally {
+    occupied.stop();
+  }
 });
