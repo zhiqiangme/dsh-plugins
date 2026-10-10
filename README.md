@@ -8,7 +8,11 @@
 | --- | --- |
 | [dsh-autostart-workbuddy/](dsh-autostart-workbuddy/) | DSH 启动时自动拉起 WorkBuddy Panel（`wb2api.exe`, 127.0.0.1:7863），可选接管 profile 里的 workbuddy 模型列表 |
 | [dsh-autostart-websearch/](dsh-autostart-websearch/) | DSH 启动时自动拉起 tavily-anthropic-search（联网搜索上游, 127.0.0.1:8787） |
-| [scripts/wire-autostart-plugins.mjs](scripts/wire-autostart-plugins.mjs) | 一次性脚本：把上面两个插件写入 `~/.dsh/profiles/desktop/package.json` 的 dependencies + bundles（结构化读写 + 时间戳备份） |
+| [scripts/wire-autostart-plugins.mjs](scripts/wire-autostart-plugins.mjs) | 一次性脚本：把上面两个插件写入 profile 的 `package.json`（dependencies + bundles，结构化读写 + 时间戳备份） |
+
+脚本不写死任何绝对路径：插件目录由**脚本自身位置**推导（与 cwd 无关），目标 profile 依次按
+命令行参数 → `DSH_PROFILE_DIR` → `DSH_HOME`/`DSH_PROFILE` → `~/.dsh/profiles/desktop` 解析
+（`os.homedir()` 在 Windows 上读的就是 `USERPROFILE`）。动文件前还会确认两个插件目录确实存在。
 
 安装、配置与刷新方式见两个插件各自的 README。
 
