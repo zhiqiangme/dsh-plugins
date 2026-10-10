@@ -79,7 +79,7 @@ function dummyEnv(port, mode = 'listen') {
 }
 
 test('插件导出 Cordis 契约：name / inject / apply', () => {
-  assert.equal(name, 'dsh-autostart-websearch');
+  assert.equal(name, 'dsh-tavily-search');
   assert.deepEqual(inject, []);
   assert.equal(typeof apply, 'function');
 });

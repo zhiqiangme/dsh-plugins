@@ -1,5 +1,5 @@
 /**
- * dsh-autostart-websearch —— DSH 启动时自动拉起 tavily-anthropic-search（联网搜索上游）。
+ * dsh-tavily-search —— DSH 启动时自动拉起 tavily-anthropic-search（联网搜索上游）。
  *
  * 背景：本机的 tavily-anthropic-search（Node 服务，127.0.0.1:8787）是 DSH 自己的上游依赖——
  * profile 的 cordis.patch.yml 里 web-search-deepseek 的 baseURL 指向
@@ -27,7 +27,7 @@ import { resolvePluginConfig } from './config.js';
 import { ManagedService } from './services.js';
 
 /** 插件名（日志前缀）。 */
-export const name = 'dsh-autostart-websearch';
+export const name = 'dsh-tavily-search';
 
 /**
  * 不注入任何 Host Service：本插件的工作（spawn 外部进程 + 探测端口）只用 node 内置模块，

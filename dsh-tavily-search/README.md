@@ -1,4 +1,4 @@
-# dsh-autostart-websearch
+# dsh-tavily-search
 
 DSH 启动时自动拉起 **tavily-anthropic-search**（联网搜索的上游 shim），替代手动运行 `tavily-anthropic-search/start.ps1` 或 `scripts/Start All.ps1`。
 
@@ -27,13 +27,13 @@ WorkBuddy Panel 那个上游（wb2api, 7863）由同级插件 [dsh-autostart-wor
 ```jsonc
 {
   "dependencies": {
-    "dsh-autostart-websearch": "file:D:\\Project\\DeepSeek Harness\\dsh-autostart-websearch"
+    "dsh-tavily-search": "file:D:\\Project\\DeepSeek Harness\\dsh-tavily-search"
   },
   "dsh": {
     "profile": {
       "bundles": [
         // ...
-        "dsh-autostart-websearch"
+        "dsh-tavily-search"
       ]
     }
   }
@@ -47,8 +47,8 @@ WorkBuddy Panel 那个上游（wb2api, 7863）由同级插件 [dsh-autostart-wor
 在 profile 的 `cordis.patch.yml` 里按行 id 覆盖：
 
 ```yaml
-- id: dsh-autostart-websearch
-  name: dsh-autostart-websearch
+- id: dsh-tavily-search
+  name: dsh-tavily-search
   config:
     enabled: true
     readinessTimeoutMs: 30000

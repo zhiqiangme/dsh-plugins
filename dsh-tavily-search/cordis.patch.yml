@@ -1,4 +1,4 @@
-# dsh-autostart-websearch 的挂载声明。
+# dsh-tavily-search 的挂载声明。
 #
 # DSH 启动时按 bundle 层栈把各插件的 patch 叠起来组成配置树，本文件就是本插件这一层：
 #   - insert：往配置树里添加新的插件行（entry）
@@ -8,5 +8,5 @@
 # 注意：`id:` 那一行后面不要写行尾注释——DSH 商城预检用正则抓该行的值，
 # 行尾注释会让它抓不到 entry ID（本插件是私有包，但保持同样的写法习惯）。
 - insert:
-    - id: dsh-autostart-websearch
-      name: dsh-autostart-websearch
+    - id: dsh-tavily-search
+      name: dsh-tavily-search

@@ -1,5 +1,5 @@
 {
-  "name": "dsh-autostart-websearch",
+  "name": "dsh-tavily-search",
   "version": "0.1.0",
   "private": true,
   "description": "DSH 启动时自动拉起 tavily-anthropic-search（联网搜索上游, 127.0.0.1:8787），幂等、静默、退出时只停自己拉起的进程。",
