@@ -74,6 +74,25 @@ function collectByType(node, type, out = []) {
   return out;
 }
 
+/**
+ * 展开函数组件。
+ *
+ * 替身 React 的 createElement 只记录元素、不执行组件，所以 <Modal title=... footer=.../>
+ * 的 props 不会变成子节点。测试里手动调用一次函数组件，把树"渲染"出来。
+ * 本插件自己的组件是直接调用的，这里只会命中 Modal 这类宿主组件。
+ */
+function render(node) {
+  if (!node || typeof node !== 'object') return node;
+  if (Array.isArray(node)) return node.map(render);
+  if (typeof node.type === 'function') {
+    return render(node.type({ ...node.props, children: node.children }));
+  }
+  if (Array.isArray(node.children)) {
+    return { ...node, children: node.children.map(render) };
+  }
+  return node;
+}
+
 /** 按 DSH 的约定插值；值不是字符串就原样返回，好让测试看出这类错误。 */
 function interpolate(value, params) {
   if (typeof value !== 'string') return value;
@@ -84,15 +103,23 @@ function interpolate(value, params) {
  * 跑一遍模块与 apply。
  *
  * @param {unknown[]} states 组件渲染时 useState 按顺序返回的值
+ * @param {{ withPrimitives?: boolean }} [options] withPrimitives=false 时模拟宿主组件不可用
  */
-function boot(states = []) {
+function boot(states = [], { withPrimitives = true } = {}) {
   const { registration, styles } = loadBundle();
   const dicts = new Map();
   const cards = [];
   const React = makeReact(states);
 
+  /** 替身 primitives：只提供 Modal，渲染成普通 div 便于断言内容。 */
+  const primitives = {
+    Modal: ({ open, title, description, children, footer }) =>
+      open === false ? null : React.createElement('div', { className: 'dsm-modal' }, title, description, children, footer),
+  };
+
   const module = registration.factory((id) => {
     if (id === 'react') return React;
+    if (id === '@deepseek-ai/dsh-client-ui-primitives' && withPrimitives) return primitives;
     throw new Error(`未预期的 require：${id}`);
   });
 
@@ -160,11 +187,13 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
 
   const expected = [
     'backendAvailable', 'backendBuilt', 'backendCheck', 'backendCurrent', 'backendHistory',
-    'backendLatest', 'backendNoHistory', 'backendRollback', 'backendTitle', 'backendUnmanaged',
-    'backendUpdate', 'backendUpdated', 'backendUpToDate', 'backendWorking', 'backendRolledBack',
+    'backendInstall', 'backendInstalled', 'backendLatest', 'backendNoHistory', 'backendRollback',
+    'backendTitle', 'backendUninstall', 'backendUninstalled', 'backendUnmanaged', 'backendUpdate',
+    'backendUpdated', 'backendUpToDate', 'backendWorking', 'backendRolledBack', 'cancel',
     'clearAll', 'count', 'description', 'disabledHint', 'emptyBackend', 'emptyHint', 'loading',
     'panelHint', 'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'savedNoSync', 'savedSync',
-    'saving', 'selectAll', 'summary', 'title', 'vision',
+    'saving', 'selectAll', 'summary', 'title', 'uninstallConfirm', 'uninstallDesc', 'uninstallKept',
+    'uninstallTitle', 'vision',
   ];
   assert.deepEqual(Object.keys(entry.zh).sort(), expected.sort());
 });
@@ -315,4 +344,82 @@ test('渲染：宿主没给面板地址时回退到默认值', () => {
   ]);
   const anchors = collectByType(cards[0].component({ t, view: 'page' }), 'a');
   assert.equal(anchors[0].props.href, 'http://127.0.0.1:7863/panel');
+});
+
+/** 组件里 useState 的取值顺序：phase/rows/meta/reason/picked/savedPicked/saving/notice/backend/check/busy/notice/confirming。 */
+function backendStates(backend, { check, confirming } = {}) {
+  return ['ready', ROWS, {}, '', new Set(), new Set(), false, undefined, backend, check, undefined, undefined, confirming];
+}
+
+/** 渲染后把按钮的文字标签取出来。 */
+function buttonLabels(tree) {
+  return collectByType(tree, 'button').map((node) => collectText(node).join(''));
+}
+
+test('后端区（已安装）：显示 更新/卸载/回滚，不显示 安装；卸载是危险色', () => {
+  const { cards, t } = boot(
+    backendStates({ exeExists: true, version: { tag: 'v1.13.0', revision: 'd'.repeat(40) }, history: [] }),
+  );
+  const tree = cards[0].component({ t, view: 'page' });
+  const labels = buttonLabels(tree);
+
+  assert.ok(labels.includes('更新'), '已安装应显示更新');
+  assert.ok(labels.includes('卸载'), '已安装应显示卸载');
+  assert.ok(labels.includes('回滚'), '已安装应显示回滚');
+  assert.equal(labels.includes('安装'), false, '已安装不该显示安装（与卸载互斥）');
+
+  const uninstall = collectByType(tree, 'button').find((node) => collectText(node).join('') === '卸载');
+  assert.match(uninstall.props.className, /dsm-wb-btn-danger/, '卸载按钮用危险色');
+});
+
+test('后端区（未安装）：显示 安装，不显示 更新/卸载/回滚', () => {
+  const { cards, t } = boot(backendStates({ exeExists: false, version: {}, history: [] }));
+  const labels = buttonLabels(cards[0].component({ t, view: 'page' }));
+
+  assert.ok(labels.includes('安装'), '未安装应显示安装');
+  assert.equal(labels.includes('卸载'), false, '未安装不该显示卸载（与安装互斥）');
+  assert.equal(labels.includes('更新'), false, '未安装没有可更新的东西');
+  assert.equal(labels.includes('回滚'), false, '未安装没有可回滚的版本');
+  assert.ok(labels.includes('检查更新'), '检查更新始终可用');
+});
+
+test('卸载二次确认：弹出 Modal，含确认与取消两个按钮', () => {
+  const { cards, t } = boot(
+    backendStates({ exeExists: true, version: {}, history: [] }, { confirming: true }),
+  );
+  const tree = render(cards[0].component({ t, view: 'page' }));
+  const texts = collectText(tree);
+
+  assert.ok(texts.includes('卸载后端？'), '应显示确认标题');
+  assert.ok(texts.some((text) => text.includes('会停止后端')), '应说明删什么');
+  assert.ok(texts.some((text) => text.includes('账号凭证与状态')), '应说明保留什么');
+  assert.ok(collectByType(tree, 'div').some((node) => node.props.className === 'dsm-modal'), '走的是宿主 Modal');
+
+  const labels = buttonLabels(tree);
+  assert.ok(labels.includes('确认卸载'));
+  assert.ok(labels.includes('取消'));
+});
+
+test('卸载二次确认：拿不到宿主 Modal 时退回行内确认（仍是二次确认）', () => {
+  const { cards, t } = boot(
+    backendStates({ exeExists: true, version: {}, history: [] }, { confirming: true }),
+    { withPrimitives: false },
+  );
+  const tree = cards[0].component({ t, view: 'page' });
+  const texts = collectText(tree);
+
+  assert.ok(texts.includes('卸载后端？'));
+  assert.ok(buttonLabels(tree).includes('确认卸载'));
+  assert.equal(
+    collectByType(tree, 'div').some((node) => node.props.className === 'dsm-modal'),
+    false,
+    '没有宿主组件时不该假装有弹窗',
+  );
+  assert.ok(collectByType(tree, 'div').some((node) => node.props.className === 'dsm-wb-confirm'), '应走行内确认');
+});
+
+test('卸载二次确认：未点开时不出现确认界面', () => {
+  const { cards, t } = boot(backendStates({ exeExists: true, version: {}, history: [] }));
+  const texts = collectText(cards[0].component({ t, view: 'page' }));
+  assert.equal(texts.includes('卸载后端？'), false);
 });

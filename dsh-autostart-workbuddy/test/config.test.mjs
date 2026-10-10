@@ -108,6 +108,13 @@ test('backend 段：默认开启启动检查、保留 3 个版本，各字段可
   assert.equal(custom.backend.apiBase, 'http://127.0.0.1:1');
 });
 
+test('managedExe：没配 exe 时为 true（用自管目录），显式配了为 false', () => {
+  assert.equal(resolvePluginConfig({}, ENV).managedExe, true);
+  assert.equal(resolvePluginConfig({ exe: 'C:\\tmp\\x.exe' }, ENV).managedExe, false);
+  // 空白字符串不算显式配置
+  assert.equal(resolvePluginConfig({ exe: '   ' }, ENV).managedExe, true);
+});
+
 test('models 段：白名单、排除、档位与超时可覆盖，非法值退回默认', () => {
   const resolved = resolvePluginConfig(
     {

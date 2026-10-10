@@ -492,3 +492,59 @@ export function adoptCurrentBinary(paths, { tag = null, source = 'adopted', prev
   });
   return { ok: true, version: localVersion(paths) };
 }
+
+/**
+ * 安装后端：只在"当前没有 exe"时允许。
+ *
+ * 已经装了就拒绝——那应该走更新。允许"安装"覆盖会让人以为能装成任意版本，
+ * 而版本只能来自 release（见 release.js）。
+ */
+export async function installBackend({ paths, env = process.env, apiBase, service, logger, target, keepVersions } = {}) {
+  if (isFile(paths.exe)) {
+    return { ok: false, state: 'already-installed', reason: '后端已安装；升级请用「更新」' };
+  }
+  const result = await applyUpdate({ paths, env, apiBase, service, logger, target, keepVersions });
+  if (!result.ok) return result;
+  return { ...result, state: 'installed' };
+}
+
+/**
+ * 卸载后端：停进程 + 删程序文件，**保留 `config.json` 与 `data/`**。
+ *
+ * 保留凭证是刻意的：卸载后端不该顺带把账号删掉（`data/auths` 里是明文 token）。
+ * 要连数据一起清，请自己删 `data/`。
+ */
+export async function uninstallBackend({ paths, service, logger, alsoCache = true } = {}) {
+  if (!isFile(paths.exe)) {
+    return { ok: false, state: 'not-installed', reason: '后端没有安装' };
+  }
+
+  const stop = await stopForUpdate(service, logger);
+  if (!stop.ok) return { ok: false, state: 'not-owned', reason: stop.reason };
+
+  const removed = [];
+  const remove = (target, { keepDir = false } = {}) => {
+    if (!existsSync(target)) return;
+    try {
+      rmSync(target, { recursive: true, force: true });
+      removed.push(target);
+      if (keepDir) mkdirSync(target, { recursive: true });
+    } catch (error) {
+      logger?.warn?.(`[workbuddy] 删除 ${target} 失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  remove(paths.exe);
+  remove(paths.manifest);
+  remove(paths.versions, { keepDir: true });
+  if (alsoCache) remove(paths.cache, { keepDir: true });
+  forgetBuildInfo(paths.exe);
+
+  logger?.info?.('[workbuddy] 后端已卸载（config.json 与 data/ 保留）');
+  return {
+    ok: true,
+    state: 'uninstalled',
+    removed: removed.map((item) => item.replace(paths.root, '.')),
+    kept: ['backend/current/config.json', 'data/', 'logs/'],
+  };
+}

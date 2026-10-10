@@ -19,7 +19,14 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 
-import { applyUpdate, checkForUpdate, describeBackend, rollbackBackend } from './backend.js';
+import {
+  applyUpdate,
+  checkForUpdate,
+  describeBackend,
+  installBackend,
+  rollbackBackend,
+  uninstallBackend,
+} from './backend.js';
 import {
   backupPatchFile,
   creditsLabel,
@@ -279,8 +286,16 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
     return;
   }
 
-  if (action !== 'update' && action !== 'rollback') {
+  // 会改动磁盘的动作：都要串行执行（见 backendBusy），其中卸载还要求显式二次确认。
+  const MUTATING_ACTIONS = new Set(['install', 'update', 'rollback', 'uninstall']);
+
+  if (!MUTATING_ACTIONS.has(action)) {
     json(res, 400, { ok: false, reason: `不认识的动作：${action || '(空)'}` });
+    return;
+  }
+
+  if (action === 'uninstall' && body.value.confirm !== true) {
+    json(res, 400, { ok: false, reason: '卸载需要二次确认（confirm: true）' });
     return;
   }
 
@@ -290,17 +305,30 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
   }
   backendBusy = true;
   try {
-    const result =
-      action === 'update'
-        ? await applyUpdate({
-            paths,
-            env,
-            apiBase,
-            service,
-            logger,
-            keepVersions: resolved.backend?.keepVersions,
-          })
-        : await rollbackBackend({ paths, service, logger });
+    let result;
+    if (action === 'install') {
+      result = await installBackend({
+        paths,
+        env,
+        apiBase,
+        service,
+        logger,
+        keepVersions: resolved.backend?.keepVersions,
+      });
+    } else if (action === 'uninstall') {
+      result = await uninstallBackend({ paths, service, logger });
+    } else if (action === 'update') {
+      result = await applyUpdate({
+        paths,
+        env,
+        apiBase,
+        service,
+        logger,
+        keepVersions: resolved.backend?.keepVersions,
+      });
+    } else {
+      result = await rollbackBackend({ paths, service, logger });
+    }
     json(res, result.ok ? 200 : 400, { ...result, backend: snapshot() });
   } finally {
     backendBusy = false;

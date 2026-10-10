@@ -29,7 +29,7 @@
 import { checkForUpdate } from './backend.js';
 import { resolvePluginConfig } from './config.js';
 import { syncModels } from './models.js';
-import { ManagedService } from './services.js';
+import { ManagedService, isFile } from './services.js';
 import { registerPanelRoutes } from './web.js';
 
 /** 插件名（日志前缀）。 */
@@ -62,24 +62,31 @@ export function apply(ctx, config) {
   }
 
   const service = new ManagedService(resolved.spec, logger);
+  const installed = isFile(resolved.spec.exe);
+  // 只有"用插件自管路径、但文件不存在"才当作未安装（提示去面板装）；
+  // 用户在 profile 里显式配了 exe 却指错时，仍按老行为尝试启动，让错误暴露出来。
+  const notInstalled = !installed && resolved.managedExe === true;
 
   logger.info(
-    `[${name}] 准备托管 ${service.title} (${service.port})；日志目录 ${resolved.logDir}`,
+    notInstalled
+      ? `[${name}] 后端未安装（${resolved.spec.exe} 不存在），本次只挂面板；可在插件页点「安装」`
+      : `[${name}] 准备托管 ${service.title} (${service.port})；日志目录 ${resolved.logDir}`,
   );
 
   // Web 面板路由（浏览器半侧 lib/client.js 的取数口）。与后端启动无关，先挂上：
-  // 这样后端还没起来时打开面板也能看到"后端不可达"的具体原因。
+  // 这样后端还没起来（或没装）时打开面板也能看到状态、并就地安装。
   registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service });
 
   // 启动时查一次后端更新（**只提示**，安装永远由用户在面板里点）。
   checkBackendUpdateOnStart(resolved, hostEnv, logger);
 
-  // 后台启动：不 await，避免拖慢插件树加载。
-  const startup = start(service, logger);
+  // 没装后端就不启动：否则 spawn 必然失败、日志只会刷错误。
+  // 生命周期照常登记——用户在面板里点「安装」把后端拉起来之后，DSH 退出仍会把它停掉。
+  const startup = notInstalled ? Promise.resolve({ state: 'not-installed' }) : start(service, logger);
 
   // 模型列表同步：等后端就绪后再拉 `/v1/models` 回写 profile（见 lib/models.js）。
   // 同样不 await：拉取可能耗时数十秒，不能拖住插件树加载。
-  syncAfterStartup(startup, resolved, hostEnv, logger);
+  if (!notInstalled) syncAfterStartup(startup, resolved, hostEnv, logger);
 
   ctx.effect(() => {
     // exit 钩子只做同步发信号：进程退出阶段不允许异步等待，异步等待在下面的 disposer 里。

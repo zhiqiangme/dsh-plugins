@@ -33,6 +33,17 @@ window.__ModuleLoader__.load({
     const h = React.createElement;
     const { useCallback, useEffect, useMemo, useState } = React;
 
+    /**
+     * 宿主 UI 组件（primitives 在客户端的 seed 模块表里）。只取 Modal 做"二次确认"弹窗；
+     * 拿不到就退回卡片内的行内确认——不能因为一个可选依赖让整块卡片加载失败。
+     */
+    let Modal;
+    try {
+      Modal = require('@deepseek-ai/dsh-client-ui-primitives')?.Modal;
+    } catch {
+      Modal = undefined;
+    }
+
     const name = 'dsh-autostart-workbuddy-client';
     const inject = ['slots', 'locale'];
     const namespace = 'settings.dsh-autostart-workbuddy';
@@ -44,6 +55,14 @@ window.__ModuleLoader__.load({
      * （host/port 可被 profile 覆盖），拿不到时才用这个。
      */
     const DEFAULT_PANEL_URL = 'http://127.0.0.1:7863/panel';
+
+    /** 后端动作 → 成功后的提示文案 key。 */
+    const BACKEND_NOTICE = {
+      install: 'backendInstalled',
+      update: 'backendUpdated',
+      rollback: 'backendRolledBack',
+      uninstall: 'backendUninstalled',
+    };
 
     const CSS = `
 .dsm-wb-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;padding:14px 16px}
@@ -93,6 +112,12 @@ window.__ModuleLoader__.load({
 .dsm-wb-badge{flex:none;border-radius:6px;padding:1px 6px;font-size:12px;border:1px solid var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-tertiary,#999)}
 .dsm-wb-badge-new{color:var(--dsw-alias-state-warning-primary,#d29922);border-color:currentColor}
 .dsm-wb-badge-ok{color:var(--dsw-alias-state-success-primary,#3fb950);border-color:currentColor}
+/* 危险动作（卸载）用错误色描边；不做成实心红，避免误点。 */
+.dsm-wb-btn-danger{background:transparent;border-color:var(--dsw-alias-state-error-primary,#d92d20);color:var(--dsw-alias-state-error-primary,#d92d20)}
+.dsm-wb-btn-danger:hover:not(:disabled){background:rgba(217,45,32,.12)}
+.dsm-wb-confirm{margin-top:10px;border:1px solid var(--dsw-alias-state-warning-primary,#d29922);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#25262b);padding:12px 14px}
+.dsm-wb-confirm-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
+.dsm-wb-confirm-body{margin-top:4px}
 `;
 
     // 字典值必须是**字符串**：DSH 的 t(key, params) 用 `{name}` 占位符插值
@@ -134,6 +159,15 @@ window.__ModuleLoader__.load({
       backendNoHistory: '历史版本：无',
       backendHistory: '历史版本：{list}',
       backendBuilt: '构建于 {time}',
+      backendInstall: '安装',
+      backendUninstall: '卸载',
+      backendInstalled: '后端已安装 {tag}。',
+      backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
+      cancel: '取消',
+      uninstallTitle: '卸载后端？',
+      uninstallDesc: '会停止后端，并删除程序文件：wb2api.exe、历史版本、下载缓存。',
+      uninstallKept: '账号凭证与状态（data/）以及 config.json 会保留。',
+      uninstallConfirm: '确认卸载',
     };
 
     const en = {
@@ -172,6 +206,15 @@ window.__ModuleLoader__.load({
       backendNoHistory: 'History: none',
       backendHistory: 'History: {list}',
       backendBuilt: 'built {time}',
+      backendInstall: 'Install',
+      backendUninstall: 'Uninstall',
+      backendInstalled: 'Backend installed: {tag}.',
+      backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
+      cancel: 'Cancel',
+      uninstallTitle: 'Uninstall the backend?',
+      uninstallDesc: 'Stops the backend and deletes its program files: wb2api.exe, archived versions, download cache.',
+      uninstallKept: 'Credentials and state (data/) plus config.json are kept.',
+      uninstallConfirm: 'Uninstall',
     };
 
     function ensureStyle() {
@@ -220,6 +263,51 @@ window.__ModuleLoader__.load({
       if (a.size !== b.size) return false;
       for (const item of a) if (!b.has(item)) return false;
       return true;
+    }
+
+    /**
+     * 卸载的二次确认。优先用宿主的 Modal（真弹窗，走 portal）；拿不到宿主组件就退回
+     * 卡片内的行内确认——两种形态都保证"再点一次才真的删"。
+     */
+    function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm }) {
+      const cancel = h(
+        'button',
+        { key: 'cancel', type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', onClick: onCancel },
+        t('cancel'),
+      );
+      const confirm = h(
+        'button',
+        { key: 'confirm', type: 'button', className: 'dsm-wb-btn dsm-wb-btn-danger', onClick: onConfirm },
+        t('uninstallConfirm'),
+      );
+      const detail = h(
+        'div',
+        { className: 'dsm-wb-confirm-body' },
+        h('p', { className: 'dsm-wb-hint' }, t('uninstallDesc')),
+        h('p', { className: 'dsm-wb-hint' }, t('uninstallKept')),
+      );
+
+      if (typeof Modal === 'function') {
+        return h(
+          Modal,
+          {
+            key: 'confirm',
+            open: true,
+            onClose: onCancel,
+            title: t('uninstallTitle'),
+            description: t('uninstallDesc'),
+            footer: [cancel, confirm],
+          },
+          detail,
+        );
+      }
+      return h(
+        'div',
+        { key: 'confirm', className: 'dsm-wb-confirm' },
+        h('div', { className: 'dsm-wb-confirm-title' }, t('uninstallTitle')),
+        detail,
+        h('div', { className: 'dsm-wb-toolbar' }, cancel, confirm),
+      );
     }
 
     function ModelsCard({ t, view }) {
@@ -304,11 +392,13 @@ window.__ModuleLoader__.load({
         }
       }, [picked, load, t]);
 
-      // ---- 后端版本（更新检查 / 手动更新 / 回滚）----
+      // ---- 后端版本（更新检查 / 安装 / 更新 / 卸载 / 回滚）----
       const [backend, setBackend] = useState(undefined);
       const [check, setCheck] = useState(undefined);
       const [backendBusy, setBackendBusy] = useState(undefined);
       const [backendNotice, setBackendNotice] = useState(undefined);
+      /** 卸载的二次确认弹窗是否打开。 */
+      const [confirming, setConfirming] = useState(false);
 
       const loadBackend = useCallback(async () => {
         try {
@@ -324,11 +414,11 @@ window.__ModuleLoader__.load({
       }, [loadBackend]);
 
       const runBackend = useCallback(
-        async (action) => {
+        async (action, extra) => {
           setBackendBusy(action);
           setBackendNotice(undefined);
           try {
-            const payload = await request(BACKEND_PATH, 'POST', { action });
+            const payload = await request(BACKEND_PATH, 'POST', { action, ...(extra ?? {}) });
             if (payload.backend) setBackend(payload.backend);
             if (action === 'check') {
               setCheck(payload.check?.error ? { error: payload.check.error } : payload.check);
@@ -336,7 +426,7 @@ window.__ModuleLoader__.load({
               setCheck(undefined);
               setBackendNotice({
                 kind: 'ok',
-                text: t(action === 'update' ? 'backendUpdated' : 'backendRolledBack', {
+                text: t(BACKEND_NOTICE[action] ?? 'backendUpdated', {
                   tag: payload.latest?.tag ?? payload.local?.tag ?? '',
                 }),
               });
@@ -475,7 +565,7 @@ window.__ModuleLoader__.load({
         body.push(h('p', { key: 'path', className: 'dsm-wb-path' }, t('patchPath', { path: meta.patchPath })));
       }
 
-      // 后端版本区：只提示 + 手动更新。数据来自宿主半侧的 /backend 端点，
+      // 后端版本区：检查 / 安装 / 更新 / 卸载 / 回滚。数据来自宿主半侧的 /backend 端点，
       // 首屏那次 GET 不联网（快），点"检查更新"才真去查 release。
       if (backend) {
         const version = backend.version ?? {};
@@ -483,6 +573,8 @@ window.__ModuleLoader__.load({
           version.tag ?? (version.revision ? version.revision.slice(0, 7) : null) ?? t('backendUnmanaged');
         const history = Array.isArray(backend.history) ? backend.history : [];
         const latestTag = check?.latest?.tag ?? '';
+        // 老快照没有 exeExists 字段时按"已安装"处理，避免误显示成未安装。
+        const installed = backend.exeExists !== false;
 
         const section = [
           h(
@@ -506,26 +598,52 @@ window.__ModuleLoader__.load({
               },
               backendBusy === 'check' ? t('backendWorking') : t('backendCheck'),
             ),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsm-wb-btn dsm-wb-btn-primary',
-                disabled: Boolean(backendBusy),
-                onClick: () => runBackend('update'),
-              },
-              backendBusy === 'update' ? t('backendWorking') : t('backendUpdate'),
-            ),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsm-wb-btn dsm-wb-btn-outline',
-                disabled: Boolean(backendBusy),
-                onClick: () => runBackend('rollback'),
-              },
-              backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'),
-            ),
+            // 安装与卸载互斥：没装才显示"安装"，装了才显示"卸载"。
+            installed
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsm-wb-btn dsm-wb-btn-primary',
+                    disabled: Boolean(backendBusy),
+                    onClick: () => runBackend('update'),
+                  },
+                  backendBusy === 'update' ? t('backendWorking') : t('backendUpdate'),
+                )
+              : h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsm-wb-btn dsm-wb-btn-primary',
+                    disabled: Boolean(backendBusy),
+                    onClick: () => runBackend('install'),
+                  },
+                  backendBusy === 'install' ? t('backendWorking') : t('backendInstall'),
+                ),
+            installed
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsm-wb-btn dsm-wb-btn-danger',
+                    disabled: Boolean(backendBusy),
+                    onClick: () => setConfirming(true),
+                  },
+                  t('backendUninstall'),
+                )
+              : null,
+            installed
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsm-wb-btn dsm-wb-btn-outline',
+                    disabled: Boolean(backendBusy),
+                    onClick: () => runBackend('rollback'),
+                  },
+                  backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'),
+                )
+              : null,
           ),
           h(
             'p',
@@ -534,6 +652,10 @@ window.__ModuleLoader__.load({
             version.builtAt ? ` · ${t('backendBuilt', { time: version.builtAt })}` : '',
           ),
         ];
+
+        if (confirming) {
+          section.push(renderUninstallConfirm({ t, Modal, h, onCancel: () => setConfirming(false), onConfirm: () => { setConfirming(false); runBackend('uninstall', { confirm: true }); } }));
+        }
 
         if (check?.error) {
           section.push(h('p', { key: 'checkError', className: 'dsm-wb-backend-line' }, check.error));

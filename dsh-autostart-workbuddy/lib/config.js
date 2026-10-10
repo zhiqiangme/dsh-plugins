@@ -166,6 +166,13 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
     spec,
     models: resolveModelsConfig(config.models, spec),
     backend: resolveBackendConfig(config.backend, paths),
+    /**
+     * exe 是否来自插件自管目录（profile 里没显式配 exe）。
+     *
+     * 用来区分两种"文件不存在"：自管路径没有 exe = 还没装（面板里点安装）；
+     * 用户自己配的 exe 不存在 = 配置错了，仍要按老行为尝试启动，把错误暴露出来。
+     */
+    managedExe: !stringOr(config.exe, ''),
   };
 }
 
