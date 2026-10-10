@@ -12,6 +12,7 @@
   "files": [
     "lib",
     "icons",
+    "locale/*.json",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -21,6 +22,7 @@
     },
     "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "dsh": {

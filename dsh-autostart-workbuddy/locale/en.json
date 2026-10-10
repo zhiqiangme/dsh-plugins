@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WorkBuddy autostart",
+    "description": "Starts the WorkBuddy Panel (wb2api, 127.0.0.1:7863/panel) with DSH — idempotent and silent — and can optionally manage the workbuddy model list in the profile."
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WorkBuddy 连接启动",
+    "description": "DSH 启动时自动拉起 WorkBuddy Panel（wb2api, 127.0.0.1:7863/panel），幂等、静默；可选接管 profile 里的 workbuddy 模型列表。"
+  }
+}
