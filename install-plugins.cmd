@@ -9,7 +9,8 @@ rem No system Node.js is required: DSH ships a console node.exe as its "primary 
 rem (resources\runtime\primary-runtime\dependencies\node\bin\node.exe) and the script runs on it.
 rem Not "DeepSeek Harness.exe" with ELECTRON_RUN_AS_NODE=1 the way dsh.cmd does it: that exe is a
 rem GUI-subsystem binary without console input, so every interactive prompt reads EOF at once.
-rem A system node is only the fallback when the DSH install cannot be found.
+rem If that path moves, the copy DSH keeps under %DSH_HOME%\dsh-runtimes is tried next;
+rem a system node is only the last resort.
 setlocal
 
 set "SCRIPT=%~dp0scripts\install-plugins.mjs"
@@ -28,6 +29,13 @@ if not defined DSHCMD if exist "%LOCALAPPDATA%\Programs\DeepSeek Harness\resourc
 
 set "RUNTIME="
 if defined DSHCMD for %%I in ("%DSHCMD%\..\..\..\primary-runtime\dependencies\node\bin\node.exe") do if exist "%%~fI" set "RUNTIME=%%~fI"
+
+rem Fallback: DSH also keeps a copy of the primary runtime under its home directory
+rem (DSH_HOME, default %USERPROFILE%\.dsh). The install-dir layout above is internal and may
+rem move in a future DSH release; this copy keeps the installer working without system Node.
+set "HOMEDIR=%USERPROFILE%\.dsh"
+if defined DSH_HOME set "HOMEDIR=%DSH_HOME%"
+if not defined RUNTIME if exist "%HOMEDIR%\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe" set "RUNTIME=%HOMEDIR%\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
 
 if defined RUNTIME (
   "%RUNTIME%" "%SCRIPT%" %*
