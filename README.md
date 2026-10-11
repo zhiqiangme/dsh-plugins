@@ -8,8 +8,8 @@
 | --- | --- |
 | [dsh-autostart-workbuddy/](dsh-autostart-workbuddy/) | DSH 启动时自动拉起 WorkBuddy Panel（`wb2api.exe`, 127.0.0.1:7863），可选接管 profile 里的 workbuddy 模型列表 |
 | [dsh-tavily-search/](dsh-tavily-search/) | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内提供 `127.0.0.1:8787/v1` 搜索接口，插件页卡片里配 API Key、一键接入网页搜索（原名 `dsh-autostart-websearch`） |
-| [install-plugins.cmd](install-plugins.cmd) | 双击运行的安装入口，调用下面的 PowerShell 脚本 |
-| [scripts/install-plugins.ps1](scripts/install-plugins.ps1) | 把上面两个插件安装 / 更新 / 卸载到 DSH 的 profile，或查看安装状态 |
+| [install-plugins.cmd](install-plugins.cmd) | 双击运行的安装入口，用 DSH 自带的 Node 运行时执行下面的脚本 |
+| [scripts/install-plugins.mjs](scripts/install-plugins.mjs) | 把上面两个插件安装 / 更新 / 卸载到 DSH 的 profile，或查看安装状态 |
 
 ## 安装插件
 
@@ -22,16 +22,19 @@
 完成后重启对应的 DSH 生效。也可以在终端里带参数一行跑完（参数都可省略，省略的会询问）：
 
 ```powershell
-.\install-plugins.cmd -Action install -Plugins all -Profiles desktop -Yes
-.\install-plugins.cmd -Action status -Profiles desktop,web,cli
+.\install-plugins.cmd --action install --plugins all --profiles desktop --yes
+.\install-plugins.cmd --action status --profiles desktop,web,cli
+.\install-plugins.cmd --help
 ```
 
 要点：
 
 - 实际执行的是 DSH 自带的 `dsh plugin --profile <名> add|remove`：它在 profile 锁内用 DSH 自带的 pnpm 安装，
   同时维护 `package.json` 的 dependencies 和 `dsh.profile.bundles`，还会做插件兼容性检查。
-  所以脚本不手改 `package.json`，也**不需要系统装 Node**；`dsh.cmd` 从 PATH 或默认安装位置找，
-  也可以用环境变量 `DSH_CLI` 指定。profile 目录跟 DSH 一致：`DSH_HOME`（默认 `~/.dsh`）下的 `profiles\<名>`。
+  所以脚本不手改 `package.json`。`dsh.cmd` 从 PATH 或默认安装位置找，也可以用环境变量 `DSH_CLI` 指定。
+- **不需要系统装 Node.js**：插件本身跑在 DSH 进程里，不依赖系统 Node；安装脚本也一样——
+  `install-plugins.cmd` 和 DSH 自己的 `dsh.cmd` 一样，以 `ELECTRON_RUN_AS_NODE=1` 用 `DeepSeek Harness.exe` 执行 `.mjs`。
+  找不到 DSH 时才退回系统 `node`（此时脚本会说明缺什么）。profile 目录跟 DSH 一致：`DSH_HOME`（默认 `~/.dsh`）下的 `profiles\<名>`。
 - **更新**：插件以 `file:` 依赖拷贝进 profile，改了源码后再 `add`（包括 `--force`）pnpm 都认为"已是最新"。
   所以脚本先比对 profile 里那份拷贝和仓库的文件哈希，不一致才"先移除再添加"，一致就不动。
   移除只动 `package.json`，插件在 `cordis.patch.yml` 里的配置行（如模型白名单）原样保留；
