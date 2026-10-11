@@ -208,6 +208,12 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'panelHint', 'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'savedNoSync', 'savedSync',
     'saving', 'selectAll', 'summary', 'title', 'uninstallConfirm', 'uninstallDesc', 'uninstallKept',
     'uninstallTitle', 'vision',
+    // 插件自身更新区（与后端版本区无关）
+    'restartFailed', 'restartNow', 'restarting', 'updateAvailable', 'updateCancelled', 'updateCheck',
+    'updateCheckFailed', 'updateChecking', 'updateCurrent', 'updateFailed', 'updateForce', 'updateLatestVersion',
+    'updateLost', 'updateMismatch', 'updateNoMarket', 'updateNow', 'updateProgress', 'updateRefreshHint',
+    'updateRestartHint', 'updateRolledBack', 'updateRunning', 'updateStartFailed', 'updateSucceeded',
+    'updateTitle', 'updateTooFresh', 'updateUpToDate',
   ];
   assert.deepEqual(Object.keys(entry.zh).sort(), expected.sort());
 });
@@ -370,12 +376,19 @@ function buttonLabels(tree) {
   return collectByType(tree, 'button').map((node) => collectText(node).join(''));
 }
 
+/** 只取"后端版本"那一块：卡片底部还有插件自身的更新区，它也有"检查更新"按钮。 */
+function backendSection(tree) {
+  return collectByType(tree, 'div').find(
+    (node) => node.props.className === 'dsm-wb-backend' && collectText(node).includes('后端版本'),
+  );
+}
+
 test('后端区（已安装）：显示 更新/卸载/回滚，不显示 安装；卸载是危险色', () => {
   const { cards, t } = boot(
     backendStates({ exeExists: true, version: { tag: 'v1.13.0', revision: 'd'.repeat(40) }, history: [] }),
   );
   const tree = cards[0].component({ t, view: 'page' });
-  const labels = buttonLabels(tree);
+  const labels = buttonLabels(backendSection(tree));
 
   assert.ok(labels.includes('更新'), '已安装应显示更新');
   assert.ok(labels.includes('卸载'), '已安装应显示卸载');
@@ -391,7 +404,7 @@ test('后端区（已安装）：显示 更新/卸载/回滚，不显示 安装�
 
 test('后端区（未安装）：显示 安装，不显示 更新/卸载/回滚', () => {
   const { cards, t } = boot(backendStates({ exeExists: false, version: {}, history: [] }));
-  const labels = buttonLabels(cards[0].component({ t, view: 'page' }));
+  const labels = buttonLabels(backendSection(cards[0].component({ t, view: 'page' })));
 
   assert.ok(labels.includes('安装'), '未安装应显示安装');
   assert.equal(labels.includes('卸载'), false, '未安装不该显示卸载（与安装互斥）');
@@ -440,4 +453,118 @@ test('卸载二次确认：未点开时不出现确认界面', () => {
   const { cards, t } = boot(backendStates({ exeExists: true, version: {}, history: [] }));
   const texts = collectText(cards[0].component({ t, view: 'page' }));
   assert.equal(texts.includes('卸载后端？'), false);
+});
+
+// ---- 插件自身更新区 ----
+
+/** 「插件更新」区块的基准状态：有新版本、装了市场、没有进行中的任务。 */
+function updateModel(overrides = {}) {
+  return {
+    version: { phase: 'ready', ok: true, currentVersion: '26.10.11', latestVersion: '26.10.12', updateAvailable: true },
+    market: { phase: 'ready', restartSupported: false, endpoints: {} },
+    operation: undefined,
+    target: undefined,
+    busy: false,
+    notice: undefined,
+    restart: undefined,
+    ...overrides,
+  };
+}
+
+const noop = () => {};
+const updateActions = { checkUpdate: noop, startUpdate: noop, restart: noop };
+
+/** 渲染更新区并给出文本与按钮。 */
+function renderUpdate(model, actions = updateActions) {
+  const { module, t } = boot();
+  const section = module.renderUpdateSection(model, actions, t);
+  return { section, text: collectText(section).join('|'), buttons: collectByType(section, 'button') };
+}
+
+const button = (buttons, label) => buttons.find((node) => collectText(node).join('') === label);
+
+test('插件更新区：首屏（hooks 状态尚未就绪）显示检查中，且排在后端版本区之后', () => {
+  const { cards, t } = boot(backendStates({ exeExists: true, version: { tag: 'v1.13.0' }, history: [] }));
+  const tree = cards[0].component({ t, view: 'page' });
+  assert.ok(collectText(tree).includes('正在检查更新…'));
+  const sections = collectByType(tree, 'div').filter((node) => node.props.className === 'dsm-wb-backend');
+  assert.deepEqual(
+    sections.map((node) => collectText(node)[0]),
+    ['后端版本', '插件更新'],
+    '插件更新区应在后端版本区之后，两块各自独立',
+  );
+});
+
+test('插件更新区：有新版本且装了市场 → 两个版本号与"更新到"按钮', () => {
+  const started = [];
+  const { text, buttons } = renderUpdate(updateModel(), { ...updateActions, startUpdate: (force) => started.push(force) });
+  assert.match(text, /当前运行版本：\|26\.10\.11/);
+  assert.match(text, /npm 最新版本：\|26\.10\.12/);
+  assert.match(text, /有新版本/);
+  const update = button(buttons, '更新到 26.10.12');
+  assert.equal(update.props.disabled, false);
+  update.props.onClick();
+  assert.deepEqual(started, [false], '普通更新不带 force');
+});
+
+test('插件更新区：没装市场 → 只提示，没有更新按钮', () => {
+  const { text, buttons } = renderUpdate(updateModel({ market: { phase: 'absent' } }));
+  assert.equal(button(buttons, '更新到 26.10.12'), undefined);
+  assert.match(text, /dshmarket/);
+  assert.ok(button(buttons, '检查更新'));
+});
+
+test('插件更新区：已是最新 / 检查失败', () => {
+  const latest = renderUpdate(
+    updateModel({ version: { phase: 'ready', ok: true, currentVersion: '26.10.12', latestVersion: '26.10.12', updateAvailable: false } }),
+  );
+  assert.match(latest.text, /已是最新/);
+  assert.equal(latest.buttons.length, 1, '只剩"检查更新"');
+
+  const failed = renderUpdate(updateModel({ version: { phase: 'error', currentVersion: '26.10.11', reason: '连不上注册表' } }));
+  assert.match(failed.text, /检查更新失败：连不上注册表/);
+  assert.match(failed.text, /当前运行版本：\|26\.10\.11/);
+  assert.equal(button(failed.buttons, '检查更新').props.disabled, false);
+});
+
+test('插件更新区：进行中显示进度，按钮全部禁用', () => {
+  const { text, buttons } = renderUpdate(
+    updateModel({ operation: { operationId: 'b-update-1', state: 'running', progress: { percent: 40, detail: 'Progress: resolved 3' } } }),
+  );
+  assert.match(text, /正在更新… 40%/);
+  assert.match(text, /Progress: resolved 3/);
+  assert.ok(buttons.every((node) => node.props.disabled === true));
+});
+
+test('插件更新区：成功后按 restartRequired 提示重启；市场支持重启时才给重启按钮', () => {
+  const operation = { state: 'succeeded', installedVersion: '26.10.12', outcome: { restartRequired: true } };
+  const desktop = renderUpdate(updateModel({ operation, target: '26.10.12' }));
+  assert.match(desktop.text, /已更新到 26\.10\.12。 重启 DSH 后生效。/);
+  assert.equal(button(desktop.buttons, '立即重启 DSH'), undefined, '桌面版的重启归桌面壳管');
+  assert.doesNotMatch(desktop.text, /注意：装上的是/);
+
+  const web = renderUpdate(updateModel({ operation, target: '26.10.12', market: { phase: 'ready', restartSupported: true } }));
+  assert.ok(button(web.buttons, '立即重启 DSH'));
+});
+
+test('插件更新区：装上的版本低于目标时警告；高于目标不警告', () => {
+  const below = renderUpdate(updateModel({ target: '26.10.12', operation: { state: 'succeeded', installedVersion: '26.10.11', outcome: {} } }));
+  assert.match(below.text, /注意：装上的是 26\.10\.11，不是预期的 26\.10\.12/);
+  const above = renderUpdate(updateModel({ target: '26.10.12', operation: { state: 'succeeded', installedVersion: '26.10.13', outcome: {} } }));
+  assert.doesNotMatch(above.text, /注意：装上的是/);
+});
+
+test('插件更新区：发布冷却期 / 版本未变时给"强制更新"，其它失败不给', () => {
+  const started = [];
+  const fresh = renderUpdate(
+    updateModel({ operation: { state: 'failed', failure: { code: 'RELEASE_TOO_FRESH', message: 'x' } } }),
+    { ...updateActions, startUpdate: (force) => started.push(force) },
+  );
+  assert.match(fresh.text, /发布冷却期/);
+  button(fresh.buttons, '强制更新').props.onClick();
+  assert.deepEqual(started, [true]);
+
+  const other = renderUpdate(updateModel({ operation: { state: 'failed', failure: { code: 'UPDATE_FAILED', message: 'pnpm 退出码 1' } } }));
+  assert.match(other.text, /更新失败：pnpm 退出码 1/);
+  assert.equal(button(other.buttons, '强制更新'), undefined);
 });

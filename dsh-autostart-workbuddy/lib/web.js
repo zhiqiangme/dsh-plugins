@@ -1,6 +1,6 @@
 /**
  * Web 面板的宿主半侧：把「后端有哪些模型 / 当前白名单是什么」交给浏览器半侧，
- * 并接受勾选结果写回 profile。
+ * 并接受勾选结果写回 profile；另有后端版本路由与插件自身的版本检查路由（见 lib/update.js）。
  *
  * 为什么必须有宿主半侧：
  *   页面跑在 DSH Web 客户端里，拿不到 wb2api 的响应——面板只监听 127.0.0.1:7863
@@ -32,6 +32,7 @@ import {
   uninstallBackend,
 } from './backend.js';
 import { creditsLabel, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, syncModels } from './models.js';
+import { createVersionChecker } from './update.js';
 
 /** 插件名：与 package.json / cordis.patch.yml 里的 name 保持一致。 */
 const PLUGIN_ID = 'dsh-autostart-workbuddy';
@@ -44,6 +45,9 @@ export const MODELS_PATH = `${PANEL_BASE}/models`;
 
 /** 后端版本与更新端点（GET 读状态 / POST 执行 check|update|rollback）。 */
 export const BACKEND_PATH = `${PANEL_BASE}/backend`;
+
+/** 本插件自身的版本检查端点：当前运行版本 vs npm latest（?force=1 绕过缓存）。与后端 wb2api 的版本无关。 */
+export const VERSION_PATH = `${PANEL_BASE}/version`;
 
 /** 请求体上限：白名单最多几十个 id，64KB 足够，防止有人往 loopback 路由灌大包。 */
 const MAX_BODY_BYTES = 64 * 1024;
@@ -363,8 +367,22 @@ export function configEditorOf(ctx) {
   return hostService(ctx, 'configEditor', (candidate) => typeof candidate?.edit === 'function');
 }
 
-/** 注册面板路由；宿主没有 webServer 时只记一条 warn。 */
-export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service }) {
+/** `?force=1` / `?force=true` 视为强制刷新；其它值（含缺省）走缓存。 */
+function forceFrom(req) {
+  try {
+    const value = new URL(req.url ?? '', 'http://localhost').searchParams.get('force');
+    return value === '1' || value === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 注册面板路由；宿主没有 webServer 时只记一条 warn。
+ *
+ * checkVersion 只给测试注入，缺省用 lib/update.js 的带缓存检查器。
+ */
+export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, checkVersion = createVersionChecker() }) {
   const mount = (scoped) => {
     const holder = scoped ?? ctx;
     const webServer =
@@ -374,7 +392,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       return;
     }
 
-    /** 来源校验与异常兜底：两条路由共用，避免各写一遍。 */
+    /** 来源校验与异常兜底：各路由共用，避免各写一遍。 */
     const guard = (handler) => async (req, res) => {
       if (!loopbackOrigin(req)) {
         json(res, 403, { ok: false, reason: 'origin-not-trusted' });
@@ -421,8 +439,21 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
         handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service })),
       });
 
+      const disposeVersion = webServer.register({
+        kind: 'exact',
+        path: VERSION_PATH,
+        handler: guard(async (req, res) => {
+          if (req.method !== 'GET') {
+            json(res, 405, { ok: false, reason: 'method not allowed' });
+            return;
+          }
+          // 注册表都连不上也回 200：失败原因是给用户看的结果，不是路由本身出错
+          json(res, 200, await checkVersion({ force: forceFrom(req) }));
+        }),
+      });
+
       return () => {
-        for (const dispose of [disposeModels, disposeBackend]) {
+        for (const dispose of [disposeModels, disposeBackend, disposeVersion]) {
           try {
             dispose?.();
           } catch {

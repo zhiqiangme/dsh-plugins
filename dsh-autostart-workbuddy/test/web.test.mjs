@@ -13,7 +13,15 @@ import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
 import { resolvePluginConfig } from '../lib/config.js';
-import { BACKEND_PATH, MODELS_PATH, applySelection, describeModels, loopbackOrigin, registerPanelRoutes } from '../lib/web.js';
+import {
+  BACKEND_PATH,
+  MODELS_PATH,
+  VERSION_PATH,
+  applySelection,
+  describeModels,
+  loopbackOrigin,
+  registerPanelRoutes,
+} from '../lib/web.js';
 import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
@@ -86,10 +94,11 @@ function fakeRes() {
   };
 }
 
-function fakeReq(method, { origin, body } = {}) {
+function fakeReq(method, { origin, body, url } = {}) {
   const chunks = body === undefined ? [] : [Buffer.from(body, 'utf8')];
   return {
     method,
+    url,
     headers: origin === undefined ? {} : { origin },
     async *[Symbol.asyncIterator]() {
       for (const chunk of chunks) yield chunk;
@@ -246,8 +255,8 @@ test('路由：来源、方法与请求体边界', async () => {
   const resolved = configFor(port);
   const ctx = fakeCtx({ configEditor: editorFor() });
   try {
-    registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env });
-    assert.equal(ctx.routes.length, 2);
+    registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env, checkVersion: async () => ({ ok: true }) });
+    assert.equal(ctx.routes.length, 3);
     const modelsRoute = ctx.routes.find((route) => route.path === MODELS_PATH);
     const backendRoute = ctx.routes.find((route) => route.path === BACKEND_PATH);
     assert.ok(modelsRoute, '应注册模型路由');
@@ -333,10 +342,10 @@ test('路由：用 ctx.inject 等 webServer 就绪，而不是在 apply 时直�
       },
     },
   });
-  assert.equal(routes.length, 2);
+  assert.equal(routes.length, 3);
   assert.deepEqual(
     routes.map((route) => route.path).sort(),
-    [BACKEND_PATH, MODELS_PATH].sort(),
+    [BACKEND_PATH, MODELS_PATH, VERSION_PATH].sort(),
   );
   for (const route of routes) assert.equal(route.kind, 'exact');
 });
@@ -366,6 +375,37 @@ test('后端路由：GET 给版本快照且默认不联网，POST 校验动作�
   await handler(fakeReq('POST', { body: JSON.stringify({ action: 'nope' }) }), unknownAction);
   assert.equal(unknownAction.status, 400);
   assert.match(unknownAction.body.reason, /不认识的动作/);
+});
+
+test('插件版本路由：GET 交给版本检查器，只有 ?force=1 绕过缓存；其它方法 405、外部来源 403', async () => {
+  const ctx = fakeCtx();
+  const calls = [];
+  registerPanelRoutes(ctx, {
+    logger: ctx.logger,
+    resolved: {},
+    env: process.env,
+    checkVersion: async (options) => {
+      calls.push(options);
+      return { ok: true, currentVersion: '26.10.11', latestVersion: '26.10.12', updateAvailable: true };
+    },
+  });
+  const handler = ctx.routes.find((route) => route.path === VERSION_PATH).handler;
+  assert.equal(VERSION_PATH, '/plugins/dsh-autostart-workbuddy/version');
+
+  const cached = fakeRes();
+  await handler(fakeReq('GET', { url: VERSION_PATH }), cached);
+  assert.equal(cached.status, 200);
+  assert.equal(cached.body.updateAvailable, true);
+  await handler(fakeReq('GET', { url: `${VERSION_PATH}?force=1` }), fakeRes());
+  assert.deepEqual(calls, [{ force: false }, { force: true }]);
+
+  const wrongMethod = fakeRes();
+  await handler(fakeReq('POST'), wrongMethod);
+  assert.equal(wrongMethod.status, 405);
+
+  const foreign = fakeRes();
+  await handler(fakeReq('GET', { origin: 'http://evil.example' }), foreign);
+  assert.equal(foreign.status, 403);
 });
 
 test('loopbackOrigin：无 Origin 放行，loopback 放行，其它拒绝', () => {

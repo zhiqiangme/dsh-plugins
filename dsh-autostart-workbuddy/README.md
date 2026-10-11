@@ -72,6 +72,20 @@ node lib/sync-cli.js
 `configForms` 通道要求宿主声明带 `.volatile()` 的 schemastery 配置，本插件刻意不引这个依赖。
 路由只接受 loopback 来源（无 Origin 或 localhost/127.0.0.1/::1），其它一律 403。
 
+### 插件更新（卡片最底部）
+
+与上面管 wb2api 的「后端版本」是两回事：这一块管**本插件自己**。
+
+- 显示当前运行版本与 npm 最新版本。版本检查走宿主半侧路由 `/plugins/dsh-autostart-workbuddy/version`
+  （[lib/update.js](lib/update.js)）：同时问 npm 官方源与 npmmirror，取较高者，缓存 10 分钟，「检查更新」绕过缓存。
+- 装了 [dshmarket](https://www.npmjs.com/package/dshmarket) 时出现「更新到 x」按钮，经它的公开更新 API v1 更新并显示进度；
+  没装时只提示有新版本。本插件不自己跑 pnpm：DSH 自带的插件管理器不支持升级已安装的插件，
+  profile 锁、文件占用、回滚与版本核对都交给 dshmarket。
+- 桌面版更新完成后要**重启 DSH** 才会换上新代码（桌面版的重启归桌面壳管，卡片不提供重启按钮）。
+  新版本刚发布时可能被 pnpm 的发布冷却期挡下，卡片会给出「强制更新」。
+- 一键更新面向从 npm 安装的情况。从本地目录（`file:`）装时 dshmarket 把它当作本地拷贝（`linked`），
+  是否、以及如何换成 npm 版本由它决定；这种情况下请用上文的 `install-plugins.cmd` 更新。
+
 ⚠️ 改了 `lib/client.js` 要**重启 DSH** 才生效：客户端 bundle 的版本号由文件 mtime/size 派生，
 宿主只在启动时扫描一次；`lib/*.js` 的改动同样不会热重载。
 
