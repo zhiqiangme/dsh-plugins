@@ -166,9 +166,11 @@ const isBlank = (line) => line.trim() === '';
  * 认不出就返回 ok:false，让调用方放弃写入——宁可不同步，也不能猜错位置改坏 profile。
  */
 export function locateModelsBlock(lines, providerName = 'workbuddy') {
+  let sawProviders = false;
   for (let i = 0; i < lines.length; i += 1) {
     const header = /^(\s*)providers:\s*(#.*)?$/.exec(lines[i]);
     if (!header) continue;
+    sawProviders = true;
     const providersIndent = header[1].length;
     const providerIndent = providersIndent + 2;
     const modelsIndent = providerIndent + 2;
@@ -219,24 +221,96 @@ export function locateModelsBlock(lines, providerName = 'workbuddy') {
       return { ok: false, reason: `provider ${providerName} 下没有 models 段` };
     }
   }
+  // missing 让调用方区分"整个 provider 不在"（可以补建）与"在但形状不对"（必须拒绝）。
+  if (sawProviders) return { ok: false, missing: 'provider', reason: `providers 段里没有 ${providerName}` };
   return { ok: false, reason: '文件里没有 providers: 段' };
+}
+
+/** llm-pi-ai 条目的识别：按包名认，id 可能被用户改过。 */
+const LLM_PI_AI_NAME = /^\s+name:\s*["']?@deepseek-ai\/dsh-llm-pi-ai["']?\s*(#.*)?$/;
+
+/**
+ * provider 整段不在时，在 llm-pi-ai 条目的 `providers:` 末尾补建一段。
+ *
+ * 实际遇到过：profile 里 workbuddy provider 整段丢失后，只替换 models 段的同步就再也
+ * 写不进去，DSH 模型列表里 WorkBuddy 分组随之消失，插件面板保存也无效。
+ * 补建的骨架与本机原先手写的那段一致；密钥走凭据库的 WORKBUDDY_PROXY_KEY，不落明文。
+ * 只往 llm-pi-ai 条目里加：别的插件（如 dsh-connect-trae）也可能有 providers: 段，不能加错地方。
+ */
+export function insertProviderBlock(lines, providerName, entries, provider) {
+  for (let begin = 0; begin < lines.length; begin += 1) {
+    if (!/^- /.test(lines[begin])) continue;
+    // 条目在下一个顶格行（下一个条目或顶格注释）处结束。
+    let end = lines.length;
+    for (let j = begin + 1; j < lines.length; j += 1) {
+      if (!isBlank(lines[j]) && indentOf(lines[j]) === 0) {
+        end = j;
+        break;
+      }
+    }
+    if (!lines.slice(begin + 1, end).some((line) => LLM_PI_AI_NAME.test(line))) continue;
+
+    for (let i = begin + 1; i < end; i += 1) {
+      const header = /^(\s*)providers:\s*(#.*)?$/.exec(lines[i]);
+      if (!header) continue;
+      const providersIndent = header[1].length;
+      let providersEnd = end;
+      for (let j = i + 1; j < end; j += 1) {
+        if (isBlank(lines[j])) continue;
+        if (indentOf(lines[j]) <= providersIndent) {
+          providersEnd = j;
+          break;
+        }
+      }
+      while (providersEnd > i + 1 && isBlank(lines[providersEnd - 1])) providersEnd -= 1;
+
+      const pad = (n) => ' '.repeat(providersIndent + n);
+      const rendered = renderModelsBlock(entries, providersIndent + 6);
+      const block = [
+        `${pad(2)}${providerName}:`,
+        `${pad(4)}displayName: ${yamlScalar(provider.displayName)}`,
+        `${pad(4)}apiKeyEnv: ${yamlScalar(provider.apiKeyEnv)}`,
+        `${pad(4)}baseURL: ${yamlScalar(provider.baseURL)}`,
+        `${pad(4)}api: openai-completions`,
+        `${pad(4)}reasoning: max`,
+        `${pad(4)}models:`,
+        ...rendered,
+      ];
+      return { ok: true, lines: [...lines.slice(0, providersEnd), ...block, ...lines.slice(providersEnd)], rendered };
+    }
+    return { ok: false, reason: 'llm-pi-ai 条目下没有 providers: 段' };
+  }
+  return { ok: false, reason: 'profile 里没有 llm-pi-ai 条目' };
+}
+
+/** provider 的 baseURL（OpenAI 兼容，带 /v1/）：由 /v1/models 地址去掉末尾的 models 得到。 */
+export function providerBaseURL(baseURL) {
+  const endpoint = modelsEndpoint(baseURL);
+  return endpoint ? endpoint.replace(/models$/, '') : undefined;
 }
 
 /**
  * 用生成的条目替换 `models:` 段，其余内容逐字节保留（含换行风格与结尾换行）。
  *
- * @returns {{ ok: boolean, changed?: boolean, text?: string, reason?: string }}
+ * 传了 `provider`（补建用的骨架）且 provider 整段不在时，改为在 llm-pi-ai 里补建，见 insertProviderBlock。
+ *
+ * @returns {{ ok: boolean, changed?: boolean, created?: boolean, text?: string, rendered?: string[], reason?: string }}
  */
-export function updatePatchText(text, entries, providerName = 'workbuddy') {
+export function updatePatchText(text, entries, providerName = 'workbuddy', provider) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = text.split(/\r?\n/);
   const located = locateModelsBlock(lines, providerName);
-  if (!located.ok) return { ok: false, reason: located.reason };
+  if (!located.ok) {
+    if (located.missing !== 'provider' || !provider) return { ok: false, reason: located.reason };
+    const inserted = insertProviderBlock(lines, providerName, entries, provider);
+    if (!inserted.ok) return { ok: false, reason: inserted.reason };
+    return { ok: true, changed: true, created: true, text: inserted.lines.join(eol), rendered: inserted.rendered };
+  }
 
   const rendered = renderModelsBlock(entries, located.itemIndent);
   const current = lines.slice(located.modelsIndex + 1, located.arrayEnd);
   if (current.length === rendered.length && current.every((line, i) => line === rendered[i])) {
-    return { ok: true, changed: false, text };
+    return { ok: true, changed: false, text, rendered };
   }
 
   const next = [
@@ -244,7 +318,7 @@ export function updatePatchText(text, entries, providerName = 'workbuddy') {
     ...rendered,
     ...lines.slice(located.arrayEnd),
   ];
-  return { ok: true, changed: true, text: next.join(eol) };
+  return { ok: true, changed: true, text: next.join(eol), rendered };
 }
 
 /** 拼 `/v1/models`：允许 baseURL 写成 `http://host:port`、`.../v1` 或 `.../v1/`。 */
@@ -566,14 +640,18 @@ export async function syncModels(options) {
   }
 
   const before = readFileSync(patchPath, 'utf8');
-  const updated = updatePatchText(before, entries, models.provider);
+  const updated = updatePatchText(before, entries, models.provider, {
+    displayName: models.provider === 'workbuddy' ? 'WorkBuddy' : models.provider,
+    apiKeyEnv: 'WORKBUDDY_PROXY_KEY',
+    baseURL: providerBaseURL(models.baseURL || `http://${spec.host}:${spec.port}`),
+  });
   if (!updated.ok) return { state: 'failed', reason: updated.reason, patchPath, entries };
   if (!updated.changed) return { state: 'unchanged', patchPath, entries };
 
-  const rendered = renderModelsBlock(entries, locateModelsBlock(before.split(/\r?\n/), models.provider).itemIndent);
-  if (dryRun) return { state: 'dry-run', patchPath, entries, rendered };
+  const { rendered, created } = updated;
+  if (dryRun) return { state: 'dry-run', patchPath, entries, rendered, created };
 
   const backup = backupPatchFile(patchPath, models.keepBackups ?? 3);
   writeFileSync(patchPath, updated.text);
-  return { state: 'updated', patchPath, entries, backup };
+  return { state: 'updated', patchPath, entries, backup, created };
 }

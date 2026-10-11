@@ -20,6 +20,7 @@ import {
   modelDisplayName,
   modelsEndpoint,
   planModelEntries,
+  providerBaseURL,
   readPluginModelsConfig,
   renderModelsBlock,
   resolveProfilePatchPath,
@@ -251,6 +252,84 @@ test('回写：provider 下没有 models 段时拒绝写入', () => {
   const result = updatePatchText(SAMPLE_NO_MODELS_PATCH, planModelEntries(SAMPLE, {}), 'workbuddy');
   assert.equal(result.ok, false);
   assert.match(result.reason, /models/);
+});
+
+/** workbuddy provider 整段丢失的 profile；另一个条目也有 providers:，用来确认不会补错地方。 */
+const SAMPLE_NO_PROVIDER_PATCH = `- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      openrouter:
+        displayName: OpenRouter
+        models:
+          - id: anthropic/claude-opus-5.5
+            name: Claude Opus 5.5
+        baseURL: https://openrouter.ai/api/v1/
+
+- id: dsh-connect-trae
+  name: dsh-connect-trae
+  config:
+    providers:
+      cn:
+        enabled: true
+- id: locale
+  name: "@deepseek-ai/dsh-client-locale"
+  config:
+    preference: zh
+`;
+
+const PROVIDER_SKELETON = {
+  displayName: 'WorkBuddy',
+  apiKeyEnv: 'WORKBUDDY_PROXY_KEY',
+  baseURL: 'http://127.0.0.1:7863/v1/',
+};
+
+test('回写：provider 整段丢失时在 llm-pi-ai 的 providers 末尾补建', () => {
+  const entries = planModelEntries(SAMPLE, {});
+  const result = updatePatchText(SAMPLE_NO_PROVIDER_PATCH, entries, 'workbuddy', PROVIDER_SKELETON);
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(result.created, true);
+
+  const lines = result.text.split('\n');
+  const at = lines.indexOf('      workbuddy:');
+  assert.ok(at > 0, result.text);
+  // 必须落在 llm-pi-ai 条目里（openrouter 之后、dsh-connect-trae 之前），且空行留在补建段之后。
+  assert.ok(at > lines.indexOf('        baseURL: https://openrouter.ai/api/v1/'));
+  assert.ok(at < lines.indexOf('- id: dsh-connect-trae'));
+  assert.deepEqual(lines.slice(at + 1, at + 7), [
+    '        displayName: WorkBuddy',
+    '        apiKeyEnv: WORKBUDDY_PROXY_KEY',
+    '        baseURL: http://127.0.0.1:7863/v1/',
+    '        api: openai-completions',
+    '        reasoning: max',
+    '        models:',
+  ]);
+  assert.equal(lines[at + 7], '          - id: cn:alpha');
+  assert.equal(result.text.match(/workbuddy:/g).length, 1, '只补建一次');
+
+  // 补建后再同步就走普通替换路径，结果稳定。
+  const again = updatePatchText(result.text, entries, 'workbuddy', PROVIDER_SKELETON);
+  assert.equal(again.ok, true);
+  assert.equal(again.changed, false);
+});
+
+test('回写：没传补建骨架时，provider 丢失仍拒绝写入', () => {
+  const result = updatePatchText(SAMPLE_NO_PROVIDER_PATCH, planModelEntries(SAMPLE, {}), 'workbuddy');
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /workbuddy/);
+});
+
+test('回写：profile 里没有 llm-pi-ai 条目时不补建', () => {
+  const text = SAMPLE_NO_PROVIDER_PATCH.replace('"@deepseek-ai/dsh-llm-pi-ai"', 'something-else');
+  const result = updatePatchText(text, planModelEntries(SAMPLE, {}), 'workbuddy', PROVIDER_SKELETON);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /llm-pi-ai/);
+});
+
+test('provider baseURL：统一成带 /v1/ 的形式', () => {
+  assert.equal(providerBaseURL('http://127.0.0.1:7863'), 'http://127.0.0.1:7863/v1/');
+  assert.equal(providerBaseURL('http://127.0.0.1:7863/v1'), 'http://127.0.0.1:7863/v1/');
+  assert.equal(providerBaseURL(''), undefined);
 });
 
 test('接口地址归一：裸主机、/v1、带尾斜杠都能拼出 /v1/models', () => {
