@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,6 +92,51 @@ test('子进程提前退出：不白等满超时，并给出退出码原因', as
   assert.equal(result.state, 'failed');
   assert.match(result.reason, /提前退出/);
   assert.ok(elapsed < 10_000, `应在子进程退出后立即失败，实际耗时 ${elapsed}ms`);
+});
+
+/** 轮询到条件成立或超时。 */
+async function waitUntil(predicate, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return predicate();
+}
+
+test('子进程退出后 stderr 仍有输出：不抛未捕获异常，日志完整落盘', async () => {
+  const port = await freePort();
+  const spec = specFor(port, { env: { ...process.env, TEST_MODE: 'panic' } });
+  const service = new ManagedService(spec, silent);
+
+  const result = await service.ensureRunning();
+  assert.equal(result.state, 'failed');
+  assert.match(result.reason, /code=2/);
+
+  // 日志流在子进程 'close' 之后才关；等它落盘再读。
+  const errLog = () => {
+    const name = readdirSync(spec.logDir).find((item) => item.endsWith('.err.log'));
+    return name ? readFileSync(join(spec.logDir, name), 'utf8') : '';
+  };
+  assert.ok(await waitUntil(() => errLog().endsWith('late stderr END!!')), `stderr 应完整写入日志，实际 ${errLog().length} 字节`);
+});
+
+test('停止后重新拉起：上一轮的退出信息与停止标记不带进新一轮', async () => {
+  const port = await freePort();
+  const warnings = [];
+  const service = new ManagedService(specFor(port), { ...silent, warn: (line) => warnings.push(line) });
+
+  assert.equal((await service.ensureRunning()).state, 'started');
+  await service.stop('模拟更新');
+  assert.ok(service.exitInfo, '停止后应记下退出信息');
+
+  assert.equal((await service.ensureRunning()).state, 'started');
+  assert.equal(service.exitInfo, undefined, '新一轮不应沿用旧进程的退出信息');
+  assert.equal(service.stopping, false);
+
+  // 新进程意外退出必须报警（旧实现里 stopping 一直停在 true，这条会被吞掉）。
+  service.child.kill();
+  assert.ok(await waitUntil(() => warnings.some((line) => line.includes('已退出'))), warnings.join('\n'));
 });
 
 test('可执行文件不存在：直接失败且不 spawn', async () => {

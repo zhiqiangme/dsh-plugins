@@ -150,7 +150,8 @@ export class ManagedService {
     this.exitInfo = undefined;
     /** stderr 环形缓冲：启动失败时用来给出可诊断的原因，而不是只说「超时」。 */
     this.recentStderr = [];
-    this.streams = [];
+    /** 主动停止中：此时的退出是预期的，不报警。每次拉起都会重置（见 #spawn）。 */
+    this.stopping = false;
   }
 
   get key() {
@@ -233,7 +234,20 @@ export class ManagedService {
     } catch (error) {
       return `无法创建日志文件: ${error instanceof Error ? error.message : String(error)}`;
     }
-    this.streams = [out, err];
+    // 日志流必须有 error 监听：打开失败（权限、磁盘满）或写入出错时，没有监听的 'error'
+    // 会变成宿主进程里的未捕获异常，把整个 DSH 带崩。日志写不进去只值得一条 warn。
+    let logFailed = false;
+    for (const stream of [out, err]) {
+      stream.on('error', (error) => {
+        if (logFailed) return;
+        logFailed = true;
+        this.logger.warn(`[workbuddy] ${this.title} 日志写入失败: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+    const streams = [out, err];
+    const write = (stream, chunk) => {
+      if (!stream.writableEnded && !stream.destroyed) stream.write(chunk);
+    };
 
     let child;
     try {
@@ -246,31 +260,42 @@ export class ManagedService {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
-      this.#closeStreams();
+      closeStreams(streams);
       return `无法启动进程: ${error instanceof Error ? error.message : String(error)}`;
     }
 
+    // 每次拉起都是新的一轮：上一轮（更新/回滚前被停掉的那个进程）留下的退出信息、
+    // stderr 与"正在停止"标记都不能带进来，否则新进程崩了不报警、超时时报的是旧进程的退出原因。
     this.child = child;
     this.startedByUs = true;
     this.pid = child.pid;
+    this.exitInfo = undefined;
+    this.recentStderr = [];
+    this.stopping = false;
+    const current = () => this.child === child;
 
-    child.stdout?.pipe(out);
+    child.stdout?.on('data', (chunk) => write(out, chunk));
     child.stderr?.on('data', (chunk) => {
-      err.write(chunk);
-      this.#rememberStderr(String(chunk));
+      write(err, chunk);
+      if (current()) this.#rememberStderr(String(chunk));
     });
     child.once('error', (error) => {
-      this.exitInfo = { error: error instanceof Error ? error.message : String(error) };
-      this.logger.error(`[workbuddy] ${this.title} 进程错误: ${this.exitInfo.error}`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (current()) this.exitInfo = { error: message };
+      this.logger.error(`[workbuddy] ${this.title} 进程错误: ${message}`);
     });
     child.once('exit', (code, signal) => {
+      // 迟到的旧进程退出事件只关它自己的日志，不能改写新一轮的状态。
+      if (!current()) return;
       this.exitInfo = { code, signal };
-      this.#closeStreams();
       // 正常停止（disposer 主动 kill）不算异常，只有「非预期退出」才值得报警。
       if (!this.stopping) {
         this.logger.warn(`[workbuddy] ${this.title} 已退出 (code=${code}, signal=${signal})`);
       }
     });
+    // 日志流在 'close' 才关：'exit' 触发时 stdio 可能还没读完（Go panic 的大段堆栈就是这样），
+    // 此时关流，后续的 'data' 会写到已结束的流上。'close' 保证 stdio 已全部结束。
+    child.once('close', () => closeStreams(streams));
 
     return undefined;
   }
@@ -326,7 +351,7 @@ export class ManagedService {
       }
       await waitForExit(child, 2000);
     }
-    this.#closeStreams();
+    // 日志流由该进程自己的 'close' 事件收尾（见 #spawn），这里不提前关。
     return { stopped: true, skipped: false };
   }
 
@@ -344,15 +369,15 @@ export class ManagedService {
     }
   }
 
-  #closeStreams() {
-    for (const stream of this.streams) {
-      try {
-        stream.end();
-      } catch {
-        /* 忽略 */
-      }
+}
+
+function closeStreams(streams) {
+  for (const stream of streams) {
+    try {
+      stream.end();
+    } catch {
+      /* 忽略 */
     }
-    this.streams = [];
   }
 }
 

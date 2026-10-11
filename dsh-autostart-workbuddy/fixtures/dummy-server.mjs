@@ -3,6 +3,7 @@
  * 健康探针 / 假 GitHub Release"。
  *
  *   TEST_MODE   listen（默认，只监听 TCP）| exit（立刻退出，模拟启动失败）
+ *               | panic（以 code 2 退出，但继承了 stderr 的孙进程在退出后还会再写一段）
  *               | http-models（HTTP 服务，GET /v1/models 返回模型列表）
  *               | http-empty（返回空列表，模拟上游故障时面板的降级行为）
  *               | http-error（返回 500）
@@ -31,6 +32,22 @@ const port = Number(process.env.TEST_PORT || 0);
 if (mode === 'exit') {
   process.stderr.write('dummy: 故意启动失败\n');
   process.exit(3);
+}
+
+if (mode === 'panic') {
+  // 孙进程继承 stderr，在本进程退出后才写：父进程先收到 'exit'，stderr 却还开着、之后还有数据。
+  // 只靠本进程多写一些测不出来——Windows 下管道写是同步的，退出前数据已被读走，时序不可控；
+  // 孙进程持有句柄则稳定复现（后端派生辅助进程时就是这种形态）。
+  // detached 必须开：Windows 下 libuv 把子进程放进"父进程退出即全杀"的 Job，不脱离就跟着本进程一起死。
+  // 输出不带换行：-e 的代码经命令行传递，转义序列容易被改写。
+  const { spawn } = await import('node:child_process');
+  spawn(process.execPath, ['-e', "setTimeout(() => process.stderr.write('late stderr END!!'), 300)"], {
+    stdio: ['ignore', 'ignore', 'inherit'],
+    detached: true,
+    windowsHide: true,
+  });
+  process.stderr.write('panic: boom\n');
+  process.exit(2);
 }
 
 /** 默认模型清单：两个域各一条，字段与 wb2api 真实返回对齐。 */
@@ -197,7 +214,8 @@ if (mode === 'http-release') {
   server.listen(port, '127.0.0.1', () => {
     process.stdout.write(`dummy http listening ${server.address().port}\n`);
   });
-} else {
+} else if (mode !== 'panic') {
+  // panic 不监听：它只等 stderr 写完就退出，监听了反而会被当成"启动成功"。
   const { createServer } = await import('node:net');
   const server = createServer(() => {});
   server.listen(port, '127.0.0.1', () => {
