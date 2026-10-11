@@ -1,7 +1,7 @@
 /**
  * Tavily → Anthropic Messages 适配服务：把 Tavily 检索包装成 DSH「网页搜索」能用的接口。
  *
- * 来源：移植自 D:\Project\Test\tavily-anthropic-search\server.js（Test 仓库提交 242449c），
+ * 来源：移植自作者早先独立运行的 tavily-anthropic-search 适配服务（server.js），
  * 改成 ESM 并做了两处调整：
  *   - API Key 不再在启动时固定读取，而是每次请求调用 `resolveApiKey()` 现取——
  *     key 存在 DSH 凭据库里，用户在插件页改了 key，下一次搜索立即生效，不用重启；
@@ -41,7 +41,7 @@ export const SHIM_DEFAULTS = Object.freeze({
   maxBodyBytes: 1024 * 1024,
   /** 非空时校验调用方的 x-api-key / Bearer；为空则不校验（DSH 只要求非空值）。 */
   shimApiKey: '',
-  userAgent: 'dsh-tavily-search/0.2',
+  userAgent: 'dsh-tavily-search',
   /** 缺 key 时错误信息里的补救提示；插件会换成"去插件页填写"的说法。 */
   missingKeyHint: '请设置 TAVILY_API_KEY。',
 });

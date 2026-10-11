@@ -1,12 +1,14 @@
-# dsh-autostart-workbuddy
+# @zhiqiangme/dsh-autostart-workbuddy
 
-DSH 启动时自动拉起 **WorkBuddy Panel**（`wb2api.exe`），替代手动运行 `scripts/WorkBuddy Panel.ps1` 或 `scripts/Start All.ps1`。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件：DSH 启动时自动拉起
+**WorkBuddy Panel**（[workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel) 的 `wb2api.exe`），
+不用再手动启动它；还可以接管 DSH 里 workbuddy 的模型列表、在插件页管理后端版本。
 
 | 服务 | 端点 | 作用 |
 | --- | --- | --- |
 | WorkBuddy Panel（`wb2api.exe`） | `127.0.0.1:7863` | profile 里 `workbuddy` provider 的上游（`http://127.0.0.1:7863/v1/`） |
 
-联网搜索那个上游（Tavily 适配服务, 8787）由同级插件 [dsh-tavily-search](../dsh-tavily-search/) 负责：两个插件各自独立开关，任何一个出问题都不影响另一个。
+同一仓库里还有 Tavily 联网搜索插件 [@zhiqiangme/dsh-tavily-search](https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-tavily-search)：两个插件各自独立开关，任何一个出问题都不影响另一个。
 
 ## 行为
 
@@ -17,8 +19,6 @@ DSH 启动时自动拉起 **WorkBuddy Panel**（`wb2api.exe`），替代手动�
 - **退出即停，但只停自己拉起的**：DSH 退出时结束本插件 spawn 的进程；DSH 启动前就已在运行的服务（手动起的、另一个 DSH 实例留下的）不受影响。
 - **只依赖 Node 内置模块**：核心工作（拉起进程、改 profile）不注入任何 Host Service，因此不受插件加载顺序影响；
   Web 面板要用宿主 webserver 时是"用得上就用"——拿不到只少一个面板，其余功能照常。
-
-与手动运行 `WorkBuddy Panel.ps1` 的差异：不再经过那层 pwsh 编排（也就没有临时日志目录），并去掉了自动弹浏览器这一步。
 
 ## 接管模型列表
 
@@ -46,7 +46,7 @@ node lib/sync-cli.js
 
 真正的写入只发生在 DSH 里：启动后自动同步一次，或在插件页点「保存」。
 
-⚠️ 一个上游行为要知道：`kimi-k3-1` 这类模型上游只支持 `medium` 档，默认三档是照你的要求统一给的；
+⚠️ 一个上游行为要知道：`kimi-k3-1` 这类模型上游只支持 `medium` 档，默认的三档是对所有模型统一给的；
 要严格对齐上游就配 `efforts: auto`。
 
 ## Web 面板：在这里勾选模型、看倍率
@@ -77,17 +77,18 @@ node lib/sync-cli.js
 
 ## 安装到 profile
 
-双击仓库根目录的 `install-plugins.cmd`，按提示选择插件和 profile（说明见[根目录 README](../README.md#安装插件)），
-完成后重启 DSH 生效。改了本插件的源码后再运行一次同样的"安装 / 更新"即可换上新代码。
+从源码安装：克隆[仓库](https://github.com/zhiqiangme/dsh-plugins)后双击根目录的 `install-plugins.cmd`，
+按提示选择插件和 profile（说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从源码安装)），完成后重启 DSH 生效。
+改了本插件的源码后再运行一次同样的"安装 / 更新"即可换上新代码。
 
 手动安装等价于（先完全退出桌面版）：
 
 ```powershell
-dsh plugin --profile desktop add "file:D:\Project\DeepSeek Harness\dsh-autostart-workbuddy"
+dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 ```
 
 ⚠️ `file:` 依赖在 profile 里是**拷贝**，不是软链：改了本插件的源码后再 `add`（包括 `--force`）pnpm 都认为"已是最新"，
-要先 `dsh plugin --profile desktop remove dsh-autostart-workbuddy` 再 `add`，否则 DSH 跑的还是旧代码。
+要先 `dsh plugin --profile desktop remove @zhiqiangme/dsh-autostart-workbuddy` 再 `add`，否则 DSH 跑的还是旧代码。
 安装脚本会比对文件哈希自动做这一步。
 
 ## 配置
@@ -96,7 +97,7 @@ dsh plugin --profile desktop add "file:D:\Project\DeepSeek Harness\dsh-autostart
 
 ```yaml
 - id: dsh-autostart-workbuddy
-  name: dsh-autostart-workbuddy
+  name: '@zhiqiangme/dsh-autostart-workbuddy'   # 包名以 @ 开头，YAML 里必须加引号
   config:
     enabled: true
     readinessTimeoutMs: 30000

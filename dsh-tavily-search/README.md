@@ -1,6 +1,6 @@
-# dsh-tavily-search
+# @zhiqiangme/dsh-tavily-search
 
-用 **Tavily** 给 DSH 的「网页搜索」供数。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件：用 **Tavily** 给 DSH 的「网页搜索」供数。
 
 DSH 自带的搜索提供方（`@deepseek-ai/dsh-web-search-deepseek`）向「接口地址」发 Anthropic Messages 请求，
 只解析响应里的 `web_search_tool_result` 结构化块。本插件在 **DSH 进程内**监听 `127.0.0.1:8787`，
@@ -34,7 +34,7 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 ## 行为
 
 - **进程内监听**：随插件加载监听、随插件卸载关闭，没有外部进程；出站请求走 DSH 的代理策略。
-- **不抢端口**：端口上已有同类适配服务（例如手动起的旧 `server.js`）时只记日志，DSH 的请求由它处理；
+- **不抢端口**：端口上已有同类适配服务（例如用下文"独立运行"起的实例）时只记日志，DSH 的请求由它处理；
   端口被别的程序占着时记错误日志。插件重载时会先等约 2s，让上一个实例释放端口。
 - **失败不阻断**：监听不上只写日志，DSH 本身照常可用。
 - **API Key 存在 DSH 凭据库**：引用名默认 `TAVILY_API_KEY`，值在 `~/.dsh/.credentials.yaml`，不写进任何设置文件。
@@ -43,17 +43,18 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 
 ## 安装到 profile
 
-双击仓库根目录的 `install-plugins.cmd`，按提示选择插件和 profile（说明见[根目录 README](../README.md#安装插件)），
-完成后重启 DSH 生效。改了本目录的代码后再运行一次同样的"安装 / 更新"即可换上新代码。
+从源码安装：克隆[仓库](https://github.com/zhiqiangme/dsh-plugins)后双击根目录的 `install-plugins.cmd`，
+按提示选择插件和 profile（说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从源码安装)），完成后重启 DSH 生效。
+改了本目录的代码后再运行一次同样的"安装 / 更新"即可换上新代码。
 
 手动安装等价于（先完全退出桌面版）：
 
 ```powershell
-dsh plugin --profile desktop add "file:D:\Project\DeepSeek Harness\dsh-tavily-search"
+dsh plugin --profile desktop add "file:<仓库路径>\dsh-tavily-search"
 ```
 
 > `file:` 依赖是**拷贝**进 profile 的 `node_modules`，改了代码后再 `add`（包括 `--force`）pnpm 都认为"已是最新"，
-> 要先 `dsh plugin --profile desktop remove dsh-tavily-search` 再 `add`。安装脚本会比对文件哈希自动做这一步。
+> 要先 `dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search` 再 `add`。安装脚本会比对文件哈希自动做这一步。
 
 ## 配置
 
@@ -61,7 +62,7 @@ dsh plugin --profile desktop add "file:D:\Project\DeepSeek Harness\dsh-tavily-se
 
 ```yaml
 - id: dsh-tavily-search
-  name: dsh-tavily-search
+  name: '@zhiqiangme/dsh-tavily-search'   # 包名以 @ 开头，YAML 里必须加引号
   config:
     port: 8787
     maxResults: 8
@@ -85,19 +86,14 @@ dsh plugin --profile desktop add "file:D:\Project\DeepSeek Harness\dsh-tavily-se
 
 ## 独立运行
 
-不开 DSH 也能起一个同样的接口（排障、给别的客户端用）。没有凭据库，key 从环境变量读，
-变量名沿用旧 `tavily-anthropic-search`（`TAVILY_API_KEY`、`LISTEN`、`TAVILY_MAX_RESULTS`、`TAVILY_SEARCH_DEPTH`……）：
+不开 DSH 也能起一个同样的接口（排障、给别的客户端用）。没有凭据库，配置从环境变量读
+（`TAVILY_API_KEY`、`LISTEN`、`TAVILY_MAX_RESULTS`、`TAVILY_SEARCH_DEPTH`……）：
 
 ```powershell
 $env:TAVILY_API_KEY = 'tvly-…'
 node lib/cli.js                  # 前台监听，Ctrl+C 退出
 node lib/cli.js --print-config   # 只打印解析出的配置
 ```
-
-## 来源
-
-适配服务（`lib/shim.js`）移植自 `D:\Project\Test\tavily-anthropic-search\server.js`（Test 仓库提交 `242449c`），
-响应结构契约与那边的 README 一致。旧目录不再被本插件引用，可以保留作参考，也可以删除。
 
 ## 测试
 
