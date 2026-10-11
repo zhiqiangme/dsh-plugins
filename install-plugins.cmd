@@ -5,9 +5,11 @@ rem   install-plugins.cmd --action install --plugins all --profiles desktop --ye
 rem Kept ASCII-only on purpose: cmd.exe parses batch files in the console code page, so any
 rem Chinese text here would break on non-UTF-8 consoles. All prompts live in the .mjs.
 rem
-rem No system Node.js is required: like DSH's own dsh.cmd, the script runs on the Node runtime
-rem built into "DeepSeek Harness.exe" (ELECTRON_RUN_AS_NODE=1). A system node is only the
-rem fallback when the DSH install cannot be found (the script then explains what is missing).
+rem No system Node.js is required: DSH ships a console node.exe as its "primary runtime"
+rem (resources\runtime\primary-runtime\dependencies\node\bin\node.exe) and the script runs on it.
+rem Not "DeepSeek Harness.exe" with ELECTRON_RUN_AS_NODE=1 the way dsh.cmd does it: that exe is a
+rem GUI-subsystem binary without console input, so every interactive prompt reads EOF at once.
+rem A system node is only the fallback when the DSH install cannot be found.
 setlocal
 
 set "SCRIPT=%~dp0scripts\install-plugins.mjs"
@@ -18,17 +20,16 @@ if not exist "%SCRIPT%" (
 )
 
 rem Locate dsh.cmd (DSH_CLI override, PATH, then the default per-user install location);
-rem the executable is in the install root, above resources\runtime\cli\bin\dsh.cmd.
+rem the runtime sits beside it: resources\runtime\{cli\bin\dsh.cmd, primary-runtime\...}.
 set "DSHCMD="
 if defined DSH_CLI if exist "%DSH_CLI%" set "DSHCMD=%DSH_CLI%"
 if not defined DSHCMD for %%I in (dsh.cmd) do set "DSHCMD=%%~$PATH:I"
 if not defined DSHCMD if exist "%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" set "DSHCMD=%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd"
 
 set "RUNTIME="
-if defined DSHCMD for %%I in ("%DSHCMD%\..\..\..\..\..\DeepSeek Harness.exe") do if exist "%%~fI" set "RUNTIME=%%~fI"
+if defined DSHCMD for %%I in ("%DSHCMD%\..\..\..\primary-runtime\dependencies\node\bin\node.exe") do if exist "%%~fI" set "RUNTIME=%%~fI"
 
 if defined RUNTIME (
-  set "ELECTRON_RUN_AS_NODE=1"
   "%RUNTIME%" "%SCRIPT%" %*
 ) else (
   "%SystemRoot%\System32\where.exe" node.exe >nul 2>nul || (

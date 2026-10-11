@@ -33,7 +33,8 @@
   同时维护 `package.json` 的 dependencies 和 `dsh.profile.bundles`，还会做插件兼容性检查。
   所以脚本不手改 `package.json`。`dsh.cmd` 从 PATH 或默认安装位置找，也可以用环境变量 `DSH_CLI` 指定。
 - **不需要系统装 Node.js**：插件本身跑在 DSH 进程里，不依赖系统 Node；安装脚本也一样——
-  `install-plugins.cmd` 和 DSH 自己的 `dsh.cmd` 一样，以 `ELECTRON_RUN_AS_NODE=1` 用 `DeepSeek Harness.exe` 执行 `.mjs`。
+  `install-plugins.cmd` 用 DSH 安装包自带的 `node.exe`（`resources\runtime\primary-runtime\dependencies\node\bin`）执行 `.mjs`。
+  不像 `dsh.cmd` 那样用 `ELECTRON_RUN_AS_NODE=1` 跑 `DeepSeek Harness.exe`：那是 GUI 程序，拿不到控制台输入，菜单会全部读空。
   找不到 DSH 时才退回系统 `node`（此时脚本会说明缺什么）。profile 目录跟 DSH 一致：`DSH_HOME`（默认 `~/.dsh`）下的 `profiles\<名>`。
 - **更新**：插件以 `file:` 依赖拷贝进 profile，改了源码后再 `add`（包括 `--force`）pnpm 都认为"已是最新"。
   所以脚本先比对 profile 里那份拷贝和仓库的文件哈希，不一致才"先移除再添加"，一致就不动。

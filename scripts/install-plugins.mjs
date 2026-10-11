@@ -1,7 +1,7 @@
 // 把本仓库的 DSH 插件安装 / 更新 / 卸载到 DSH 的 profile，或查看安装状态。
 //
-// 入口是仓库根目录的 install-plugins.cmd（可双击）。它用 DSH 自带的运行时（"DeepSeek Harness.exe"
-// 以 Node 模式运行，dsh.cmd 也是这么跑的）执行本脚本，所以用户机器上不需要另装 Node.js。
+// 入口是仓库根目录的 install-plugins.cmd（可双击）。它用 DSH 安装包自带的 node.exe（primary runtime）
+// 执行本脚本，所以用户机器上不需要另装 Node.js。
 // 本脚本只用 Node 内置模块；不带参数时逐项询问，带参数时跳过对应问题：
 //
 //   install-plugins.cmd --action install --plugins all --profiles desktop,web --yes
@@ -54,8 +54,10 @@ const bad = (text) => console.log(paint(31, `  ${text}`));
 /**
  * 逐行读 stdin。自己排队而不是每次 rl.question：管道输入时多行会一次到达，question 会丢掉后面的行。
  * terminal: false 让控制台保持行编辑模式，不进 raw 模式，调用 dsh 子进程时也不受影响。
- * stdin 结束（如管道读完）后再问一律返回 null，由调用方按默认处理。
+ * stdin 结束（如管道读完）后再问一律返回 null：菜单和确认会报错退出，不拿默认值替用户做决定。
  */
+const NO_INPUT = '读不到键盘输入（stdin 已关闭）。请在终端里运行，或用 --action / --plugins / --profiles / --yes 指定全部选项。';
+
 let reader;
 function ask(prompt) {
   if (!reader) {
@@ -86,7 +88,9 @@ async function choose(question, options) {
   console.log(`\n${question}`);
   options.forEach((option, i) => console.log(`  [${i + 1}] ${option}${i === 0 ? '（默认）' : ''}`));
   for (;;) {
-    const answer = (await ask('请输入序号，直接回车用默认：'))?.trim() ?? '';
+    const answer = (await ask('请输入序号，直接回车用默认：'))?.trim();
+    // stdin 已结束：没人在场作答，不能拿默认值替用户做决定（否则会悄悄装进 desktop）
+    if (answer === undefined) throw new Error(NO_INPUT);
     if (answer === '') return 0;
     const number = Number(answer);
     if (Number.isInteger(number) && number >= 1 && number <= options.length) return number - 1;
@@ -96,8 +100,8 @@ async function choose(question, options) {
 
 async function confirm(question) {
   const answer = await ask(`${question} [Y/n] `);
-  // stdin 已结束（管道读完）说明没人在场确认，按取消处理；要无人值守请用 --yes
-  if (answer === null) return false;
+  // stdin 已结束（管道读完）说明没人在场确认，不能当作同意；要无人值守请用 --yes
+  if (answer === null) throw new Error(NO_INPUT);
   return ['', 'y', 'yes', '是'].includes(answer.trim().toLowerCase());
 }
 
