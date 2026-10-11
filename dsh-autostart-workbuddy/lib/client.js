@@ -21,8 +21,9 @@
  * （Trae/Qoder 的 `dsm-btn` / `dsm-plugin-card` 是它们自己的 CSS，不是宿主全局类）。
  */
 
+// 模块 id 必须是 npm 包名：宿主的客户端模块表按包名登记，对不上就加载不到本 bundle。
 window.__ModuleLoader__.load({
-  id: 'dsh-autostart-workbuddy',
+  id: '@zhiqiangme/dsh-autostart-workbuddy',
   factory: (require) => {
     // ModuleLoader 的 factory 只注入 require；这里自行建立 CommonJS 导出对象，
     // 与 DSH 其它客户端 bundle 的包装约定一致。
@@ -770,8 +771,9 @@ window.__ModuleLoader__.load({
         }
       };
 
-      registerCard('plugins.bundle.config', 'dsh-autostart-workbuddy');
-      registerCard('plugins.row.config', 'dsh-autostart-workbuddy#dsh-autostart-workbuddy');
+      // 插件页按"包名"找 bundle 卡片、按"包名#行 id"找行卡片（DSH plugin-manager 的 rowConfigKey）。
+      registerCard('plugins.bundle.config', '@zhiqiangme/dsh-autostart-workbuddy');
+      registerCard('plugins.row.config', '@zhiqiangme/dsh-autostart-workbuddy#dsh-autostart-workbuddy');
     }
 
     // 纯函数，导出给测试；宿主只认 name / inject / apply。

@@ -1,8 +1,24 @@
 {
-  "name": "dsh-tavily-search",
-  "version": "0.2.0",
-  "private": true,
+  "name": "@zhiqiangme/dsh-tavily-search",
+  "version": "26.10.11",
   "description": "用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内提供 127.0.0.1:8787/v1 搜索接口，API Key 存在 DSH 凭据库。",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "tavily",
+    "web-search"
+  ],
+  "author": "zhiqiangme",
+  "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-tavily-search#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhiqiangme/dsh-plugins.git",
+    "directory": "dsh-tavily-search"
+  },
+  "bugs": {
+    "url": "https://github.com/zhiqiangme/dsh-plugins/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "icon": "icons/tavily.png",
@@ -47,5 +63,8 @@
     "serve": "node lib/cli.js",
     "print-config": "node lib/cli.js --print-config"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
 }

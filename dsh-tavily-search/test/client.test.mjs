@@ -12,6 +12,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const SOURCE = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
+/** 宿主按 npm 包名登记客户端模块、寻址插件页卡片；行 id 则沿用改作用域包之前的名字。 */
+const PACKAGE_NAME = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).name;
+const ROW_ID = 'dsh-tavily-search';
 const NAMESPACE = 'settings.dsh-tavily-search';
 
 /** 替身 React：createElement 产出普通对象；hooks 走最简实现（useState 返回初值）。 */
@@ -32,7 +35,7 @@ function loadModule({ withPrimitives = true } = {}) {
   };
   // eslint-disable-next-line no-new-func -- 故意在沙箱里跑浏览器 bundle
   new Function('window', 'document', 'console', SOURCE)(window, document, console);
-  assert.equal(registration.id, 'dsh-tavily-search');
+  assert.equal(registration.id, PACKAGE_NAME);
   const primitives = { SettingsSecretField: (props) => React.createElement('host-secret-field', props) };
   return registration.factory((id) => {
     if (id === 'react') return React;
@@ -184,8 +187,8 @@ test('卡片注册到两个 slot，key 逐字等于包名与行 id', () => {
   assert.deepEqual(
     cards.map((card) => [card.spec.name, card.spec.key]),
     [
-      ['plugins.bundle.config', 'dsh-tavily-search'],
-      ['plugins.row.config', 'dsh-tavily-search#dsh-tavily-search'],
+      ['plugins.bundle.config', PACKAGE_NAME],
+      ['plugins.row.config', `${PACKAGE_NAME}#${ROW_ID}`],
     ],
   );
   assert.equal(module.name, 'dsh-tavily-search-client');

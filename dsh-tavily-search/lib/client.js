@@ -23,8 +23,9 @@
  * 与内置网页搜索页长得一样；拿不到宿主组件时退回自带的同款输入框。
  */
 
+// 模块 id 必须是 npm 包名：宿主的客户端模块表按包名登记，对不上就加载不到本 bundle。
 window.__ModuleLoader__.load({
-  id: 'dsh-tavily-search',
+  id: '@zhiqiangme/dsh-tavily-search',
   factory: (require) => {
     // ModuleLoader 的 factory 只注入 require；这里自行建立 CommonJS 导出对象，
     // 与 DSH 其它客户端 bundle 的包装约定一致。
@@ -726,8 +727,9 @@ window.__ModuleLoader__.load({
         }
       };
 
-      registerCard('plugins.bundle.config', 'dsh-tavily-search');
-      registerCard('plugins.row.config', 'dsh-tavily-search#dsh-tavily-search');
+      // 插件页按"包名"找 bundle 卡片、按"包名#行 id"找行卡片（DSH plugin-manager 的 rowConfigKey）。
+      registerCard('plugins.bundle.config', '@zhiqiangme/dsh-tavily-search');
+      registerCard('plugins.row.config', '@zhiqiangme/dsh-tavily-search#dsh-tavily-search');
     }
 
     exports.apply = apply;

@@ -1,8 +1,24 @@
 {
-  "name": "dsh-autostart-workbuddy",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@zhiqiangme/dsh-autostart-workbuddy",
+  "version": "26.10.11",
   "description": "DSH 启动时自动拉起 WorkBuddy Panel（wb2api, 127.0.0.1:7863/panel），幂等、静默、退出时只停自己拉起的进程。",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "workbuddy",
+    "wb2api"
+  ],
+  "author": "zhiqiangme",
+  "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-autostart-workbuddy#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhiqiangme/dsh-plugins.git",
+    "directory": "dsh-autostart-workbuddy"
+  },
+  "bugs": {
+    "url": "https://github.com/zhiqiangme/dsh-plugins/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "icon": "icons/workbuddy.png",
@@ -47,5 +63,8 @@
     "backend-check": "node lib/backend-cli.js --check",
     "print-config": "node -e \"import('./lib/config.js').then(({ resolvePluginConfig, describeConfig }) => console.log(JSON.stringify(describeConfig(resolvePluginConfig({}, process.env)), null, 2)))\""
   },
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
 }

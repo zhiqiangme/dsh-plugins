@@ -14,7 +14,7 @@
 // 移除只动 package.json，插件写在 cordis.patch.yml 里的配置行（如模型白名单）原样保留。
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -25,13 +25,29 @@ import { parseArgs } from 'node:util';
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 /**
- * 本仓库提供的插件。legacy 是改名前的包名：profile 里还留着旧名时一并移除，
- * 否则旧目录已不存在，会让 pnpm 安装失败。
+ * 本仓库提供的插件。
+ * - folder：仓库里的目录名；name：npm 包名，以该目录 package.json 为准（发布到 npm 后带 @zhiqiangme 作用域）。
+ * - rowId：插件在 cordis 配置树里的行 id。改作用域包时刻意没变，用户 cordis.patch.yml 里的设置按 id 覆盖，因此不用迁移。
+ * - legacy：以前用过的包名（改作用域前的无作用域名、更早的旧名）。profile 里还以 file:/link: 指向本地拷贝时
+ *   一并移除——旧名和新名会各自插入同一个行 id，并存会冲突；不是本地来源的同名包可能是别人发布的，不碰。
  */
 const CATALOG = [
-  { name: 'dsh-autostart-workbuddy', alias: 'workbuddy', title: 'WorkBuddy 自动启动 + 模型同步', legacy: [] },
-  { name: 'dsh-tavily-search', alias: 'tavily-search', title: 'Tavily 网页搜索', legacy: ['dsh-autostart-websearch'] },
-].map((plugin) => ({ ...plugin, dir: join(REPO_ROOT, plugin.name) }));
+  { folder: 'dsh-autostart-workbuddy', alias: 'workbuddy', title: 'WorkBuddy 自动启动 + 模型同步', legacy: ['dsh-autostart-workbuddy'] },
+  { folder: 'dsh-tavily-search', alias: 'tavily-search', title: 'Tavily 网页搜索', legacy: ['dsh-tavily-search', 'dsh-autostart-websearch'] },
+].map((plugin) => {
+  const dir = join(REPO_ROOT, plugin.folder);
+  let name = plugin.folder;
+  try {
+    name = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).name;
+  } catch {
+    // 目录缺失时 main() 会给出明确报错，这里先用目录名占位
+  }
+  return { ...plugin, dir, name, rowId: plugin.folder };
+});
+
+/** 旧包名只在指向本地拷贝时才算本仓库的遗留，可以安全移除。 */
+const isLocalSpec = (spec) => typeof spec === 'string' && /^(file|link):/.test(spec);
+const legacyIn = (plugin, dependencies) => plugin.legacy.filter((old) => old in dependencies && isLocalSpec(dependencies[old]));
 
 /** 面向用户的 profile 选项。CLI 对应 DSH 的 headless profile（`dsh headless "任务"`）：这一版 DSH 没有单独的 tui 模板。 */
 const PROFILE_CHOICES = [
@@ -202,6 +218,47 @@ function specPointsHere(spec, plugin) {
 }
 
 /**
+ * profile 的 cordis.patch.yml 里，本插件那一行（按行 id 找）若还写着旧包名的 `name:`，改成新包名。
+ *
+ * 为什么要改：`name` 是 DSH 加载的模块名，用户层的行会覆盖 bundle 层，旧名留着 DSH 就会去加载一个
+ * 已经移除的包。DSH 的 configEditor 只能在 DSH 运行时用，这里只能改文本——所以只做最窄的一处替换：
+ * 顶层行（`- ` 开头）范围内、id 等于 rowId、`name:` 的值恰好是某个旧包名的那一行，其余字节原样保留，
+ * 写之前留一份带时间戳的备份。新包名以 @ 开头，YAML 里必须加引号。
+ * @returns 改了的行 id 列表（没有可改的返回空数组）。
+ */
+function migrateRowNames(profile, plugins) {
+  const file = join(profileDir(profile), 'cordis.patch.yml');
+  if (!existsSync(file)) return [];
+  const text = readFileSync(file, 'utf8');
+  const lines = text.split('\n');
+  const starts = lines.map((line, i) => (/^-\s/.test(line) ? i : -1)).filter((i) => i >= 0);
+  const scalar = '[\'"]?([^\'"\\s#]+)[\'"]?\\s*(?:#.*)?\\r?$';
+  const idPattern = new RegExp(`^(?:- |  )id:\\s*${scalar}`);
+  const namePattern = new RegExp(`^(- |  )name:\\s*${scalar}`);
+  const migrated = [];
+  starts.forEach((start, k) => {
+    const end = k + 1 < starts.length ? starts[k + 1] : lines.length;
+    let id;
+    let nameAt = -1;
+    for (let i = start; i < end; i++) {
+      id ??= idPattern.exec(lines[i])?.[1];
+      if (nameAt < 0 && namePattern.test(lines[i])) nameAt = i;
+    }
+    const plugin = plugins.find((candidate) => candidate.rowId === id);
+    if (!plugin || nameAt < 0) return;
+    const [, lead, value] = namePattern.exec(lines[nameAt]);
+    if (!plugin.legacy.includes(value)) return;
+    lines[nameAt] = `${lead}name: '${plugin.name}'${lines[nameAt].endsWith('\r') ? '\r' : ''}`;
+    migrated.push(id);
+  });
+  if (migrated.length === 0) return [];
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  writeFileSync(`${file}.bak-before-scoped-name-${stamp}`, text);
+  writeFileSync(file, lines.join('\n'));
+  return migrated;
+}
+
+/**
  * 找正在使用该 profile 的 DSH 进程。DSH 的 CLI 和桌面宿主都是 "DeepSeek Harness.exe" 以 Node 模式运行：
  * - 桌面宿主：命令行含 dsh-desktop-host\lib\index.js 和 profile 目录；
  * - CLI（dsh web / dsh headless）：命令行含 dsh-desktop-host\lib\cli.js 和 profile 名（排除 dsh plugin 自己）。
@@ -274,7 +331,7 @@ function showStatus(profile, selected) {
   const dependencies = dependenciesOf(manifest);
   const bundles = bundlesOf(manifest);
   for (const plugin of selected) {
-    const label = plugin.name.padEnd(26);
+    const label = plugin.name.padEnd(38);
     if (!(plugin.name in dependencies)) {
       console.log(`  ${label} 未安装`);
       continue;
@@ -290,8 +347,8 @@ function showStatus(profile, selected) {
     else warn(text);
   }
   for (const plugin of CATALOG) {
-    for (const old of plugin.legacy) {
-      if (old in dependencies) warn(`残留旧包名 ${old}（已改名为 ${plugin.name}），安装时会自动移除`);
+    for (const old of legacyIn(plugin, dependencies)) {
+      warn(`残留旧包名 ${old}（已改名为 ${plugin.name}），安装时会自动移除`);
     }
   }
 }
@@ -310,7 +367,7 @@ async function installInto(profile, selected) {
 
   const dependencies = dependenciesOf(manifest);
   const bundles = bundlesOf(manifest);
-  const legacy = selected.flatMap((plugin) => plugin.legacy.filter((old) => old in dependencies));
+  const legacy = selected.flatMap((plugin) => legacyIn(plugin, dependencies));
 
   // 已装且来源正确、拷贝与仓库一致、在 DSH 里启用着 → 不动；否则（含被停用的）先移除再添加：
   // 停用的插件 pnpm add 不会重新放回 bundles，用户这次明确要装，就当作重新启用。
@@ -326,7 +383,7 @@ async function installInto(profile, selected) {
       add.push(plugin);
     }
   }
-  if (legacy.length === 0 && add.length === 0) return true;
+  if (legacy.length === 0 && add.length === 0) return migrateRows(profile, selected);
 
   if (legacy.length > 0) {
     console.log(`  移除旧包名：${legacy.join(', ')}`);
@@ -349,13 +406,28 @@ async function installInto(profile, selected) {
     return false;
   }
   ok(`已安装：${add.map((plugin) => plugin.name).join(', ')}`);
-  return true;
+  return migrateRows(profile, selected);
+}
+
+/** 安装成功后修正 cordis.patch.yml 里仍写着旧包名的行（见 migrateRowNames）；写失败算这个 profile 没装好。 */
+function migrateRows(profile, selected) {
+  try {
+    const migrated = migrateRowNames(profile, selected);
+    if (migrated.length > 0) ok(`cordis.patch.yml：行 ${migrated.join(', ')} 的 name 已改为新包名（原文件已备份）`);
+    return true;
+  } catch (error) {
+    bad(`修正 cordis.patch.yml 失败：${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
 }
 
 async function uninstallFrom(profile, selected) {
   step(`从 ${profile} 卸载`);
   const dependencies = dependenciesOf(readManifest(profile));
-  const names = selected.flatMap((plugin) => [plugin.name, ...plugin.legacy]).filter((name) => name in dependencies);
+  const names = selected.flatMap((plugin) => [
+    ...(plugin.name in dependencies ? [plugin.name] : []),
+    ...legacyIn(plugin, dependencies),
+  ]);
   if (names.length === 0) {
     ok('没有要卸载的插件');
     return true;
@@ -383,7 +455,7 @@ function resolvePlugins(value) {
     const key = item.trim().toLowerCase();
     if (!key) continue;
     if (key === 'all') return CATALOG;
-    const match = CATALOG.find((plugin) => plugin.name === key || plugin.alias === key);
+    const match = CATALOG.find((plugin) => [plugin.name, plugin.folder, plugin.alias].includes(key));
     if (!match) throw new Error(`未知插件：${item}（可选 all、${CATALOG.map((plugin) => plugin.alias).join('、')}）`);
     if (!result.includes(match)) result.push(match);
   }

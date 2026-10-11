@@ -13,6 +13,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const SOURCE = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
+/** 宿主按 npm 包名登记客户端模块、寻址插件页卡片；行 id 则沿用改作用域包之前的名字。 */
+const PACKAGE_NAME = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).name;
+const ROW_ID = 'dsh-autostart-workbuddy';
 const NAMESPACE = 'settings.dsh-autostart-workbuddy';
 
 /** 把 bundle 放进沙箱执行，拿回它注册进 __ModuleLoader__ 的 registration 与注入的样式。 */
@@ -28,6 +31,7 @@ function loadBundle() {
   // eslint-disable-next-line no-new-func -- 故意在沙箱里跑浏览器 bundle
   new Function('window', 'document', 'console', SOURCE)(window, document, console);
   assert.ok(registration, 'bundle 应调用 window.__ModuleLoader__.load');
+  assert.equal(registration.id, PACKAGE_NAME);
   return { registration, styles };
 }
 
@@ -168,8 +172,8 @@ test('bundle 契约：模块名、注入的服务名、两个 slot 的 key', () 
   const row = cards.find((card) => card.spec.name === 'plugins.row.config');
   assert.ok(bundle, '应注册 plugins.bundle.config');
   assert.ok(row, '应注册 plugins.row.config');
-  assert.equal(bundle.spec.key, 'dsh-autostart-workbuddy');
-  assert.equal(row.spec.key, 'dsh-autostart-workbuddy#dsh-autostart-workbuddy');
+  assert.equal(bundle.spec.key, PACKAGE_NAME);
+  assert.equal(row.spec.key, `${PACKAGE_NAME}#${ROW_ID}`);
   assert.equal(typeof bundle.component, 'function');
 });
 
