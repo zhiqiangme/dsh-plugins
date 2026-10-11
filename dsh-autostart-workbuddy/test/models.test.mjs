@@ -16,6 +16,7 @@ import { resolvePluginConfig } from '../lib/config.js';
 import {
   creditsLabel,
   fetchModels,
+  backupPatchFile,
   locateModelsBlock,
   modelDisplayName,
   modelsEndpoint,
@@ -324,6 +325,21 @@ test('回写：profile 里没有 llm-pi-ai 条目时不补建', () => {
   const result = updatePatchText(text, planModelEntries(SAMPLE, {}), 'workbuddy', PROVIDER_SKELETON);
   assert.equal(result.ok, false);
   assert.match(result.reason, /llm-pi-ai/);
+});
+
+test('备份：同一秒内连续备份不互相覆盖，保存前的原样留得住', () => {
+  const { dir, path } = tempPatch('original\n');
+  const first = backupPatchFile(path, 3);
+  writeFileSync(path, 'modified\n', 'utf8');
+  const second = backupPatchFile(path, 3);
+
+  assert.notEqual(first, second);
+  assert.equal(readFileSync(first, 'utf8'), 'original\n');
+  assert.equal(readFileSync(second, 'utf8'), 'modified\n');
+
+  // 带序号的备份按字典序排在原名之后，清理时"最旧的先删"依然成立。
+  const names = readdirSync(dir).filter((name) => name.includes('bak-before-model-sync')).sort();
+  assert.deepEqual(names.map((name) => join(dir, name)), [first, second]);
 });
 
 test('provider baseURL：统一成带 /v1/ 的形式', () => {

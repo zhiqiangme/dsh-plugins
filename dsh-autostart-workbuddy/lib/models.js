@@ -16,7 +16,7 @@
  * 只依赖 node: 内置模块（fetch 是 Node 18+ 的全局实现）。
  */
 
-import { copyFileSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 import { isFile, resolveDshHome } from './services.js';
@@ -579,8 +579,11 @@ export function backupPatchFile(path, keep) {
     const p = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   })();
-  const backup = `${path}.${BACKUP_TAG}-${stamp}`;
-  copyFileSync(path, backup);
+  // 同一秒内可能备份两次（面板保存：先备份再写白名单，紧接着同步又备份一次）。
+  // 同名会让第二次覆盖第一次，丢掉"保存前"的原样；撞名就加序号，序号后缀按字典序仍排在原名之后。
+  let backup = `${path}.${BACKUP_TAG}-${stamp}`;
+  for (let n = 2; existsSync(backup); n += 1) backup = `${path}.${BACKUP_TAG}-${stamp}-${n}`;
+  copyFileSync(path, backup, constants.COPYFILE_EXCL);
 
   if (keep > 0) {
     const prefix = `${basename(path)}.${BACKUP_TAG}-`;
