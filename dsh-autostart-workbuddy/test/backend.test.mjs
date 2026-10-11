@@ -346,6 +346,36 @@ test('rollbackBackend：装完新版再回滚，current 回到旧版本', async 
   }
 });
 
+test('rollbackBackend：回滚后健康检查失败 → 恢复当前版本，上一版本原样留在 versions/ 可再次回滚', async () => {
+  const release = startFixture({ TEST_MODE: 'http-release' });
+  const health = startFixture({ TEST_MODE: 'http-health' });
+  const apiBase = `http://127.0.0.1:${await release.ready}`;
+  const healthyPort = await health.ready;
+  const { paths } = tempBackendRoot();
+  try {
+    const updated = await applyUpdate({ paths, env: {}, apiBase, service: fakeService(healthyPort) });
+    assert.equal(updated.ok, true);
+    const previousExe = join(paths.versions, versionDirName(null, OLD_REVISION), 'wb2api.exe');
+    assert.ok(isFile(previousExe), '更新后旧版本应在 versions/ 里');
+
+    // 没人监听的端口：/healthz 必然失败，模拟"旧版本一时没起来"。
+    const failed = await rollbackBackend({ paths, service: fakeService(await freePort()) });
+    assert.equal(failed.ok, false);
+    assert.equal(failed.state, 'health-failed');
+    assert.equal(readBuildInfo(paths.exe).revision, NEW_COMMIT, 'current 应恢复成回滚前的版本');
+    assert.equal(readBuildInfo(previousExe)?.revision, OLD_REVISION, '上一版本必须放回原处');
+    assert.deepEqual(readdirSync(paths.versions).filter((name) => name.endsWith('-failed')), []);
+
+    // 偶发失败之后再点一次回滚，照样能成功。
+    const retried = await rollbackBackend({ paths, service: fakeService(healthyPort) });
+    assert.equal(retried.ok, true, JSON.stringify(retried));
+    assert.equal(readBuildInfo(paths.exe).revision, OLD_REVISION);
+  } finally {
+    release.stop();
+    health.stop();
+  }
+});
+
 test('rollbackBackend：没有上一版本记录时明确拒绝', async () => {
   const { paths } = tempBackendRoot();
   const result = await rollbackBackend({ paths, service: fakeService(await freePort()) });

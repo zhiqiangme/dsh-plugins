@@ -278,12 +278,20 @@ export function swapIn(paths, stagedExe, { from, to }) {
   return { archiveDir, archivedExe, hadCurrent, archivedVersion: versionDirName(from?.tag, from?.revision) };
 }
 
-/** 回滚刚才那次切换：把新版本挪去 -failed 目录，旧版本挪回来。 */
-export function rollbackSwap(paths, swap, to) {
+/**
+ * 撤销刚才那次切换：换上去的版本挪走，原来的版本挪回 current。
+ *
+ * 换上去的版本挪去哪由来源决定：
+ *   - 更新（新下载的包）：挪去 `<版本>-failed`，留作排查，不会再被当成可回滚的版本；
+ *   - 回滚（`returnTo` = 它原本在 versions/ 里的位置）：原样放回去。健康检查失败可能只是
+ *     端口起得慢、上游一时不通，放进 -failed 会让 installed.json 的 previous 指向一个空目录，
+ *     一次偶发失败就永久丢掉回滚能力。
+ */
+export function rollbackSwap(paths, swap, to, { returnTo } = {}) {
   if (isFile(paths.exe)) {
-    const failedDir = join(paths.versions, `${versionDirName(to?.tag, to?.commit)}-failed`);
+    const target = returnTo ?? join(paths.versions, `${versionDirName(to?.tag, to?.commit)}-failed`, EXE_ENTRY);
     try {
-      moveFile(paths.exe, join(failedDir, EXE_ENTRY));
+      moveFile(paths.exe, target);
     } catch {
       /* 挪不动就删掉，避免留下一个半吊子的 current */
       rmSync(paths.exe, { force: true });
@@ -455,7 +463,7 @@ export async function rollbackBackend({ paths, service, logger } = {}) {
 
   if (!health.ok) {
     logger?.error?.(`[workbuddy] 回滚后健康检查失败：${health.reason}`);
-    rollbackSwap(paths, swap, previous);
+    rollbackSwap(paths, swap, previous, { returnTo: previousExe });
     await service.ensureRunning();
     return { ok: false, state: 'health-failed', reason: health.reason, restored: true };
   }
