@@ -173,6 +173,16 @@ test('bundle 契约：模块名、注入的服务名、两个 slot 的 key', () 
   assert.equal(typeof bundle.component, 'function');
 });
 
+test('保存的白名单按面板展示顺序排（cn → global，组内后端顺序），与勾选先后无关', () => {
+  const { module } = boot();
+  const rows = [{ id: 'global:b' }, { id: 'cn:x' }, { id: 'global:a' }, { id: 'other' }, { id: 'cn:y' }];
+  // 模拟"cn:x 取消后又勾上"：Set 插入顺序里它排在最后。
+  const picked = new Set(['global:a', 'cn:y', 'other', 'global:b', 'cn:x']);
+  assert.deepEqual(module.orderedSelection(rows, picked), ['cn:x', 'cn:y', 'global:b', 'global:a', 'other']);
+  assert.deepEqual(module.orderedSelection(rows, new Set(['global:a'])), ['global:a']);
+  assert.deepEqual(module.orderedSelection(rows, new Set()), []);
+});
+
 test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 的键集合一致', () => {
   const { dicts } = boot();
   const entry = dicts.get(NAMESPACE);

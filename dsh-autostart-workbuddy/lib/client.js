@@ -252,6 +252,26 @@ window.__ModuleLoader__.load({
       return 2;
     }
 
+    /** 面板的展示顺序：区域（cn → global → 其它），区域内保持后端返回顺序。 */
+    function sortRows(rows) {
+      return rows
+        .map((row, index) => ({ row, index }))
+        .sort((a, b) => regionRank(a.row.id) - regionRank(b.row.id) || a.index - b.index)
+        .map((entry) => entry.row);
+    }
+
+    /**
+     * 保存用的白名单：按面板展示顺序排，而不是勾选的先后。
+     *
+     * 白名单的顺序就是 DSH 模型选择器里的展示顺序（见 models.js 的 planModelEntries）；
+     * 用 Set 的插入顺序会让"取消再勾上"的模型跑到最后，每改一次顺序就漂一次。
+     */
+    function orderedSelection(rows, picked) {
+      return sortRows(rows)
+        .filter((row) => picked.has(row.id))
+        .map((row) => row.id);
+    }
+
     function formatTokens(value) {
       if (!value) return undefined;
       if (value >= 1_000_000) return `${Math.round((value / 1_000_000) * 10) / 10}M`;
@@ -352,12 +372,7 @@ window.__ModuleLoader__.load({
         load();
       }, [load]);
 
-      const sorted = useMemo(() => {
-        return rows
-          .map((row, index) => ({ row, index }))
-          .sort((a, b) => regionRank(a.row.id) - regionRank(b.row.id) || a.index - b.index)
-          .map((entry) => entry.row);
-      }, [rows]);
+      const sorted = useMemo(() => sortRows(rows), [rows]);
 
       const toggle = useCallback((id) => {
         setPicked((previous) => {
@@ -373,7 +388,7 @@ window.__ModuleLoader__.load({
         setSaving(true);
         setNotice(undefined);
         try {
-          const payload = await request(MODELS_PATH, 'POST', { only: [...picked] });
+          const payload = await request(MODELS_PATH, 'POST', { only: orderedSelection(rows, picked) });
           if (!payload.ok) {
             setNotice({ kind: 'error', text: payload.reason ?? t('saveFailed') });
             return;
@@ -393,7 +408,7 @@ window.__ModuleLoader__.load({
         } finally {
           setSaving(false);
         }
-      }, [picked, load, t]);
+      }, [rows, picked, load, t]);
 
       // ---- 后端版本（更新检查 / 安装 / 更新 / 卸载 / 回滚）----
       const [backend, setBackend] = useState(undefined);
@@ -759,6 +774,8 @@ window.__ModuleLoader__.load({
       registerCard('plugins.row.config', 'dsh-autostart-workbuddy#dsh-autostart-workbuddy');
     }
 
+    // 纯函数，导出给测试；宿主只认 name / inject / apply。
+    exports.orderedSelection = orderedSelection;
     exports.apply = apply;
     exports.inject = inject;
     exports.name = name;
