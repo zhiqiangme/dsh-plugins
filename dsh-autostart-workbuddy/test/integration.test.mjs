@@ -4,17 +4,19 @@
  *   2) 已在监听的服务被识别为 already-running 而不是重复拉起；
  *   3) disposer 只停止本插件自己拉起的进程。
  *
- * ctx 用一个最小替身：只实现 effect（注册清理函数）与 logger。
+ * ctx 用一个最小替身：effect（注册清理函数）、logger、get（软取宿主服务），以及
+ * on('internal/update') + update(config)——按 cordis 的瀑布语义把配置变更交给插件。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { apply, inject, name } from '../lib/index.js';
+import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 const DUMMY = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
 
@@ -33,13 +35,30 @@ function freePort() {
 function fakeContext(services = {}) {
   const disposers = [];
   const lines = [];
+  const updateHooks = [];
   const record = (level) => (...args) => lines.push(`${level} ${args.join(' ')}`);
   return {
     lines,
     disposers,
+    /** update() 走到默认处理（即 cordis 会重启插件）的次数。 */
+    restarts: 0,
     logger: { info: record('info'), warn: record('warn'), error: record('error') },
     get(key) {
       return services[key];
+    },
+    on(event, listener) {
+      if (event === 'internal/update') updateHooks.push(listener);
+    },
+    /** 模拟 fiber.update：依次调钩子，钩子都调了 next 才落到默认的"重启"。 */
+    update(config) {
+      const queue = [...updateHooks];
+      const next = () => {
+        const hook = queue.shift();
+        if (hook) return hook(config, true, next);
+        this.restarts += 1;
+        return undefined;
+      };
+      return next();
     },
     effect(factory) {
       const dispose = factory();
@@ -86,16 +105,6 @@ async function waitForLog(ctx, needle, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (ctx.lines.some((l) => l.includes(needle))) return true;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  return false;
-}
-
-/** 轮询等待任意条件（用于"文件被回写"这类异步落盘结果）。 */
-async function waitFor(predicate, timeoutMs = 15_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
     await new Promise((r) => setTimeout(r, 100));
   }
   return false;
@@ -155,95 +164,80 @@ test('启动失败不抛异常：只记录错误，不影响宿主', async (t) =
   assert.ok(await waitForLog(ctx, '启动失败'), ctx.lines.join('\n'));
 });
 
-/** 与真实 profile 同构的最小 patch，用于验证"启动即同步模型列表"这条链路。 */
-const PATCH_FIXTURE = `- id: llm-pi-ai
-  name: "@deepseek-ai/dsh-llm-pi-ai"
-  config:
-    providers:
-      workbuddy:
-        displayName: WorkBuddy
-        baseURL: http://127.0.0.1:7863/v1/
-        models:
-          - id: cn:stale
-            name: 过期条目
-- id: locale
-  name: "@deepseek-ai/dsh-client-locale"
-`;
-
-test('开启模型同步后：apply 会在后端就绪后回写 profile 的 models 段', async (t) => {
+test('开启模型同步后：apply 会在后端就绪后经 configEditor 写进 llm-pi-ai', async (t) => {
   const port = await freePort();
-  const dir = mkdtempSync(join(tmpdir(), 'autostart-wb-sync-'));
-  const patchPath = join(dir, 'cordis.patch.yml');
-  writeFileSync(patchPath, PATCH_FIXTURE, 'utf8');
-
-  const ctx = fakeContext();
+  const editor = createFakeConfigEditor(profileRows());
+  const ctx = fakeContext({ configEditor: editor });
   t.after(() => ctx.disposeAll());
 
   const began = Date.now();
   apply(
     ctx,
     fakeServiceConfig(port, {
-      // 假后端同时提供 /v1/models，才能把"拉起服务 → 拉模型 → 回写配置"整条链路跑通。
+      // 假后端同时提供 /v1/models，才能把"拉起服务 → 拉模型 → 写配置"整条链路跑通。
       env: dummyEnv(port, 'http-models'),
-      models: { enabled: true, profilePatch: patchPath, apiKey: 'test-key', timeoutMs: 5_000 },
+      models: { enabled: true, apiKey: 'test-key', timeoutMs: 5_000 },
     }),
   );
   const elapsed = Date.now() - began;
   // 模型同步是后台动作，不能拖住插件树加载。
   assert.ok(elapsed < 200, `apply 应立刻返回，实际耗时 ${elapsed}ms`);
 
-  assert.ok(
-    await waitFor(() => readFileSync(patchPath, 'utf8').includes('name: CN Alpha 0.11')),
-    `models 段应被回写：\n${readFileSync(patchPath, 'utf8')}`,
-  );
-
-  const after = readFileSync(patchPath, 'utf8');
-  assert.ok(after.includes('          - id: cn:alpha'));
-  assert.ok(after.includes('          - id: global:beta'));
-  assert.ok(after.includes('            name: GL Beta Free'), '国际版模型要带 GL 前缀与 Free 倍率');
-  assert.ok(after.includes('            reasoningEfforts:'), '默认给低/高/最大三档');
-  assert.ok(after.includes('- id: locale'), '其余配置不能被改动');
   assert.ok(await waitForLog(ctx, '模型列表已同步'), ctx.lines.join('\n'));
+  const workbuddy = editor.entry('llm-pi-ai').options.config.providers.workbuddy;
+  assert.deepEqual(workbuddy.models.map((model) => model.name), ['CN Alpha 0.11', 'GL Beta Free']);
+  assert.deepEqual(Object.keys(workbuddy.models[0].reasoningEfforts), ['low', 'high', 'max'], '默认给低/高/最大三档');
+  assert.equal(workbuddy.apiKeyEnv, 'WORKBUDDY_PROXY_KEY', 'provider 的其它字段不能被动');
+  assert.deepEqual(editor.edits.map((edit) => edit.id), ['llm-pi-ai'], '只编辑 llm-pi-ai 那一行');
 });
 
-test('未显式配 profilePatch 时：取宿主 profileContext.patchPath 回写', async (t) => {
+test('宿主没有 configEditor 时：只跳过模型同步并记日志，后端照常拉起', async (t) => {
   const port = await freePort();
-  const dir = mkdtempSync(join(tmpdir(), 'autostart-wb-hostprofile-'));
-  const patchPath = join(dir, 'cordis.patch.yml');
-  writeFileSync(patchPath, PATCH_FIXTURE, 'utf8');
-
-  // 宿主进程的 process.env 里没有 DSH_PROFILE_DIR / DSH_PROFILE，路径只能来自 profileContext。
-  const ctx = fakeContext({ profileContext: { name: 'desktop', dir, patchPath } });
+  const ctx = fakeContext();
   t.after(() => ctx.disposeAll());
 
-  const env = dummyEnv(port, 'http-models');
-  delete env.DSH_PROFILE_DIR;
-  delete env.DSH_PROFILE;
   apply(
     ctx,
     fakeServiceConfig(port, {
-      env,
+      env: dummyEnv(port, 'http-models'),
       models: { enabled: true, apiKey: 'test-key', timeoutMs: 5_000 },
     }),
   );
-
-  assert.ok(
-    await waitFor(() => readFileSync(patchPath, 'utf8').includes('name: CN Alpha 0.11')),
-    `models 段应被回写：\n${readFileSync(patchPath, 'utf8')}\n${ctx.lines.join('\n')}`,
-  );
+  assert.ok(await waitForLog(ctx, '已启动'), ctx.lines.join('\n'));
+  assert.ok(await waitForLog(ctx, '模型列表未同步'), ctx.lines.join('\n'));
+  assert.ok(ctx.lines.some((line) => line.includes('configEditor')), ctx.lines.join('\n'));
 });
 
-test('模型同步未开启时：不碰 profile 文件', async (t) => {
+test('模型同步未开启时：不编辑任何配置', async (t) => {
   const port = await freePort();
-  const dir = mkdtempSync(join(tmpdir(), 'autostart-wb-nosync-'));
-  const patchPath = join(dir, 'cordis.patch.yml');
-  writeFileSync(patchPath, PATCH_FIXTURE, 'utf8');
-
-  const ctx = fakeContext();
+  const editor = createFakeConfigEditor(profileRows());
+  const ctx = fakeContext({ configEditor: editor });
   t.after(() => ctx.disposeAll());
 
   apply(ctx, fakeServiceConfig(port, { env: dummyEnv(port, 'http-models') }));
   assert.ok(await waitForLog(ctx, '已启动'), ctx.lines.join('\n'));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(editor.edits.length, 0);
+});
 
-  assert.equal(readFileSync(patchPath, 'utf8'), PATCH_FIXTURE);
+test('配置变更：只改 models.* 时就地生效、不重启插件；改了别的字段才重启', async (t) => {
+  const port = await freePort();
+  const ctx = fakeContext();
+  t.after(() => ctx.disposeAll());
+
+  const config = fakeServiceConfig(port, {
+    env: dummyEnv(port),
+    models: { enabled: false, only: ['cn:alpha'] },
+  });
+  apply(ctx, config);
+  assert.ok(await waitForLog(ctx, '已启动'), ctx.lines.join('\n'));
+
+  // 面板保存白名单就是这种变更：不能重启（重启会把托管的后端停掉再拉起）。
+  ctx.update({ ...config, models: { enabled: false, only: ['global:beta'] } });
+  assert.equal(ctx.restarts, 0);
+  assert.ok(ctx.lines.some((line) => line.includes('就地生效')), ctx.lines.join('\n'));
+
+  // 端口等服务规格变了，必须按 cordis 的默认处理重启，新规格才会生效。
+  ctx.update({ ...config, port: port + 1 });
+  assert.equal(ctx.restarts, 1);
 });

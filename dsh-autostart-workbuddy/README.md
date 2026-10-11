@@ -24,23 +24,27 @@ DSH 启动时自动拉起 **WorkBuddy Panel**（`wb2api.exe`），替代手动�
 
 除了拉服务，本插件还能接管 WorkBuddy 的**模型列表**（`config.models.enabled: true` 时）：
 
-- 后端就绪后拉一次 `GET /v1/models`，把**后端真实提供的模型**写回 profile 的
-  `cordis.patch.yml` → `llm-pi-ai.providers.workbuddy.models`，下次启动（或配置热加载）生效。
+- 后端就绪后拉一次 `GET /v1/models`，把**后端真实提供的模型**写进
+  `llm-pi-ai.providers.workbuddy.models`，llm-pi-ai 随即热重载，模型选择器马上就是新清单。
+- 写入走 DSH 自己的 **configEditor**（设置页用的同一个入口）：持 profile 锁、按 llm-pi-ai 的 schema
+  校验、原子写、只热重载被改的那一行，失败自动回滚。不再自己改 `cordis.patch.yml` 的文本，
+  所以不会和设置页的保存互相覆盖。代价是 llm-pi-ai 那一行会按 DSH 的格式重新排版（行内注释不保留）。
+- workbuddy provider 整段不在时会按原有形状补建（`apiKeyEnv: WORKBUDDY_PROXY_KEY`，密钥不落明文）。
 - 展示名统一成 `<CN|GL> <上游名> <倍率>`：`cn:` → `CN`、`global:` → `GL`；
   倍率取上游的 `credits`（`x0.11` → `0.11`，`x0.00` 或缺失 → `Free`）。
 - 每个模型默认给**低/高/最大**三个思考档位（`efforts: auto` 则按上游声明的档位）。
 - `models.only` 是白名单：留空 = 同步后端全部模型；填了就只保留列出的 id，并按列出顺序展示。
-- 后端返回空列表（面板在上游故障时就是这么降级的）或请求失败时**不动现有配置**；
-  结构认不出来也拒绝写入——宁可不同步，也不能改坏 profile。
-- 写入前会备份成 `<配置>.bak-before-model-sync-<时间戳>`，只保留最近 `keepBackups`（默认 3）份。
-- 不想让它改文件就别开 `models.enabled`（默认关闭）。
+- 后端返回空列表（面板在上游故障时就是这么降级的）或请求失败时**不动现有配置**。
+- 宿主没有 configEditor（DSH 版本过旧）时只记一条日志、跳过同步，后端照常拉起。
+- 不想让它改配置就别开 `models.enabled`（默认关闭）。
 
-手动同步一次（配置来源与自动同步完全相同，都读 profile 里本插件那一行）：
+命令行只能**预览**（读 profile 里本插件那一行，打印将要写进去的 models 段，不改任何文件）：
 
 ```powershell
-node lib/sync-cli.js --dry-run   # 只看将要写入什么
-node lib/sync-cli.js             # 真写入（带备份）
+node lib/sync-cli.js
 ```
+
+真正的写入只发生在 DSH 里：启动后自动同步一次，或在插件页点「保存」。
 
 ⚠️ 一个上游行为要知道：`kimi-k3-1` 这类模型上游只支持 `medium` 档，默认三档是照你的要求统一给的；
 要严格对齐上游就配 `efforts: auto`。
@@ -50,12 +54,14 @@ node lib/sync-cli.js             # 真写入（带备份）
 在 DSH 的**插件**页打开本插件（组合包页面，或本插件那一行的"配置"），卡片会列出后端
 `/v1/models` 的**全部**模型，每行带倍率、上下文长度与是否支持视觉：
 
-- 勾选结果写进本插件的 `config.models.only` 白名单；**保存**时顺手重新生成
-  `llm-pi-ai.providers.workbuddy.models`，不用等下次启动（配置热加载即生效）。
+- 勾选结果经 configEditor 写进本插件的 `config.models.only` 白名单；**保存**时顺手重新生成
+  `llm-pi-ai.providers.workbuddy.models`，不用等下次启动。
+- 改白名单（以及 `models` 段的其它字段）**不会重启本插件**：插件拦下这类配置变更就地生效，
+  托管的后端不会被停掉再拉起。端口、exe 等其它字段变了才按常规重启。
 - 倍率就是拼进展示名的那个（`x0.11` → `x0.11`，`x0.00` / 缺失 → `Free`）。
 - **一个都不勾**再保存 = 白名单留空 = 同步后端全部模型（既有语义），面板里有提示。
-- 后端不可达时面板照常打开并显示原因，此时**不写任何文件**。
-- 只有勾选/保存/全选这些动作会写 profile，且写前照例备份（同一套 `.bak-before-model-sync-<时间戳>`）。
+- 后端不可达时面板照常打开并显示原因，此时**不写任何配置**。
+- 只有点「保存」才会写 profile；保存后的提示会说明模型清单是否同步成功（失败用错误色并给出原因）。
 - 卡片顶部有一行 **后端面板：`127.0.0.1:7863/panel`** 的可点击外链，点了用**默认浏览器**打开。
   地址由宿主按服务规格给出（端口可配），不是写死的。链接用 `<a target="_blank" rel="noopener noreferrer">`，
   宿主主窗口的 `setWindowOpenHandler` 对 http(s) 会调 `shell.openExternal`——这也是 DSH 里外链的既有做法。
@@ -142,12 +148,10 @@ node lib/sync-cli.js             # 真写入（带备份）
 | `only` | 白名单，按列出顺序写；空 = 后端全部模型 |
 | `exclude` | 黑名单，优先级高于 `only` |
 | `efforts` | 每个模型的思考档位，默认 `[low, high, max]`；填 `auto` 用上游声明的档位 |
-| `profilePatch` | 目标配置路径，默认取宿主当前 profile 的 `cordis.patch.yml`（CLI 下由 `DSH_PROFILE_DIR` 或 `DSH_HOME` + `DSH_PROFILE` 推导） |
 | `panelConfig` | 读网关密钥的面板配置，默认 `<cwd>/config.json` |
 | `apiKey` | 显式指定网关密钥，默认依次尝试 `WORKBUDDY_PROXY_KEY`、面板 `config.json` 的 `api_key` |
 | `baseURL` | 模型接口地址，默认 `http://<host>:<port>` |
 | `timeoutMs` | 拉取超时，默认 60000（面板的模型列表缓存 1h，冷缓存要等上游） |
-| `keepBackups` | 保留的备份份数，默认 3 |
 
 `backend` 段的字段（后端版本管理）：
 
@@ -234,8 +238,7 @@ node lib/cli.js
 # 额外校验可执行文件 / profile 配置是否存在、端口当前状态
 node lib/cli.js --check
 
-# 手动同步一次模型列表（唯一会写文件的入口）
-node lib/sync-cli.js --dry-run
+# 预览模型列表同步会写什么（只读；真正写入在 DSH 里进行）
 node lib/sync-cli.js
 ```
 

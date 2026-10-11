@@ -1,14 +1,12 @@
 /**
  * 模型列表同步测试：命名/筛选/渲染/定位是纯函数；拉取与回写用真 HTTP 假服务跑通。
  *
- * 回写是"改用户 profile"的动作，所以这里覆盖得比其它模块更细：
- * 只动 models 段、认不出结构就不写、空列表不清空、备份有上限。
+ * 写入走宿主 configEditor（这里用 fixtures/fake-config-editor.mjs 替身），重点覆盖：
+ * 只动目标 provider、provider 丢失时补建、空列表/请求失败不写、编辑失败如实报错。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,8 +14,7 @@ import { resolvePluginConfig } from '../lib/config.js';
 import {
   creditsLabel,
   fetchModels,
-  backupPatchFile,
-  locateModelsBlock,
+  findConfigEntry,
   modelDisplayName,
   modelsEndpoint,
   planModelEntries,
@@ -26,52 +23,12 @@ import {
   renderModelsBlock,
   resolveProfilePatchPath,
   syncModels,
-  updatePatchText,
+  withProviderModels,
   yamlScalar,
 } from '../lib/models.js';
-import { isFile } from '../lib/services.js';
+import { createFakeConfigEditor, llmPiAiConfig, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** 与真实 profile 同构的最小 patch：providers 缩进 4、provider 6、models 8、条目 10。 */
-const PATCH_FIXTURE = `# 测试用 profile patch（结构与真实文件一致）
-- id: llm-pi-ai
-  name: "@deepseek-ai/dsh-llm-pi-ai"
-  config:
-    providers:
-      openrouter:
-        displayName: OpenRouter
-        models:
-          - id: anthropic/claude-opus-5.5
-            name: Claude Opus 5.5
-      workbuddy:
-        displayName: WorkBuddy
-        apiKeyEnv: WORKBUDDY_PROXY_KEY
-        baseURL: http://127.0.0.1:7863/v1/
-        api: openai-completions
-        models:
-          - id: cn:stale
-            name: 过期条目
-- id: locale
-  name: "@deepseek-ai/dsh-client-locale"
-  config:
-    preference: zh
-`;
-
-const SAMPLE_NO_MODELS_PATCH = `# 测试用 profile patch（workbuddy provider 下没有 models 段）
-- id: llm-pi-ai
-  name: "@deepseek-ai/dsh-llm-pi-ai"
-  config:
-    providers:
-      workbuddy:
-        displayName: WorkBuddy
-        baseURL: http://127.0.0.1:7863/v1/
-- id: locale
-  name: "@deepseek-ai/dsh-client-locale"
-  config:
-    preference: zh
-`;
 
 const SAMPLE = [
   {
@@ -125,23 +82,16 @@ function startFixture(env = {}) {
   return { child, ready, stop: () => child.kill() };
 }
 
-function tempPatch(text = PATCH_FIXTURE) {
-  const dir = mkdtempSync(join(tmpdir(), 'autostart-models-'));
-  const path = join(dir, 'cordis.patch.yml');
-  writeFileSync(path, text, 'utf8');
-  return { dir, path };
-}
-
 /** 用插件真实的配置解析拼出 spec + models，避免测试里手搓配置结构。 */
-function configFor(port, patchPath, models = {}) {
+function configFor(port, models = {}) {
   return resolvePluginConfig(
-    {
-      port,
-      models: { enabled: true, profilePatch: patchPath, apiKey: 'test-key', timeoutMs: 5_000, ...models },
-    },
+    { port, models: { enabled: true, apiKey: 'test-key', timeoutMs: 5_000, ...models } },
     { PATH: '' },
   );
 }
+
+/** 取出 fake editor 里 llm-pi-ai 当前的 provider 配置。 */
+const providersOf = (editor) => editor.entry('llm-pi-ai').options.config.providers;
 
 test('倍率标签：x0.11 → 0.11，0 / 缺失 → Free', () => {
   assert.equal(creditsLabel('x0.11'), '0.11');
@@ -214,134 +164,6 @@ test('渲染：缩进与手写文件一致', () => {
   ]);
 });
 
-test('定位 models 段：只认 workbuddy，且不误伤 openrouter', () => {
-  const lines = PATCH_FIXTURE.split('\n');
-  const located = locateModelsBlock(lines, 'workbuddy');
-  assert.equal(located.ok, true);
-  assert.equal(lines[located.modelsIndex].trim(), 'models:');
-  assert.equal(located.itemIndent, 10);
-  // 定位到的必须是 workbuddy 自己那一段（cn:stale 是它的过期条目）。
-  assert.equal(lines[located.modelsIndex + 1].trim(), '- id: cn:stale');
-
-  assert.equal(locateModelsBlock(PATCH_FIXTURE.split('\n'), 'nope').ok, false);
-  assert.equal(locateModelsBlock(['- id: a'], 'workbuddy').ok, false);
-});
-
-test('回写：只替换 models 段，其余逐字节保留，且可识别"无变化"', () => {
-  const entries = planModelEntries(SAMPLE, {});
-  const first = updatePatchText(PATCH_FIXTURE, entries, 'workbuddy');
-  assert.equal(first.ok, true);
-  assert.equal(first.changed, true);
-  assert.ok(first.text.includes('          - id: cn:alpha'));
-  assert.ok(first.text.includes('            name: GL Beta Free'));
-  assert.ok(!first.text.includes('cn:stale'));
-  // 其它 provider、其它条目、注释、结尾换行都不能动。
-  assert.ok(first.text.includes('          - id: anthropic/claude-opus-5.5'));
-  assert.ok(first.text.includes('- id: locale'));
-  assert.ok(first.text.startsWith('# 测试用 profile patch'));
-  assert.ok(first.text.endsWith('    preference: zh\n'));
-
-  const second = updatePatchText(first.text, entries, 'workbuddy');
-  assert.equal(second.changed, false);
-
-  const crlf = updatePatchText(PATCH_FIXTURE.replace(/\n/g, '\r\n'), entries, 'workbuddy');
-  assert.equal(crlf.ok, true);
-  assert.ok(crlf.text.includes('\r\n'), 'CRLF 文件必须保持 CRLF');
-});
-
-test('回写：provider 下没有 models 段时拒绝写入', () => {
-  const result = updatePatchText(SAMPLE_NO_MODELS_PATCH, planModelEntries(SAMPLE, {}), 'workbuddy');
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /models/);
-});
-
-/** workbuddy provider 整段丢失的 profile；另一个条目也有 providers:，用来确认不会补错地方。 */
-const SAMPLE_NO_PROVIDER_PATCH = `- id: llm-pi-ai
-  name: "@deepseek-ai/dsh-llm-pi-ai"
-  config:
-    providers:
-      openrouter:
-        displayName: OpenRouter
-        models:
-          - id: anthropic/claude-opus-5.5
-            name: Claude Opus 5.5
-        baseURL: https://openrouter.ai/api/v1/
-
-- id: dsh-connect-trae
-  name: dsh-connect-trae
-  config:
-    providers:
-      cn:
-        enabled: true
-- id: locale
-  name: "@deepseek-ai/dsh-client-locale"
-  config:
-    preference: zh
-`;
-
-const PROVIDER_SKELETON = {
-  displayName: 'WorkBuddy',
-  apiKeyEnv: 'WORKBUDDY_PROXY_KEY',
-  baseURL: 'http://127.0.0.1:7863/v1/',
-};
-
-test('回写：provider 整段丢失时在 llm-pi-ai 的 providers 末尾补建', () => {
-  const entries = planModelEntries(SAMPLE, {});
-  const result = updatePatchText(SAMPLE_NO_PROVIDER_PATCH, entries, 'workbuddy', PROVIDER_SKELETON);
-  assert.equal(result.ok, true, result.reason);
-  assert.equal(result.created, true);
-
-  const lines = result.text.split('\n');
-  const at = lines.indexOf('      workbuddy:');
-  assert.ok(at > 0, result.text);
-  // 必须落在 llm-pi-ai 条目里（openrouter 之后、dsh-connect-trae 之前），且空行留在补建段之后。
-  assert.ok(at > lines.indexOf('        baseURL: https://openrouter.ai/api/v1/'));
-  assert.ok(at < lines.indexOf('- id: dsh-connect-trae'));
-  assert.deepEqual(lines.slice(at + 1, at + 7), [
-    '        displayName: WorkBuddy',
-    '        apiKeyEnv: WORKBUDDY_PROXY_KEY',
-    '        baseURL: http://127.0.0.1:7863/v1/',
-    '        api: openai-completions',
-    '        reasoning: max',
-    '        models:',
-  ]);
-  assert.equal(lines[at + 7], '          - id: cn:alpha');
-  assert.equal(result.text.match(/workbuddy:/g).length, 1, '只补建一次');
-
-  // 补建后再同步就走普通替换路径，结果稳定。
-  const again = updatePatchText(result.text, entries, 'workbuddy', PROVIDER_SKELETON);
-  assert.equal(again.ok, true);
-  assert.equal(again.changed, false);
-});
-
-test('回写：没传补建骨架时，provider 丢失仍拒绝写入', () => {
-  const result = updatePatchText(SAMPLE_NO_PROVIDER_PATCH, planModelEntries(SAMPLE, {}), 'workbuddy');
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /workbuddy/);
-});
-
-test('回写：profile 里没有 llm-pi-ai 条目时不补建', () => {
-  const text = SAMPLE_NO_PROVIDER_PATCH.replace('"@deepseek-ai/dsh-llm-pi-ai"', 'something-else');
-  const result = updatePatchText(text, planModelEntries(SAMPLE, {}), 'workbuddy', PROVIDER_SKELETON);
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /llm-pi-ai/);
-});
-
-test('备份：同一秒内连续备份不互相覆盖，保存前的原样留得住', () => {
-  const { dir, path } = tempPatch('original\n');
-  const first = backupPatchFile(path, 3);
-  writeFileSync(path, 'modified\n', 'utf8');
-  const second = backupPatchFile(path, 3);
-
-  assert.notEqual(first, second);
-  assert.equal(readFileSync(first, 'utf8'), 'original\n');
-  assert.equal(readFileSync(second, 'utf8'), 'modified\n');
-
-  // 带序号的备份按字典序排在原名之后，清理时"最旧的先删"依然成立。
-  const names = readdirSync(dir).filter((name) => name.includes('bak-before-model-sync')).sort();
-  assert.deepEqual(names.map((name) => join(dir, name)), [first, second]);
-});
-
 test('provider baseURL：统一成带 /v1/ 的形式', () => {
   assert.equal(providerBaseURL('http://127.0.0.1:7863'), 'http://127.0.0.1:7863/v1/');
   assert.equal(providerBaseURL('http://127.0.0.1:7863/v1'), 'http://127.0.0.1:7863/v1/');
@@ -395,90 +217,6 @@ test('fetchModels：真 HTTP 拉取、Bearer 鉴权、错误与空列表', async
   assert.match(errorResult.reason, /500/);
 });
 
-test('syncModels：写入 profile，留备份，第二次运行判定为无变化', async (t) => {
-  const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
-  t.after(fixture.stop);
-  const port = await fixture.ready;
-  const { path } = tempPatch();
-  const resolved = configFor(port, path);
-
-  const result = await syncModels({ spec: resolved.spec, models: resolved.models, env: { PATH: '' } });
-  assert.equal(result.state, 'updated');
-  assert.equal(result.entries.length, 2);
-  assert.ok(isFile(result.backup), '改配置前必须留备份');
-
-  const after = readFileSync(path, 'utf8');
-  assert.ok(after.includes('            name: CN Alpha 0.11'));
-  assert.ok(after.includes('            name: GL Beta Free'));
-  assert.ok(after.includes('          - id: anthropic/claude-opus-5.5'), '别的 provider 不能被动');
-
-  const again = await syncModels({ spec: resolved.spec, models: resolved.models, env: { PATH: '' } });
-  assert.equal(again.state, 'unchanged');
-});
-
-test('syncModels：白名单决定写入哪些模型与顺序', async (t) => {
-  const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
-  t.after(fixture.stop);
-  const port = await fixture.ready;
-  const { path } = tempPatch();
-  const resolved = configFor(port, path, { only: ['global:beta'] });
-
-  const result = await syncModels({ spec: resolved.spec, models: resolved.models, env: { PATH: '' } });
-  assert.equal(result.state, 'updated');
-  const after = readFileSync(path, 'utf8');
-  assert.deepEqual(
-    after.split('\n').filter((l) => /^\s+- id: (cn|global):/.test(l)).map((l) => l.trim()),
-    ['- id: global:beta'],
-  );
-});
-
-test('syncModels：空列表 / 请求失败 / 无法定位时都不动文件', async (t) => {
-  const emptyFixture = startFixture({ TEST_MODE: 'http-empty' });
-  t.after(emptyFixture.stop);
-  const { path } = tempPatch();
-  const emptyResolved = configFor(await emptyFixture.ready, path);
-  const skippedEmpty = await syncModels({ spec: emptyResolved.spec, models: emptyResolved.models, env: { PATH: '' } });
-  assert.equal(skippedEmpty.state, 'skipped');
-  assert.match(skippedEmpty.reason, /空模型列表/);
-  assert.equal(readFileSync(path, 'utf8'), PATCH_FIXTURE, '空列表绝不能清空已有配置');
-
-  const errorFixture = startFixture({ TEST_MODE: 'http-error' });
-  t.after(errorFixture.stop);
-  const errorResolved = configFor(await errorFixture.ready, path);
-  const failed = await syncModels({ spec: errorResolved.spec, models: errorResolved.models, env: { PATH: '' } });
-  assert.equal(failed.state, 'failed');
-  assert.equal(readFileSync(path, 'utf8'), PATCH_FIXTURE);
-
-  // 后端正常但目标文件结构认不出：必须拒绝写入（宁可不同步也不能改错位置）。
-  const modelsFixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
-  t.after(modelsFixture.stop);
-  const noModels = tempPatch(SAMPLE_NO_MODELS_PATCH);
-  const noModelsResolved = configFor(await modelsFixture.ready, noModels.path);
-  const located = await syncModels({
-    spec: noModelsResolved.spec,
-    models: noModelsResolved.models,
-    env: { PATH: '' },
-  });
-  assert.equal(located.state, 'failed');
-  assert.match(located.reason, /models/);
-  assert.equal(readFileSync(noModels.path, 'utf8'), SAMPLE_NO_MODELS_PATCH);
-});
-
-test('syncModels：dry-run 只算不写；未开启时直接跳过', async (t) => {
-  const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
-  t.after(fixture.stop);
-  const port = await fixture.ready;
-  const { path } = tempPatch();
-  const resolved = configFor(port, path);
-
-  const plan = await syncModels({ spec: resolved.spec, models: resolved.models, env: { PATH: '' }, dryRun: true });
-  assert.equal(plan.state, 'dry-run');
-  assert.equal(readFileSync(path, 'utf8'), PATCH_FIXTURE);
-
-  const off = configFor(port, path, { enabled: false });
-  assert.deepEqual(await syncModels({ spec: off.spec, models: off.models, env: { PATH: '' } }), { state: 'disabled' });
-});
-
 test('读取 profile 里本插件的 models 配置（手动同步与自动同步同一份来源）', () => {
   const text = `- id: llm-pi-ai
   name: "@deepseek-ai/dsh-llm-pi-ai"
@@ -530,21 +268,150 @@ test('读取 profile 里本插件的 models 配置（手动同步与自动同步
   );
 });
 
-test('syncModels：备份只保留最近 keepBackups 份', async (t) => {
+
+test('读取 only: [] 得到空数组，而不是字符串 "[]"', () => {
+  const text = `- id: dsh-autostart-workbuddy
+  name: dsh-autostart-workbuddy
+  config:
+    models:
+      enabled: true
+      only: []
+`;
+  assert.deepEqual(readPluginModelsConfig(text).only, []);
+});
+
+const SKELETON = {
+  displayName: 'WorkBuddy',
+  apiKeyEnv: 'WORKBUDDY_PROXY_KEY',
+  baseURL: 'http://127.0.0.1:7863/v1/',
+  api: 'openai-completions',
+  reasoning: 'max',
+};
+
+test('withProviderModels：只换目标 provider 的 models，其余字段与 provider 原样保留', () => {
+  const entries = planModelEntries(SAMPLE, {});
+  const before = llmPiAiConfig();
+  const result = withProviderModels(before, 'workbuddy', entries, SKELETON);
+
+  assert.equal(result.changed, true);
+  assert.equal(result.created, false);
+  assert.deepEqual(result.config.providers.workbuddy.models, entries);
+  assert.equal(result.config.providers.workbuddy.apiKeyEnv, 'WORKBUDDY_PROXY_KEY');
+  assert.deepEqual(result.config.providers.openrouter, before.providers.openrouter);
+  assert.equal(before.providers.workbuddy.models[0].id, 'cn:stale', '不能就地改调用方传进来的对象');
+
+  const again = withProviderModels(result.config, 'workbuddy', entries, SKELETON);
+  assert.equal(again.changed, false);
+});
+
+test('withProviderModels：provider 整段丢失时按骨架补建', () => {
+  const entries = planModelEntries(SAMPLE, {});
+  const result = withProviderModels(llmPiAiConfig({ withWorkbuddy: false }), 'workbuddy', entries, SKELETON);
+  assert.equal(result.changed, true);
+  assert.equal(result.created, true);
+  assert.deepEqual(result.config.providers.workbuddy, { ...SKELETON, models: entries });
+  assert.ok(result.config.providers.openrouter, '别的 provider 不能丢');
+
+  // 连 providers 都没有也能补。
+  assert.deepEqual(withProviderModels(undefined, 'workbuddy', entries, SKELETON).config, {
+    providers: { workbuddy: { ...SKELETON, models: entries } },
+  });
+});
+
+test('findConfigEntry：按 id 或包名找可编辑条目', () => {
+  const editor = createFakeConfigEditor(profileRows());
+  assert.equal(findConfigEntry(editor, { id: 'dsh-autostart-workbuddy' })?.options.id, 'dsh-autostart-workbuddy');
+  assert.equal(findConfigEntry(editor, { name: '@deepseek-ai/dsh-llm-pi-ai' })?.options.id, 'llm-pi-ai');
+  assert.equal(findConfigEntry(editor, { id: 'nope' }), undefined);
+  assert.equal(findConfigEntry(undefined, { id: 'llm-pi-ai' }), undefined);
+});
+
+test('syncModels：经 configEditor 写进 llm-pi-ai，第二次运行判定为无变化', async (t) => {
+  const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
+  t.after(fixture.stop);
+  const resolved = configFor(await fixture.ready);
+  const editor = createFakeConfigEditor(profileRows());
+
+  const result = await syncModels({ spec: resolved.spec, models: resolved.models, editor, env: { PATH: '' } });
+  assert.equal(result.state, 'updated');
+  assert.equal(result.entries.length, 2);
+  assert.equal(result.documentPath, editor.documentPath);
+  assert.deepEqual(editor.edits.map((edit) => edit.id), ['llm-pi-ai'], '只编辑 llm-pi-ai 那一行');
+  assert.deepEqual(
+    providersOf(editor).workbuddy.models.map((model) => model.name),
+    ['CN Alpha 0.11', 'GL Beta Free'],
+  );
+  assert.ok(providersOf(editor).openrouter, '别的 provider 不能被动');
+
+  const again = await syncModels({ spec: resolved.spec, models: resolved.models, editor, env: { PATH: '' } });
+  assert.equal(again.state, 'unchanged');
+  assert.equal(editor.edits.length, 1, '无变化时不该再写');
+});
+
+test('syncModels：白名单决定写入哪些模型与顺序；provider 丢失时补建', async (t) => {
+  const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
+  t.after(fixture.stop);
+  const resolved = configFor(await fixture.ready, { only: ['global:beta'] });
+  const editor = createFakeConfigEditor(profileRows({ withWorkbuddy: false }));
+
+  const result = await syncModels({ spec: resolved.spec, models: resolved.models, editor, env: { PATH: '' } });
+  assert.equal(result.state, 'updated');
+  assert.equal(result.created, true);
+  const workbuddy = providersOf(editor).workbuddy;
+  assert.deepEqual(workbuddy.models.map((model) => model.id), ['global:beta']);
+  assert.equal(workbuddy.baseURL, `http://127.0.0.1:${resolved.spec.port}/v1/`);
+  assert.equal(workbuddy.apiKeyEnv, 'WORKBUDDY_PROXY_KEY');
+});
+
+test('syncModels：空列表 / 请求失败 / 没有 editor / 没有 llm-pi-ai / 编辑失败都不写', async (t) => {
+  const emptyFixture = startFixture({ TEST_MODE: 'http-empty' });
+  t.after(emptyFixture.stop);
+  const emptyResolved = configFor(await emptyFixture.ready);
+  const editor = createFakeConfigEditor(profileRows());
+  const skippedEmpty = await syncModels({ spec: emptyResolved.spec, models: emptyResolved.models, editor });
+  assert.equal(skippedEmpty.state, 'skipped');
+  assert.match(skippedEmpty.reason, /空模型列表/);
+
+  const errorFixture = startFixture({ TEST_MODE: 'http-error' });
+  t.after(errorFixture.stop);
+  const errorResolved = configFor(await errorFixture.ready);
+  const failed = await syncModels({ spec: errorResolved.spec, models: errorResolved.models, editor });
+  assert.equal(failed.state, 'failed');
+  assert.equal(editor.edits.length, 0, '空列表与请求失败都不能动配置');
+
+  const modelsFixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
+  t.after(modelsFixture.stop);
+  const resolved = configFor(await modelsFixture.ready);
+
+  const noEditor = await syncModels({ spec: resolved.spec, models: resolved.models, editor: undefined });
+  assert.equal(noEditor.state, 'skipped');
+  assert.match(noEditor.reason, /configEditor/);
+
+  const noTarget = await syncModels({
+    spec: resolved.spec,
+    models: resolved.models,
+    editor: createFakeConfigEditor(profileRows().slice(1)),
+  });
+  assert.equal(noTarget.state, 'skipped');
+  assert.match(noTarget.reason, /llm-pi-ai/);
+
+  editor.failWith = new Error('Configuration for "llm-pi-ai" is overridden by a home patch');
+  const rejected = await syncModels({ spec: resolved.spec, models: resolved.models, editor });
+  assert.equal(rejected.state, 'failed');
+  assert.match(rejected.reason, /overridden/);
+});
+
+test('syncModels：dry-run 只算不写；未开启时直接跳过', async (t) => {
   const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
   t.after(fixture.stop);
   const port = await fixture.ready;
-  const { dir, path } = tempPatch();
-  const resolved = configFor(port, path, { keepBackups: 2 });
+  const editor = createFakeConfigEditor(profileRows());
+  const resolved = configFor(port);
 
-  for (let i = 0; i < 3; i += 1) {
-    // 每轮先把 models 段改脏，逼出一次真实写入（备份名精确到秒，故隔开一秒）。
-    writeFileSync(path, readFileSync(path, 'utf8').replace(/^\s+- id: (cn|global):.*$/m, '          - id: cn:stale'));
-    const result = await syncModels({ spec: resolved.spec, models: resolved.models, env: { PATH: '' } });
-    assert.equal(result.state, 'updated');
-    if (i < 2) await sleep(1_050);
-  }
+  const plan = await syncModels({ spec: resolved.spec, models: resolved.models, editor, dryRun: true });
+  assert.equal(plan.state, 'dry-run');
+  assert.equal(editor.edits.length, 0);
 
-  const backups = readdirSync(dir).filter((name) => name.includes('bak-before-model-sync'));
-  assert.equal(backups.length, 2, `备份应只保留 2 份，实际 ${backups.join(', ')}`);
+  const off = configFor(port, { enabled: false });
+  assert.deepEqual(await syncModels({ spec: off.spec, models: off.models, editor }), { state: 'disabled' });
 });

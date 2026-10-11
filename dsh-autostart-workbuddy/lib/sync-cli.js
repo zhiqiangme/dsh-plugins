@@ -1,14 +1,15 @@
 /**
- * 手动同步模型列表（DSH 启动时插件也会自动做一次，见 lib/index.js）。
+ * 预览模型列表同步：按 profile 里的插件配置拉一次 /v1/models，打印将要写进
+ * llm-pi-ai 的 workbuddy provider 的 models 段。**不改任何文件。**
  *
- *   node lib/sync-cli.js            按 profile 里的插件配置同步一次
- *   node lib/sync-cli.js --dry-run  只打印将要写入的 models 段，不改任何文件
+ *   node lib/sync-cli.js
  *
- * 配置来源与自动同步完全一致：读 profile 的 cordis.patch.yml 里
- * `- id: dsh-autostart-workbuddy` 那一行的 config.models——命令行里没有宿主，
- * 只能直接读文件，这样"手动跑一次"和"启动时自动同步"用的就是同一份配置。
+ * 为什么不再提供"真写入"：写配置必须走 DSH 的 configEditor（持 profile 锁、校验、原子写、
+ * 热重载，见 lib/models.js 顶部注释）。命令行里没有宿主，直接改 cordis.patch.yml 会和运行中的
+ * DSH 互相覆盖。真正的同步发生在 DSH 启动后（插件自动做一次）与插件页点「保存」时。
  *
- * 这是本插件唯一会写文件的入口；lib/cli.js 保持只读。
+ * 配置来源与插件运行时一致：读 profile 的 cordis.patch.yml 里 `- id: dsh-autostart-workbuddy`
+ * 那一行的 config.models——命令行里没有宿主，只能读文件。
  */
 
 import { readFileSync } from 'node:fs';
@@ -21,12 +22,13 @@ import {
   readPluginModelsConfig,
   renderModelsBlock,
   resolveProfilePatchPath,
-  syncModels,
 } from './models.js';
 import { isFile } from './services.js';
 
 const PLUGIN_ID = 'dsh-autostart-workbuddy';
-const dryRun = process.argv.includes('--dry-run');
+
+/** 预览里 `- id:` 的缩进：与本机 profile 里 providers.<name>.models 下的条目一致。 */
+const PREVIEW_ITEM_INDENT = 10;
 
 const patchPath = resolveProfilePatchPath(process.env, '');
 if (!patchPath || !isFile(patchPath)) {
@@ -38,8 +40,8 @@ if (!patchPath || !isFile(patchPath)) {
 
 const modelsRaw = readPluginModelsConfig(readFileSync(patchPath, 'utf8'), PLUGIN_ID);
 if (!modelsRaw) {
-  console.error(`profile 里没有 ${PLUGIN_ID} 的 config.models，手动同步无事可做。`);
-  console.error('在 profile 的 cordis.patch.yml 末尾追加（白名单留空 = 后端全部模型）：');
+  console.error(`profile 里没有 ${PLUGIN_ID} 的 config.models，没有可预览的同步配置。`);
+  console.error('在插件页打开模型列表并保存一次白名单，或在 profile 的 cordis.patch.yml 末尾追加：');
   console.error('');
   console.error(`- id: ${PLUGIN_ID}`);
   console.error(`  name: ${PLUGIN_ID}`);
@@ -52,8 +54,7 @@ if (!modelsRaw) {
 }
 
 // 服务规格仍用内置默认值；如果改过后端端口，请同时配 models.baseURL。
-const resolved = resolvePluginConfig({ models: { ...modelsRaw, profilePatch: patchPath } }, process.env);
-const models = resolved.models;
+const models = resolvePluginConfig({ models: modelsRaw }, process.env).models;
 
 if (!models.enabled) {
   console.log(`profile 里 ${PLUGIN_ID} 的 models.enabled 不是 true，未开启同步。`);
@@ -65,37 +66,16 @@ const apiKey =
   (typeof process.env.WORKBUDDY_PROXY_KEY === 'string' ? process.env.WORKBUDDY_PROXY_KEY.trim() : '') ||
   panelApiKey(models.panelConfig);
 
-if (dryRun) {
-  const fetched = await fetchModels({ baseURL: models.baseURL, apiKey, timeoutMs: models.timeoutMs });
-  if (!fetched.ok) {
-    console.error(`拉取失败：${fetched.reason}`);
-    process.exit(1);
-  }
-  const entries = planModelEntries(fetched.models, models);
-  console.log(`后端共 ${fetched.models.length} 个模型，按当前配置取 ${entries.length} 个：`);
-  console.log('');
-  console.log(renderModelsBlock(entries, 10).join('\n'));
+const fetched = await fetchModels({ baseURL: models.baseURL, apiKey, timeoutMs: models.timeoutMs });
+if (!fetched.ok) {
+  console.error(`拉取失败：${fetched.reason}`);
+  process.exit(1);
 }
 
-const result = await syncModels({ spec: resolved.spec, models, env: process.env, dryRun });
-
-switch (result.state) {
-  case 'dry-run':
-    console.log('');
-    console.log(`以上内容将写入 ${result.patchPath}（--dry-run 未写入）。`);
-    break;
-  case 'updated':
-    console.log(`已同步 ${result.entries.length} 个模型 → ${result.patchPath}`);
-    console.log(`备份：${result.backup}`);
-    console.log('重启 DSH（或触发配置热加载）后生效。');
-    break;
-  case 'unchanged':
-    console.log(`模型列表已是最新（${result.entries.length} 个模型），未改动文件。`);
-    break;
-  case 'disabled':
-    console.log('模型列表同步未开启。');
-    break;
-  default:
-    console.error(`未同步：${result.reason ?? result.state}`);
-    process.exit(1);
-}
+const entries = planModelEntries(fetched.models, models);
+console.log(`后端共 ${fetched.models.length} 个模型，按当前配置取 ${entries.length} 个：`);
+console.log('');
+console.log(renderModelsBlock(entries, PREVIEW_ITEM_INDENT).join('\n'));
+console.log('');
+console.log(`以上将写进 llm-pi-ai 的 providers.${models.provider}.models（本命令不改文件）。`);
+console.log('DSH 启动后插件会自动同步一次；也可以在插件页的模型列表里点「保存」立即同步。');

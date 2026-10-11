@@ -17,7 +17,6 @@ const MODELS_DEFAULTS = Object.freeze({
   provider: 'workbuddy',
   // 面板的模型列表是缓存 1h 的；冷缓存时要等上游，给它 60s（面板自己那侧上限是 120s）。
   timeoutMs: 60_000,
-  keepBackups: 3,
 });
 
 /** 布尔字段的宽容解析：只有显式 false 才关闭（与 DSH 配置里 enabled 的 opt-out 语义一致）。 */
@@ -101,14 +100,11 @@ function resolveModelsConfig(raw, spec) {
     // `auto` = 按上游声明的档位生成；否则用给定档位（默认低/高/最大三档）。
     efforts: models.efforts === 'auto' ? 'auto' : stringArray(models.efforts, DEFAULT_EFFORTS),
     provider: stringOr(models.provider, MODELS_DEFAULTS.provider),
-    // 空字符串 = 插件内取宿主 profileContext.patchPath；CLI 下由 DSH_PROFILE_DIR / DSH_PROFILE 推导。
-    profilePatch: stringOr(models.profilePatch, ''),
     panelConfig: stringOr(models.panelConfig, spec.cwd ? join(spec.cwd, 'config.json') : ''),
     // 空 = 依次尝试 WORKBUDDY_PROXY_KEY 与面板 config.json 的 api_key。
     apiKey: stringOr(models.apiKey, ''),
     baseURL: stringOr(models.baseURL, `http://${spec.host}:${spec.port}`),
     timeoutMs: positiveNumber(models.timeoutMs, MODELS_DEFAULTS.timeoutMs),
-    keepBackups: positiveNumber(models.keepBackups, MODELS_DEFAULTS.keepBackups),
   };
 }
 

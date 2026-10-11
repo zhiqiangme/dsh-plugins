@@ -2,42 +2,22 @@
  * Web 面板宿主半侧测试：GET 的取数与回显、POST 的「写白名单 + 立即重新同步」，
  * 以及路由边界（来源、方法、请求体）。
  *
- * 路由要宿主 webserver 才存在，所以这里用只收集 handler 的假 webServer 直接调用——
- * 覆盖的是本插件自己的判定逻辑，不测 DSH 的 webserver 实现。
+ * 路由要宿主 webserver 才存在，所以这里用只收集 handler 的假 webServer 直接调用；
+ * 写配置走宿主 configEditor，用 fixtures/fake-config-editor.mjs 替身。
+ * 覆盖的是本插件自己的判定逻辑，不测 DSH 的 webserver / configEditor 实现。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolvePluginConfig } from '../lib/config.js';
 import { BACKEND_PATH, MODELS_PATH, applySelection, describeModels, loopbackOrigin, registerPanelRoutes } from '../lib/web.js';
+import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
-
-const PATCH = `# 测试用 profile patch
-- id: llm-pi-ai
-  name: "@deepseek-ai/dsh-llm-pi-ai"
-  config:
-    providers:
-      workbuddy:
-        displayName: WorkBuddy
-        baseURL: http://127.0.0.1:7863/v1/
-        models:
-          - id: cn:stale
-            name: 过期条目
-- id: dsh-autostart-workbuddy
-  name: dsh-autostart-workbuddy
-  config:
-    models:
-      enabled: true
-      only:
-        - cn:alpha
-`;
+const PLUGIN_ID = 'dsh-autostart-workbuddy';
 
 /** 起一个假后端；端口由子进程打印，避免抢占竞态。 */
 function startFixture(env = {}) {
@@ -80,22 +60,17 @@ function freePort() {
   });
 }
 
-function tempPatch(text = PATCH) {
-  const dir = mkdtempSync(join(tmpdir(), 'autostart-web-'));
-  const path = join(dir, 'cordis.patch.yml');
-  writeFileSync(path, text, 'utf8');
-  return { dir, path };
-}
-
 /** 用插件真实的配置解析拼出 spec + models，避免测试里手搓配置结构。 */
-function configFor(port, patchPath, models = {}) {
+function configFor(port, models = {}) {
   return resolvePluginConfig(
-    {
-      port,
-      models: { enabled: true, profilePatch: patchPath, apiKey: 'test-key', timeoutMs: 5_000, ...models },
-    },
+    { port, models: { enabled: true, only: ['cn:alpha'], apiKey: 'test-key', timeoutMs: 5_000, ...models } },
     { PATH: '' },
   );
+}
+
+/** 与 configFor 对应的宿主侧 profile：本插件那一行的 config 与插件手里那份一致。 */
+function editorFor(models = { enabled: true, only: ['cn:alpha'] }) {
+  return createFakeConfigEditor(profileRows({ models }));
 }
 
 function fakeRes() {
@@ -122,7 +97,7 @@ function fakeReq(method, { origin, body } = {}) {
   };
 }
 
-function fakeCtx() {
+function fakeCtx(services = {}) {
   const routes = [];
   const lines = [];
   const record = (level) => (...args) => lines.push(`${level} ${args.join(' ')}`);
@@ -136,6 +111,9 @@ function fakeCtx() {
         return () => {};
       },
     },
+    get(name) {
+      return services[name];
+    },
     effect(factory) {
       return factory();
     },
@@ -145,15 +123,16 @@ function fakeCtx() {
 test('GET：返回后端全量模型，并按当前白名单标记勾选状态', async () => {
   const fixture = startFixture({ TEST_MODE: 'http-models' });
   const port = await fixture.ready;
-  const { path } = tempPatch();
-  const resolved = configFor(port, path);
+  const resolved = configFor(port);
+  const editor = editorFor();
   try {
-    const payload = await describeModels({ spec: resolved.spec, models: resolved.models, env: process.env });
+    const payload = await describeModels({ spec: resolved.spec, models: resolved.models, editor, env: process.env });
 
     assert.equal(payload.ok, true);
     assert.equal(payload.provider, 'workbuddy');
     assert.equal(payload.enabled, true);
     assert.deepEqual(payload.only, ['cn:alpha']);
+    assert.equal(payload.patchPath, editor.documentPath);
     assert.equal(payload.models.length, 2);
 
     const alpha = payload.models.find((row) => row.id === 'cn:alpha');
@@ -176,8 +155,7 @@ test('GET：返回后端全量模型，并按当前白名单标记勾选状态',
 test('GET：白名单为空 = 同步全部，所有条目都算已勾选', async () => {
   const fixture = startFixture({ TEST_MODE: 'http-models' });
   const port = await fixture.ready;
-  const { path } = tempPatch(PATCH.replace('      only:\n        - cn:alpha\n', '      only: []\n'));
-  const resolved = configFor(port, path);
+  const resolved = configFor(port, { only: [] });
   try {
     const payload = await describeModels({ spec: resolved.spec, models: resolved.models, env: process.env });
     assert.equal(payload.ok, true);
@@ -189,88 +167,84 @@ test('GET：白名单为空 = 同步全部，所有条目都算已勾选', async
 });
 
 test('GET：后端不可达时返回 ok:false 与原因，而不是抛异常', async () => {
-  const port = await freePort();
-  const { path } = tempPatch();
-  const resolved = configFor(port, path);
-  const payload = await describeModels({ spec: resolved.spec, models: resolved.models, env: process.env });
+  const resolved = configFor(await freePort());
+  const editor = editorFor();
+  const payload = await describeModels({ spec: resolved.spec, models: resolved.models, editor, env: process.env });
   assert.equal(payload.ok, false);
   assert.match(payload.reason, /请求失败/);
-  assert.equal(payload.patchPath, path);
+  assert.equal(payload.patchPath, editor.documentPath);
 });
 
-test('POST：写白名单并立即重新生成 provider 的模型清单（留备份）', async () => {
+test('POST：经 configEditor 写白名单，并立即重新生成 provider 的模型清单', async () => {
   const fixture = startFixture({ TEST_MODE: 'http-models' });
   const port = await fixture.ready;
-  const { dir, path } = tempPatch();
-  const resolved = configFor(port, path);
+  const resolved = configFor(port);
+  const editor = editorFor();
   try {
-    const result = await applySelection({
-      spec: resolved.spec,
-      models: resolved.models,
-      env: process.env,
-      only: ['global:beta', 'cn:alpha'],
-    });
+    const result = await applySelection({ resolved, editor, env: process.env, only: ['global:beta', ' cn:alpha '] });
 
     assert.equal(result.ok, true);
     assert.equal(result.changed, true);
     assert.equal(result.sync.state, 'updated');
     assert.equal(result.sync.count, 2);
 
-    const text = readFileSync(path, 'utf8');
-    // 白名单按勾选顺序写入
-    assert.match(text, /      only:\n        - global:beta\n        - cn:alpha\n/);
-    // provider 的模型清单被同一动作重写成后端真实模型（含倍率展示名）
-    assert.match(text, /- id: cn:alpha\n            name: CN Alpha 0.11/);
-    assert.match(text, /- id: global:beta\n            name: GL Beta Free/);
-    // 过期条目被替换掉，且另一个插件（llm-pi-ai）的段落还在
-    assert.equal(text.includes('过期条目'), false);
-    assert.ok(text.includes('# 测试用 profile patch'));
-
-    const backups = readdirSync(dir).filter((name) => name.includes('bak-before-model-sync'));
-    assert.ok(backups.length >= 1, '应留下带时间戳的备份');
+    // 白名单按勾选顺序写进本插件自己那一行（去掉首尾空白），其它字段不丢。
+    assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models, { enabled: true, only: ['global:beta', 'cn:alpha'] });
+    // 插件手里那份配置立即可见（宿主钩子之外也兜底刷新）。
+    assert.deepEqual(resolved.models.only, ['global:beta', 'cn:alpha']);
+    // provider 的模型清单被同一动作重写成后端真实模型（含倍率展示名），顺序跟白名单走。
+    assert.deepEqual(
+      editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((model) => model.name),
+      ['GL Beta Free', 'CN Alpha 0.11'],
+    );
+    assert.deepEqual(editor.edits.map((edit) => edit.id), [PLUGIN_ID, 'llm-pi-ai']);
   } finally {
     fixture.stop();
   }
 });
 
-test('POST：白名单没变时判为无变化（不重写文件），但清单仍会重算', async () => {
+test('POST：白名单没变时不编辑本插件那一行，但清单仍会重算', async () => {
   const fixture = startFixture({ TEST_MODE: 'http-models' });
   const port = await fixture.ready;
-  const { path } = tempPatch();
-  const resolved = configFor(port, path);
+  const resolved = configFor(port);
+  const editor = editorFor();
   try {
-    const result = await applySelection({
-      spec: resolved.spec,
-      models: resolved.models,
-      env: process.env,
-      only: ['cn:alpha'],
-    });
+    const result = await applySelection({ resolved, editor, env: process.env, only: ['cn:alpha'] });
     assert.equal(result.ok, true);
     assert.equal(result.changed, false);
     // 白名单本来就有 cn:alpha，但 provider 清单里还是过期条目 → 这一步要把它修正
     assert.equal(result.sync.state, 'updated');
+    assert.deepEqual(editor.edits.map((edit) => edit.id), ['llm-pi-ai']);
   } finally {
     fixture.stop();
   }
 });
 
-test('POST：only 不是字符串数组时拒绝，且不动文件', async () => {
-  const { path } = tempPatch();
-  const before = readFileSync(path, 'utf8');
-  const resolved = configFor(await freePort(), path);
+test('POST：参数非法 / 没有 configEditor / 编辑被拒时都如实报错，且不动配置', async () => {
+  const resolved = configFor(await freePort());
+  const editor = editorFor();
 
-  const result = await applySelection({ spec: resolved.spec, models: resolved.models, only: 'cn:alpha' });
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /only/);
-  assert.equal(readFileSync(path, 'utf8'), before);
+  const badOnly = await applySelection({ resolved, editor, only: 'cn:alpha' });
+  assert.equal(badOnly.ok, false);
+  assert.match(badOnly.reason, /only/);
+
+  const noEditor = await applySelection({ resolved, editor: undefined, only: ['cn:alpha'] });
+  assert.equal(noEditor.ok, false);
+  assert.match(noEditor.reason, /configEditor/);
+
+  editor.failWith = new Error('Configuration entry is no longer available');
+  const rejected = await applySelection({ resolved, editor, only: ['global:beta'] });
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.reason, /no longer available/);
+  assert.equal(editor.edits.length, 0);
+  assert.deepEqual(resolved.models.only, ['cn:alpha'], '写入失败时插件手里的白名单不能先变');
 });
 
 test('路由：来源、方法与请求体边界', async () => {
   const fixture = startFixture({ TEST_MODE: 'http-models' });
   const port = await fixture.ready;
-  const { path } = tempPatch();
-  const resolved = configFor(port, path);
-  const ctx = fakeCtx();
+  const resolved = configFor(port);
+  const ctx = fakeCtx({ configEditor: editorFor() });
   try {
     registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env });
     assert.equal(ctx.routes.length, 2);
@@ -368,8 +342,7 @@ test('路由：用 ctx.inject 等 webServer 就绪，而不是在 apply 时直�
 });
 
 test('后端路由：GET 给版本快照且默认不联网，POST 校验动作，其它方法 405', async () => {
-  const { path } = tempPatch();
-  const resolved = configFor(await freePort(), path);
+  const resolved = configFor(await freePort());
   const ctx = fakeCtx();
   registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env });
   const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;

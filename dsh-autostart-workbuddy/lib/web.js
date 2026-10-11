@@ -4,9 +4,13 @@
  *
  * 为什么必须有宿主半侧：
  *   页面跑在 DSH Web 客户端里，拿不到 wb2api 的响应——面板只监听 127.0.0.1:7863
- *   且不发 CORS 头，跨源 fetch 会被浏览器拦掉；白名单又写在 profile 的
- *   cordis.patch.yml 里，页面同样碰不到。所以由插件自己开一条 loopback 路由：
+ *   且不发 CORS 头，跨源 fetch 会被浏览器拦掉。所以由插件自己开一条 loopback 路由：
  *   GET 读（后端模型 + 当前白名单），POST 写（白名单 + 立即重新同步 provider 清单）。
+ *
+ * 写入一律走宿主的 configEditor（与 DSH 设置页同一个入口，持 profile 锁、校验、原子写、热重载）：
+ * 白名单写本插件自己那一行的 `models.only`，模型清单写 llm-pi-ai 那一行（见 models.js）。
+ * 读白名单用插件手里的配置——它由 index.js 的 internal/update 钩子随每次配置变更就地刷新，
+ * 不再回头解析 cordis.patch.yml。
  *
  * 为什么挂在 ctx.webServer 而不是自己 listen：
  *   DSH 的 host webserver 已经占着客户端的同源地址，插件路由挂在它下面才拿得到
@@ -17,7 +21,7 @@
  * 只依赖 node: 内置模块（与 services.js 的约束一致）。
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   applyUpdate,
@@ -27,18 +31,7 @@ import {
   rollbackBackend,
   uninstallBackend,
 } from './backend.js';
-import {
-  backupPatchFile,
-  creditsLabel,
-  fetchModels,
-  modelDisplayName,
-  panelApiKey,
-  readPluginModelsConfig,
-  resolveProfilePatchPath,
-  syncModels,
-  updatePluginOnlyList,
-} from './models.js';
-import { isFile } from './services.js';
+import { creditsLabel, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, syncModels } from './models.js';
 
 /** 插件名：与 package.json / cordis.patch.yml 里的 name 保持一致。 */
 const PLUGIN_ID = 'dsh-autostart-workbuddy';
@@ -112,21 +105,6 @@ function resolveApiKey(models, env) {
   return fromEnv || panelApiKey(models.panelConfig);
 }
 
-/**
- * 读文件里当前的白名单，而不是宿主启动时传进来的那份。
- *
- * 面板保存后会立刻改文件，用内存里的旧配置回显会让用户看到"刚勾的没生效"；
- * 以文件为准，刷新页面与重启 DSH 得到的结果就一致。
- */
-function readLiveModelsConfig(patchPath) {
-  if (!patchPath || !isFile(patchPath)) return undefined;
-  try {
-    return readPluginModelsConfig(readFileSync(patchPath, 'utf8'), PLUGIN_ID);
-  } catch {
-    return undefined;
-  }
-}
-
 function positiveIntOrNull(value) {
   const n = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
@@ -139,12 +117,14 @@ function positiveIntOrNull(value) {
  * 所以这里不能用 planModelEntries（那是"按白名单过滤后写进 profile"的逻辑）。
  *
  * 白名单为空 = 同步后端全部模型（既有语义），此时所有条目都标记为已选。
+ *
+ * `models` 是插件手里的当前配置（随配置变更就地刷新，见 index.js），`patchPath` 只用来
+ * 告诉用户写到了哪个文件。
  */
-export async function describeModels({ spec, models, env = process.env }) {
-  const patchPath = resolveProfilePatchPath(env, models.profilePatch);
-  const live = readLiveModelsConfig(patchPath);
-  const only = Array.isArray(live?.only) ? live.only : models.only ?? [];
-  const enabled = typeof live?.enabled === 'boolean' ? live.enabled : models.enabled;
+export async function describeModels({ spec, models, editor, env = process.env }) {
+  const patchPath = editor?.documentPath;
+  const only = models.only ?? [];
+  const enabled = models.enabled;
 
   const fetched = await fetchModels({
     baseURL: models.baseURL || `http://${spec.host}:${spec.port}`,
@@ -181,40 +161,59 @@ export async function describeModels({ spec, models, env = process.env }) {
  * POST 的处理：写白名单 → 立即重新同步 provider 的模型清单。
  *
  * 两步都做是刻意的：只写白名单要等下次 DSH 启动才见效，用户点完"保存"看不到变化；
- * 顺手同步一次，DSH 的模型选择器马上就是新清单（配置热加载生效）。
+ * 顺手同步一次，DSH 的模型选择器马上就是新清单（llm-pi-ai 那一行被热重载）。
+ *
+ * 白名单写的是本插件自己那一行：configEditor 改完会触发本插件的 internal/update，
+ * index.js 的钩子只就地刷新 models，不重启插件（重启会把托管的 wb2api 一起停掉）。
+ *
+ * @param {{ resolved: object, editor?: object, env?: object, only: unknown }} options
+ *   `resolved` 是插件手里那份配置对象；钩子会就地换掉它的 models，这里也同步刷新一次，
+ *   宿主没有转发 internal/update 时（测试、旧版本）保存结果照样立即可见。
  */
-export async function applySelection({ spec, models, env = process.env, only }) {
+export async function applySelection({ resolved, editor, env = process.env, only }) {
   if (!Array.isArray(only) || only.some((id) => typeof id !== 'string')) {
     return { ok: false, reason: 'only 必须是字符串数组' };
   }
-
-  const patchPath = resolveProfilePatchPath(env, models.profilePatch);
-  if (!patchPath) return { ok: false, reason: '无法确定 profile 的 cordis.patch.yml 路径' };
-  if (!isFile(patchPath)) return { ok: false, reason: `profile 配置不存在：${patchPath}` };
-
-  const updated = updatePluginOnlyList(readFileSync(patchPath, 'utf8'), only, PLUGIN_ID);
-  if (!updated.ok) return { ok: false, reason: updated.reason, patchPath };
-
-  let backup;
-  if (updated.changed) {
-    backup = backupPatchFile(patchPath, models.keepBackups ?? 3);
-    writeFileSync(patchPath, updated.text);
+  if (typeof editor?.edit !== 'function') {
+    return { ok: false, reason: '宿主没有 configEditor 服务，无法保存白名单' };
   }
+  const entry = findConfigEntry(editor, { id: PLUGIN_ID });
+  if (!entry) return { ok: false, reason: `DSH 里没有可编辑的 ${PLUGIN_ID} 条目` };
 
-  const synced = await syncModels({ spec, models: { ...models, only }, env });
+  const ids = only.map((id) => id.trim()).filter(Boolean);
+  const patchPath = editor.documentPath;
+  const currentOnly = entry.options?.config?.models?.only;
+  const changed = !isDeepStrictEqual(currentOnly, ids);
+
+  if (changed) {
+    try {
+      await editor.edit(entry, (current) => {
+        const config = plainObject(current);
+        return { ...config, models: { ...plainObject(config.models), only: ids } };
+      });
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error), patchPath };
+    }
+  }
+  resolved.models = { ...resolved.models, only: ids };
+
+  const synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, env });
   return {
     ok: true,
     patchPath,
-    changed: updated.changed,
-    backup,
-    only,
+    changed,
+    only: ids,
     sync: {
       state: synced.state,
       count: Array.isArray(synced.entries) ? synced.entries.length : undefined,
       reason: synced.reason,
-      backup: synced.backup,
+      created: synced.created,
     },
   };
+}
+
+function plainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {};
 }
 
 /**
@@ -338,29 +337,38 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
 /**
  * 取宿主 webserver 服务。
  *
- * 不写进 `inject`：本插件的核心职责（拉起后端、同步模型列表）不依赖任何 Host Service，
- * 不该因为 webServer 缺席而整个插件不激活——只影响 Web 面板。
+ * 不写进 `inject`：本插件的核心职责（拉起后端）不依赖任何 Host Service，
+ * 不该因为 webServer / configEditor 缺席而整个插件不激活——只影响面板与模型同步。
+ *
+ * @param {string} name 服务名
+ * @param {(candidate: unknown) => boolean} usable 判断拿到的东西能不能用
  */
-function resolveWebServer(ctx) {
+export function hostService(ctx, name, usable) {
   const candidates = [];
   try {
-    candidates.push(ctx?.webServer);
+    candidates.push(ctx?.[name]);
   } catch {
     /* 服务未就绪时读属性可能抛，忽略 */
   }
   try {
-    if (typeof ctx?.get === 'function') candidates.push(ctx.get('webServer'));
+    if (typeof ctx?.get === 'function') candidates.push(ctx.get(name));
   } catch {
     /* 同上 */
   }
-  return candidates.find((candidate) => typeof candidate?.register === 'function');
+  return candidates.find(usable);
+}
+
+/** 宿主的 configEditor（DSH 设置页用的同一个写配置入口）；每次用时现取，拿不到返回 undefined。 */
+export function configEditorOf(ctx) {
+  return hostService(ctx, 'configEditor', (candidate) => typeof candidate?.edit === 'function');
 }
 
 /** 注册面板路由；宿主没有 webServer 时只记一条 warn。 */
 export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service }) {
   const mount = (scoped) => {
     const holder = scoped ?? ctx;
-    const webServer = holder?.webServer ?? resolveWebServer(holder);
+    const webServer =
+      holder?.webServer ?? hostService(holder, 'webServer', (candidate) => typeof candidate?.register === 'function');
     if (typeof webServer?.register !== 'function') {
       logger.warn(`[${PLUGIN_ID}] 宿主没有可用的 webServer 服务，Web 面板路由未注册（插件其余功能不受影响）`);
       return;
@@ -386,7 +394,11 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
         path: MODELS_PATH,
         handler: guard(async (req, res) => {
           if (req.method === 'GET') {
-            json(res, 200, await describeModels({ spec: resolved.spec, models: resolved.models, env }));
+            json(
+              res,
+              200,
+              await describeModels({ spec: resolved.spec, models: resolved.models, editor: configEditorOf(ctx), env }),
+            );
             return;
           }
           if (req.method === 'POST') {
@@ -395,12 +407,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               json(res, 400, { ok: false, reason: body.reason });
               return;
             }
-            const result = await applySelection({
-              spec: resolved.spec,
-              models: resolved.models,
-              env,
-              only: body.value.only,
-            });
+            const result = await applySelection({ resolved, editor: configEditorOf(ctx), env, only: body.value.only });
             json(res, result.ok ? 200 : 400, result);
             return;
           }

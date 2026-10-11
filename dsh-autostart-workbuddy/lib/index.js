@@ -14,7 +14,7 @@
  *   - DSH 退出时，只停止「本插件自己拉起」的进程，用户手动起的服务不受影响。
  *
  * 除了拉起后端，本插件还接管 WorkBuddy 的**模型列表**（config.models.enabled）：
- * 后端就绪后拉一次 `/v1/models`，把「后端真实提供的模型」写回 profile 的
+ * 后端就绪后拉一次 `/v1/models`，经宿主 configEditor 把「后端真实提供的模型」写进
  * `llm-pi-ai.providers.workbuddy.models`，名字统一成 `<CN|GL> <上游名> <倍率>`。
  * 细节与取舍见 lib/models.js 顶部注释；默认关闭，不会擅自改用户的 profile。
  *
@@ -25,21 +25,23 @@
  * 进程托管原语只有本插件在用（wb2api.exe 是独立程序，必须 spawn）。
  */
 
+import { isDeepStrictEqual } from 'node:util';
+
 import { checkForUpdate } from './backend.js';
 import { resolvePluginConfig } from './config.js';
 import { syncModels } from './models.js';
 import { ManagedService, isFile } from './services.js';
-import { registerPanelRoutes } from './web.js';
+import { configEditorOf, registerPanelRoutes } from './web.js';
 
 /** 插件名（日志前缀）。 */
 export const name = 'dsh-autostart-workbuddy';
 
 /**
- * 不注入任何 Host Service：本插件的核心工作（spawn 外部进程 + 探测端口 + 改 profile）
+ * 不注入任何 Host Service：本插件的核心工作（spawn 外部进程 + 探测端口）
  * 只用 node 内置模块，不依赖加载顺序，也不会因为某个 Service 缺席而整个插件不激活。
  *
- * Web 面板要用宿主 webserver，但那是"用得上就用"：在 apply 里软取（见 web.js 的
- * resolveWebServer），拿不到只少一个面板，不影响拉起后端与同步模型列表。
+ * Web 面板要用宿主 webServer、写配置要用宿主 configEditor，都是"用得上就用"：
+ * 用时软取（见 web.js 的 hostService），拿不到只少面板或跳过模型同步，不影响拉起后端。
  */
 export const inject = [];
 
@@ -53,7 +55,7 @@ export const inject = [];
 export function apply(ctx, config) {
   const hostEnv = process.env;
   const logger = normalizeLogger(ctx);
-  const resolved = withHostProfilePatch(resolvePluginConfig(config, hostEnv), ctx);
+  const resolved = resolvePluginConfig(config, hostEnv);
 
   if (!resolved.enabled) {
     logger.info(`[${name}] 已禁用（enabled: false），不启动 WorkBuddy Panel`);
@@ -76,6 +78,9 @@ export function apply(ctx, config) {
   // 这样后端还没起来（或没装）时打开面板也能看到状态、并就地安装。
   registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service });
 
+  // 白名单等 models.* 的改动就地生效，不重启插件（见 watchConfigUpdates）。
+  watchConfigUpdates(ctx, resolved, hostEnv, logger);
+
   // 启动时查一次后端更新（**只提示**，安装永远由用户在面板里点）。
   checkBackendUpdateOnStart(resolved, hostEnv, logger);
 
@@ -83,9 +88,9 @@ export function apply(ctx, config) {
   // 生命周期照常登记——用户在面板里点「安装」把后端拉起来之后，DSH 退出仍会把它停掉。
   const startup = notInstalled ? Promise.resolve({ state: 'not-installed' }) : start(service, logger);
 
-  // 模型列表同步：等后端就绪后再拉 `/v1/models` 回写 profile（见 lib/models.js）。
+  // 模型列表同步：等后端就绪后再拉 `/v1/models`，经宿主 configEditor 写进 llm-pi-ai（见 lib/models.js）。
   // 同样不 await：拉取可能耗时数十秒，不能拖住插件树加载。
-  if (!notInstalled) syncAfterStartup(startup, resolved, hostEnv, logger);
+  if (!notInstalled) syncAfterStartup(ctx, startup, resolved, hostEnv, logger);
 
   ctx.effect(() => {
     // exit 钩子只做同步发信号：进程退出阶段不允许异步等待，异步等待在下面的 disposer 里。
@@ -113,24 +118,25 @@ export function apply(ctx, config) {
 }
 
 /**
- * 没显式配 `models.profilePatch` 时，用宿主 `profileContext.patchPath` 补上。
+ * 配置变更的就地刷新。
  *
- * DSH 只把 DSH_PROFILE / DSH_PROFILE_DIR 注入给模型执行的 shell（dsh-shell-env），
- * 宿主进程自己的 process.env 里没有，光靠环境变量推导在插件里永远拿不到路径，
- * 面板「保存」与启动后的模型同步都会报「无法确定 profile 的 cordis.patch.yml 路径」。
- * 与 webServer 一样软取，不进 inject：拿不到就退回环境变量推导（CLI 场景）。
+ * cordis 对配置变更的默认处理是重启插件：先 dispose（把本插件托管的 wb2api 停掉）再重新 apply。
+ * 面板每次保存白名单都会改本插件的配置，照默认走就是"点一次保存、后端断一下"。
+ * 所以只有 models.* 变了时就地换掉 resolved.models、不调 next()（即否决这次重启）；
+ * 端口、exe、env 等别的字段变了仍调 next()，按原样重启让新规格生效。
+ * resolved 是 web 路由与同步共用的同一个对象，换掉 models 后下一个请求就用上新值。
  */
-function withHostProfilePatch(resolved, ctx) {
-  if (resolved.models.profilePatch) return resolved;
-  let profile;
-  try {
-    profile = typeof ctx?.get === 'function' ? ctx.get('profileContext') : undefined;
-  } catch {
-    /* 服务未就绪时读取可能抛，忽略 */
-  }
-  const patchPath = typeof profile?.patchPath === 'string' ? profile.patchPath.trim() : '';
-  if (!patchPath) return resolved;
-  return { ...resolved, models: { ...resolved.models, profilePatch: patchPath } };
+function watchConfigUpdates(ctx, resolved, hostEnv, logger) {
+  if (typeof ctx?.on !== 'function') return;
+  ctx.on('internal/update', (config, _noSave, next) => {
+    const updated = resolvePluginConfig(config, hostEnv);
+    const { models: _nextModels, ...nextRest } = updated;
+    const { models: _currentModels, ...currentRest } = resolved;
+    if (!isDeepStrictEqual(nextRest, currentRest)) return next();
+    resolved.models = updated.models;
+    logger.info(`[${name}] models 配置已更新（就地生效，不重启插件）`);
+    return undefined;
+  });
 }
 
 /** 启动失败只记日志：一个上游起不来不应该让 DSH 启动失败。 */
@@ -153,7 +159,7 @@ async function start(service, logger) {
  * 后端没起来就跳过：此时 `/v1/models` 不可信，保持 profile 里现有的清单更好。
  * 同步结果只记日志——模型列表没更新不该影响 DSH 启动（下一次启动会再试）。
  */
-function syncAfterStartup(startup, resolved, hostEnv, logger) {
+function syncAfterStartup(ctx, startup, resolved, hostEnv, logger) {
   if (!resolved.models.enabled) return;
 
   startup
@@ -162,12 +168,13 @@ function syncAfterStartup(startup, resolved, hostEnv, logger) {
         logger.warn(`[${name}] 后端未就绪，跳过模型列表同步`);
         return undefined;
       }
-      return syncModels({ spec: resolved.spec, models: resolved.models, env: hostEnv });
+      // configEditor 现取：它和本插件谁先加载不确定，等到后端就绪时通常早已挂好。
+      return syncModels({ spec: resolved.spec, models: resolved.models, editor: configEditorOf(ctx), env: hostEnv });
     })
     .then((result) => {
       if (!result) return;
       if (result.state === 'updated') {
-        logger.info(`[${name}] 模型列表已同步 ${result.entries.length} 个模型 → ${result.patchPath}（下次启动生效）`);
+        logger.info(`[${name}] 模型列表已同步 ${result.entries.length} 个模型 → ${result.documentPath}${result.created ? '（已补建 provider）' : ''}`);
       } else if (result.state === 'unchanged') {
         logger.info(`[${name}] 模型列表已是最新（${result.entries.length} 个模型）`);
       } else if (result.state !== 'disabled' && result.state !== 'dry-run') {

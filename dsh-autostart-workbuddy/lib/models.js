@@ -1,25 +1,31 @@
 /**
  * WorkBuddy 模型列表同步：从本地 wb2api 的 `/v1/models` 拉真实模型清单，
- * 回写 profile 的 `cordis.patch.yml` 里 `llm-pi-ai` 的 workbuddy provider 的 `models:` 段。
+ * 写进 `llm-pi-ai` 插件配置里 workbuddy provider 的 `models`。
  *
  * 为什么是"改配置"而不是"运行期注册"：
  *   DSH 的 llm 服务只允许 provider 的归属插件注册模型（registerAdapter /
  *   registerModelDiscovery 都绑定各自的 settingsNs），本插件无法给 llm-pi-ai 的
- *   workbuddy 路由追加模型；而模型清单本来就写在 profile 的 patch 层里，
- *   所以按"启动时同步一次"的方式接管，改动在下次启动（或配置热加载）后生效。
+ *   workbuddy 路由追加模型；模型清单本来就是 llm-pi-ai 的配置，所以改它的配置。
  *
- * 为什么自己做 YAML 手术而不是引 YAML 库：
- *   本插件刻意只依赖 node: 内置模块（见 services.js 顶部注释）。这里只需要替换
- *   一整段缩进列表，不需要完整解析 YAML，所以按缩进定位 + 整段替换，
- *   其余字节原样保留——profile 是手写文件，注释和排版不能被重排。
+ * 为什么走宿主的 configEditor 而不是直接改 cordis.patch.yml：
+ *   configEditor 是 DSH 设置页自己用的写入口——持 profile 锁、按目标插件的 schema 校验、
+ *   原子写、只热重载被改的那一行，失败还会回滚。直接改文本既绕过锁（会和设置页互相覆盖），
+ *   又得自己维护一套缩进解析，profile 形状一变就写不进去或写错位置。
+ *   这里只做"旧配置 → 新配置"的纯对象变换（withProviderModels），写入交给 configEditor。
+ *
+ * 读 cordis.patch.yml 的部分（readPluginModelsConfig）只剩命令行预览在用：命令行里没有宿主。
  *
  * 只依赖 node: 内置模块（fetch 是 Node 18+ 的全局实现）。
  */
 
-import { constants, copyFileSync, existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { isFile, resolveDshHome } from './services.js';
+
+/** llm-pi-ai 的包名：按包名找 Loader 条目，profile 里的行 id 可能被用户改过。 */
+export const LLM_PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
 
 /** 默认保留的思考档位：与 DSH 既有的三档 UI 对齐（低/高/最大）。 */
 export const DEFAULT_EFFORTS = Object.freeze(['low', 'high', 'max']);
@@ -29,9 +35,6 @@ const REGION_PREFIXES = Object.freeze([
   ['cn:', 'CN'],
   ['global:', 'GL'],
 ]);
-
-/** 生成的 models 段使用的备份后缀；清理旧备份时只认这个前缀。 */
-const BACKUP_TAG = 'bak-before-model-sync';
 
 /**
  * 倍率标签：`credits` 是 wb2api 给的积分倍率（形如 `x0.11`）。
@@ -124,7 +127,7 @@ export function yamlScalar(value) {
 }
 
 /**
- * 渲染 models 段的行（不含 `models:` 那一行本身）。
+ * 渲染 models 段的行（不含 `models:` 那一行本身）；命令行预览用，排版与手写 profile 一致。
  *
  * @param {object[]} entries planModelEntries 的结果
  * @param {number} itemIndent `- id:` 那一层的缩进
@@ -152,135 +155,37 @@ export function renderModelsBlock(entries, itemIndent) {
 const indentOf = (line) => line.length - line.trimStart().length;
 const isBlank = (line) => line.trim() === '';
 
+const plainObject = (value) =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {};
+
 /**
- * 定位 provider 的 `models:` 段。
+ * 纯对象变换：把 provider 的 models 换成新条目；provider 整段不在时按骨架补建。
  *
- * 只认一种形状（也就是本机 profile 的实际形状）：
+ * 补建是实际遇到过的情况：profile 里 workbuddy provider 整段丢失后，DSH 模型列表里的
+ * WorkBuddy 分组随之消失。骨架与本机原先手写的那段一致，密钥只写变量名（凭据库里的
+ * WORKBUDDY_PROXY_KEY），不落明文。其它 provider 与其它字段原样保留。
  *
- *     providers:
- *       <provider>:
- *         ...
- *         models:
- *           - id: ...
- *
- * 认不出就返回 ok:false，让调用方放弃写入——宁可不同步，也不能猜错位置改坏 profile。
+ * @returns {{ changed: boolean, created: boolean, config: object }}
  */
-export function locateModelsBlock(lines, providerName = 'workbuddy') {
-  let sawProviders = false;
-  for (let i = 0; i < lines.length; i += 1) {
-    const header = /^(\s*)providers:\s*(#.*)?$/.exec(lines[i]);
-    if (!header) continue;
-    sawProviders = true;
-    const providersIndent = header[1].length;
-    const providerIndent = providersIndent + 2;
-    const modelsIndent = providerIndent + 2;
-
-    let providersEnd = lines.length;
-    for (let j = i + 1; j < lines.length; j += 1) {
-      if (isBlank(lines[j])) continue;
-      if (indentOf(lines[j]) <= providersIndent) {
-        providersEnd = j;
-        break;
-      }
-    }
-
-    for (let j = i + 1; j < providersEnd; j += 1) {
-      if (isBlank(lines[j]) || indentOf(lines[j]) !== providerIndent) continue;
-      const key = /^\s*([A-Za-z0-9_.-]+):\s*(#.*)?$/.exec(lines[j]);
-      if (!key || key[1] !== providerName) continue;
-
-      let providerEnd = providersEnd;
-      for (let k = j + 1; k < providersEnd; k += 1) {
-        if (isBlank(lines[k])) continue;
-        if (indentOf(lines[k]) <= providerIndent) {
-          providerEnd = k;
-          break;
-        }
-      }
-
-      for (let k = j + 1; k < providerEnd; k += 1) {
-        if (isBlank(lines[k]) || indentOf(lines[k]) !== modelsIndent) continue;
-        if (!/^\s*models:\s*(#.*)?$/.test(lines[k])) continue;
-
-        const first = lines.slice(k + 1, providerEnd).find((line) => !isBlank(line));
-        if (!first || indentOf(first) <= modelsIndent) {
-          return { ok: false, reason: `provider ${providerName} 的 models 段不是预期的缩进列表` };
-        }
-
-        let arrayEnd = providerEnd;
-        for (let n = k + 1; n < providerEnd; n += 1) {
-          if (isBlank(lines[n])) continue;
-          if (indentOf(lines[n]) <= modelsIndent) {
-            arrayEnd = n;
-            break;
-          }
-        }
-        while (arrayEnd > k + 1 && isBlank(lines[arrayEnd - 1])) arrayEnd -= 1;
-        return { ok: true, modelsIndex: k, arrayEnd, itemIndent: indentOf(first) };
-      }
-      return { ok: false, reason: `provider ${providerName} 下没有 models 段` };
-    }
-  }
-  // missing 让调用方区分"整个 provider 不在"（可以补建）与"在但形状不对"（必须拒绝）。
-  if (sawProviders) return { ok: false, missing: 'provider', reason: `providers 段里没有 ${providerName}` };
-  return { ok: false, reason: '文件里没有 providers: 段' };
+export function withProviderModels(config, providerName, entries, skeleton) {
+  const base = plainObject(config);
+  const providers = plainObject(base.providers);
+  const existing = providers[providerName];
+  const created = Object.keys(plainObject(existing)).length === 0;
+  const provider = created ? { ...skeleton, models: entries } : { ...existing, models: entries };
+  const changed = created || !isDeepStrictEqual(existing.models, entries);
+  return { changed, created, config: { ...base, providers: { ...providers, [providerName]: provider } } };
 }
 
-/** llm-pi-ai 条目的识别：按包名认，id 可能被用户改过。 */
-const LLM_PI_AI_NAME = /^\s+name:\s*["']?@deepseek-ai\/dsh-llm-pi-ai["']?\s*(#.*)?$/;
-
-/**
- * provider 整段不在时，在 llm-pi-ai 条目的 `providers:` 末尾补建一段。
- *
- * 实际遇到过：profile 里 workbuddy provider 整段丢失后，只替换 models 段的同步就再也
- * 写不进去，DSH 模型列表里 WorkBuddy 分组随之消失，插件面板保存也无效。
- * 补建的骨架与本机原先手写的那段一致；密钥走凭据库的 WORKBUDDY_PROXY_KEY，不落明文。
- * 只往 llm-pi-ai 条目里加：别的插件（如 dsh-connect-trae）也可能有 providers: 段，不能加错地方。
- */
-export function insertProviderBlock(lines, providerName, entries, provider) {
-  for (let begin = 0; begin < lines.length; begin += 1) {
-    if (!/^- /.test(lines[begin])) continue;
-    // 条目在下一个顶格行（下一个条目或顶格注释）处结束。
-    let end = lines.length;
-    for (let j = begin + 1; j < lines.length; j += 1) {
-      if (!isBlank(lines[j]) && indentOf(lines[j]) === 0) {
-        end = j;
-        break;
-      }
-    }
-    if (!lines.slice(begin + 1, end).some((line) => LLM_PI_AI_NAME.test(line))) continue;
-
-    for (let i = begin + 1; i < end; i += 1) {
-      const header = /^(\s*)providers:\s*(#.*)?$/.exec(lines[i]);
-      if (!header) continue;
-      const providersIndent = header[1].length;
-      let providersEnd = end;
-      for (let j = i + 1; j < end; j += 1) {
-        if (isBlank(lines[j])) continue;
-        if (indentOf(lines[j]) <= providersIndent) {
-          providersEnd = j;
-          break;
-        }
-      }
-      while (providersEnd > i + 1 && isBlank(lines[providersEnd - 1])) providersEnd -= 1;
-
-      const pad = (n) => ' '.repeat(providersIndent + n);
-      const rendered = renderModelsBlock(entries, providersIndent + 6);
-      const block = [
-        `${pad(2)}${providerName}:`,
-        `${pad(4)}displayName: ${yamlScalar(provider.displayName)}`,
-        `${pad(4)}apiKeyEnv: ${yamlScalar(provider.apiKeyEnv)}`,
-        `${pad(4)}baseURL: ${yamlScalar(provider.baseURL)}`,
-        `${pad(4)}api: openai-completions`,
-        `${pad(4)}reasoning: max`,
-        `${pad(4)}models:`,
-        ...rendered,
-      ];
-      return { ok: true, lines: [...lines.slice(0, providersEnd), ...block, ...lines.slice(providersEnd)], rendered };
-    }
-    return { ok: false, reason: 'llm-pi-ai 条目下没有 providers: 段' };
-  }
-  return { ok: false, reason: 'profile 里没有 llm-pi-ai 条目' };
+/** 补建 provider 用的骨架：与 llm-pi-ai 的 OpenAI 兼容 provider 字段一致。 */
+export function providerSkeleton(models, spec) {
+  return {
+    displayName: models.provider === 'workbuddy' ? 'WorkBuddy' : models.provider,
+    apiKeyEnv: 'WORKBUDDY_PROXY_KEY',
+    baseURL: providerBaseURL(models.baseURL || `http://${spec.host}:${spec.port}`),
+    api: 'openai-completions',
+    reasoning: 'max',
+  };
 }
 
 /** provider 的 baseURL（OpenAI 兼容，带 /v1/）：由 /v1/models 地址去掉末尾的 models 得到。 */
@@ -290,35 +195,15 @@ export function providerBaseURL(baseURL) {
 }
 
 /**
- * 用生成的条目替换 `models:` 段，其余内容逐字节保留（含换行风格与结尾换行）。
- *
- * 传了 `provider`（补建用的骨架）且 provider 整段不在时，改为在 llm-pi-ai 里补建，见 insertProviderBlock。
- *
- * @returns {{ ok: boolean, changed?: boolean, created?: boolean, text?: string, rendered?: string[], reason?: string }}
+ * 在 configEditor 的可编辑条目里找一行：先按 id，再按包名。
+ * 只认 configEditor.entries() 给的条目——那是 profile 顶层、id 唯一、能安全写回的行。
  */
-export function updatePatchText(text, entries, providerName = 'workbuddy', provider) {
-  const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  const lines = text.split(/\r?\n/);
-  const located = locateModelsBlock(lines, providerName);
-  if (!located.ok) {
-    if (located.missing !== 'provider' || !provider) return { ok: false, reason: located.reason };
-    const inserted = insertProviderBlock(lines, providerName, entries, provider);
-    if (!inserted.ok) return { ok: false, reason: inserted.reason };
-    return { ok: true, changed: true, created: true, text: inserted.lines.join(eol), rendered: inserted.rendered };
-  }
-
-  const rendered = renderModelsBlock(entries, located.itemIndent);
-  const current = lines.slice(located.modelsIndex + 1, located.arrayEnd);
-  if (current.length === rendered.length && current.every((line, i) => line === rendered[i])) {
-    return { ok: true, changed: false, text, rendered };
-  }
-
-  const next = [
-    ...lines.slice(0, located.modelsIndex + 1),
-    ...rendered,
-    ...lines.slice(located.arrayEnd),
-  ];
-  return { ok: true, changed: true, text: next.join(eol), rendered };
+export function findConfigEntry(editor, { id, name } = {}) {
+  const entries = [...(editor?.entries?.() ?? [])];
+  return (
+    (id !== undefined ? entries.find((entry) => entry.options?.id === id) : undefined) ??
+    (name !== undefined ? entries.find((entry) => entry.options?.name === name) : undefined)
+  );
 }
 
 /** 拼 `/v1/models`：允许 baseURL 写成 `http://host:port`、`.../v1` 或 `.../v1/`。 */
@@ -396,9 +281,6 @@ function parseScalar(raw) {
 /**
  * 定位 profile patch 里本插件那一行的 `config.models` 段。
  *
- * 读（readPluginModelsConfig）与写（updatePluginOnlyList）共用这一份定位逻辑，
- * 避免两处对"哪一段是 models"产生分歧。
- *
  * 只认一种形状（也就是本机 profile 的实际形状）：
  *
  *     - id: dsh-autostart-workbuddy
@@ -409,7 +291,7 @@ function parseScalar(raw) {
  *           only:
  *             - cn:xxx
  *
- * 认不出就返回 ok:false，让调用方放弃——宁可不动，也不能猜错位置改坏 profile。
+ * 认不出就返回 ok:false，让调用方放弃。
  */
 function locatePluginModelsBlock(lines, entryId) {
   const entryIndex = lines.findIndex((line) => {
@@ -457,9 +339,8 @@ function locatePluginModelsBlock(lines, entryId) {
 /**
  * 读 profile patch 里本插件那一行的 `config.models`。
  *
- * 为什么需要它：models 配置是 DSH 启动时由宿主传给插件的，命令行里没有宿主；
- * 手动同步（lib/sync-cli.js）与 Web 面板（lib/web.js）都直接从同一个文件里读，
- * 保证"手动跑一次"和"启动时自动同步"用的是同一份配置，不会各说各话。
+ * 只给命令行预览（lib/sync-cli.js）用：models 配置是 DSH 启动时由宿主传给插件的，
+ * 命令行里没有宿主，只能读文件。插件运行时一律用宿主给的配置（见 lib/index.js 的 internal/update 钩子）。
  *
  * 形状见 locatePluginModelsBlock；认不出就返回 undefined。
  */
@@ -505,120 +386,26 @@ export function readPluginModelsConfig(text, entryId = 'dsh-autostart-workbuddy'
 }
 
 /**
- * 用新的白名单替换本插件那一行的 `config.models.only`，其余内容逐字节保留。
- *
- * 与 updatePatchText 的分工：那个改的是 llm-pi-ai 里 workbuddy provider 的模型清单
- * （内容由后端决定），这个改的是本插件自己的白名单（内容由用户在 Web 面板里勾选）。
- *
- * 空数组写成 `only: []` 而不是删掉整段：`only` 留空本来就等于"同步后端全部模型"，
- * 写成空数组语义相同，但用户下次打开面板能看出"这里被显式清空过"。
- *
- * @returns {{ ok: boolean, changed?: boolean, text?: string, reason?: string }}
- */
-export function updatePluginOnlyList(text, only, entryId = 'dsh-autostart-workbuddy') {
-  if (!Array.isArray(only) || only.some((id) => typeof id !== 'string')) {
-    return { ok: false, reason: 'only 不是字符串数组' };
-  }
-  const ids = only.map((id) => id.trim()).filter(Boolean);
-
-  const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  const lines = text.split(/\r?\n/);
-  const located = locatePluginModelsBlock(lines, entryId);
-  if (!located.ok) return { ok: false, reason: located.reason };
-
-  const { modelsIndex, entryEnd, modelsIndent, keyIndent, itemIndent } = located;
-
-  // 找现有的 only: 键，以及它名下的列表项范围。
-  let onlyIndex = -1;
-  let onlyEnd = -1;
-  for (let i = modelsIndex + 1; i < entryEnd; i += 1) {
-    if (isBlank(lines[i])) continue;
-    const indent = indentOf(lines[i]);
-    if (indent <= modelsIndent) break;
-    if (indent !== keyIndent) continue;
-    const key = /^\s*([A-Za-z0-9_.-]+):\s*(.*)$/.exec(lines[i]);
-    if (!key || key[1] !== 'only') continue;
-
-    onlyIndex = i;
-    onlyEnd = entryEnd;
-    for (let j = i + 1; j < entryEnd; j += 1) {
-      if (isBlank(lines[j])) continue;
-      if (indentOf(lines[j]) <= keyIndent) {
-        onlyEnd = j;
-        break;
-      }
-    }
-    while (onlyEnd > i + 1 && isBlank(lines[onlyEnd - 1])) onlyEnd -= 1;
-    break;
-  }
-
-  const pad = (n) => ' '.repeat(n);
-  const rendered =
-    ids.length === 0
-      ? [`${pad(keyIndent)}only: []`]
-      : [`${pad(keyIndent)}only:`, ...ids.map((id) => `${pad(itemIndent)}- ${yamlScalar(id)}`)];
-
-  let next;
-  if (onlyIndex >= 0) {
-    const current = lines.slice(onlyIndex, onlyEnd);
-    if (current.length === rendered.length && current.every((line, i) => line === rendered[i])) {
-      return { ok: true, changed: false, text };
-    }
-    next = [...lines.slice(0, onlyIndex), ...rendered, ...lines.slice(onlyEnd)];
-  } else {
-    // 没有 only: 就插在 models: 之后，缩进与同级键一致。
-    next = [...lines.slice(0, modelsIndex + 1), ...rendered, ...lines.slice(modelsIndex + 1)];
-  }
-  return { ok: true, changed: true, text: next.join(eol) };
-}
-
-/** 改配置前先落备份，并只保留最近 N 份自己产生的备份，避免越积越多。 */
-export function backupPatchFile(path, keep) {
-  const stamp = (() => {
-    const d = new Date();
-    const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-  })();
-  // 同一秒内可能备份两次（面板保存：先备份再写白名单，紧接着同步又备份一次）。
-  // 同名会让第二次覆盖第一次，丢掉"保存前"的原样；撞名就加序号，序号后缀按字典序仍排在原名之后。
-  let backup = `${path}.${BACKUP_TAG}-${stamp}`;
-  for (let n = 2; existsSync(backup); n += 1) backup = `${path}.${BACKUP_TAG}-${stamp}-${n}`;
-  copyFileSync(path, backup, constants.COPYFILE_EXCL);
-
-  if (keep > 0) {
-    const prefix = `${basename(path)}.${BACKUP_TAG}-`;
-    const stale = readdirSync(resolve(path, '..'))
-      .filter((name) => name.startsWith(prefix))
-      .sort()
-      .slice(0, -keep);
-    for (const name of stale) {
-      try {
-        unlinkSync(join(resolve(path, '..'), name));
-      } catch {
-        /* 删不掉就算了：留着不影响功能 */
-      }
-    }
-  }
-  return backup;
-}
-
-/**
- * 同步一次模型列表。
+ * 同步一次模型列表：拉 /v1/models → 按白名单规划 → 通过 configEditor 写进 llm-pi-ai 的配置。
  *
  * @param {object} options
  * @param {object} options.spec     已解析的服务规格（取 host/port 拼 /v1/models）
  * @param {object} options.models   已解析的 models 配置
+ * @param {object} [options.editor] 宿主的 configEditor 服务；没有就无法写入
  * @param {NodeJS.ProcessEnv} [options.env]
  * @param {boolean} [options.dryRun] 只算不写
  */
 export async function syncModels(options) {
-  const { spec, models, env = process.env, dryRun = false } = options;
+  const { spec, models, editor, env = process.env, dryRun = false } = options;
 
   if (!models?.enabled) return { state: 'disabled' };
+  if (typeof editor?.edit !== 'function') {
+    return { state: 'skipped', reason: '宿主没有 configEditor 服务，无法写入模型列表' };
+  }
+  const documentPath = editor.documentPath;
 
-  const patchPath = resolveProfilePatchPath(env, models.profilePatch);
-  if (!patchPath) return { state: 'skipped', reason: '无法确定 profile 的 cordis.patch.yml 路径' };
-  if (!isFile(patchPath)) return { state: 'skipped', reason: `profile 配置不存在：${patchPath}` };
+  const target = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE });
+  if (!target) return { state: 'skipped', reason: `DSH 里没有可编辑的 ${LLM_PI_AI_PACKAGE} 条目`, documentPath };
 
   const apiKey =
     models.apiKey ||
@@ -630,31 +417,34 @@ export async function syncModels(options) {
     apiKey,
     timeoutMs: models.timeoutMs,
   });
-  if (!fetched.ok) return { state: 'failed', reason: fetched.reason, patchPath };
+  if (!fetched.ok) return { state: 'failed', reason: fetched.reason, documentPath };
 
   // 上游故障时面板会返回空列表（还带负缓存），此时绝不能把已有配置清空。
   if (fetched.models.length === 0) {
-    return { state: 'skipped', reason: '后端返回空模型列表，保持现有配置', patchPath };
+    return { state: 'skipped', reason: '后端返回空模型列表，保持现有配置', documentPath };
   }
 
   const entries = planModelEntries(fetched.models, models);
   if (entries.length === 0) {
-    return { state: 'skipped', reason: '按 only/exclude 过滤后没有可写的模型', patchPath };
+    return { state: 'skipped', reason: '按 only/exclude 过滤后没有可写的模型', documentPath };
   }
 
-  const before = readFileSync(patchPath, 'utf8');
-  const updated = updatePatchText(before, entries, models.provider, {
-    displayName: models.provider === 'workbuddy' ? 'WorkBuddy' : models.provider,
-    apiKeyEnv: 'WORKBUDDY_PROXY_KEY',
-    baseURL: providerBaseURL(models.baseURL || `http://${spec.host}:${spec.port}`),
-  });
-  if (!updated.ok) return { state: 'failed', reason: updated.reason, patchPath, entries };
-  if (!updated.changed) return { state: 'unchanged', patchPath, entries };
+  const skeleton = providerSkeleton(models, spec);
+  const planned = withProviderModels(target.options?.config, models.provider, entries, skeleton);
+  if (!planned.changed) return { state: 'unchanged', entries, documentPath };
+  if (dryRun) return { state: 'dry-run', entries, created: planned.created, documentPath };
 
-  const { rendered, created } = updated;
-  if (dryRun) return { state: 'dry-run', patchPath, entries, rendered, created };
-
-  const backup = backupPatchFile(patchPath, models.keepBackups ?? 3);
-  writeFileSync(patchPath, updated.text);
-  return { state: 'updated', patchPath, entries, backup, created };
+  // change 回调拿的是 configEditor 在锁内重新读出的最新配置：在它上面重算，
+  // 而不是用上面的 planned，避免把锁外读到的旧配置写回去。
+  let created = planned.created;
+  try {
+    await editor.edit(target, (current) => {
+      const next = withProviderModels(current, models.provider, entries, skeleton);
+      created = next.created;
+      return next.config;
+    });
+  } catch (error) {
+    return { state: 'failed', reason: error instanceof Error ? error.message : String(error), entries, documentPath };
+  }
+  return { state: 'updated', entries, created, documentPath };
 }

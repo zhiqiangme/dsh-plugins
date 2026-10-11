@@ -4,7 +4,7 @@
  *   node lib/cli.js            打印解析后的服务规格与模型列表同步配置
  *   node lib/cli.js --check    额外校验可执行文件 / profile 配置是否存在、端口当前状态
  *
- * 只读：绝不 spawn 任何进程、不联网、不改任何文件（要真正同步模型列表用 lib/sync-cli.js）。
+ * 只读：绝不 spawn 任何进程、不联网、不改任何文件（预览模型列表用 lib/sync-cli.js）。
  */
 
 import { readFileSync } from 'node:fs';
@@ -23,10 +23,7 @@ const modelsRaw = patchPath && isFile(patchPath)
   ? readPluginModelsConfig(readFileSync(patchPath, 'utf8'), PLUGIN_ID)
   : undefined;
 
-const resolved = resolvePluginConfig(
-  modelsRaw ? { models: { ...modelsRaw, profilePatch: patchPath } } : {},
-  process.env,
-);
+const resolved = resolvePluginConfig(modelsRaw ? { models: modelsRaw } : {}, process.env);
 const info = describeConfig(resolved);
 
 console.log(`插件启用: ${resolved.enabled}`);
@@ -44,11 +41,11 @@ if (check) {
 console.log('');
 
 const models = resolved.models;
-const effectivePatch = resolveProfilePatchPath(process.env, models.profilePatch);
 console.log(`── 模型列表同步 (${models.enabled ? '开启' : '关闭'})`);
 if (models.enabled) {
-  console.log(`   目标配置: ${effectivePatch ?? '(无法确定：缺 DSH_PROFILE_DIR / DSH_PROFILE)'}${
-    check && effectivePatch ? (isFile(effectivePatch) ? '  [存在]' : '  [缺失]') : ''
+  // 运行时由 DSH 的 configEditor 写入宿主当前 profile；这里只能按环境变量猜同一个文件。
+  console.log(`   profile : ${patchPath ?? '(无法确定：缺 DSH_PROFILE_DIR / DSH_PROFILE)'}${
+    check && patchPath ? (isFile(patchPath) ? '  [存在]' : '  [缺失]') : ''
   }`);
   console.log(`   接口    : ${modelsEndpoint(models.baseURL)}`);
   console.log(`   面板配置: ${models.panelConfig}`);
@@ -63,12 +60,8 @@ if (models.enabled) {
 }
 console.log('');
 
-const patchMissing = models.enabled && (!patchPath || !isFile(patchPath));
-if (check && (!isFile(info.exe) || patchMissing)) {
-  const issues = [!isFile(info.exe) ? '可执行文件缺失' : undefined, patchMissing ? 'profile 配置不可写' : undefined]
-    .filter(Boolean)
-    .join('、');
-  console.log(`检查发现 1 处问题：${issues}。`);
+if (check && !isFile(info.exe)) {
+  console.log('检查发现 1 处问题：可执行文件缺失。');
   process.exitCode = 1;
 } else {
   console.log('检查通过。');
