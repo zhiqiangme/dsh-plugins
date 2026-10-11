@@ -77,29 +77,18 @@ node lib/sync-cli.js
 
 ## 安装到 profile
 
-在 `~/.dsh/profiles/desktop/package.json` 里加一条依赖和一个 bundle：
+双击仓库根目录的 `install-plugins.cmd`，按提示选择插件和 profile（说明见[根目录 README](../README.md#安装插件)），
+完成后重启 DSH 生效。改了本插件的源码后再运行一次同样的"安装 / 更新"即可换上新代码。
 
-```jsonc
-{
-  "dependencies": {
-    "dsh-autostart-workbuddy": "file:D:\\Project\\DeepSeek Harness\\dsh-autostart-workbuddy"
-  },
-  "dsh": {
-    "profile": {
-      "bundles": [
-        // ...
-        "dsh-autostart-workbuddy"
-      ]
-    }
-  }
-}
+手动安装等价于（先完全退出桌面版）：
+
+```powershell
+dsh plugin --profile desktop add "file:D:\Project\DeepSeek Harness\dsh-autostart-workbuddy"
 ```
 
-然后在该目录执行 `pnpm install`（用 DSH 自带的 pnpm），重启 DSH 生效。
-
-⚠️ `file:` 依赖在 profile 里是**拷贝**，不是软链：改了本插件的源码后 `pnpm install` 会认为"已是最新"而不重新拷贝，
-需要先把 `node_modules/dsh-autostart-workbuddy` 挪走再 `pnpm add "dsh-autostart-workbuddy@file:<目录>"`，
-否则 DSH 跑的还是旧代码。
+⚠️ `file:` 依赖在 profile 里是**拷贝**，不是软链：改了本插件的源码后再 `add`（包括 `--force`）pnpm 都认为"已是最新"，
+要先 `dsh plugin --profile desktop remove dsh-autostart-workbuddy` 再 `add`，否则 DSH 跑的还是旧代码。
+安装脚本会比对文件哈希自动做这一步。
 
 ## 配置
 

@@ -43,27 +43,17 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 
 ## 安装到 profile
 
-在 `~/.dsh/profiles/desktop/package.json` 里加一条依赖和一个 bundle（也可以用仓库根目录的接线脚本）：
+双击仓库根目录的 `install-plugins.cmd`，按提示选择插件和 profile（说明见[根目录 README](../README.md#安装插件)），
+完成后重启 DSH 生效。改了本目录的代码后再运行一次同样的"安装 / 更新"即可换上新代码。
 
-```jsonc
-{
-  "dependencies": {
-    "dsh-tavily-search": "file:D:\\Project\\DeepSeek Harness\\dsh-tavily-search"
-  },
-  "dsh": {
-    "profile": {
-      "bundles": [
-        // ...
-        "dsh-tavily-search"
-      ]
-    }
-  }
-}
+手动安装等价于（先完全退出桌面版）：
+
+```powershell
+dsh plugin --profile desktop add "file:D:\Project\DeepSeek Harness\dsh-tavily-search"
 ```
 
-然后在该目录执行 `pnpm install`（用 DSH 自带的 pnpm），重启 DSH 生效。
-
-> `file:` 依赖是**拷贝**进 profile 的 `node_modules`，改了本目录的代码后要重新 `pnpm install --force` 才会生效。
+> `file:` 依赖是**拷贝**进 profile 的 `node_modules`，改了代码后再 `add`（包括 `--force`）pnpm 都认为"已是最新"，
+> 要先 `dsh plugin --profile desktop remove dsh-tavily-search` 再 `add`。安装脚本会比对文件哈希自动做这一步。
 
 ## 配置
 

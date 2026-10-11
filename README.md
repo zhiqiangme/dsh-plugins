@@ -1,6 +1,6 @@
 # DeepSeek Harness 本地插件仓库
 
-本仓库存放两个 DSH 插件，以及把它们接入 desktop profile 的一次性接线脚本。
+本仓库存放两个 DSH 插件，以及把它们安装进 DSH profile 的脚本。
 
 ## 目录
 
@@ -8,13 +8,41 @@
 | --- | --- |
 | [dsh-autostart-workbuddy/](dsh-autostart-workbuddy/) | DSH 启动时自动拉起 WorkBuddy Panel（`wb2api.exe`, 127.0.0.1:7863），可选接管 profile 里的 workbuddy 模型列表 |
 | [dsh-tavily-search/](dsh-tavily-search/) | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内提供 `127.0.0.1:8787/v1` 搜索接口，插件页卡片里配 API Key、一键接入网页搜索（原名 `dsh-autostart-websearch`） |
-| [scripts/wire-plugins.mjs](scripts/wire-plugins.mjs) | 一次性脚本：把上面两个插件写入 profile 的 `package.json`（dependencies + bundles，结构化读写 + 时间戳备份；改过名的插件会原位替换旧名） |
+| [install-plugins.cmd](install-plugins.cmd) | 双击运行的安装入口，调用下面的 PowerShell 脚本 |
+| [scripts/install-plugins.ps1](scripts/install-plugins.ps1) | 把上面两个插件安装 / 更新 / 卸载到 DSH 的 profile，或查看安装状态 |
 
-脚本不写死任何绝对路径：插件目录由**脚本自身位置**推导（与 cwd 无关），目标 profile 依次按
-命令行参数 → `DSH_PROFILE_DIR` → `DSH_HOME`/`DSH_PROFILE` → `~/.dsh/profiles/desktop` 解析
-（`os.homedir()` 在 Windows 上读的就是 `USERPROFILE`）。动文件前还会确认两个插件目录确实存在。
+## 安装插件
 
-安装、配置与刷新方式见两个插件各自的 README。
+双击仓库根目录的 `install-plugins.cmd`，按提示选（直接回车都是默认项）：
+
+1. 操作：**安装 / 更新**（默认）、卸载、查看安装状态
+2. 插件：**全部**（默认）、`dsh-autostart-workbuddy`、`dsh-tavily-search`
+3. 装到哪个 DSH：**Desktop**（默认）、Web（`dsh web`）、CLI（`dsh headless`）、全部三个
+
+完成后重启对应的 DSH 生效。也可以在终端里带参数一行跑完（参数都可省略，省略的会询问）：
+
+```powershell
+.\install-plugins.cmd -Action install -Plugins all -Profiles desktop -Yes
+.\install-plugins.cmd -Action status -Profiles desktop,web,cli
+```
+
+要点：
+
+- 实际执行的是 DSH 自带的 `dsh plugin --profile <名> add|remove`：它在 profile 锁内用 DSH 自带的 pnpm 安装，
+  同时维护 `package.json` 的 dependencies 和 `dsh.profile.bundles`，还会做插件兼容性检查。
+  所以脚本不手改 `package.json`，也**不需要系统装 Node**；`dsh.cmd` 从 PATH 或默认安装位置找，
+  也可以用环境变量 `DSH_CLI` 指定。profile 目录跟 DSH 一致：`DSH_HOME`（默认 `~/.dsh`）下的 `profiles\<名>`。
+- **更新**：插件以 `file:` 依赖拷贝进 profile，改了源码后再 `add`（包括 `--force`）pnpm 都认为"已是最新"。
+  所以脚本先比对 profile 里那份拷贝和仓库的文件哈希，不一致才"先移除再添加"，一致就不动。
+  移除只动 `package.json`，插件在 `cordis.patch.yml` 里的配置行（如模型白名单）原样保留；
+  重新添加后插件排到 bundles 末尾（两个插件都只插入自己的配置行，顺序不影响行为）。
+- 在 DSH 插件管理里**停用**过的插件，再选"安装"会重新启用（`pnpm add` 本身不会把它放回 bundles）。
+- 改 desktop profile 前要**完全退出桌面版**（DSH 自己的要求）；脚本检测到对应 profile 的 DSH 进程在跑会停下等你关掉，
+  也可以跳过这个 profile。desktop profile 需要先打开过一次桌面版才存在；web / CLI 的 profile 第一次安装时自动创建。
+- 改名前的旧包名 `dsh-autostart-websearch` 若还留在 profile 里，安装时会一并移除。
+- 卸载不删 `cordis.patch.yml` 里的配置行，也不删 WorkBuddy 后端（`~/.dsh/autostart-workbuddy`）。
+
+插件自身的配置方式见两个插件各自的 README。
 
 ## 来源与历史
 
@@ -52,7 +80,7 @@
 ```
 
 - **范围 = 改动涉及的插件目录名**：`workbuddy` / `tavily-search`（2026-10-10 改名前的历史里是 `websearch`）
-- 只涉及仓库级文件（根 `README.md`、`scripts/`），或**同时**涉及两个插件时，用 `repo`
+- 只涉及仓库级文件（根 `README.md`、`install-plugins.cmd`、`scripts/`），或**同时**涉及两个插件时，用 `repo`
 - 格式为 `类型(范围)：描述`，类型沿用既有的 `新增 / 修复 / 文档 / 移除 / 调整 / 改进 / 测试 / 修正`
 
 约定是靠 `git filter-repo --commit-callback` 按"改动路径"自动套用的（脚本逻辑：取该提交改动路径的顶层目录，
