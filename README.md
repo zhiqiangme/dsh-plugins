@@ -9,6 +9,29 @@
 
 插件自身的行为与配置见各自目录下的 README。
 
+## 从 npm 安装（推荐）
+
+先**完全退出** DSH 桌面版（托盘图标里也要退出），然后在终端运行（`dsh` 命令随 DSH 桌面版一起安装）：
+
+```powershell
+dsh plugin --profile desktop add @zhiqiangme/dsh-autostart-workbuddy
+dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search
+```
+
+重新打开 DSH 即生效，插件出现在「插件」页。只装其中一个也可以；装到 Web / CLI 就把 `desktop` 换成 `web` / `headless`。
+
+更新与卸载：
+
+```powershell
+dsh plugin --profile desktop update --latest @zhiqiangme/dsh-autostart-workbuddy @zhiqiangme/dsh-tavily-search
+dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
+```
+
+- 更新要带 `--latest`：版本号按日期编排，跨年时主版本号会变（`26.x` → `27.x`），不带它不会升过去。
+- DSH 自带的 pnpm 对刚发布的版本有观察期（`minimumReleaseAge`）：首次 `add` 会自动把该版本列入例外，
+  `update` 可能要等新版本发布一段时间后才拿得到。
+- 卸载不删 `cordis.patch.yml` 里的插件配置，重新安装后沿用。
+
 ## 从源码安装
 
 双击仓库根目录的 `install-plugins.cmd`（Windows），按提示选（直接回车都是默认项）：

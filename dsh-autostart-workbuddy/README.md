@@ -77,6 +77,16 @@ node lib/sync-cli.js
 
 ## 安装到 profile
 
+从 npm 安装：先**完全退出** DSH 桌面版，然后在终端运行（`dsh` 命令随 DSH 桌面版一起安装），重新打开 DSH 生效：
+
+```powershell
+dsh plugin --profile desktop add @zhiqiangme/dsh-autostart-workbuddy
+# 更新：dsh plugin --profile desktop update --latest @zhiqiangme/dsh-autostart-workbuddy
+```
+
+装到 Web / CLI 就把 `desktop` 换成 `web` / `headless`。更新要带 `--latest`：版本号按日期编排（`26.10.11`），
+跨年时主版本号会变。更多说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从-npm-安装推荐)。
+
 从源码安装：克隆[仓库](https://github.com/zhiqiangme/dsh-plugins)后双击根目录的 `install-plugins.cmd`，
 按提示选择插件和 profile（说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从源码安装)），完成后重启 DSH 生效。
 改了本插件的源码后再运行一次同样的"安装 / 更新"即可换上新代码。
