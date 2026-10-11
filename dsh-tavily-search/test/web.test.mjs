@@ -7,7 +7,15 @@ import { Readable } from 'node:stream';
 
 import { resolvePluginConfig } from '../lib/config.js';
 import { ShimRuntime } from '../lib/runtime.js';
-import { describeStatus, loopbackOrigin, registerPanelRoutes, runTestSearch, STATUS_PATH, TEST_PATH } from '../lib/web.js';
+import {
+  describeStatus,
+  loopbackOrigin,
+  registerPanelRoutes,
+  runTestSearch,
+  STATUS_PATH,
+  TEST_PATH,
+  VERSION_PATH,
+} from '../lib/web.js';
 import { freePort, memoryLogger, okTavily, startMockTavily } from './helpers.mjs';
 
 async function startRuntime(t, { handler, apiKey = 'tvly-test' } = {}) {
@@ -93,9 +101,10 @@ test('loopbackOrigin：无 Origin 或本机来源放行，外部来源拒绝', (
 });
 
 /** 替身 req / res：够路由处理函数用即可。 */
-function fakeRequest(method, { origin, body } = {}) {
+function fakeRequest(method, { origin, body, url } = {}) {
   const req = Readable.from(body === undefined ? [] : [Buffer.from(body)]);
   req.method = method;
+  req.url = url;
   req.headers = origin ? { origin } : {};
   return req;
 }
@@ -114,7 +123,7 @@ function fakeResponse() {
   return res;
 }
 
-test('registerPanelRoutes：注册两条路由，校验来源与方法，卸载时释放', async () => {
+test('registerPanelRoutes：注册三条路由，校验来源与方法，卸载时释放', async () => {
   const routes = new Map();
   const released = [];
   const webServer = {
@@ -126,13 +135,18 @@ test('registerPanelRoutes：注册两条路由，校验来源与方法，卸载�
   const disposers = [];
   const ctx = { webServer, effect: (factory) => disposers.push(factory()) };
   const resolved = resolvePluginConfig({});
+  const versionCalls = [];
   registerPanelRoutes(ctx, {
     logger: memoryLogger(),
     resolved,
     runtime: { status: () => ({ state: 'listening', reason: '' }) },
+    checkVersion: async (options) => {
+      versionCalls.push(options);
+      return { ok: true, currentVersion: '26.10.11', latestVersion: '26.10.12', updateAvailable: true };
+    },
   });
 
-  assert.deepEqual([...routes.keys()].sort(), [STATUS_PATH, TEST_PATH].sort());
+  assert.deepEqual([...routes.keys()].sort(), [STATUS_PATH, TEST_PATH, VERSION_PATH].sort());
   assert.equal(STATUS_PATH, '/plugins/dsh-tavily-search/status');
 
   const ok = fakeResponse();
@@ -152,8 +166,21 @@ test('registerPanelRoutes：注册两条路由，校验来源与方法，卸载�
   await routes.get(TEST_PATH).handler(fakeRequest('POST', { body: '[1]' }), badBody);
   assert.equal(badBody.status, 400);
 
+  const version = fakeResponse();
+  await routes.get(VERSION_PATH).handler(fakeRequest('GET', { url: VERSION_PATH }), version);
+  assert.equal(version.status, 200);
+  assert.equal(version.body.updateAvailable, true);
+  const forced = fakeResponse();
+  await routes.get(VERSION_PATH).handler(fakeRequest('GET', { url: `${VERSION_PATH}?force=1` }), forced);
+  // 只有 ?force=1 才绕过缓存
+  assert.deepEqual(versionCalls, [{ force: false }, { force: true }]);
+
+  const versionPost = fakeResponse();
+  await routes.get(VERSION_PATH).handler(fakeRequest('POST'), versionPost);
+  assert.equal(versionPost.status, 405);
+
   for (const dispose of disposers) dispose();
-  assert.deepEqual(released.sort(), [STATUS_PATH, TEST_PATH].sort());
+  assert.deepEqual(released.sort(), [STATUS_PATH, TEST_PATH, VERSION_PATH].sort());
 });
 
 test('registerPanelRoutes：宿主没有 webServer 时只记 warn，不抛', () => {

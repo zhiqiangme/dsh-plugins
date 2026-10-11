@@ -5,7 +5,7 @@
  *   1) 文案字典的值必须是字符串、中英文 key 一致（DSH 的 t() 只做 `{name}` 插值）；
  *   2) 两个 slot 的 key 逐字正确（写错不报错，只是卡片不出现）；
  *   3) 凭据只经 remote.credentials 写入，卡片没有任何读回密钥值的路径；
- *   4) renderCard 在各状态下的关键输出（接入/未接入、端口冲突、只读 key、测试结果）。
+ *   4) renderCard 在各状态下的关键输出（接入/未接入、端口冲突、只读 key、测试结果、插件更新）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -215,6 +215,7 @@ test('首屏（全部加载中）能渲染，不抛错', () => {
   assert.match(text, /Tavily 联网搜索/);
   assert.match(text, /正在读取插件状态/);
   assert.match(text, /正在读取网页搜索设置/);
+  assert.match(text, /正在检查更新/);
   assert.equal(typeof t('title'), 'string');
 });
 
@@ -371,4 +372,141 @@ test('webModel：按用户层"有没有这个键"判断覆盖，缺省凭据引�
   );
   assert.equal(module.webModel({ status: 'ready', value: {}, user: {}, writable: true }).overridden, false);
   assert.equal(module.webModel({ status: 'ready', value: { apiKeyEnv: 'K' }, writable: false }).apiKeyEnv, 'K');
+});
+
+/** 「插件更新」区块的基准状态：有新版本、装了市场、没有进行中的任务。 */
+function updateModel(overrides = {}) {
+  return readyModel({
+    update: {
+      version: { phase: 'ready', ok: true, currentVersion: '26.10.11', latestVersion: '26.10.12', updateAvailable: true },
+      market: { phase: 'ready', restartSupported: false, endpoints: {} },
+      operation: undefined,
+      target: undefined,
+      busy: false,
+      notice: undefined,
+      restart: undefined,
+      ...overrides,
+    },
+  });
+}
+
+test('插件更新：有新版本且装了市场 → 显示两个版本号与"更新到"按钮', () => {
+  const { module, t } = boot();
+  const started = [];
+  const tree = render(module.renderCard(updateModel(), { ...actions, startUpdate: (force) => started.push(force) }, t));
+  const text = collectText(tree).join('|');
+  assert.match(text, /当前运行版本：\|26\.10\.11/);
+  assert.match(text, /npm 最新版本：\|26\.10\.12/);
+  assert.match(text, /有新版本/);
+  const update = buttonByLabel(tree, '更新到 26.10.12');
+  assert.equal(update.props.disabled, false);
+  update.props.onClick();
+  assert.deepEqual(started, [false], '普通更新不带 force');
+});
+
+test('插件更新：没装市场 → 只提示有新版本，没有更新按钮', () => {
+  const { module, t } = boot();
+  const tree = render(module.renderCard(updateModel({ market: { phase: 'absent' } }), actions, t));
+  assert.equal(buttonByLabel(tree, '更新到 26.10.12'), undefined);
+  assert.match(collectText(tree).join('|'), /dshmarket/);
+  assert.ok(buttonByLabel(tree, '检查更新'));
+});
+
+test('插件更新：已是最新 / 检查失败', () => {
+  const { module, t } = boot();
+  const latest = render(
+    module.renderCard(
+      updateModel({ version: { phase: 'ready', ok: true, currentVersion: '26.10.12', latestVersion: '26.10.12', updateAvailable: false } }),
+      actions,
+      t,
+    ),
+  );
+  assert.match(collectText(latest).join('|'), /已是最新/);
+  assert.equal(buttons(latest).some((node) => collectText(node.children).join('').startsWith('更新到')), false);
+
+  const failed = render(
+    module.renderCard(updateModel({ version: { phase: 'error', currentVersion: '26.10.11', reason: '连不上注册表' } }), actions, t),
+  );
+  const text = collectText(failed).join('|');
+  assert.match(text, /检查更新失败：连不上注册表/);
+  assert.match(text, /当前运行版本：\|26\.10\.11/);
+  assert.equal(buttonByLabel(failed, '检查更新').props.disabled, false);
+});
+
+test('插件更新：进行中显示进度，按钮全部禁用', () => {
+  const { module, t } = boot();
+  const tree = render(
+    module.renderCard(
+      updateModel({ operation: { operationId: 'b-update-1', state: 'running', progress: { percent: 40, detail: 'Progress: resolved 3' } } }),
+      actions,
+      t,
+    ),
+  );
+  const text = collectText(tree).join('|');
+  assert.match(text, /正在更新… 40%/);
+  assert.match(text, /Progress: resolved 3/);
+  assert.equal(buttonByLabel(tree, '检查更新').props.disabled, true);
+  assert.equal(buttonByLabel(tree, '正在更新…').props.disabled, true);
+});
+
+test('插件更新：成功后按 restartRequired 提示重启；市场支持重启时才给重启按钮', () => {
+  const { module, t } = boot();
+  const operation = {
+    operationId: 'b-update-1',
+    state: 'succeeded',
+    installedVersion: '26.10.12',
+    outcome: { restartRequired: true, refreshRequired: false },
+  };
+  const desktop = render(module.renderCard(updateModel({ operation, target: '26.10.12' }), actions, t));
+  const text = collectText(desktop).join('|');
+  assert.match(text, /已更新到 26\.10\.12。 重启 DSH 后生效。/);
+  assert.equal(buttonByLabel(desktop, '立即重启 DSH'), undefined, '桌面版的重启归桌面壳管');
+  assert.doesNotMatch(text, /注意：装上的是/);
+
+  const web = render(
+    module.renderCard(updateModel({ operation, target: '26.10.12', market: { phase: 'ready', restartSupported: true } }), actions, t),
+  );
+  assert.ok(buttonByLabel(web, '立即重启 DSH'));
+});
+
+test('插件更新：装上的版本低于目标时额外警告；高于目标（latest 期间前移）不警告', () => {
+  const { module, t } = boot();
+  const below = render(
+    module.renderCard(
+      updateModel({ target: '26.10.12', operation: { state: 'succeeded', installedVersion: '26.10.11', outcome: {} } }),
+      actions,
+      t,
+    ),
+  );
+  assert.match(collectText(below).join('|'), /注意：装上的是 26\.10\.11，不是预期的 26\.10\.12/);
+
+  const above = render(
+    module.renderCard(
+      updateModel({ target: '26.10.12', operation: { state: 'succeeded', installedVersion: '26.10.13', outcome: {} } }),
+      actions,
+      t,
+    ),
+  );
+  assert.doesNotMatch(collectText(above).join('|'), /注意：装上的是/);
+});
+
+test('插件更新：发布冷却期 / 版本未变时给"强制更新"，其它失败不给', () => {
+  const { module, t } = boot();
+  const started = [];
+  const fresh = render(
+    module.renderCard(
+      updateModel({ operation: { state: 'failed', failure: { code: 'RELEASE_TOO_FRESH', message: 'x' } } }),
+      { ...actions, startUpdate: (force) => started.push(force) },
+      t,
+    ),
+  );
+  assert.match(collectText(fresh).join('|'), /发布冷却期/);
+  buttonByLabel(fresh, '强制更新').props.onClick();
+  assert.deepEqual(started, [true]);
+
+  const other = render(
+    module.renderCard(updateModel({ operation: { state: 'failed', failure: { code: 'UPDATE_FAILED', message: 'pnpm 退出码 1' } } }), actions, t),
+  );
+  assert.match(collectText(other).join('|'), /更新失败：pnpm 退出码 1/);
+  assert.equal(buttonByLabel(other, '强制更新'), undefined);
 });

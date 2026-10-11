@@ -1,8 +1,9 @@
 /**
- * 插件页卡片的宿主半侧：两条 loopback 路由。
+ * 插件页卡片的宿主半侧：三条 loopback 路由。
  *
- *   GET  /plugins/dsh-tavily-search/status  搜索接口状态（在不在监听、端点、凭据引用名）
- *   POST /plugins/dsh-tavily-search/test    端到端测试一次搜索：按 DSH 的请求形状打本插件的接口
+ *   GET  /plugins/dsh-tavily-search/status   搜索接口状态（在不在监听、端点、凭据引用名）
+ *   POST /plugins/dsh-tavily-search/test     端到端测试一次搜索：按 DSH 的请求形状打本插件的接口
+ *   GET  /plugins/dsh-tavily-search/version  当前运行版本 vs npm latest（?force=1 绕过缓存，见 lib/update.js）
  *
  * API Key 不走这里：卡片直接用 DSH 的 `remote.credentials` 读写凭据库（与内置网页搜索页同一条路），
  * 值从不经过本插件的路由。
@@ -13,12 +14,15 @@
  */
 
 /** 插件名：与 package.json / cordis.patch.yml 里的 name 保持一致。 */
+import { createVersionChecker } from './update.js';
+
 const PLUGIN_ID = 'dsh-tavily-search';
 
 /** 面板路由前缀：DSH 给每个插件留的命名空间，浏览器半侧用同一份常量。 */
 export const PANEL_BASE = `/plugins/${PLUGIN_ID}`;
 export const STATUS_PATH = `${PANEL_BASE}/status`;
 export const TEST_PATH = `${PANEL_BASE}/test`;
+export const VERSION_PATH = `${PANEL_BASE}/version`;
 
 /** 请求体上限：测试请求只带一个检索词，4KB 足够，防止有人往 loopback 路由灌大包。 */
 const MAX_BODY_BYTES = 4 * 1024;
@@ -150,8 +154,24 @@ function resolveWebServer(ctx) {
   return candidates.find((candidate) => typeof candidate?.register === 'function');
 }
 
-/** 注册面板路由；宿主没有 webServer 时只记一条 warn。 */
-export function registerPanelRoutes(ctx, { logger, resolved, runtime }) {
+/** `?force=1` / `?force=true` 视为强制刷新；其它值（含缺省）走缓存。 */
+function forceFrom(req) {
+  try {
+    const value = new URL(req.url ?? '', 'http://localhost').searchParams.get('force');
+    return value === '1' || value === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 注册面板路由；宿主没有 webServer 时只记一条 warn。
+ *
+ * @param {object} ctx
+ * @param {{ logger: object, resolved: object, runtime?: object, checkVersion?: (options: { force: boolean }) => Promise<object> }} options
+ *   checkVersion 只给测试注入，缺省用 lib/update.js 的带缓存检查器
+ */
+export function registerPanelRoutes(ctx, { logger, resolved, runtime, checkVersion = createVersionChecker() }) {
   const mount = (scoped) => {
     const webServer = resolveWebServer(scoped ?? ctx) ?? resolveWebServer(ctx);
     if (!webServer) {
@@ -159,7 +179,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, runtime }) {
       return;
     }
 
-    /** 来源校验与异常兜底：两条路由共用。 */
+    /** 来源校验与异常兜底：各路由共用。 */
     const guard = (handler) => async (req, res) => {
       if (!loopbackOrigin(req)) {
         json(res, 403, { ok: false, reason: 'origin-not-trusted' });
@@ -204,8 +224,21 @@ export function registerPanelRoutes(ctx, { logger, resolved, runtime }) {
         }),
       });
 
+      const disposeVersion = webServer.register({
+        kind: 'exact',
+        path: VERSION_PATH,
+        handler: guard(async (req, res) => {
+          if (req.method !== 'GET') {
+            json(res, 405, { ok: false, reason: 'method not allowed' });
+            return;
+          }
+          // 检查失败（注册表都连不上）也是 200：同测试搜索，失败原因是给用户看的结果
+          json(res, 200, await checkVersion({ force: forceFrom(req) }));
+        }),
+      });
+
       return () => {
-        for (const dispose of [disposeStatus, disposeTest]) {
+        for (const dispose of [disposeStatus, disposeTest, disposeVersion]) {
           try {
             dispose?.();
           } catch {
