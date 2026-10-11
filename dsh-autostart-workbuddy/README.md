@@ -142,7 +142,7 @@ node lib/sync-cli.js             # 真写入（带备份）
 | `only` | 白名单，按列出顺序写；空 = 后端全部模型 |
 | `exclude` | 黑名单，优先级高于 `only` |
 | `efforts` | 每个模型的思考档位，默认 `[low, high, max]`；填 `auto` 用上游声明的档位 |
-| `profilePatch` | 目标配置路径，默认由 `DSH_PROFILE_DIR`（或 `DSH_HOME` + `DSH_PROFILE`）推导 |
+| `profilePatch` | 目标配置路径，默认取宿主当前 profile 的 `cordis.patch.yml`（CLI 下由 `DSH_PROFILE_DIR` 或 `DSH_HOME` + `DSH_PROFILE` 推导） |
 | `panelConfig` | 读网关密钥的面板配置，默认 `<cwd>/config.json` |
 | `apiKey` | 显式指定网关密钥，默认依次尝试 `WORKBUDDY_PROXY_KEY`、面板 `config.json` 的 `api_key` |
 | `baseURL` | 模型接口地址，默认 `http://<host>:<port>` |

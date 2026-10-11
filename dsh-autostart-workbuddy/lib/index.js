@@ -53,7 +53,7 @@ export const inject = [];
 export function apply(ctx, config) {
   const hostEnv = process.env;
   const logger = normalizeLogger(ctx);
-  const resolved = resolvePluginConfig(config, hostEnv);
+  const resolved = withHostProfilePatch(resolvePluginConfig(config, hostEnv), ctx);
 
   if (!resolved.enabled) {
     logger.info(`[${name}] 已禁用（enabled: false），不启动 WorkBuddy Panel`);
@@ -110,6 +110,27 @@ export function apply(ctx, config) {
       }
     };
   }, `${name}: lifecycle`);
+}
+
+/**
+ * 没显式配 `models.profilePatch` 时，用宿主 `profileContext.patchPath` 补上。
+ *
+ * DSH 只把 DSH_PROFILE / DSH_PROFILE_DIR 注入给模型执行的 shell（dsh-shell-env），
+ * 宿主进程自己的 process.env 里没有，光靠环境变量推导在插件里永远拿不到路径，
+ * 面板「保存」与启动后的模型同步都会报「无法确定 profile 的 cordis.patch.yml 路径」。
+ * 与 webServer 一样软取，不进 inject：拿不到就退回环境变量推导（CLI 场景）。
+ */
+function withHostProfilePatch(resolved, ctx) {
+  if (resolved.models.profilePatch) return resolved;
+  let profile;
+  try {
+    profile = typeof ctx?.get === 'function' ? ctx.get('profileContext') : undefined;
+  } catch {
+    /* 服务未就绪时读取可能抛，忽略 */
+  }
+  const patchPath = typeof profile?.patchPath === 'string' ? profile.patchPath.trim() : '';
+  if (!patchPath) return resolved;
+  return { ...resolved, models: { ...resolved.models, profilePatch: patchPath } };
 }
 
 /** 启动失败只记日志：一个上游起不来不应该让 DSH 启动失败。 */

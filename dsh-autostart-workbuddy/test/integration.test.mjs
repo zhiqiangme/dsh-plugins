@@ -29,8 +29,8 @@ function freePort() {
   });
 }
 
-/** 最小 Cordis Context 替身：收集 effect 的 disposer，记录日志。 */
-function fakeContext() {
+/** 最小 Cordis Context 替身：收集 effect 的 disposer，记录日志；services 供 ctx.get 软取。 */
+function fakeContext(services = {}) {
   const disposers = [];
   const lines = [];
   const record = (level) => (...args) => lines.push(`${level} ${args.join(' ')}`);
@@ -38,6 +38,9 @@ function fakeContext() {
     lines,
     disposers,
     logger: { info: record('info'), warn: record('warn'), error: record('error') },
+    get(key) {
+      return services[key];
+    },
     effect(factory) {
       const dispose = factory();
       if (typeof dispose === 'function') disposers.push(dispose);
@@ -201,6 +204,33 @@ test('开启模型同步后：apply 会在后端就绪后回写 profile 的 mode
   assert.ok(after.includes('            reasoningEfforts:'), '默认给低/高/最大三档');
   assert.ok(after.includes('- id: locale'), '其余配置不能被改动');
   assert.ok(await waitForLog(ctx, '模型列表已同步'), ctx.lines.join('\n'));
+});
+
+test('未显式配 profilePatch 时：取宿主 profileContext.patchPath 回写', async (t) => {
+  const port = await freePort();
+  const dir = mkdtempSync(join(tmpdir(), 'autostart-wb-hostprofile-'));
+  const patchPath = join(dir, 'cordis.patch.yml');
+  writeFileSync(patchPath, PATCH_FIXTURE, 'utf8');
+
+  // 宿主进程的 process.env 里没有 DSH_PROFILE_DIR / DSH_PROFILE，路径只能来自 profileContext。
+  const ctx = fakeContext({ profileContext: { name: 'desktop', dir, patchPath } });
+  t.after(() => ctx.disposeAll());
+
+  const env = dummyEnv(port, 'http-models');
+  delete env.DSH_PROFILE_DIR;
+  delete env.DSH_PROFILE;
+  apply(
+    ctx,
+    fakeServiceConfig(port, {
+      env,
+      models: { enabled: true, apiKey: 'test-key', timeoutMs: 5_000 },
+    }),
+  );
+
+  assert.ok(
+    await waitFor(() => readFileSync(patchPath, 'utf8').includes('name: CN Alpha 0.11')),
+    `models 段应被回写：\n${readFileSync(patchPath, 'utf8')}\n${ctx.lines.join('\n')}`,
+  );
 });
 
 test('模型同步未开启时：不碰 profile 文件', async (t) => {

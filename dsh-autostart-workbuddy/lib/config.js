@@ -101,7 +101,7 @@ function resolveModelsConfig(raw, spec) {
     // `auto` = 按上游声明的档位生成；否则用给定档位（默认低/高/最大三档）。
     efforts: models.efforts === 'auto' ? 'auto' : stringArray(models.efforts, DEFAULT_EFFORTS),
     provider: stringOr(models.provider, MODELS_DEFAULTS.provider),
-    // 空字符串 = 由 DSH_PROFILE_DIR / DSH_PROFILE 推导。
+    // 空字符串 = 插件内取宿主 profileContext.patchPath；CLI 下由 DSH_PROFILE_DIR / DSH_PROFILE 推导。
     profilePatch: stringOr(models.profilePatch, ''),
     panelConfig: stringOr(models.panelConfig, spec.cwd ? join(spec.cwd, 'config.json') : ''),
     // 空 = 依次尝试 WORKBUDDY_PROXY_KEY 与面板 config.json 的 api_key。
