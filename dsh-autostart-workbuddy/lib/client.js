@@ -379,12 +379,15 @@ window.__ModuleLoader__.load({
             return;
           }
           const sync = payload.sync ?? {};
+          // 先重载再出提示：load() 开头会清空 notice，反过来写会把结果（尤其是同步失败的原因）立刻抹掉。
+          await load();
           if (sync.state === 'updated' || sync.state === 'unchanged') {
             setNotice({ kind: 'ok', text: t('savedSync', { count: sync.count ?? 0 }) });
           } else {
-            setNotice({ kind: 'ok', text: t('savedNoSync', { state: sync.reason ?? sync.state ?? '' }) });
+            // failed / skipped 意味着 DSH 的模型清单没跟上白名单，用错误色提示；disabled 是用户自己关的，不算错。
+            const kind = sync.state === 'failed' || sync.state === 'skipped' ? 'error' : 'ok';
+            setNotice({ kind, text: t('savedNoSync', { state: sync.reason ?? sync.state ?? '' }) });
           }
-          await load();
         } catch (error) {
           setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) });
         } finally {
