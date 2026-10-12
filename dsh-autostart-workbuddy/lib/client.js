@@ -107,6 +107,8 @@ window.__ModuleLoader__.load({
 .dsm-wb-link:hover{text-decoration:underline}
 .dsm-wb-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 0 8px}
 .dsm-wb-count{flex:1;min-width:120px;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
+.dsm-wb-sync{display:flex;align-items:center;gap:8px;margin-top:12px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;cursor:pointer}
+.dsm-wb-sync input{margin:0;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
 .dsm-wb-btn{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 14px;font-size:13px;line-height:1.5}
 .dsm-wb-btn:disabled{cursor:default}
 /* 主按钮用"反色"配色，不用 --dsw-alias-brand-primary 当底色：本主题把
@@ -167,14 +169,18 @@ window.__ModuleLoader__.load({
       clearAll: '全部取消',
       refresh: '刷新',
       save: '保存',
+      saveSync: '保存并同步',
+      syncEnabled: '同步到 DSH 模型列表',
+      syncHint: '开启后，保存会立即更新 WorkBuddy 模型列表，以后启动 DSH 时也会自动同步。',
       saving: '保存中…',
       count: '后端共 {total} 个模型，已勾选 {picked} 个',
       vision: '视觉',
       emptyBackend: '后端没有返回任何模型。',
       emptyHint: '一个都没勾 = 同步后端全部模型（白名单留空的既有语义）。',
-      disabledHint: 'profile 里 models.enabled 不是 true：保存只改白名单，不会重新生成模型清单。',
+      disabledHint: '模型同步已关闭，保存只更新勾选结果。勾选“同步到 DSH 模型列表”并保存，即可生成模型清单。',
       savedSync: '已保存，并已重新生成模型清单：{count} 个模型。',
       savedNoSync: '已保存白名单；模型清单未更新（{state}）。',
+      savedDisabled: '已保存，同步已关闭；保留现有 DSH 模型列表。',
       saveFailed: '保存失败。',
       patchPath: '写入目标：{path}',
       panelHint: '后端面板：',
@@ -248,14 +254,18 @@ window.__ModuleLoader__.load({
       clearAll: 'Clear all',
       refresh: 'Refresh',
       save: 'Save',
+      saveSync: 'Save and sync',
+      syncEnabled: 'Sync to the DSH model list',
+      syncHint: 'When enabled, saving updates the WorkBuddy model list immediately and DSH syncs it again on startup.',
       saving: 'Saving…',
       count: '{total} models on the backend, {picked} selected',
       vision: 'vision',
       emptyBackend: 'The backend returned no models.',
       emptyHint: 'Selecting nothing means “sync every backend model” (the existing meaning of an empty allow-list).',
-      disabledHint: 'profile has models.enabled !== true: saving only rewrites the allow-list, it will not regenerate the model list.',
+      disabledHint: 'Model sync is off; saving only updates the selection. Enable “Sync to the DSH model list” and save to generate the list.',
       savedSync: 'Saved and regenerated the model list: {count} models.',
       savedNoSync: 'Allow-list saved; the model list was not updated ({state}).',
+      savedDisabled: 'Saved with sync off; the existing DSH model list is kept.',
       saveFailed: 'Save failed.',
       patchPath: 'Written to: {path}',
       panelHint: 'Panel: ',
@@ -810,7 +820,7 @@ window.__ModuleLoader__.load({
             setRows([]);
             setPicked(new Set());
             setSavedPicked(new Set());
-            setMeta({ enabled: payload.enabled, patchPath: payload.patchPath });
+            setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, patchPath: payload.patchPath });
             setReason(payload.reason ?? '');
             setPhase('error');
             return;
@@ -818,7 +828,7 @@ window.__ModuleLoader__.load({
           const list = payload.models ?? [];
           const selected = new Set(list.filter((row) => row.selected).map((row) => row.id));
           setRows(list);
-          setMeta({ enabled: payload.enabled, patchPath: payload.patchPath, url: payload.url });
+          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, patchPath: payload.patchPath, url: payload.url });
           setPicked(selected);
           setSavedPicked(new Set(selected));
           setPhase('ready');
@@ -849,7 +859,10 @@ window.__ModuleLoader__.load({
         setSaving(true);
         setNotice(undefined);
         try {
-          const payload = await request(MODELS_PATH, 'POST', { only: orderedSelection(rows, picked) });
+          const payload = await request(MODELS_PATH, 'POST', {
+            enabled: meta.enabled === true,
+            only: orderedSelection(rows, picked),
+          });
           if (!payload.ok) {
             setNotice({ kind: 'error', text: payload.reason ?? t('saveFailed') });
             return;
@@ -859,6 +872,8 @@ window.__ModuleLoader__.load({
           await load();
           if (sync.state === 'updated' || sync.state === 'unchanged') {
             setNotice({ kind: 'ok', text: t('savedSync', { count: sync.count ?? 0 }) });
+          } else if (sync.state === 'disabled') {
+            setNotice({ kind: 'ok', text: t('savedDisabled') });
           } else {
             // failed / skipped 意味着 DSH 的模型清单没跟上白名单，用错误色提示；disabled 是用户自己关的，不算错。
             const kind = sync.state === 'failed' || sync.state === 'skipped' ? 'error' : 'ok';
@@ -869,7 +884,7 @@ window.__ModuleLoader__.load({
         } finally {
           setSaving(false);
         }
-      }, [rows, picked, load, t]);
+      }, [rows, picked, meta.enabled, load, t]);
 
       // ---- 后端版本（更新检查 / 安装 / 更新 / 卸载 / 回滚）----
       const [backend, setBackend] = useState(undefined);
@@ -954,7 +969,8 @@ window.__ModuleLoader__.load({
         return h('p', { className: 'dsm-wb-desc' }, t('summary'));
       }
 
-      const dirty = !sameSet(picked, savedPicked);
+      // enabled 是开关草稿，savedEnabled 是上次读取的配置；只切换开关也必须允许保存。
+      const dirty = !sameSet(picked, savedPicked) || meta.enabled !== meta.savedEnabled;
       const body = [];
 
       if (phase === 'loading') {
@@ -971,6 +987,24 @@ window.__ModuleLoader__.load({
       } else {
         body.push(
           h(
+            'label',
+            { key: 'sync', className: 'dsm-wb-sync' },
+            h('input', {
+              type: 'checkbox',
+              checked: meta.enabled === true,
+              disabled: saving,
+              onChange: (event) => {
+                const enabled = event.target.checked;
+                setMeta((previous) => ({ ...previous, enabled }));
+                setNotice(undefined);
+              },
+            }),
+            t('syncEnabled'),
+          ),
+          h('p', { key: 'syncHint', className: 'dsm-wb-hint' }, t(meta.enabled === true ? 'syncHint' : 'disabledHint')),
+        );
+        body.push(
+          h(
             'div',
             { key: 'toolbar', className: 'dsm-wb-toolbar' },
             h('span', { className: 'dsm-wb-count' }, t('count', { total: sorted.length, picked: picked.size })),
@@ -979,6 +1013,7 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 className: 'dsm-wb-btn dsm-wb-btn-outline',
+                disabled: saving,
                 onClick: () => {
                   setPicked(new Set(sorted.map((row) => row.id)));
                   setNotice(undefined);
@@ -991,6 +1026,7 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 className: 'dsm-wb-btn dsm-wb-btn-outline',
+                disabled: saving,
                 onClick: () => {
                   setPicked(new Set());
                   setNotice(undefined);
@@ -998,16 +1034,17 @@ window.__ModuleLoader__.load({
               },
               t('clearAll'),
             ),
-            h('button', { type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', onClick: load }, t('refresh')),
+            h('button', { type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', disabled: saving, onClick: load }, t('refresh')),
             h(
               'button',
               {
                 type: 'button',
                 className: 'dsm-wb-btn dsm-wb-btn-primary',
-                disabled: saving || !dirty,
+                // 同步已开启时允许重复保存，修复旧清单或重试上次失败无需先改勾选。
+                disabled: saving || (!dirty && meta.enabled !== true),
                 onClick: save,
               },
-              saving ? t('saving') : t('save'),
+              saving ? t('saving') : t(meta.enabled === true ? 'saveSync' : 'save'),
             ),
           ),
         );
@@ -1026,6 +1063,7 @@ window.__ModuleLoader__.load({
                   h('input', {
                     type: 'checkbox',
                     checked: picked.has(row.id),
+                    disabled: saving,
                     onChange: () => toggle(row.id),
                   }),
                   h('span', { className: 'dsm-wb-label' }, row.label),
@@ -1048,9 +1086,6 @@ window.__ModuleLoader__.load({
           );
         }
 
-        if (meta.enabled === false) {
-          body.push(h('p', { key: 'disabled', className: 'dsm-wb-hint' }, t('disabledHint')));
-        }
         if (picked.size === 0 && sorted.length > 0) {
           body.push(h('p', { key: 'emptyHint', className: 'dsm-wb-hint' }, t('emptyHint')));
         }

@@ -233,6 +233,81 @@ test('POST：白名单没变时不编辑本插件那一行，但清单仍会重�
   }
 });
 
+test('POST：首次开启同步，即使白名单没变也会保存开关并补建 provider', async (t) => {
+  const fixture = startFixture({ TEST_MODE: 'http-models' });
+  t.after(() => fixture.stop());
+  const port = await fixture.ready;
+  for (const previousEnabled of [undefined, false]) {
+    const models = { only: ['cn:alpha'], exclude: ['global:beta'], efforts: ['high'] };
+    if (previousEnabled !== undefined) models.enabled = previousEnabled;
+    const resolved = resolvePluginConfig({ port, models: { ...models, apiKey: 'test-key' } }, { PATH: '' });
+    const editor = createFakeConfigEditor(profileRows({ models, withWorkbuddy: false }));
+
+    const result = await applySelection({ resolved, editor, only: ['cn:alpha'], enabled: true });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.changed, true);
+    assert.equal(result.enabled, true);
+    assert.equal(result.sync.state, 'updated');
+    assert.equal(result.sync.created, true);
+    assert.equal(resolved.models.enabled, true);
+    assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models, { ...models, enabled: true });
+    const provider = editor.entry('llm-pi-ai').options.config.providers.workbuddy;
+    assert.deepEqual(provider.models.map((model) => model.id), ['cn:alpha']);
+    assert.deepEqual(provider.models[0].reasoningEfforts, { high: 'high' });
+    assert.deepEqual(editor.edits.map((edit) => edit.id), [PLUGIN_ID, 'llm-pi-ai']);
+  }
+});
+
+test('POST：关闭同步会保存开关，保留 provider 原清单且不请求后端', async () => {
+  const resolved = configFor(await freePort());
+  const editor = editorFor();
+  const original = structuredClone(editor.entry('llm-pi-ai').options.config);
+  const result = await applySelection({ resolved, editor, only: ['cn:alpha'], enabled: false });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.enabled, false);
+  assert.equal(result.sync.state, 'disabled');
+  assert.equal(resolved.models.enabled, false);
+  assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models, { enabled: false, only: ['cn:alpha'] });
+  assert.deepEqual(editor.entry('llm-pi-ai').options.config, original);
+  assert.deepEqual(editor.edits.map((edit) => edit.id), [PLUGIN_ID]);
+});
+
+test('POST：旧客户端只发送白名单时，保留关闭或未配置的同步开关', async () => {
+  for (const models of [{ enabled: false, only: ['cn:alpha'] }, { only: ['cn:alpha'] }]) {
+    const resolved = resolvePluginConfig({ models }, { PATH: '' });
+    const editor = editorFor(models);
+    const result = await applySelection({ resolved, editor, only: ['global:beta'] });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.sync.state, 'disabled');
+    assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models, { ...models, only: ['global:beta'] });
+    assert.deepEqual(editor.edits.map((edit) => edit.id), [PLUGIN_ID]);
+  }
+});
+
+test('POST：开关类型非法或写入失败时，开关与白名单都不能先在内存生效', async () => {
+  const models = { enabled: false, only: ['cn:alpha'] };
+  const resolved = configFor(await freePort(), models);
+  const editor = editorFor(models);
+  for (const enabled of ['true', null, 1]) {
+    const result = await applySelection({ resolved, editor, only: ['global:beta'], enabled });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /enabled/);
+    assert.equal(editor.edits.length, 0);
+  }
+
+  editor.failWith = new Error('write rejected');
+  const result = await applySelection({ resolved, editor, only: ['global:beta'], enabled: true });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /write rejected/);
+  assert.equal(resolved.models.enabled, false);
+  assert.deepEqual(resolved.models.only, ['cn:alpha']);
+  assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models, models);
+  assert.equal(editor.edits.length, 0);
+});
+
 test('POST：参数非法 / 没有 configEditor / 编辑被拒时都如实报错，且不动配置', async () => {
   const resolved = configFor(await freePort());
   const editor = editorFor();
@@ -289,6 +364,11 @@ test('路由：来源、方法与请求体边界', async () => {
     await handler(fakeReq('POST', { body: '{}' }), noOnly);
     assert.equal(noOnly.status, 400);
 
+    const badEnabled = fakeRes();
+    await handler(fakeReq('POST', { body: JSON.stringify({ only: ['cn:alpha'], enabled: 'true' }) }), badEnabled);
+    assert.equal(badEnabled.status, 400);
+    assert.match(badEnabled.body.reason, /enabled/);
+
     // 正常 GET
     const okGet = fakeRes();
     await handler(fakeReq('GET', { origin: 'http://127.0.0.1:19387' }), okGet);
@@ -298,9 +378,11 @@ test('路由：来源、方法与请求体边界', async () => {
 
     // 正常 POST
     const okPost = fakeRes();
-    await handler(fakeReq('POST', { body: JSON.stringify({ only: ['cn:alpha'] }) }), okPost);
+    await handler(fakeReq('POST', { body: JSON.stringify({ only: ['cn:alpha'], enabled: false }) }), okPost);
     assert.equal(okPost.status, 200);
     assert.equal(okPost.body.ok, true);
+    assert.equal(okPost.body.enabled, false);
+    assert.equal(okPost.body.sync.state, 'disabled');
   } finally {
     fixture.stop();
   }

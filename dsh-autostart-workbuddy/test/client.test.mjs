@@ -19,7 +19,7 @@ const ROW_ID = 'dsh-autostart-workbuddy';
 const NAMESPACE = 'settings.dsh-autostart-workbuddy';
 
 /** 把 bundle 放进沙箱执行，拿回它注册进 __ModuleLoader__ 的 registration 与注入的样式。 */
-function loadBundle() {
+function loadBundle({ fetchImpl = globalThis.fetch } = {}) {
   let registration;
   const styles = [];
   const window = { __ModuleLoader__: { load: (value) => { registration = value; } } };
@@ -29,7 +29,7 @@ function loadBundle() {
     head: { appendChild: (element) => styles.push(element) },
   };
   // eslint-disable-next-line no-new-func -- 故意在沙箱里跑浏览器 bundle
-  new Function('window', 'document', 'console', SOURCE)(window, document, console);
+  new Function('window', 'document', 'console', 'fetch', SOURCE)(window, document, console, fetchImpl);
   assert.ok(registration, 'bundle 应调用 window.__ModuleLoader__.load');
   assert.equal(registration.id, PACKAGE_NAME);
   return { registration, styles };
@@ -40,7 +40,11 @@ function makeReact(states) {
   let index = 0;
   return {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
-    useState: () => [states[index++], () => {}],
+    useState: () => {
+      const slot = index++;
+      return [states[slot], (value) => { states[slot] = typeof value === 'function' ? value(states[slot]) : value; }];
+    },
+    beginRender: () => { index = 0; },
     useCallback: (fn) => fn,
     useMemo: (fn) => fn(),
     useEffect: () => {},
@@ -109,8 +113,8 @@ function interpolate(value, params) {
  * @param {unknown[]} states 组件渲染时 useState 按顺序返回的值
  * @param {{ withPrimitives?: boolean }} [options] withPrimitives=false 时模拟宿主组件不可用
  */
-function boot(states = [], { withPrimitives = true } = {}) {
-  const { registration, styles } = loadBundle();
+function boot(states = [], { withPrimitives = true, fetchImpl } = {}) {
+  const { registration, styles } = loadBundle({ fetchImpl });
   const dicts = new Map();
   const cards = [];
   const React = makeReact(states);
@@ -151,6 +155,10 @@ function boot(states = [], { withPrimitives = true } = {}) {
     module,
     dicts,
     cards,
+    renderCard: () => {
+      React.beginRender();
+      return cards[0].component({ t: ctx.locale.bind(NAMESPACE), view: 'page' });
+    },
     t: ctx.locale.bind(NAMESPACE),
     css: styles.map((style) => style.textContent).join('\n'),
   };
@@ -206,8 +214,8 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'backendUpdated', 'backendUpToDate', 'backendWorking', 'backendRolledBack', 'cancel',
     'clearAll', 'count', 'description', 'disabledHint', 'emptyBackend', 'emptyHint', 'loading',
     'panelHint', 'panelKeyCopied', 'panelKeyCopy', 'panelKeyManual', 'panelKeyNone', 'panelKeyWorking',
-    'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'savedNoSync', 'savedSync',
-    'saving', 'selectAll', 'summary', 'title', 'uninstallConfirm', 'uninstallDesc', 'uninstallKept',
+    'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'saveSync', 'savedDisabled', 'savedNoSync', 'savedSync',
+    'saving', 'selectAll', 'summary', 'syncEnabled', 'syncHint', 'title', 'uninstallConfirm', 'uninstallDesc', 'uninstallKept',
     'uninstallTitle', 'vision',
     // 插件自身更新区（与后端版本区无关）
     'restartFailed', 'restartNow', 'restarting', 'updateAvailable', 'updateCancelled', 'updateCheck',
@@ -307,6 +315,99 @@ test('渲染（loading / error 态）：都不抛错，error 态显示原因', (
   const failedTexts = collectText(failed.cards[0].component({ t: failed.t, view: 'page' }));
   assert.ok(failedTexts.includes('connection refused'));
   assert.ok(failedTexts.includes('重试'));
+});
+
+/** 开关与模型勾选维持独立草稿；用实际事件和请求验证只改开关也能保存。 */
+function modelStates(enabled) {
+  return ['ready', ROWS, { enabled, savedEnabled: enabled }, '', new Set(['cn:alpha']), new Set(['cn:alpha']), false, undefined];
+}
+
+function syncCheckbox(tree) {
+  const label = collectByType(tree, 'label').find((node) => node.props.className === 'dsm-wb-sync');
+  return collectByType(label, 'input')[0];
+}
+
+test('模型开关：只开启同步就能保存，POST 同时传开关和白名单，成功后回显', async () => {
+  const requests = [];
+  const { renderCard } = boot(modelStates(false), {
+    fetchImpl: async (path, options) => {
+      requests.push({ path, ...options });
+      const payload = options.method === 'POST'
+        ? { ok: true, enabled: true, sync: { state: 'updated', count: 1 } }
+        : { ok: true, enabled: true, models: ROWS };
+      return { ok: true, json: async () => payload };
+    },
+  });
+
+  let tree = renderCard();
+  assert.equal(syncCheckbox(tree).props.checked, false);
+  assert.equal(button(collectByType(tree, 'button'), '保存').props.disabled, true);
+  syncCheckbox(tree).props.onChange({ target: { checked: true } });
+  tree = renderCard();
+  assert.equal(syncCheckbox(tree).props.checked, true);
+  const save = button(collectByType(tree, 'button'), '保存并同步');
+  assert.equal(save.props.disabled, false, '只改开关、白名单不变也必须能保存');
+  await save.props.onClick();
+
+  assert.equal(requests[0].path, '/plugins/dsh-autostart-workbuddy/models');
+  assert.equal(requests[0].method, 'POST');
+  assert.deepEqual(JSON.parse(requests[0].body), { enabled: true, only: ['cn:alpha'] });
+  assert.equal(requests[1].method, 'GET');
+  tree = renderCard();
+  assert.equal(syncCheckbox(tree).props.checked, true);
+  assert.ok(collectText(tree).includes('已保存，并已重新生成模型清单：1 个模型。'));
+  assert.equal(button(collectByType(tree, 'button'), '保存并同步').props.disabled, false, '成功后仍允许重新同步');
+});
+
+test('模型开关：关闭后只保存选择，失败时保留草稿并允许重试', async () => {
+  let reject = true;
+  const requests = [];
+  const { renderCard } = boot(modelStates(true), {
+    fetchImpl: async (_path, options) => {
+      if (options.method === 'POST') {
+        requests.push(JSON.parse(options.body));
+        if (reject) return { ok: false, json: async () => ({ reason: 'write rejected' }) };
+        return { ok: true, json: async () => ({ ok: true, enabled: false, sync: { state: 'disabled' } }) };
+      }
+      return { ok: true, json: async () => ({ ok: true, enabled: false, models: ROWS }) };
+    },
+  });
+
+  syncCheckbox(renderCard()).props.onChange({ target: { checked: false } });
+  await button(collectByType(renderCard(), 'button'), '保存').props.onClick();
+  let tree = renderCard();
+  assert.equal(syncCheckbox(tree).props.checked, false);
+  assert.ok(collectText(tree).includes('write rejected'));
+  assert.equal(button(collectByType(tree, 'button'), '保存').props.disabled, false);
+
+  reject = false;
+  await button(collectByType(tree, 'button'), '保存').props.onClick();
+  tree = renderCard();
+  assert.equal(button(collectByType(tree, 'button'), '保存').props.disabled, true);
+  assert.ok(collectText(tree).includes('已保存，同步已关闭；保留现有 DSH 模型列表。'));
+  assert.deepEqual(requests, Array(2).fill({ enabled: false, only: ['cn:alpha'] }));
+});
+
+test('模型同步：勾选未变时可重试同步失败，保存期间禁用开关和选择操作', async () => {
+  const { renderCard } = boot(modelStates(true), {
+    fetchImpl: async (_path, options) => ({
+      ok: true,
+      json: async () => options.method === 'POST'
+        ? { ok: true, sync: { state: 'failed', reason: 'backend unavailable' } }
+        : { ok: true, enabled: true, models: ROWS },
+    }),
+  });
+  await button(collectByType(renderCard(), 'button'), '保存并同步').props.onClick();
+  const tree = renderCard();
+  assert.ok(collectText(tree).some((text) => text.includes('backend unavailable')));
+  assert.equal(button(collectByType(tree, 'button'), '保存并同步').props.disabled, false);
+
+  const states = modelStates(true);
+  states[6] = true;
+  const busy = boot(states).renderCard();
+  assert.ok(collectByType(busy, 'input').every((node) => node.props.disabled === true));
+  const toolbar = collectByType(busy, 'div').find((node) => node.props.className === 'dsm-wb-toolbar');
+  assert.ok(collectByType(toolbar, 'button').every((node) => node.props.disabled === true));
 });
 
 test('渲染（summary 视图）：给行详情页的一句话，不抛错', () => {

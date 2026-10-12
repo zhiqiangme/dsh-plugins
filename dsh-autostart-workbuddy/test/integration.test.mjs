@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { apply, inject, name } from '../lib/index.js';
+import { MODELS_PATH } from '../lib/web.js';
 import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 const DUMMY = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
@@ -218,6 +219,44 @@ test('模型同步未开启时：不编辑任何配置', async (t) => {
   assert.ok(await waitForLog(ctx, '已启动'), ctx.lines.join('\n'));
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(editor.edits.length, 0);
+});
+
+test('面板首次开启同步：不重启托管后端，保存后立即补建模型清单', async (t) => {
+  const port = await freePort();
+  const models = { only: ['cn:alpha'], apiKey: 'test-key', timeoutMs: 5_000 };
+  const config = fakeServiceConfig(port, { env: dummyEnv(port, 'http-models'), models, backend: { checkOnStart: false } });
+  const editor = createFakeConfigEditor(profileRows({ models, withWorkbuddy: false }));
+  editor.entry(name).options.config = structuredClone(config);
+  const routes = [];
+  const ctx = fakeContext({ configEditor: editor });
+  ctx.webServer = { register: (route) => { routes.push(route); return () => {}; } };
+  editor.onUpdate(name, (next) => ctx.update(next));
+  t.after(() => ctx.disposeAll());
+
+  apply(ctx, config);
+  assert.ok(await waitForLog(ctx, '已启动'), ctx.lines.join('\n'));
+  assert.equal(editor.edits.length, 0);
+
+  let status;
+  let result;
+  await routes.find((route) => route.path === MODELS_PATH).handler({
+    method: 'POST',
+    headers: {},
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from(JSON.stringify({ only: ['cn:alpha'], enabled: true }));
+    },
+  }, {
+    writeHead(code) { status = code; },
+    end(body) { result = JSON.parse(body); },
+  });
+
+  assert.equal(status, 200);
+  assert.equal(result.sync.state, 'updated');
+  assert.equal(result.sync.created, true);
+  assert.equal(ctx.restarts, 0, '开启同步不能重启插件或停止托管后端');
+  assert.equal(editor.entry(name).options.config.models.enabled, true);
+  assert.deepEqual(editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((model) => model.id), ['cn:alpha']);
+  assert.deepEqual(editor.edits.map((edit) => edit.id), [name, 'llm-pi-ai']);
 });
 
 test('配置变更：只改 models.* 时就地生效、不重启插件；改了别的字段才重启', async (t) => {

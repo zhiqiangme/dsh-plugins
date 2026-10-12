@@ -186,7 +186,7 @@ export async function describeModels({ spec, models, editor, env = process.env }
 }
 
 /**
- * POST 的处理：写白名单 → 立即重新同步 provider 的模型清单。
+ * POST 的处理：写同步开关与白名单 → 开启时立即重新同步 provider 的模型清单。
  *
  * 两步都做是刻意的：只写白名单要等下次 DSH 启动才见效，用户点完"保存"看不到变化；
  * 顺手同步一次，DSH 的模型选择器马上就是新清单（llm-pi-ai 那一行被热重载）。
@@ -194,13 +194,16 @@ export async function describeModels({ spec, models, editor, env = process.env }
  * 白名单写的是本插件自己那一行：configEditor 改完会触发本插件的 internal/update，
  * index.js 的钩子只就地刷新 models，不重启插件（重启会把托管的 wb2api 一起停掉）。
  *
- * @param {{ resolved: object, editor?: object, env?: object, only: unknown }} options
+ * @param {{ resolved: object, editor?: object, env?: object, only: unknown, enabled?: boolean }} options
  *   `resolved` 是插件手里那份配置对象；钩子会就地换掉它的 models，这里也同步刷新一次，
  *   宿主没有转发 internal/update 时（测试、旧版本）保存结果照样立即可见。
  */
-export async function applySelection({ resolved, editor, env = process.env, only }) {
+export async function applySelection({ resolved, editor, env = process.env, only, enabled }) {
   if (!Array.isArray(only) || only.some((id) => typeof id !== 'string')) {
     return { ok: false, reason: 'only 必须是字符串数组' };
+  }
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    return { ok: false, reason: 'enabled 必须是布尔值' };
   }
   if (typeof editor?.edit !== 'function') {
     return { ok: false, reason: '宿主没有 configEditor 服务，无法保存白名单' };
@@ -210,26 +213,30 @@ export async function applySelection({ resolved, editor, env = process.env, only
 
   const ids = only.map((id) => id.trim()).filter(Boolean);
   const patchPath = editor.documentPath;
-  const currentOnly = entry.options?.config?.models?.only;
-  const changed = !isDeepStrictEqual(currentOnly, ids);
+  const currentModels = entry.options?.config?.models;
+  // 旧客户端只发送 only；省略 enabled 时保留原开关，不能把旧请求当作开启或关闭同步。
+  const enabledPatch = enabled === undefined ? {} : { enabled };
+  const changed = !isDeepStrictEqual(currentModels?.only, ids) ||
+    (enabled !== undefined && currentModels?.enabled !== enabled);
 
   if (changed) {
     try {
       await editor.edit(entry, (current) => {
         const config = plainObject(current);
-        return { ...config, models: { ...plainObject(config.models), only: ids } };
+        return { ...config, models: { ...plainObject(config.models), ...enabledPatch, only: ids } };
       });
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : String(error), patchPath };
     }
   }
-  resolved.models = { ...resolved.models, only: ids };
+  resolved.models = { ...resolved.models, ...enabledPatch, only: ids };
 
   const synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, env });
   return {
     ok: true,
     patchPath,
     changed,
+    enabled: resolved.models.enabled,
     only: ids,
     sync: {
       state: synced.state,
@@ -449,7 +456,9 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               json(res, 400, { ok: false, reason: body.reason });
               return;
             }
-            const result = await applySelection({ resolved, editor: configEditorOf(ctx), env, only: body.value.only });
+            const result = await applySelection({
+              resolved, editor: configEditorOf(ctx), env, only: body.value.only, enabled: body.value.enabled,
+            });
             json(res, result.ok ? 200 : 400, result);
             return;
           }
