@@ -149,6 +149,33 @@ test('shimApiKey 非空时校验调用方凭据', async (t) => {
   assert.equal(ok.status, 200);
 });
 
+test('浏览器来源的请求在读取凭据前拒绝，text/plain 不能绕过并消耗额度', async (t) => {
+  let resolutions = 0;
+  const { scenario, shim } = await setup(t, okTavily([]), {
+    resolveApiKey: () => {
+      resolutions += 1;
+      return ['key-one', 'key-two'];
+    },
+  });
+  for (const headers of [
+    { origin: 'https://attacker.example' },
+    { origin: 'null' },
+    { origin: shim.base },
+    { 'sec-fetch-site': 'cross-site' },
+  ]) {
+    const response = await fetch(`${shim.base}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain', ...headers },
+      body: JSON.stringify(dshBody),
+    });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error.type, 'permission_error');
+  }
+  assert.equal(resolutions, 0, '拒绝请求不能读取凭据');
+  assert.equal(scenario.requests.length, 0, '拒绝请求不能消耗 Tavily 额度');
+  assert.equal((await post(shim.base, '/v1/messages', dshBody)).status, 200, '宿主请求仍然可用');
+});
+
 test('API Key 每次请求现取：轮换后下一次搜索就用新值', async (t) => {
   let current = 'tvly-old';
   const { scenario, shim } = await setup(t, okTavily([]), { resolveApiKey: async () => current });

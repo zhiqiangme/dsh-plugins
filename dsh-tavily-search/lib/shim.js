@@ -338,6 +338,13 @@ export function createShimServer(input) {
         sendError(res, anthropicError(404, 'not_found_error', `未知路径：${req.method} ${pathname}`));
         return;
       }
+      // 搜索由 DSH 宿主（或 CLI）转发，浏览器只调用宿主的面板路由。
+      // 即使不允许 CORS，网页仍能用 text/plain POST 提交 JSON 并消耗所有 key 的额度；
+      // 因此在读体、取凭据前拒绝浏览器来源，包括沙箱页面的 Origin: null。
+      if (req.headers.origin !== undefined || req.headers['sec-fetch-site'] === 'cross-site') {
+        sendError(res, anthropicError(403, 'permission_error', '搜索接口只接受宿主或 CLI 请求，浏览器请使用宿主的面板路由。'));
+        return;
+      }
       if (!isAuthorized(req, options)) {
         sendError(res, anthropicError(401, 'authentication_error', '鉴权失败：x-api-key / Bearer 与 shimApiKey 不一致。'));
         return;
