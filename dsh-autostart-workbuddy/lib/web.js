@@ -32,6 +32,7 @@ import {
   uninstallBackend,
 } from './backend.js';
 import { creditsLabel, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, syncModels } from './models.js';
+import { isFile } from './services.js';
 import { createVersionChecker } from './update.js';
 
 /** 插件名：与 package.json / cordis.patch.yml 里的 name 保持一致。 */
@@ -48,6 +49,15 @@ export const BACKEND_PATH = `${PANEL_BASE}/backend`;
 
 /** 本插件自身的版本检查端点：当前运行版本 vs npm latest（?force=1 绕过缓存）。与后端 wb2api 的版本无关。 */
 export const VERSION_PATH = `${PANEL_BASE}/version`;
+
+/**
+ * 后端控制台访问密钥（POST 才给）：控制台 /panel 首次打开会要 config.json 里的 api_key，
+ * 用户不知道去哪找，卡片上一键复制。
+ *
+ * 用 POST 不用 GET：浏览器对跨源 POST 一定带 Origin，guard 会拦下；GET 的顶层导航、
+ * <img>/<script> 引用都不带 Origin。密钥也不放进 /backend 快照，只在点按钮时取一次。
+ */
+export const PANEL_KEY_PATH = `${PANEL_BASE}/panel-key`;
 
 /** 请求体上限：白名单最多几十个 id，64KB 足够，防止有人往 loopback 路由灌大包。 */
 const MAX_BODY_BYTES = 64 * 1024;
@@ -107,6 +117,20 @@ function resolveApiKey(models, env) {
   if (models.apiKey) return models.apiKey;
   const fromEnv = typeof env.WORKBUDDY_PROXY_KEY === 'string' ? env.WORKBUDDY_PROXY_KEY.trim() : '';
   return fromEnv || panelApiKey(models.panelConfig);
+}
+
+/**
+ * 读后端控制台的访问密钥：就是 wb2api 自己 config.json 里的 api_key（控制台的密钥门校验的正是它）。
+ * 不走 resolveApiKey——那里优先用 profile/环境变量里给 DSH 调用的网关密钥，未必与 config.json 一致。
+ *
+ * key 为空字符串 = config.json 没设 api_key，控制台不鉴权、不会弹密钥框。
+ */
+export function readPanelKey(resolved) {
+  const path = resolved?.models?.panelConfig || resolved?.backend?.paths?.config || resolved?.paths?.config || '';
+  if (!path || !isFile(path)) {
+    return { ok: false, reason: `找不到后端配置文件 ${path || 'config.json'}（后端可能还没安装或从未启动过）` };
+  }
+  return { ok: true, key: panelApiKey(path), configPath: path };
 }
 
 function positiveIntOrNull(value) {
@@ -452,8 +476,21 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
         }),
       });
 
+      const disposePanelKey = webServer.register({
+        kind: 'exact',
+        path: PANEL_KEY_PATH,
+        handler: guard(async (req, res) => {
+          if (req.method !== 'POST') {
+            json(res, 405, { ok: false, reason: 'method not allowed' });
+            return;
+          }
+          const result = readPanelKey(resolved);
+          json(res, result.ok ? 200 : 404, result);
+        }),
+      });
+
       return () => {
-        for (const dispose of [disposeModels, disposeBackend, disposeVersion]) {
+        for (const dispose of [disposeModels, disposeBackend, disposeVersion, disposePanelKey]) {
           try {
             dispose?.();
           } catch {

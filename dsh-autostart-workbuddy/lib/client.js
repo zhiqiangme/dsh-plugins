@@ -60,6 +60,8 @@ window.__ModuleLoader__.load({
      * （host/port 可被 profile 覆盖），拿不到时才用这个。
      */
     const DEFAULT_PANEL_URL = 'http://127.0.0.1:7863/panel';
+    /** 宿主半侧的控制台访问密钥路由（lib/web.js）：POST 才给，点「复制访问密钥」时取一次。 */
+    const PANEL_KEY_PATH = '/plugins/dsh-autostart-workbuddy/panel-key';
 
     /** 本插件的 npm 包名：dshmarket 按它定位要更新的依赖。 */
     const PACKAGE_NAME = '@zhiqiangme/dsh-autostart-workbuddy';
@@ -133,6 +135,8 @@ window.__ModuleLoader__.load({
 .dsm-wb-notice-ok{color:var(--dsw-alias-state-success-primary,#3fb950)}
 .dsm-wb-notice-error{color:var(--dsw-alias-state-error-primary,#d92d20)}
 .dsm-wb-empty{padding:12px 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px}
+.dsm-wb-panel-key{margin-left:8px;padding:1px 10px;font-size:12px}
+.dsm-wb-key{display:inline-block;margin-left:4px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;font-family:ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary,#e6e6e6);user-select:all;word-break:break-all}
 .dsm-wb-path{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;word-break:break-all}
 .dsm-wb-backend{margin-top:14px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px}
 .dsm-wb-backend-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -174,6 +178,11 @@ window.__ModuleLoader__.load({
       saveFailed: '保存失败。',
       patchPath: '写入目标：{path}',
       panelHint: '后端面板：',
+      panelKeyCopy: '复制访问密钥',
+      panelKeyWorking: '读取中…',
+      panelKeyCopied: '已复制访问密钥：打开后端面板，粘贴到「需要访问密钥」的弹窗里即可，浏览器会记住。',
+      panelKeyManual: '没能写入剪贴板，请手动选中复制：',
+      panelKeyNone: '后端没有设置访问密钥，打开面板无需输入。',
       backendTitle: '后端版本',
       backendCurrent: '当前 {version}',
       backendLatest: '上游 {tag}',
@@ -250,6 +259,11 @@ window.__ModuleLoader__.load({
       saveFailed: 'Save failed.',
       patchPath: 'Written to: {path}',
       panelHint: 'Panel: ',
+      panelKeyCopy: 'Copy access key',
+      panelKeyWorking: 'Reading…',
+      panelKeyCopied: 'Access key copied: open the panel and paste it into the “access key” prompt; the browser remembers it.',
+      panelKeyManual: 'Could not write to the clipboard; select and copy it manually: ',
+      panelKeyNone: 'The backend has no access key set; the panel opens without one.',
       backendTitle: 'Backend version',
       backendCurrent: 'current {version}',
       backendLatest: 'upstream {tag}',
@@ -912,6 +926,29 @@ window.__ModuleLoader__.load({
       // 放在所有既有 useState 之后：hooks 按调用顺序配对，插到前面会打乱上面那些状态
       const updater = useUpdater(t);
 
+      // 同样排在既有 hooks 之后。控制台的密钥只存在用户浏览器的 localStorage 里（按来源隔离），
+      // 插件替它填不进去，只能把 config.json 里的 api_key 交给用户粘贴一次。
+      const [panelKey, setPanelKey] = useState(undefined);
+      const copyPanelKey = useCallback(async () => {
+        setPanelKey({ busy: true });
+        try {
+          const payload = await request(PANEL_KEY_PATH, 'POST', {});
+          if (!payload.key) {
+            setPanelKey({ kind: 'ok', text: t('panelKeyNone') });
+            return;
+          }
+          try {
+            await navigator.clipboard.writeText(payload.key);
+            setPanelKey({ kind: 'ok', text: t('panelKeyCopied') });
+          } catch {
+            // 剪贴板 API 可能被宿主/非安全上下文拒绝：退回显示原文，让用户自己选中复制。
+            setPanelKey({ kind: 'manual', key: payload.key });
+          }
+        } catch (error) {
+          setPanelKey({ kind: 'error', text: errorText(error) });
+        }
+      }, [t]);
+
       // 行详情页在缺少包描述时才用 summary 视图；本包有 description，正常走 page。
       if (view === 'summary') {
         return h('p', { className: 'dsm-wb-desc' }, t('summary'));
@@ -1191,7 +1228,22 @@ window.__ModuleLoader__.load({
             },
             panelLabel,
           ),
+          wbButton(
+            'panelKey',
+            'outline dsm-wb-panel-key',
+            panelKey?.busy ? t('panelKeyWorking') : t('panelKeyCopy'),
+            copyPanelKey,
+            Boolean(panelKey?.busy),
+          ),
         ),
+        panelKey?.kind === 'manual'
+          ? h(
+              'p',
+              { className: 'dsm-wb-notice dsm-wb-notice-error' },
+              t('panelKeyManual'),
+              h('code', { className: 'dsm-wb-key' }, panelKey.key),
+            )
+          : wbNotice('panelKeyNotice', panelKey?.busy ? undefined : panelKey),
         body,
       );
     }

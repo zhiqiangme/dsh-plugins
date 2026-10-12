@@ -65,6 +65,11 @@ node lib/sync-cli.js
 - 卡片顶部有一行 **后端面板：`127.0.0.1:7863/panel`** 的可点击外链，点了用**默认浏览器**打开。
   地址由宿主按服务规格给出（端口可配），不是写死的。链接用 `<a target="_blank" rel="noopener noreferrer">`，
   宿主主窗口的 `setWindowOpenHandler` 对 http(s) 会调 `shell.openExternal`——这也是 DSH 里外链的既有做法。
+- 链接旁边有「复制访问密钥」：后端面板首次打开会要求输入 `config.json` 里的 `api_key`。
+  面板只从浏览器自己的 `localStorage` 读密钥（按来源隔离），插件替它填不进去，所以改为一键复制、
+  用户粘贴一次（之后浏览器会记住）。剪贴板不可用时退回显示原文供手动复制。
+  密钥经 `POST /plugins/dsh-autostart-workbuddy/panel-key` 取（只接受 loopback 来源，GET 一律 405），
+  不放进其它接口的应答里。
 
 数据通路：卡片 `fetch('/plugins/dsh-autostart-workbuddy/models')`，宿主半侧
 （[lib/web.js](lib/web.js)）负责拉后端与读写 profile。必须过宿主是因为：页面够不到

@@ -205,7 +205,8 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'backendTitle', 'backendUninstall', 'backendUninstalled', 'backendUnmanaged', 'backendUpdate',
     'backendUpdated', 'backendUpToDate', 'backendWorking', 'backendRolledBack', 'cancel',
     'clearAll', 'count', 'description', 'disabledHint', 'emptyBackend', 'emptyHint', 'loading',
-    'panelHint', 'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'savedNoSync', 'savedSync',
+    'panelHint', 'panelKeyCopied', 'panelKeyCopy', 'panelKeyManual', 'panelKeyNone', 'panelKeyWorking',
+    'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'savedNoSync', 'savedSync',
     'saving', 'selectAll', 'summary', 'title', 'uninstallConfirm', 'uninstallDesc', 'uninstallKept',
     'uninstallTitle', 'vision',
     // 插件自身更新区（与后端版本区无关）
@@ -375,6 +376,33 @@ function backendStates(backend, { check, confirming } = {}) {
 function buttonLabels(tree) {
   return collectByType(tree, 'button').map((node) => collectText(node).join(''));
 }
+
+/** 卡片 13 个 state + useUpdater 的 7 个之后，才是「复制访问密钥」的 state。 */
+function panelKeyStates(panelKey) {
+  const backend = { exeExists: true, version: { tag: 'v1.13.0', revision: 'd'.repeat(40) }, history: [] };
+  return [...backendStates(backend), ...Array(7).fill(undefined), panelKey];
+}
+
+test('复制访问密钥：按钮挨着面板链接；复制成功给提示，剪贴板不可用时显示原文供手动复制', () => {
+  const idle = boot(panelKeyStates(undefined));
+  const panelLine = collectByType(idle.cards[0].component({ t: idle.t, view: 'page' }), 'p').find(
+    (node) => node.props.className === 'dsm-wb-panel',
+  );
+  assert.ok(buttonLabels(panelLine).includes('复制访问密钥'), '按钮应在面板链接那一行');
+
+  const busy = boot(panelKeyStates({ busy: true }));
+  const busyButton = collectByType(busy.cards[0].component({ t: busy.t, view: 'page' }), 'button').find(
+    (node) => collectText(node).join('') === '读取中…',
+  );
+  assert.equal(busyButton?.props.disabled, true);
+
+  const copied = boot(panelKeyStates({ kind: 'ok', text: '已复制' }));
+  assert.ok(collectText(copied.cards[0].component({ t: copied.t, view: 'page' })).includes('已复制'));
+
+  const manual = boot(panelKeyStates({ kind: 'manual', key: 'panel-secret' }));
+  const codes = collectByType(manual.cards[0].component({ t: manual.t, view: 'page' }), 'code');
+  assert.deepEqual(codes.map((node) => collectText(node).join('')), ['panel-secret']);
+});
 
 /** 只取"后端版本"那一块：卡片底部还有插件自身的更新区，它也有"检查更新"按钮。 */
 function backendSection(tree) {

@@ -9,13 +9,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolvePluginConfig } from '../lib/config.js';
 import {
   BACKEND_PATH,
   MODELS_PATH,
+  PANEL_KEY_PATH,
   VERSION_PATH,
   applySelection,
   describeModels,
@@ -256,7 +260,7 @@ test('路由：来源、方法与请求体边界', async () => {
   const ctx = fakeCtx({ configEditor: editorFor() });
   try {
     registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env, checkVersion: async () => ({ ok: true }) });
-    assert.equal(ctx.routes.length, 3);
+    assert.equal(ctx.routes.length, 4);
     const modelsRoute = ctx.routes.find((route) => route.path === MODELS_PATH);
     const backendRoute = ctx.routes.find((route) => route.path === BACKEND_PATH);
     assert.ok(modelsRoute, '应注册模型路由');
@@ -342,10 +346,10 @@ test('路由：用 ctx.inject 等 webServer 就绪，而不是在 apply 时直�
       },
     },
   });
-  assert.equal(routes.length, 3);
+  assert.equal(routes.length, 4);
   assert.deepEqual(
     routes.map((route) => route.path).sort(),
-    [BACKEND_PATH, MODELS_PATH, VERSION_PATH].sort(),
+    [BACKEND_PATH, MODELS_PATH, PANEL_KEY_PATH, VERSION_PATH].sort(),
   );
   for (const route of routes) assert.equal(route.kind, 'exact');
 });
@@ -406,6 +410,51 @@ test('插件版本路由：GET 交给版本检查器，只有 ?force=1 绕过缓
   const foreign = fakeRes();
   await handler(fakeReq('GET', { origin: 'http://evil.example' }), foreign);
   assert.equal(foreign.status, 403);
+});
+
+test('控制台密钥路由：POST 给出 config.json 的 api_key；GET 405、外部来源 403、找不到配置 404', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wb-panel-key-'));
+  const panelConfig = join(dir, 'config.json');
+  writeFileSync(panelConfig, JSON.stringify({ listen: '127.0.0.1:7863', api_key: ' panel-secret ' }));
+  // 网关密钥（apiKey）与控制台密钥不同：路由必须给 config.json 里那个，控制台校验的是它。
+  const resolved = configFor(await freePort(), { apiKey: 'gateway-key', panelConfig });
+  const ctx = fakeCtx();
+  registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env });
+  const handler = ctx.routes.find((route) => route.path === PANEL_KEY_PATH).handler;
+  assert.equal(PANEL_KEY_PATH, '/plugins/dsh-autostart-workbuddy/panel-key');
+
+  const ok = fakeRes();
+  await handler(fakeReq('POST', { origin: 'http://127.0.0.1:19387' }), ok);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.key, 'panel-secret');
+
+  const get = fakeRes();
+  await handler(fakeReq('GET'), get);
+  assert.equal(get.status, 405, 'GET 的导航/资源引用不带 Origin，不能给密钥');
+
+  const foreign = fakeRes();
+  await handler(fakeReq('POST', { origin: 'http://evil.example' }), foreign);
+  assert.equal(foreign.status, 403);
+  assert.equal(foreign.body.key, undefined);
+
+  // 没设 api_key：控制台不鉴权，回空字符串
+  writeFileSync(panelConfig, JSON.stringify({ listen: '127.0.0.1:7863' }));
+  const none = fakeRes();
+  await handler(fakeReq('POST'), none);
+  assert.equal(none.status, 200);
+  assert.equal(none.body.key, '');
+
+  // 后端还没装（配置文件不存在）
+  const missingCtx = fakeCtx();
+  registerPanelRoutes(missingCtx, {
+    logger: missingCtx.logger,
+    resolved: configFor(await freePort(), { panelConfig: join(dir, 'nope', 'config.json') }),
+    env: process.env,
+  });
+  const missing = fakeRes();
+  await missingCtx.routes.find((route) => route.path === PANEL_KEY_PATH).handler(fakeReq('POST'), missing);
+  assert.equal(missing.status, 404);
+  assert.match(missing.body.reason, /找不到后端配置文件/);
 });
 
 test('loopbackOrigin：无 Origin 放行，loopback 放行，其它拒绝', () => {
