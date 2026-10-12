@@ -240,4 +240,31 @@ test('配置变更：只改 models.* 时就地生效、不重启插件；改了�
   // 端口等服务规格变了，必须按 cordis 的默认处理重启，新规格才会生效。
   ctx.update({ ...config, port: port + 1 });
   assert.equal(ctx.restarts, 1);
+  assert.ok(ctx.lines.some((line) => line.includes('spec.port')), '重启时应记下是哪个字段变了');
+});
+
+test('配置变更：apply 之后宿主 process.env 有变动，保存白名单仍然不重启插件', async (t) => {
+  const port = await freePort();
+  const ctx = fakeContext();
+  const marker = `DSH_WB_TEST_ENV_DRIFT_${process.pid}`;
+  t.after(() => {
+    delete process.env[marker];
+    return ctx.disposeAll();
+  });
+
+  // 不传 config.env：spec.env 就是宿主 process.env 的快照，与真实 profile 的形状一致。
+  // 假服务换成"已被占用的端口"，只为让 apply 走完整流程而不必真起一个依赖 env 的子进程。
+  const occupied = createServer();
+  await new Promise((done) => occupied.listen(port, '127.0.0.1', done));
+  t.after(() => new Promise((done) => occupied.close(done)));
+
+  const config = { ...fakeServiceConfig(port), models: { enabled: false, only: ['cn:alpha'] } };
+  apply(ctx, config);
+  assert.ok(await waitForLog(ctx, '已在'), ctx.lines.join('\n'));
+
+  // DSH 运行中别的插件改了环境变量：此前会让钩子误判"配置变了"而重启，wb2api 随之被停掉。
+  process.env[marker] = '1';
+  ctx.update({ ...config, models: { enabled: false, only: ['cn:alpha', 'global:beta'] } });
+  assert.equal(ctx.restarts, 0, ctx.lines.join('\n'));
+  assert.ok(ctx.lines.some((line) => line.includes('就地生效')), ctx.lines.join('\n'));
 });

@@ -79,7 +79,7 @@ export function apply(ctx, config) {
   registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service });
 
   // 白名单等 models.* 的改动就地生效，不重启插件（见 watchConfigUpdates）。
-  watchConfigUpdates(ctx, resolved, hostEnv, logger);
+  watchConfigUpdates(ctx, resolved, hostEnv, logger, config);
 
   // 启动时查一次后端更新（**只提示**，安装永远由用户在面板里点）。
   checkBackendUpdateOnStart(resolved, hostEnv, logger);
@@ -125,18 +125,47 @@ export function apply(ctx, config) {
  * 所以只有 models.* 变了时就地换掉 resolved.models、不调 next()（即否决这次重启）；
  * 端口、exe、env 等别的字段变了仍调 next()，按原样重启让新规格生效。
  * resolved 是 web 路由与同步共用的同一个对象，换掉 models 后下一个请求就用上新值。
+ *
+ * 比较的是"新旧两份原始配置在同一份当前环境下的解析结果"，而不是拿新配置去比 apply 时的 resolved：
+ * resolved.spec.env 是 apply 那一刻 process.env 的快照，DSH 进程运行中只要有任何环境变量变动，
+ * 两边就永远不等，每次保存白名单都会落到默认重启——托管的 wb2api 被停掉重拉，紧接着的
+ * /v1/models 拉取就是 fetch failed，白名单写进去了、模型清单却没跟上（实际遇到过）。
  */
-function watchConfigUpdates(ctx, resolved, hostEnv, logger) {
+function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig) {
   if (typeof ctx?.on !== 'function') return;
+  let currentConfig = initialConfig;
   ctx.on('internal/update', (config, _noSave, next) => {
     const updated = resolvePluginConfig(config, hostEnv);
-    const { models: _nextModels, ...nextRest } = updated;
-    const { models: _currentModels, ...currentRest } = resolved;
-    if (!isDeepStrictEqual(nextRest, currentRest)) return next();
+    const changed = changedFields(resolvePluginConfig(currentConfig, hostEnv), updated);
+    if (changed.length > 0) {
+      // 只记字段名不记值：spec.env 里可能有密钥。
+      logger.info(`[${name}] 配置变更涉及 ${changed.join(', ')}，按默认流程重启插件`);
+      return next();
+    }
+    currentConfig = config;
     resolved.models = updated.models;
     logger.info(`[${name}] models 配置已更新（就地生效，不重启插件）`);
     return undefined;
   });
+}
+
+/** 两份解析结果里除 models 以外不相等的字段路径（展开到第二层，方便从日志看出是哪一项触发了重启）。 */
+export function changedFields(previous, next) {
+  const out = [];
+  for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+    if (key === 'models' || isDeepStrictEqual(previous[key], next[key])) continue;
+    const a = previous[key];
+    const b = next[key];
+    const nested = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+    if (!nested(a) || !nested(b)) {
+      out.push(key);
+      continue;
+    }
+    for (const sub of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      if (!isDeepStrictEqual(a[sub], b[sub])) out.push(`${key}.${sub}`);
+    }
+  }
+  return out;
 }
 
 /** 启动失败只记日志：一个上游起不来不应该让 DSH 启动失败。 */
