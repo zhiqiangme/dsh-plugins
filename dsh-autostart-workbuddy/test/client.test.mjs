@@ -211,7 +211,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     // 插件自身更新区（与后端版本区无关）
     'restartFailed', 'restartNow', 'restarting', 'updateAvailable', 'updateCancelled', 'updateCheck',
     'updateCheckFailed', 'updateChecking', 'updateCurrent', 'updateFailed', 'updateForce', 'updateLatestVersion',
-    'updateLost', 'updateMismatch', 'updateNoMarket', 'updateNow', 'updateProgress', 'updateRefreshHint',
+    'updateLinked', 'updateLost', 'updateManaged', 'updateMismatch', 'updateNoMarket', 'updateNow', 'updateProgress', 'updateRefreshHint',
     'updateRestartHint', 'updateRolledBack', 'updateRunning', 'updateStartFailed', 'updateSucceeded',
     'updateTitle', 'updateTooFresh', 'updateUpToDate',
   ];
@@ -567,4 +567,15 @@ test('插件更新区：发布冷却期 / 版本未变时给"强制更新"，其
   const other = renderUpdate(updateModel({ operation: { state: 'failed', failure: { code: 'UPDATE_FAILED', message: 'pnpm 退出码 1' } } }));
   assert.match(other.text, /更新失败：pnpm 退出码 1/);
   assert.equal(button(other.buttons, '强制更新'), undefined);
+});
+
+test('插件更新区：本地目录安装（file:）→ 不给更新按钮，说明怎么更新', () => {
+  const market = { phase: 'ready', restartSupported: false, endpoints: {}, source: 'linked', updatable: false };
+  const linked = renderUpdate(updateModel({ market }));
+  assert.equal(button(linked.buttons, '更新到 26.10.12'), undefined, 'dshmarket 会拒绝本地安装，按钮点了也只会失败');
+  assert.match(linked.text, /本地目录（file:）/);
+  assert.ok(button(linked.buttons, '检查更新'));
+
+  assert.match(renderUpdate(updateModel({ market: { ...market, source: 'generation' } })).text, /DSH 桌面端统一管理/);
+  assert.ok(button(renderUpdate(updateModel({ market: { ...market, source: 'npm', updatable: true } })).buttons, '更新到 26.10.12'));
 });

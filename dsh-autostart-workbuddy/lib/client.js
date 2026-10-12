@@ -208,6 +208,8 @@ window.__ModuleLoader__.load({
       updateAvailable: '有新版本',
       updateNow: '更新到 {version}',
       updateNoMarket: '装上 DSH 插件市场（dshmarket）后可以在这里一键更新；也可以在「插件」页卸载本插件，再重新安装新版。',
+      updateLinked: '本插件是从本地目录（file:）安装的，dshmarket 不更新本地安装。请在源码目录拉取新代码后重新安装；改为从 npm 安装后，才能在这里一键更新。',
+      updateManaged: '本插件由 DSH 桌面端统一管理，dshmarket 不会更新它。请在「插件」页卸载后重新安装新版。',
       updateRunning: '正在更新…',
       updateProgress: '正在更新… {percent}%',
       updateStartFailed: '没能开始更新：{reason}',
@@ -281,6 +283,8 @@ window.__ModuleLoader__.load({
       updateAvailable: 'update available',
       updateNow: 'Update to {version}',
       updateNoMarket: 'Install the DSH plugin market (dshmarket) to update from here, or uninstall this plugin on the Plugins page and install the new version.',
+      updateLinked: 'This plugin is installed from a local directory (file:), which dshmarket does not update. Pull the new code in the source directory and reinstall, or reinstall it from npm to update from here.',
+      updateManaged: 'This plugin is managed by the DSH desktop app, so dshmarket will not update it. Uninstall it on the Plugins page and install the new version.',
       updateRunning: 'Updating…',
       updateProgress: 'Updating… {percent}%',
       updateStartFailed: 'Could not start the update: {reason}',
@@ -448,6 +452,25 @@ window.__ModuleLoader__.load({
       return { status: response.status, body: payload };
     }
 
+    /**
+     * dshmarket 只一键更新从 npm / git 装的插件。file:/link: 的本地目录安装（source 'linked'）它会直接拒绝
+     * （"locally linked plugins update from their checkout"），桌面端自带的 generation 安装也只报版本、不给更新。
+     * 所以先问一次本插件的安装来源，免得按钮点下去才失败。问不到（市场报错、网络抖动）时不拦着，
+     * 真点了失败也还有失败提示兜底。
+     */
+    const MARKET_UNMANAGED_SOURCES = new Set(['linked', 'generation']);
+
+    async function installSourceOf(updatesPath) {
+      try {
+        const result = await marketRequest(`${updatesPath}?name=${encodeURIComponent(PACKAGE_NAME)}`, 'GET');
+        const source = result.status === 200 ? result.body?.package?.source : undefined;
+        if (typeof source !== 'string') return {};
+        return { source, updatable: !MARKET_UNMANAGED_SOURCES.has(source) };
+      } catch {
+        return {};
+      }
+    }
+
     /** 市场失败体 → 一句可展示的原因。 */
     function marketReason(result) {
       return result.body?.failure?.message ?? result.body?.error ?? `HTTP ${result.status}`;
@@ -512,7 +535,7 @@ window.__ModuleLoader__.load({
         );
       }
       head.push(wbButton('check', 'outline', t('updateCheck'), actions.checkUpdate, version.phase === 'loading' || running));
-      if (ready && version.updateAvailable && market.phase === 'ready') {
+      if (ready && version.updateAvailable && market.phase === 'ready' && market.updatable !== false) {
         head.push(
           wbButton('update', 'primary', running ? t('updateRunning') : t('updateNow', { version: version.latestVersion }), () => actions.startUpdate(false), running),
         );
@@ -539,6 +562,9 @@ window.__ModuleLoader__.load({
       }
       if (ready && version.updateAvailable && market.phase === 'absent' && !operation) {
         section.push(h('p', { key: 'noMarket', className: 'dsm-wb-hint' }, t('updateNoMarket')));
+      }
+      if (ready && version.updateAvailable && market.phase === 'ready' && market.updatable === false && !operation) {
+        section.push(h('p', { key: 'unmanaged', className: 'dsm-wb-hint' }, t(market.source === 'linked' ? 'updateLinked' : 'updateManaged')));
       }
 
       if (isActiveOperation(operation)) {
@@ -632,6 +658,7 @@ window.__ModuleLoader__.load({
             restartSupported: body.restart?.supported === true,
             endpoints: { ...MARKET_DEFAULT_ENDPOINTS, ...body.endpoints },
           };
+          Object.assign(ready, await installSourceOf(ready.endpoints.updates));
           setMarket(ready);
           // 卡片被卸下再挂上（例如本插件被热重载）时接着轮询原来的任务。
           // 任务 id 以市场进程的 bootId 开头：对不上说明 DSH 已重启，旧记录直接丢弃

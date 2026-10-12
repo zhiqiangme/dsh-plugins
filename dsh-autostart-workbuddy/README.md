@@ -83,8 +83,8 @@ node lib/sync-cli.js
   profile 锁、文件占用、回滚与版本核对都交给 dshmarket。
 - 桌面版更新完成后要**重启 DSH** 才会换上新代码（桌面版的重启归桌面壳管，卡片不提供重启按钮）。
   新版本刚发布时可能被 pnpm 的发布冷却期挡下，卡片会给出「强制更新」。
-- 一键更新面向从 npm 安装的情况。从本地目录（`file:`）装时 dshmarket 把它当作本地拷贝（`linked`），
-  是否、以及如何换成 npm 版本由它决定；这种情况下请用上文的 `install-plugins.cmd` 更新。
+- 一键更新只对从 npm 安装的情况有效。从本地目录（`file:`）装时 dshmarket 把它当作本地拷贝（`linked`）并拒绝更新，
+  卡片会先向 dshmarket 查询安装来源，这种情况下不显示更新按钮，改为提示；请用上文的 `install-plugins.cmd` 更新，或改为从 npm 安装。
 
 ⚠️ 改了 `lib/client.js` 要**重启 DSH** 才生效：客户端 bundle 的版本号由文件 mtime/size 派生，
 宿主只在启动时扫描一次；`lib/*.js` 的改动同样不会热重载。
