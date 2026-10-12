@@ -498,10 +498,10 @@ test('插件更新区：首屏（hooks 状态尚未就绪）显示检查中，�
 test('插件更新区：有新版本且装了市场 → 两个版本号与"更新到"按钮', () => {
   const started = [];
   const { text, buttons } = renderUpdate(updateModel(), { ...updateActions, startUpdate: (force) => started.push(force) });
-  assert.match(text, /当前运行版本：\|26\.10\.11/);
-  assert.match(text, /npm 最新版本：\|26\.10\.12/);
+  assert.match(text, /当前运行版本：\|v26\.10\.11/);
+  assert.match(text, /npm 最新版本：\|v26\.10\.12/);
   assert.match(text, /有新版本/);
-  const update = button(buttons, '更新到 26.10.12');
+  const update = button(buttons, '更新到 v26.10.12');
   assert.equal(update.props.disabled, false);
   update.props.onClick();
   assert.deepEqual(started, [false], '普通更新不带 force');
@@ -509,7 +509,7 @@ test('插件更新区：有新版本且装了市场 → 两个版本号与"更�
 
 test('插件更新区：没装市场 → 只提示，没有更新按钮', () => {
   const { text, buttons } = renderUpdate(updateModel({ market: { phase: 'absent' } }));
-  assert.equal(button(buttons, '更新到 26.10.12'), undefined);
+  assert.equal(button(buttons, '更新到 v26.10.12'), undefined);
   assert.match(text, /dshmarket/);
   assert.ok(button(buttons, '检查更新'));
 });
@@ -523,7 +523,7 @@ test('插件更新区：已是最新 / 检查失败', () => {
 
   const failed = renderUpdate(updateModel({ version: { phase: 'error', currentVersion: '26.10.11', reason: '连不上注册表' } }));
   assert.match(failed.text, /检查更新失败：连不上注册表/);
-  assert.match(failed.text, /当前运行版本：\|26\.10\.11/);
+  assert.match(failed.text, /当前运行版本：\|v26\.10\.11/);
   assert.equal(button(failed.buttons, '检查更新').props.disabled, false);
 });
 
@@ -539,7 +539,7 @@ test('插件更新区：进行中显示进度，按钮全部禁用', () => {
 test('插件更新区：成功后按 restartRequired 提示重启；市场支持重启时才给重启按钮', () => {
   const operation = { state: 'succeeded', installedVersion: '26.10.12', outcome: { restartRequired: true } };
   const desktop = renderUpdate(updateModel({ operation, target: '26.10.12' }));
-  assert.match(desktop.text, /已更新到 26\.10\.12。 重启 DSH 后生效。/);
+  assert.match(desktop.text, /已更新到 v26\.10\.12。 重启 DSH 后生效。/);
   assert.equal(button(desktop.buttons, '立即重启 DSH'), undefined, '桌面版的重启归桌面壳管');
   assert.doesNotMatch(desktop.text, /注意：装上的是/);
 
@@ -549,7 +549,7 @@ test('插件更新区：成功后按 restartRequired 提示重启；市场支持
 
 test('插件更新区：装上的版本低于目标时警告；高于目标不警告', () => {
   const below = renderUpdate(updateModel({ target: '26.10.12', operation: { state: 'succeeded', installedVersion: '26.10.11', outcome: {} } }));
-  assert.match(below.text, /注意：装上的是 26\.10\.11，不是预期的 26\.10\.12/);
+  assert.match(below.text, /注意：装上的是 v26\.10\.11，不是预期的 v26\.10\.12/);
   const above = renderUpdate(updateModel({ target: '26.10.12', operation: { state: 'succeeded', installedVersion: '26.10.13', outcome: {} } }));
   assert.doesNotMatch(above.text, /注意：装上的是/);
 });
@@ -572,10 +572,10 @@ test('插件更新区：发布冷却期 / 版本未变时给"强制更新"，其
 test('插件更新区：本地目录安装（file:）→ 不给更新按钮，说明怎么更新', () => {
   const market = { phase: 'ready', restartSupported: false, endpoints: {}, source: 'linked', updatable: false };
   const linked = renderUpdate(updateModel({ market }));
-  assert.equal(button(linked.buttons, '更新到 26.10.12'), undefined, 'dshmarket 会拒绝本地安装，按钮点了也只会失败');
+  assert.equal(button(linked.buttons, '更新到 v26.10.12'), undefined, 'dshmarket 会拒绝本地安装，按钮点了也只会失败');
   assert.match(linked.text, /本地目录（file:）/);
   assert.ok(button(linked.buttons, '检查更新'));
 
   assert.match(renderUpdate(updateModel({ market: { ...market, source: 'generation' } })).text, /DSH 桌面端统一管理/);
-  assert.ok(button(renderUpdate(updateModel({ market: { ...market, source: 'npm', updatable: true } })).buttons, '更新到 26.10.12'));
+  assert.ok(button(renderUpdate(updateModel({ market: { ...market, source: 'npm', updatable: true } })).buttons, '更新到 v26.10.12'));
 });
