@@ -34,6 +34,8 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 - 一键更新不自己跑 pnpm：DSH 自带的插件管理器不支持升级已安装的插件，本插件把更新交给 dshmarket，
   由它处理 profile 锁、文件占用、回滚与版本核对。桌面版更新完成后要**重启 DSH** 才会换上新代码
   （桌面版的重启归桌面壳管，卡片不提供重启按钮）。新版本刚发布时可能被 pnpm 的发布冷却期挡下，卡片会给出「强制更新」。
+- 一键更新只对从 npm 安装的情况有效。从本地目录（`file:`）装时 dshmarket 拒绝更新（`locally linked plugins update from their checkout`），
+  卡片会先向 dshmarket 查询安装来源，这种情况下不显示更新按钮，改为提示：拉取新代码后重新安装，或改为从 npm 安装。
 
 ## 行为
 

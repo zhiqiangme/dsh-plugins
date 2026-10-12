@@ -569,3 +569,18 @@ test('插件更新：发布冷却期 / 版本未变时给"强制更新"，其它
   assert.match(collectText(other).join('|'), /更新失败：pnpm 退出码 1/);
   assert.equal(buttonByLabel(other, '强制更新'), undefined);
 });
+
+test('插件更新：本地目录安装（file:）→ 不给更新按钮，说明怎么更新', () => {
+  const { module, t } = boot();
+  const market = { phase: 'ready', restartSupported: false, endpoints: {}, source: 'linked', updatable: false };
+  const tree = render(module.renderCard(updateModel({ market }), actions, t));
+  assert.equal(buttonByLabel(tree, '更新到 26.10.12'), undefined, 'dshmarket 会拒绝本地安装，按钮点了也只会失败');
+  assert.match(collectText(tree).join('|'), /本地目录（file:）/);
+  assert.ok(buttonByLabel(tree, '检查更新'));
+
+  const managed = render(module.renderCard(updateModel({ market: { ...market, source: 'generation' } }), actions, t));
+  assert.match(collectText(managed).join('|'), /DSH 桌面端统一管理/);
+
+  const npm = render(module.renderCard(updateModel({ market: { ...market, source: 'npm', updatable: true } }), actions, t));
+  assert.ok(buttonByLabel(npm, '更新到 26.10.12'), 'npm 安装照常给按钮');
+});
