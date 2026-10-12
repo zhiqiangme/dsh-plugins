@@ -122,6 +122,7 @@ function printResult(result) {
   if (result.ok) {
     console.log(`完成：${result.state}`);
     if (result.health) console.log(`健康检查：healthy=${result.health.healthy} total=${result.health.total}`);
+    if (result.health?.servable === false) console.log('后端已启动，但还没有可用的 WorkBuddy 账号：请打开后端面板登录。');
     if (result.local) console.log(`当前版本：${result.local.tag ?? result.local.revision?.slice(0, 7)}`);
     if (result.pruned?.length) console.log(`已清理旧版本：${result.pruned.join(', ')}`);
     return;

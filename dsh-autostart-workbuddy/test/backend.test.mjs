@@ -27,6 +27,7 @@ import {
   readBuildInfo,
   readManifest,
   rollbackBackend,
+  listVersions,
   uninstallBackend,
   versionDirName,
 } from '../lib/backend.js';
@@ -159,6 +160,7 @@ test('probeHealthz：认 service 字段，拒绝非 workbuddy2api 的应答', as
   try {
     const ok = await probeHealthz({ port });
     assert.equal(ok.ok, true);
+    assert.equal(ok.servable, true);
     assert.equal(ok.healthy, 3);
   } finally {
     health.stop();
@@ -167,6 +169,28 @@ test('probeHealthz：认 service 字段，拒绝非 workbuddy2api 的应答', as
   const empty = await freePort();
   const failed = await probeHealthz({ port: empty, timeoutMs: 1_000 });
   assert.equal(failed.ok, false);
+});
+
+test('probeHealthz：没有可用账号时上游回 503，只要身份对就算后端正常（servable=false）', async () => {
+  const noAccounts = startFixture({ TEST_MODE: 'http-health', TEST_HEALTHY: '0' });
+  try {
+    const result = await probeHealthz({ port: await noAccounts.ready });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.servable, false);
+    assert.equal(result.total, 0);
+  } finally {
+    noAccounts.stop();
+  }
+
+  // 503 但不是 workbuddy2api：端口被别的服务占着，仍然算失败。
+  const stranger = startFixture({ TEST_MODE: 'http-health', TEST_HEALTHY: '0', TEST_HEALTH_SERVICE: 'other' });
+  try {
+    const result = await probeHealthz({ port: await stranger.ready });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /503/);
+  } finally {
+    stranger.stop();
+  }
 });
 
 test('checkForUpdate：识别可更新，并在 TTL 内命中缓存', async () => {
@@ -291,6 +315,9 @@ test('applyUpdate：健康检查失败 → 自动回滚到旧版本', async () =
     // 失败的新版本被挪去 -failed，不留在 current
     const failedDirs = readdirSync(paths.versions).filter((name) => name.endsWith('-failed'));
     assert.equal(failedDirs.length, 1);
+    // 挪文件前先停掉刚拉起的新进程，否则它会在 -failed 目录里继续占着端口。
+    // （端口上原本没人监听，所以更新前那次 stop 被跳过。）
+    assert.deepEqual(service.calls, [['start'], ['stop', '健康检查失败，回滚'], ['start']]);
   } finally {
     release.stop();
   }
@@ -419,6 +446,29 @@ test('installBackend：未安装时从 release 装上、启动并写清单', asy
     assert.equal(result.state, 'installed');
     assert.equal(readBuildInfo(paths.exe).revision, NEW_COMMIT);
     assert.equal(readManifest(paths).tag, 'v9.9.9');
+    assert.deepEqual(service.calls, [['stop', '更新后端'], ['start']]);
+  } finally {
+    release.stop();
+    health.stop();
+  }
+});
+
+test('installBackend：新装的后端还没登录账号（/healthz 503）→ 照样装上，不回滚', async () => {
+  const release = startFixture({ TEST_MODE: 'http-release' });
+  const health = startFixture({ TEST_MODE: 'http-health', TEST_HEALTHY: '0' });
+  const apiBase = `http://127.0.0.1:${await release.ready}`;
+  const port = await health.ready;
+  const { paths } = tempBackendRoot();
+  rmSync(paths.exe);
+  const service = fakeService(port);
+  try {
+    const result = await installBackend({ paths, env: {}, apiBase, service });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.state, 'installed');
+    assert.equal(result.health.servable, false);
+    assert.equal(readBuildInfo(paths.exe).revision, NEW_COMMIT);
+    assert.equal(readManifest(paths).tag, 'v9.9.9');
+    assert.deepEqual(listVersions(paths), [], '不应出现 -failed 目录');
     assert.deepEqual(service.calls, [['stop', '更新后端'], ['start']]);
   } finally {
     release.stop();

@@ -192,6 +192,7 @@ window.__ModuleLoader__.load({
       backendInstall: '安装',
       backendUninstall: '卸载',
       backendInstalled: '后端已安装 {tag}。',
+      backendNoAccounts: '后端已启动，但还没有可用的 WorkBuddy 账号，请打开上面的后端面板登录。',
       backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
       cancel: '取消',
       uninstallTitle: '卸载后端？',
@@ -267,6 +268,7 @@ window.__ModuleLoader__.load({
       backendInstall: 'Install',
       backendUninstall: 'Uninstall',
       backendInstalled: 'Backend installed: {tag}.',
+      backendNoAccounts: 'The backend is running but has no usable WorkBuddy account yet; sign in from the backend panel above.',
       backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
       cancel: 'Cancel',
       uninstallTitle: 'Uninstall the backend?',
@@ -887,12 +889,14 @@ window.__ModuleLoader__.load({
               setCheck(payload.check?.error ? { error: payload.check.error } : payload.check);
             } else if (payload.ok) {
               setCheck(undefined);
-              setBackendNotice({
-                kind: 'ok',
-                text: t(BACKEND_NOTICE[action] ?? 'backendUpdated', {
-                  tag: payload.latest?.tag ?? payload.local?.tag ?? '',
-                }),
+              const done = t(BACKEND_NOTICE[action] ?? 'backendUpdated', {
+                tag: payload.latest?.tag ?? payload.local?.tag ?? '',
               });
+              // 刚装好的后端还没登录账号：/healthz 是 503，但进程是好的，提示去面板登录。
+              const noAccounts = payload.health?.servable === false ? ` ${t('backendNoAccounts')}` : '';
+              setBackendNotice({ kind: 'ok', text: done + noAccounts });
+              // 后端换过/新起来了，模型区可能还停在"fetch failed"，重读一次。
+              if (action !== 'uninstall') load();
             } else {
               setBackendNotice({ kind: 'error', text: payload.reason ?? payload.state ?? '' });
             }
@@ -902,7 +906,7 @@ window.__ModuleLoader__.load({
             setBackendBusy(undefined);
           }
         },
-        [t],
+        [t, load],
       );
 
       // 放在所有既有 useState 之后：hooks 按调用顺序配对，插到前面会打乱上面那些状态

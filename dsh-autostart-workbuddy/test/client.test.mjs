@@ -201,7 +201,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
 
   const expected = [
     'backendAvailable', 'backendBuilt', 'backendCheck', 'backendCurrent', 'backendHistory',
-    'backendInstall', 'backendInstalled', 'backendLatest', 'backendNoHistory', 'backendRollback',
+    'backendInstall', 'backendInstalled', 'backendLatest', 'backendNoAccounts', 'backendNoHistory', 'backendRollback',
     'backendTitle', 'backendUninstall', 'backendUninstalled', 'backendUnmanaged', 'backendUpdate',
     'backendUpdated', 'backendUpToDate', 'backendWorking', 'backendRolledBack', 'cancel',
     'clearAll', 'count', 'description', 'disabledHint', 'emptyBackend', 'emptyHint', 'loading',

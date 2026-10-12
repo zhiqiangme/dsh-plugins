@@ -168,14 +168,17 @@ async function startFakeRelease() {
 async function startFakeHealth() {
   const { createServer } = await import('node:http');
   const healthy = Number(process.env.TEST_HEALTHY ?? 3);
+  // 上游在账号池无可用账号时回 503（刚装好、还没登录账号就是这样）；TEST_HEALTH_SERVICE 可换掉身份字段。
+  const status = healthy > 0 ? 200 : 503;
+  const service = process.env.TEST_HEALTH_SERVICE ?? 'workbuddy2api';
   const server = createServer((req, res) => {
     if (!req.url?.startsWith('/healthz')) {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end('{"error":"not found"}');
       return;
     }
-    const body = JSON.stringify({ healthy, total: healthy, service: 'workbuddy2api' });
-    res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
+    const body = JSON.stringify({ healthy, total: healthy, service });
+    res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
     res.end(body);
   });
   server.listen(port, '127.0.0.1', () => {

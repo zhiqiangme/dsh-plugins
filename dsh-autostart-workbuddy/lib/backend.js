@@ -184,14 +184,31 @@ export function listVersions(paths) {
   }
 }
 
-/** 健康探针：确认端口后面真的是 workbuddy2api，而不是恰好占了端口的别的进程。 */
+/**
+ * 健康探针：确认端口后面真的是 workbuddy2api，而不是恰好占了端口的别的进程。
+ *
+ * 上游 `/healthz` 是给负载均衡用的：账号池里没有"此刻能受理请求"的账号时返回 503，
+ * 身份另由 `service` 字段 + `X-Service` 头表明。刚装好的后端一个账号都没有（账号要装好后
+ * 在面板里登录），必然是 503——把它当失败就会回滚，用户永远装不上、也进不了面板登录。
+ * 所以这里只看身份：503 且自称 workbuddy2api = 进程正常，只是暂无可用账号（servable=false）。
+ */
 export async function probeHealthz({ host = '127.0.0.1', port, timeoutMs = 5_000 } = {}) {
   try {
     const response = await fetch(`http://${host}:${port}/healthz`, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!response.ok) return { ok: false, reason: `/healthz 返回 ${response.status}` };
-    const payload = await response.json();
-    if (payload?.service !== 'workbuddy2api') return { ok: false, reason: `/healthz 的 service 不是 workbuddy2api` };
-    return { ok: true, healthy: Number(payload.healthy) || 0, total: Number(payload.total) || 0 };
+    if (!response.ok && response.status !== 503) return { ok: false, reason: `/healthz 返回 ${response.status}` };
+    const payload = await response.json().catch(() => null);
+    if (payload?.service !== 'workbuddy2api') {
+      return {
+        ok: false,
+        reason: response.ok ? '/healthz 的 service 不是 workbuddy2api' : `/healthz 返回 ${response.status}`,
+      };
+    }
+    return {
+      ok: true,
+      servable: response.ok,
+      healthy: Number(payload.healthy) || 0,
+      total: Number(payload.total) || 0,
+    };
   } catch (error) {
     return { ok: false, reason: `探测 /healthz 失败：${error instanceof Error ? error.message : String(error)}` };
   }
@@ -408,6 +425,9 @@ export async function applyUpdate({
 
   if (!health.ok) {
     logger?.error?.(`[workbuddy] 新版本启动后健康检查失败，回滚：${health.reason}`);
+    // 先停掉刚拉起的新进程再挪文件：Windows 允许给运行中的 exe 改名，不停的话它会
+    // 在 -failed 目录里继续跑着占住端口，下面 ensureRunning 就会把它当成"已在运行"。
+    await service.stop('健康检查失败，回滚');
     rollbackSwap(paths, swap, latest);
     const restored = await service.ensureRunning();
     return {
@@ -432,6 +452,7 @@ export async function applyUpdate({
   });
   const pruned = pruneVersions(paths, keepVersions);
   logger?.info?.(`[workbuddy] 后端已更新到 ${latest.tag}（${latest.commit.slice(0, 7)}）`);
+  if (health.servable === false) logger?.info?.('[workbuddy] 后端暂无可用账号，请在后端面板登录 WorkBuddy 账号');
 
   return { ok: true, state: 'updated', latest, health, pruned, local: localVersion(paths) };
 }
@@ -463,6 +484,7 @@ export async function rollbackBackend({ paths, service, logger } = {}) {
 
   if (!health.ok) {
     logger?.error?.(`[workbuddy] 回滚后健康检查失败：${health.reason}`);
+    await service.stop('回滚后健康检查失败'); // 同 applyUpdate：先停进程再挪文件
     rollbackSwap(paths, swap, previous, { returnTo: previousExe });
     await service.ensureRunning();
     return { ok: false, state: 'health-failed', reason: health.reason, restored: true };
