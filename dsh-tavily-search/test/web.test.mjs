@@ -9,6 +9,7 @@ import { resolvePluginConfig } from '../lib/config.js';
 import { ShimRuntime } from '../lib/runtime.js';
 import {
   describeStatus,
+  KEYS_PATH,
   loopbackOrigin,
   registerPanelRoutes,
   runTestSearch,
@@ -44,6 +45,7 @@ test('describeStatus：端点、凭据引用名与运行状态；禁用时 state
   const status = describeStatus({ resolved, runtime: fakeRuntime });
   assert.equal(status.endpoint, 'http://127.0.0.1:9999/v1');
   assert.equal(status.apiKeyRef, 'TAVILY_API_KEY');
+  assert.equal(status.apiKeyRefs[1], 'TAVILY_API_KEY_2');
   assert.equal(status.server.state, 'listening');
   assert.equal(JSON.stringify(status).includes('tvly'), false, '状态里不应出现任何 key');
 
@@ -123,7 +125,7 @@ function fakeResponse() {
   return res;
 }
 
-test('registerPanelRoutes：注册三条路由，校验来源与方法，卸载时释放', async () => {
+test('registerPanelRoutes：注册四条路由，校验来源与方法，卸载时释放', async () => {
   const routes = new Map();
   const released = [];
   const webServer = {
@@ -140,13 +142,14 @@ test('registerPanelRoutes：注册三条路由，校验来源与方法，卸载�
     logger: memoryLogger(),
     resolved,
     runtime: { status: () => ({ state: 'listening', reason: '' }) },
+    inspectKeys: async () => [{ ref: 'TAVILY_API_KEY', configured: true, writable: true, tail: 'abcd' }],
     checkVersion: async (options) => {
       versionCalls.push(options);
       return { ok: true, currentVersion: '26.10.11', latestVersion: '26.10.12', updateAvailable: true };
     },
   });
 
-  assert.deepEqual([...routes.keys()].sort(), [STATUS_PATH, TEST_PATH, VERSION_PATH].sort());
+  assert.deepEqual([...routes.keys()].sort(), [STATUS_PATH, TEST_PATH, VERSION_PATH, KEYS_PATH].sort());
   assert.equal(STATUS_PATH, '/plugins/dsh-tavily-search/status');
 
   const ok = fakeResponse();
@@ -179,8 +182,16 @@ test('registerPanelRoutes：注册三条路由，校验来源与方法，卸载�
   await routes.get(VERSION_PATH).handler(fakeRequest('POST'), versionPost);
   assert.equal(versionPost.status, 405);
 
+  const keys = fakeResponse();
+  await routes.get(KEYS_PATH).handler(fakeRequest('GET'), keys);
+  assert.equal(keys.status, 200);
+  assert.deepEqual(keys.body, { ok: true, keys: [{ ref: 'TAVILY_API_KEY', configured: true, writable: true, tail: 'abcd' }] });
+  const keysPost = fakeResponse();
+  await routes.get(KEYS_PATH).handler(fakeRequest('POST'), keysPost);
+  assert.equal(keysPost.status, 405);
+
   for (const dispose of disposers) dispose();
-  assert.deepEqual(released.sort(), [STATUS_PATH, TEST_PATH, VERSION_PATH].sort());
+  assert.deepEqual(released.sort(), [STATUS_PATH, TEST_PATH, VERSION_PATH, KEYS_PATH].sort());
 });
 
 test('registerPanelRoutes：宿主没有 webServer 时只记 warn，不抛', () => {

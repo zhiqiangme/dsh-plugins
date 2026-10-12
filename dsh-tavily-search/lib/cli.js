@@ -6,7 +6,7 @@
  *
  * 独立运行时没有 DSH 凭据库，key 从环境变量读。环境变量沿用旧 tavily-anthropic-search 的命名，
  * 以前的 .env / 启动命令可以原样复用：
- *   TAVILY_API_KEY（必填）、LISTEN（host:port）或 LISTEN_HOST / LISTEN_PORT、TAVILY_BASE_URL、
+ *   TAVILY_API_KEY（必填；更多 key 用 TAVILY_API_KEY_2 … TAVILY_API_KEY_10，轮流使用）、LISTEN（host:port）或 LISTEN_HOST / LISTEN_PORT、TAVILY_BASE_URL、
  *   TAVILY_MAX_RESULTS、TAVILY_SEARCH_DEPTH、SEARCH_TIMEOUT_MS、MAX_QUERY_CHARS、SHIM_API_KEY
  */
 
@@ -35,6 +35,7 @@ export function configFromEnv(env = process.env) {
 async function main() {
   const resolved = resolvePluginConfig(configFromEnv(process.env));
   const ref = resolved.apiKeyRef;
+  const configuredRefs = resolved.apiKeyRefs.filter((item) => process.env[item]?.trim());
 
   if (process.argv.includes('--print-config')) {
     console.log(
@@ -42,7 +43,8 @@ async function main() {
         {
           endpoint: resolved.endpoint,
           apiKeyRef: ref,
-          apiKeyConfigured: Boolean(process.env[ref]?.trim()),
+          apiKeyConfigured: configuredRefs.length > 0,
+          apiKeyRefsConfigured: configuredRefs,
           ...resolved.shim,
           shimApiKey: resolved.shim.shimApiKey ? '(已设置)' : '',
         },
@@ -53,7 +55,7 @@ async function main() {
     return;
   }
 
-  if (!process.env[ref]?.trim()) {
+  if (configuredRefs.length === 0) {
     console.error(`[dsh-tavily-search] 缺少 ${ref}，无法启动。`);
     process.exitCode = 1;
     return;
@@ -61,7 +63,7 @@ async function main() {
 
   const server = createShimServer({
     ...resolved.shim,
-    resolveApiKey: () => process.env[ref],
+    resolveApiKey: () => resolved.apiKeyRefs.map((item) => process.env[item]),
     missingKeyHint: `请设置环境变量 ${ref}。`,
   });
   server.listen(resolved.port, resolved.host, () => {

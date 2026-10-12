@@ -163,6 +163,45 @@ test('API Key 每次请求现取：轮换后下一次搜索就用新值', async 
   );
 });
 
+/** mock Tavily：按 Bearer 里的 key 决定状态码，没列出的 key 返回 200。 */
+function byKey(statuses) {
+  return (req, res) => {
+    const key = String(req.headers.authorization ?? '').replace(/^Bearer\s+/, '');
+    const status = statuses[key] ?? 200;
+    res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(status === 200 ? JSON.stringify({ results: [{ title: key, url: `https://example.com/${key}`, content: 's' }] }) : `{"detail":"${status}"}`);
+  };
+}
+
+test('多个 key：请求间轮流使用；重复与空白的 key 被忽略', async (t) => {
+  const { scenario, shim } = await setup(t, byKey({}), { resolveApiKey: async () => ['k1', ' k2 ', '', 'k1', 'k3'] });
+  for (let index = 0; index < 4; index += 1) await post(shim.base, '/v1/messages', dshBody);
+  assert.deepEqual(
+    scenario.requests.map((request) => request.auth),
+    ['Bearer k1', 'Bearer k2', 'Bearer k3', 'Bearer k1'],
+  );
+});
+
+test('多个 key：被拒（401 / 429 / 432…）时当场换下一个重试；5xx 不换', async (t) => {
+  const { scenario, shim } = await setup(t, byKey({ k1: 432, k2: 401 }), { resolveApiKey: async () => ['k1', 'k2', 'k3'] });
+  const ok = await post(shim.base, '/v1/messages', dshBody);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.content[1].content[0].title, 'k3');
+  assert.deepEqual(scenario.requests.map((request) => request.auth), ['Bearer k1', 'Bearer k2', 'Bearer k3']);
+
+  const allBad = await setup(t, byKey({ a: 429, b: 433 }), { resolveApiKey: async () => ['a', 'b'] });
+  const failed = await post(allBad.shim.base, '/v1/messages', dshBody);
+  assert.equal(failed.status, 502);
+  assert.match(failed.json.error.message, /2 个 Tavily API Key 都被拒绝/);
+  assert.equal(allBad.scenario.requests.length, 2);
+
+  const broken = await setup(t, byKey({ x: 500 }), { resolveApiKey: async () => ['x', 'y'] });
+  const upstream = await post(broken.shim.base, '/v1/messages', dshBody);
+  assert.equal(upstream.status, 502);
+  assert.match(upstream.json.error.message, /HTTP 500/);
+  assert.equal(broken.scenario.requests.length, 1, '与 key 无关的故障不应换 key 重试');
+});
+
 test('缺 key 时返回 401 与补救提示，不查询 Tavily', async (t) => {
   const { scenario, shim } = await setup(t, okTavily([]), {
     resolveApiKey: async () => undefined,

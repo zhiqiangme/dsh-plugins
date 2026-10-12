@@ -1,12 +1,13 @@
 /**
- * 插件页卡片的宿主半侧：三条 loopback 路由。
+ * 插件页卡片的宿主半侧：四条 loopback 路由。
  *
  *   GET  /plugins/dsh-tavily-search/status   搜索接口状态（在不在监听、端点、凭据引用名）
  *   POST /plugins/dsh-tavily-search/test     端到端测试一次搜索：按 DSH 的请求形状打本插件的接口
  *   GET  /plugins/dsh-tavily-search/version  当前运行版本 vs npm latest（?force=1 绕过缓存，见 lib/update.js）
+ *   GET  /plugins/dsh-tavily-search/keys     各 key 槽位：是否配置、能否修改、末 4 位（多 key 列表用）
  *
- * API Key 不走这里：卡片直接用 DSH 的 `remote.credentials` 读写凭据库（与内置网页搜索页同一条路），
- * 值从不经过本插件的路由。
+ * API Key 的写入不走这里：卡片直接用 DSH 的 `remote.credentials` 写凭据库（与内置网页搜索页同一条路）。
+ * keys 路由只回末 4 位让用户分得清哪个是哪个，完整的值从不经过本插件的路由。
  *
  * 为什么挂在 ctx.webServer 而不是自己 listen：DSH 的 host webserver 已经占着客户端的同源地址，
  * 挂在它下面才拿得到同源 fetch；自己开端口既跨源，又要处理端口冲突与鉴权。
@@ -23,6 +24,7 @@ export const PANEL_BASE = `/plugins/${PLUGIN_ID}`;
 export const STATUS_PATH = `${PANEL_BASE}/status`;
 export const TEST_PATH = `${PANEL_BASE}/test`;
 export const VERSION_PATH = `${PANEL_BASE}/version`;
+export const KEYS_PATH = `${PANEL_BASE}/keys`;
 
 /** 请求体上限：测试请求只带一个检索词，4KB 足够，防止有人往 loopback 路由灌大包。 */
 const MAX_BODY_BYTES = 4 * 1024;
@@ -85,6 +87,7 @@ export function describeStatus({ resolved, runtime }) {
     ok: true,
     endpoint: resolved.endpoint,
     apiKeyRef: resolved.apiKeyRef,
+    apiKeyRefs: resolved.apiKeyRefs,
     server: runtime ? runtime.status() : { state: 'disabled', reason: '' },
     tavily: { maxResults: resolved.shim.maxResults, searchDepth: resolved.shim.searchDepth },
   };
@@ -168,10 +171,11 @@ function forceFrom(req) {
  * 注册面板路由；宿主没有 webServer 时只记一条 warn。
  *
  * @param {object} ctx
- * @param {{ logger: object, resolved: object, runtime?: object, checkVersion?: (options: { force: boolean }) => Promise<object> }} options
+ * @param {{ logger: object, resolved: object, runtime?: object, inspectKeys?: () => Promise<object[]>, checkVersion?: (options: { force: boolean }) => Promise<object> }} options
+ *   inspectKeys 见 lib/runtime.js 的 createKeyInspector；缺省时 keys 路由回空列表。
  *   checkVersion 只给测试注入，缺省用 lib/update.js 的带缓存检查器
  */
-export function registerPanelRoutes(ctx, { logger, resolved, runtime, checkVersion = createVersionChecker() }) {
+export function registerPanelRoutes(ctx, { logger, resolved, runtime, inspectKeys, checkVersion = createVersionChecker() }) {
   const mount = (scoped) => {
     const webServer = resolveWebServer(scoped ?? ctx) ?? resolveWebServer(ctx);
     if (!webServer) {
@@ -237,8 +241,20 @@ export function registerPanelRoutes(ctx, { logger, resolved, runtime, checkVersi
         }),
       });
 
+      const disposeKeys = webServer.register({
+        kind: 'exact',
+        path: KEYS_PATH,
+        handler: guard(async (req, res) => {
+          if (req.method !== 'GET') {
+            json(res, 405, { ok: false, reason: 'method not allowed' });
+            return;
+          }
+          json(res, 200, { ok: true, keys: inspectKeys ? await inspectKeys() : [] });
+        }),
+      });
+
       return () => {
-        for (const dispose of [disposeStatus, disposeTest, disposeVersion]) {
+        for (const dispose of [disposeStatus, disposeTest, disposeVersion, disposeKeys]) {
           try {
             dispose?.();
           } catch {

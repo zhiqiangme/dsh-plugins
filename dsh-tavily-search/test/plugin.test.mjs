@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { apply, inject, name } from '../lib/index.js';
-import { createKeyResolver, importLegacyKey, ShimRuntime } from '../lib/runtime.js';
+import { createKeyInspector, createKeyResolver, importLegacyKey, keyTail, ShimRuntime } from '../lib/runtime.js';
 import { dshBody, freePort, memoryLogger, okTavily, post, startMockTavily } from './helpers.mjs';
 
 /** 替身凭据服务：只实现插件用到的 resolve / describe / set。 */
@@ -118,6 +118,61 @@ test('凭据服务缺席时退回环境变量', async () => {
   assert.equal(await resolve(), 'tvly-env');
   const none = createKeyResolver({ get: () => undefined }, 'TAVILY_API_KEY', {});
   assert.equal(await none(), undefined);
+});
+
+test('多个 key：按引用顺序现取全部非空 key；凭据服务缺席时从环境变量取', async () => {
+  const refs = ['TAVILY_API_KEY', 'TAVILY_API_KEY_2', 'TAVILY_API_KEY_3'];
+  const credentials = fakeCredentials({ TAVILY_API_KEY: 'k1', TAVILY_API_KEY_3: ' k3 ' });
+  assert.deepEqual(await createKeyResolver({ get: () => credentials }, refs)(), ['k1', 'k3']);
+  assert.deepEqual(await createKeyResolver({ get: () => undefined }, refs, { TAVILY_API_KEY_2: 'e2' })(), ['e2']);
+  assert.deepEqual(await createKeyResolver({ get: () => undefined }, refs, {})(), []);
+});
+
+test('createKeyInspector：逐槽位报告配置 / 可写 / 末 4 位，绝不带出完整 key', async () => {
+  const refs = ['TAVILY_API_KEY', 'TAVILY_API_KEY_2', 'TAVILY_API_KEY_3'];
+  const credentials = fakeCredentials({ TAVILY_API_KEY: 'tvly-0123456789abcd', TAVILY_API_KEY_3: 'short' });
+  const slots = await createKeyInspector({ get: () => credentials }, refs)();
+  assert.deepEqual(slots, [
+    { ref: 'TAVILY_API_KEY', configured: true, writable: true, tail: 'abcd' },
+    { ref: 'TAVILY_API_KEY_2', configured: false, writable: true, tail: '' },
+    // 太短的 key 不露尾巴
+    { ref: 'TAVILY_API_KEY_3', configured: true, writable: true, tail: '' },
+  ]);
+  assert.equal(JSON.stringify(slots).includes('0123456789'), false);
+  assert.equal(keyTail('tvly-0123456789abcd'), 'abcd');
+
+  const fromEnv = await createKeyInspector({ get: () => undefined }, refs, { TAVILY_API_KEY_2: 'tvly-env-key-wxyz' })();
+  assert.deepEqual(fromEnv[1], { ref: 'TAVILY_API_KEY_2', configured: true, writable: false, source: 'env', tail: 'wxyz' });
+  assert.equal(fromEnv[0].configured, false);
+});
+
+test('apply：多个 key 轮流用，被拒的 key 自动跳过', async (t) => {
+  const scenario = {
+    requests: [],
+    handler: (req, res) => {
+      const bad = req.headers.authorization === 'Bearer tvly-exhausted';
+      res.writeHead(bad ? 432 : 200, { 'content-type': 'application/json' });
+      res.end(bad ? '{}' : JSON.stringify({ results: [] }));
+    },
+  };
+  const mock = await startMockTavily(scenario);
+  t.after(() => mock.server.close());
+
+  const port = await freePort();
+  const credentials = fakeCredentials({ TAVILY_API_KEY: 'tvly-exhausted', TAVILY_API_KEY_2: 'tvly-good' });
+  const ctx = fakeContext({ credentials });
+  apply(ctx, { port, tavilyBaseUrl: `http://127.0.0.1:${mock.port}` });
+  t.after(() => ctx.dispose());
+
+  await waitFor(() => healthy(port));
+  for (let index = 0; index < 2; index += 1) {
+    const { status } = await post(`http://127.0.0.1:${port}`, '/v1/messages', dshBody);
+    assert.equal(status, 200);
+  }
+  assert.deepEqual(
+    scenario.requests.map((request) => request.auth),
+    ['Bearer tvly-exhausted', 'Bearer tvly-good', 'Bearer tvly-good'],
+  );
 });
 
 test('enabled:false 时不监听', async () => {

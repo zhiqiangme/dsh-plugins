@@ -146,6 +146,21 @@ function collect(node, predicate, out = []) {
 const buttons = (tree) => collect(tree, (node) => node.type === 'button');
 const buttonByLabel = (tree, label) => buttons(tree).find((node) => collectText(node.children).join('') === label);
 
+/**
+ * keys 路由形状的槽位列表（共 10 个）：tails 里第 i 项非空 → 第 i 个槽位已配置、末 4 位为该值；
+ * 传对象可覆盖该槽位的其它字段（如 writable:false）。
+ */
+function slots(tails = []) {
+  return Array.from({ length: 10 }, (_, index) => {
+    const ref = index === 0 ? 'TAVILY_API_KEY' : `TAVILY_API_KEY_${index + 1}`;
+    const item = tails[index];
+    if (!item) return { ref, configured: false, writable: true, tail: '' };
+    return typeof item === 'string'
+      ? { ref, configured: true, writable: true, tail: item }
+      : { ref, configured: true, writable: true, tail: '', ...item };
+  });
+}
+
 /** 一份"一切就绪"的基准 model，各用例在此基础上改。 */
 function readyModel(overrides = {}) {
   return {
@@ -155,10 +170,10 @@ function readyModel(overrides = {}) {
       apiKeyRef: 'TAVILY_API_KEY',
       server: { state: 'listening', reason: '' },
     },
-    key: { phase: 'ready', configured: true, writable: true },
+    keys: { phase: 'ready', slots: slots(['abcd']) },
     draft: '',
     keyBusy: undefined,
-    confirmClear: false,
+    confirmRemove: undefined,
     keyNotice: undefined,
     web: { phase: 'ready', baseURL: 'http://127.0.0.1:8787/v1', overridden: true, writable: true, keyConfigured: true },
     webBusy: false,
@@ -313,34 +328,78 @@ test('端口被占用：显示原因，测试按钮禁用；外部实例时仍�
   assert.equal(buttonByLabel(external, '测试搜索').props.disabled, false);
 });
 
-test('API Key：草稿为空时保存禁用；只读时显示原因、无清除按钮；未配置时给出申请链接', () => {
+test('API Key：多个 key 逐个列出（末 4 位 + 引用名），每个各有删除按钮，并提示轮流使用', () => {
+  const { module, t } = boot();
+  const tree = render(module.renderCard(readyModel({ keys: { phase: 'ready', slots: slots(['aaaa', '', 'cccc']) } }), actions, t));
+  const rows = collect(tree, (node) => node.type === 'li' && node.props.className === 'dsm-tv-keyrow');
+  assert.deepEqual(
+    rows.map((row) => collectText(row.children).join('|')),
+    ['#1|…aaaa|TAVILY_API_KEY|删除', '#3|…cccc|TAVILY_API_KEY_3|删除'],
+  );
+  const text = collectText(tree).join('|');
+  assert.match(text, /2 个/);
+  assert.match(text, /轮流使用/);
+  // 中间空出来的 _2 是下一个添加位置
+  assert.match(text, /存入 DSH 凭据库（TAVILY_API_KEY_2）/);
+});
+
+test('API Key：删除某个 key 只确认那一个；删最后一个时警告搜索会失败', () => {
+  const { module, t } = boot();
+  const calls = [];
+  const spy = new Proxy({}, { get: (_target, name) => (...args) => calls.push([name, ...args]) });
+  const two = render(
+    module.renderCard(readyModel({ keys: { phase: 'ready', slots: slots(['aaaa', 'bbbb']) }, confirmRemove: 'TAVILY_API_KEY_2' }), spy, t),
+  );
+  const rows = collect(two, (node) => node.type === 'li');
+  assert.equal(collect(rows[0], (node) => node.props?.className === 'dsm-tv-confirm').length, 0);
+  assert.match(collectText(rows[1].children).join('|'), /删除 …bbbb？/);
+  buttonByLabel(rows[1], '确认删除').props.onClick();
+  buttonByLabel(rows[0], '删除').props.onClick();
+  assert.deepEqual(calls, [
+    ['removeKey', 'TAVILY_API_KEY_2'],
+    ['askRemove', 'TAVILY_API_KEY'],
+  ]);
+
+  const last = render(module.renderCard(readyModel({ confirmRemove: 'TAVILY_API_KEY' }), actions, t));
+  assert.match(collectText(last).join('|'), /…abcd 是最后一个 key/);
+});
+
+test('API Key：草稿为空时添加禁用；写入第一个空槽位；只读 key 无删除按钮；未配置时给出申请链接；满了不能再加', () => {
   const { module, t } = boot();
   const empty = render(module.renderCard(readyModel(), actions, t));
-  assert.equal(buttonByLabel(empty, '保存').props.disabled, true);
-  assert.ok(buttonByLabel(empty, '清除密钥'));
+  assert.equal(buttonByLabel(empty, '添加').props.disabled, true);
 
-  const typed = render(module.renderCard(readyModel({ draft: 'tvly-new' }), actions, t));
-  assert.equal(buttonByLabel(typed, '保存').props.disabled, false);
+  const added = [];
+  const typed = render(
+    module.renderCard(readyModel({ draft: 'tvly-new' }), { ...actions, addKey: (ref) => added.push(ref) }, t),
+  );
+  const add = buttonByLabel(typed, '添加');
+  assert.equal(add.props.disabled, false);
+  add.props.onClick();
+  assert.deepEqual(added, ['TAVILY_API_KEY_2']);
 
-  const readOnly = render(module.renderCard(readyModel({ key: { phase: 'ready', configured: true, writable: false } }), actions, t));
-  assert.equal(buttonByLabel(readOnly, '清除密钥'), undefined);
-  assert.match(collectText(readOnly).join('|'), /由启动环境变量提供/);
+  const readOnly = render(module.renderCard(readyModel({ keys: { phase: 'ready', slots: slots([{ writable: false, source: 'env' }]) } }), actions, t));
+  assert.equal(buttonByLabel(readOnly, '删除'), undefined);
+  assert.match(collectText(readOnly).join('|'), /启动环境变量提供/);
 
-  const unset = render(module.renderCard(readyModel({ key: { phase: 'ready', configured: false, writable: true } }), actions, t));
+  const unset = render(module.renderCard(readyModel({ keys: { phase: 'ready', slots: slots([]) } }), actions, t));
   const text = collectText(unset).join('|');
   assert.match(text, /未配置密钥/);
+  assert.match(text, /存入 DSH 凭据库（TAVILY_API_KEY）/);
   const links = collect(unset, (node) => node.type === 'a');
   assert.equal(links.length, 1);
   assert.equal(links[0].props.target, '_blank');
   assert.match(links[0].props.href, /^https:\/\/app\.tavily\.com/);
-});
 
-test('清除密钥需要二次确认', () => {
-  const { module, t } = boot();
-  const asking = render(module.renderCard(readyModel({ confirmClear: true }), actions, t));
-  assert.match(collectText(asking).join('|'), /确定清除/);
-  assert.ok(buttonByLabel(asking, '确认清除'));
-  assert.ok(buttonByLabel(asking, '取消'));
+  const full = render(
+    module.renderCard(readyModel({ draft: 'x', keys: { phase: 'ready', slots: slots(Array(10).fill('zzzz')) } }), actions, t),
+  );
+  assert.equal(buttonByLabel(full, '添加').props.disabled, true);
+  assert.match(collectText(full).join('|'), /已达到上限（10 个）/);
+
+  const failed = render(module.renderCard(readyModel({ keys: { phase: 'error', slots: [], reason: 'HTTP 500' } }), actions, t));
+  assert.match(collectText(failed).join('|'), /读取密钥列表失败：HTTP 500/);
+  assert.equal(buttonByLabel(failed, '添加').props.disabled, true);
 });
 
 test('测试结果：成功列出条数与标题，失败显示原因', () => {

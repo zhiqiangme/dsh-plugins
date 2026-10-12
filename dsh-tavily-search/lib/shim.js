@@ -5,7 +5,9 @@
  * 改成 ESM 并做了两处调整：
  *   - API Key 不再在启动时固定读取，而是每次请求调用 `resolveApiKey()` 现取——
  *     key 存在 DSH 凭据库里，用户在插件页改了 key，下一次搜索立即生效，不用重启；
- *   - 缺 key 不再拒绝启动，而是在请求时返回明确的错误信封（key 可以运行期补上）。
+ *   - 缺 key 不再拒绝启动，而是在请求时返回明确的错误信封（key 可以运行期补上）；
+ *   - 支持多个 key：`resolveApiKey()` 可以返回数组，请求间轮流使用，某个 key 被拒
+ *     （失效 / 限流 / 额度用尽）时当场换下一个重试。
  *
  * 背景：DSH 的搜索提供方（@deepseek-ai/dsh-web-search-deepseek）向
  * `{baseURL}/messages` 发一次带原生 `web_search_20250305` 服务端工具的 Messages 请求，
@@ -45,6 +47,13 @@ export const SHIM_DEFAULTS = Object.freeze({
   /** 缺 key 时错误信息里的补救提示；插件会换成"去插件页填写"的说法。 */
   missingKeyHint: '请设置 TAVILY_API_KEY。',
 });
+
+/**
+ * 换下一个 key 重试的 Tavily 状态码：都是"这个 key 本身用不了"，换 key 有望成功。
+ *   401 key 无效 · 403 key 被禁用 · 429 限流 · 432 key / 套餐额度用尽 · 433 按量付费额度用尽
+ * 其它失败（5xx、网络、超时）与 key 无关，换 key 只会把同一个故障重复几遍，所以不重试。
+ */
+export const KEY_FAILOVER_STATUSES = new Set([401, 403, 429, 432, 433]);
 
 /** Anthropic 风格错误响应体。 */
 function anthropicError(status, type, message) {
@@ -102,8 +111,13 @@ export function parseSearchRequest(body, options) {
   return { query };
 }
 
-/** 上游（Tavily）故障，区别于请求本身的问题。 */
-export class UpstreamError extends Error {}
+/** 上游（Tavily）故障，区别于请求本身的问题；`status` 是 Tavily 的 HTTP 状态码（网络错误时没有）。 */
+export class UpstreamError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+  }
+}
 
 /** 请求体超过上限。 */
 export class BodyTooLarge extends Error {}
@@ -137,7 +151,7 @@ export async function tavilySearch(query, apiKey, options, signal) {
   }
   const text = await response.text();
   if (!response.ok) {
-    throw new UpstreamError(`Tavily 返回 HTTP ${response.status}：${text.slice(0, 300)}`);
+    throw new UpstreamError(`Tavily 返回 HTTP ${response.status}：${text.slice(0, 300)}`, response.status);
   }
   let data;
   try {
@@ -233,6 +247,38 @@ function readBody(req, maxBytes) {
   });
 }
 
+/** `resolveApiKey()` 的结果统一成去空、去重的 key 列表（兼容只返回一个字符串的老用法）。 */
+export function normalizeKeys(value) {
+  const list = Array.isArray(value) ? value : [value];
+  const keys = [];
+  for (const item of list) {
+    const key = typeof item === 'string' ? item.trim() : '';
+    if (key && !keys.includes(key)) keys.push(key);
+  }
+  return keys;
+}
+
+/**
+ * 按 key 列表依次尝试：从 `start` 开始轮，遇到 KEY_FAILOVER_STATUSES 换下一个，
+ * 其它错误立即抛出。全部被拒时抛最后一个错误，并注明试过几个 key。
+ */
+export async function searchWithKeys(query, keys, start, options, signal) {
+  let lastError;
+  for (let offset = 0; offset < keys.length; offset += 1) {
+    const apiKey = keys[(start + offset) % keys.length];
+    try {
+      return await tavilySearch(query, apiKey, options, signal);
+    } catch (error) {
+      if (!(error instanceof UpstreamError) || !KEY_FAILOVER_STATUSES.has(error.status) || signal?.aborted) throw error;
+      lastError = error;
+    }
+  }
+  if (keys.length > 1) {
+    throw new UpstreamError(`${keys.length} 个 Tavily API Key 都被拒绝，最后一个：${lastError.message}`, lastError.status);
+  }
+  throw lastError;
+}
+
 function sendJson(res, status, body) {
   // 响应已发出（例如客户端断开后触发的迟到错误）时不再写入，避免二次写头崩溃
   if (res.headersSent) return;
@@ -258,7 +304,7 @@ function isAuthorized(req, options) {
 /**
  * 创建 HTTP 服务（不 listen：由调用方决定端口，测试可 listen 到随机端口）。
  *
- * @param {Partial<typeof SHIM_DEFAULTS> & { resolveApiKey: () => Promise<string | undefined> | string | undefined }} input
+ * @param {Partial<typeof SHIM_DEFAULTS> & { resolveApiKey: () => Promise<string | string[] | undefined> | string | string[] | undefined }} input
  */
 export function createShimServer(input) {
   const options = { ...SHIM_DEFAULTS, ...input };
@@ -266,6 +312,8 @@ export function createShimServer(input) {
   if (typeof options.resolveApiKey !== 'function') {
     throw new TypeError('createShimServer 需要 resolveApiKey()');
   }
+  /** 轮询游标：每个请求从下一个 key 开始，多个 key 的额度均摊消耗，而不是先把第一个用光。 */
+  let cursor = 0;
 
   return createServer(async (req, res) => {
     const pathname = (req.url || '/').split('?')[0].replace(/\/+$/, '') || '/';
@@ -314,8 +362,8 @@ export function createShimServer(input) {
       }
 
       // 每次请求现取 key：凭据库里的 key 被轮换后，下一次搜索就用新值
-      const apiKey = String((await options.resolveApiKey()) ?? '').trim();
-      if (!apiKey) {
+      const keys = normalizeKeys(await options.resolveApiKey());
+      if (keys.length === 0) {
         sendError(res, anthropicError(401, 'authentication_error', `未配置 Tavily API Key。${options.missingKeyHint}`));
         return;
       }
@@ -324,7 +372,9 @@ export function createShimServer(input) {
       const timer = setTimeout(() => controller.abort(), options.timeoutMs);
       res.on('close', () => controller.abort());
       try {
-        const results = await tavilySearch(parsed.query, apiKey, options, controller.signal);
+        const start = cursor % keys.length;
+        cursor = (cursor + 1) % Number.MAX_SAFE_INTEGER;
+        const results = await searchWithKeys(parsed.query, keys, start, options, controller.signal);
         sendJson(res, 200, buildMessage({ model: body?.model, query: parsed.query, results, options }));
       } catch (error) {
         if (error instanceof UpstreamError) {

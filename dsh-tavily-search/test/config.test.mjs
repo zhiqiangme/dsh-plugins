@@ -18,6 +18,10 @@ test('默认配置：启用、127.0.0.1:8787、凭据引用 TAVILY_API_KEY、不
   assert.equal(resolved.port, 8787);
   assert.equal(resolved.endpoint, 'http://127.0.0.1:8787/v1');
   assert.equal(resolved.apiKeyRef, 'TAVILY_API_KEY');
+  // 多 key：第 1 个沿用 apiKeyRef，之后 _2 … _10
+  assert.equal(resolved.apiKeyRefs.length, 10);
+  assert.deepEqual(resolved.apiKeyRefs.slice(0, 3), ['TAVILY_API_KEY', 'TAVILY_API_KEY_2', 'TAVILY_API_KEY_3']);
+  assert.equal(resolved.apiKeyRefs[9], 'TAVILY_API_KEY_10');
   assert.equal(resolved.importEnvFile, '');
   assert.equal(resolved.shim.tavilyBaseUrl, 'https://api.tavily.com');
   assert.equal(resolved.shim.maxResults, 8);
@@ -47,6 +51,8 @@ test('searchDepth 只接受 basic / advanced', () => {
 
 test('apiKeyRef 必须是环境变量名形状，否则退回默认（凭据库会拒绝别的形状）', () => {
   assert.equal(resolvePluginConfig({ apiKeyRef: 'MY_TAVILY_KEY' }).apiKeyRef, 'MY_TAVILY_KEY');
+  assert.equal(resolvePluginConfig({ apiKeyRef: 'MY_TAVILY_KEY' }).apiKeyRefs[1], 'MY_TAVILY_KEY_2');
+  assert.equal(resolvePluginConfig({ apiKeyRef: 'bad-ref' }).apiKeyRefs[1], 'TAVILY_API_KEY_2');
   assert.equal(resolvePluginConfig({ apiKeyRef: 'bad-ref' }).apiKeyRef, 'TAVILY_API_KEY');
   assert.equal(resolvePluginConfig({ apiKeyRef: '1ABC' }).apiKeyRef, 'TAVILY_API_KEY');
 });

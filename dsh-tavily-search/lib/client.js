@@ -12,9 +12,10 @@
  * key 必须逐字等于包名，写错不会报错——只是卡片不出现。
  *
  * 四块内容，各走既有的通道，本插件不自建存储：
- *   1. API Key —— `remote.credentials`（DSH 凭据库，与内置「网页搜索」页同一条路）。
- *      值只往宿主写、从不读回，卡片只知道"有没有配置、能不能改"；
- *   2. 搜索接口状态与测试 —— 宿主半侧（lib/web.js）的两条 loopback 路由；
+ *   1. API Key（可以多个）—— 写入 / 删除走 `remote.credentials`（DSH 凭据库，与内置「网页搜索」页
+ *      同一条路），值只往宿主写、从不读回；列表走宿主半侧的 keys 路由，只拿到"有没有配置、能不能改"
+ *      和末 4 位（用来分辨要删哪个）。第 1 个 key 的引用名是 TAVILY_API_KEY，之后是 _2、_3…；
+ *   2. 搜索接口状态与测试 —— 宿主半侧（lib/web.js）的 loopback 路由；
  *   3. 网页搜索接入 —— `configForms.get('web-search-deepseek')`，即内置网页搜索页编辑的同一个
  *      设置命名空间：一键把它的接口地址改成本插件的端点，或恢复默认。
  *   4. 插件更新 —— 版本检查走宿主半侧的 version 路由（问 npm）；一键更新交给 dshmarket 的
@@ -52,6 +53,7 @@ window.__ModuleLoader__.load({
     /** 与 lib/web.js 的两个端点必须一致。 */
     const STATUS_PATH = '/plugins/dsh-tavily-search/status';
     const TEST_PATH = '/plugins/dsh-tavily-search/test';
+    const KEYS_PATH = '/plugins/dsh-tavily-search/keys';
     /** 宿主状态拿不到时的兜底值（与 lib/config.js 的默认一致）。 */
     const DEFAULT_REF = 'TAVILY_API_KEY';
     const DEFAULT_ENDPOINT = 'http://127.0.0.1:8787/v1';
@@ -135,7 +137,14 @@ window.__ModuleLoader__.load({
 .dsm-tv-confirm{margin-top:10px;border:1px solid var(--dsw-alias-state-warning-primary,#d29922);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#25262b);padding:10px 12px}
 .dsm-tv-link{color:var(--dsw-alias-state-business-primary,#5686fe);text-decoration:none;cursor:pointer}
 .dsm-tv-link:hover{text-decoration:underline}
-.dsm-tv-key{margin-top:4px}
+.dsm-tv-key{margin-top:10px}
+.dsm-tv-keys{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.dsm-tv-keyrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#25262b);padding:6px 10px}
+.dsm-tv-keyrow-main{flex:1;min-width:120px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:13px;line-height:1.5}
+.dsm-tv-keyrow-index{color:var(--dsw-alias-label-tertiary,#999)}
+.dsm-tv-keyrow-ref{color:var(--dsw-alias-label-tertiary,#999);font-size:12px}
+.dsm-tv-keyrow .dsm-tv-btn{padding:2px 10px;font-size:12px}
+.dsm-tv-keyrow .dsm-tv-confirm{flex-basis:100%;margin-top:4px}
 /* 自带退路输入框：只在宿主没有 SettingsSecretField 时使用，外观尽量贴近它。 */
 .dsm-tv-field{display:flex;flex-direction:column;gap:6px}
 .dsm-tv-field-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -152,21 +161,26 @@ window.__ModuleLoader__.load({
       description: '用 Tavily 给 DSH 的「网页搜索」供数：本插件在 DSH 进程内提供搜索接口，网页搜索的接口地址指向它即可。',
       summary: '用 Tavily 给 DSH 的网页搜索供数。',
       keyTitle: 'API Key',
-      keyLabel: 'Tavily API Key',
-      keyHint: '存入 DSH 凭据库（{ref}），不写入设置文件。留空表示保持当前密钥。',
-      keyReadOnly: '{ref} 由启动环境变量提供，这里无法修改；要换 key 请先在启动环境里去掉它。',
-      keySet: '已配置密钥',
+      keyCount: '{count} 个',
       keyUnset: '未配置密钥',
-      keyLoading: '读取中…',
+      keyLoading: '正在读取密钥列表…',
+      keyLoadFailed: '读取密钥列表失败：{reason}',
+      keyRotate: '多个 key 轮流使用；某个 key 失效、被限流或额度用尽时，自动换下一个重试。',
+      keyReadOnly: '启动环境变量提供，不能在这里删除',
+      keyAddLabel: '添加 Tavily API Key',
+      keyAddHint: '存入 DSH 凭据库（{ref}），不写入设置文件。',
+      keyFull: '已达到上限（{max} 个），删除一个后才能再添加。',
       keyGet: '没有 key？到 Tavily 控制台申请：',
-      save: '保存',
-      saving: '保存中…',
-      clear: '清除密钥',
-      clearTitle: '清除后网页搜索会因缺少 key 而失败，确定清除？',
-      clearConfirm: '确认清除',
+      add: '添加',
+      adding: '添加中…',
+      remove: '删除',
+      removing: '删除中…',
+      removeTitle: '删除 {name}？',
+      removeLastTitle: '{name} 是最后一个 key，删除后网页搜索会因缺少 key 而失败。确定删除？',
+      removeConfirm: '确认删除',
       cancel: '取消',
-      keySaved: '已保存，下一次搜索立即使用新密钥。',
-      keyCleared: '已清除密钥。',
+      keyAdded: '已添加，下一次搜索起参与轮换。',
+      keyRemoved: '已删除 {name}。',
       serverTitle: '搜索接口',
       serverEndpoint: '地址：',
       serverListening: '运行中',
@@ -232,22 +246,27 @@ window.__ModuleLoader__.load({
       title: 'Tavily web search',
       description: 'Feeds DSH web search with Tavily: this plugin serves a search endpoint inside DSH; point the web-search endpoint at it.',
       summary: 'Feeds DSH web search with Tavily.',
-      keyTitle: 'API key',
-      keyLabel: 'Tavily API key',
-      keyHint: 'Stored in the DSH credential store ({ref}), never in a settings file. Leave blank to keep the current key.',
-      keyReadOnly: '{ref} comes from the launch environment and cannot be changed here; remove it there first.',
-      keySet: 'Key configured',
+      keyTitle: 'API keys',
+      keyCount: '{count}',
       keyUnset: 'No key',
-      keyLoading: 'Reading…',
+      keyLoading: 'Reading keys…',
+      keyLoadFailed: 'Could not read the keys: {reason}',
+      keyRotate: 'Keys are used in turn; when one is invalid, rate-limited or out of credits, the next one is tried.',
+      keyReadOnly: 'from the launch environment; cannot be removed here',
+      keyAddLabel: 'Add a Tavily API key',
+      keyAddHint: 'Stored in the DSH credential store ({ref}), never in a settings file.',
+      keyFull: 'Limit reached ({max} keys). Remove one before adding another.',
       keyGet: 'No key yet? Get one from the Tavily console: ',
-      save: 'Save',
-      saving: 'Saving…',
-      clear: 'Clear key',
-      clearTitle: 'Web search will fail without a key. Clear it?',
-      clearConfirm: 'Clear',
+      add: 'Add',
+      adding: 'Adding…',
+      remove: 'Remove',
+      removing: 'Removing…',
+      removeTitle: 'Remove {name}?',
+      removeLastTitle: '{name} is the last key; web search will fail without one. Remove it?',
+      removeConfirm: 'Remove',
       cancel: 'Cancel',
-      keySaved: 'Saved; the next search uses the new key.',
-      keyCleared: 'Key cleared.',
+      keyAdded: 'Added; it joins the rotation from the next search.',
+      keyRemoved: 'Removed {name}.',
       serverTitle: 'Search endpoint',
       serverEndpoint: 'Address: ',
       serverListening: 'running',
@@ -558,6 +577,108 @@ window.__ModuleLoader__.load({
       return h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', className: 'dsm-tv-link', title: url }, url.replace(/^https?:\/\//, ''));
     }
 
+    /** 列表里一个 key 的称呼：有末 4 位就用 `…abcd`，否则用引用名。 */
+    function keyName(slot) {
+      return slot.tail ? `…${slot.tail}` : slot.ref;
+    }
+
+    /**
+     * 「API Key」区块：已配置的 key 逐个列出、各自可删（带二次确认），下面一个输入框往空槽位添加。
+     *
+     * @param {{ keys: object, draft: string, keyBusy?: string, confirmRemove?: string, keyNotice?: object }} model
+     *   keys.slots 来自宿主 keys 路由；keyBusy 为 'add' 或正在删除的那个引用名
+     */
+    function renderKeySection(model, actions, t) {
+      const { keys } = model;
+      const slots = Array.isArray(keys.slots) ? keys.slots : [];
+      const configured = slots.filter((slot) => slot.configured);
+      const busy = Boolean(model.keyBusy);
+      // 添加到第一个空着且可写的槽位：删掉中间某个后，下次添加正好补回那个空位
+      const free = slots.find((slot) => !slot.configured && slot.writable !== false);
+
+      const head = [h('span', { key: 'title', className: 'dsm-tv-section-title' }, t('keyTitle'))];
+      if (keys.phase === 'ready') {
+        head.push(
+          configured.length > 0 ? badge('count', 'ok', t('keyCount', { count: configured.length })) : badge('count', 'warn', t('keyUnset')),
+        );
+      }
+      const section = [h('div', { key: 'head', className: 'dsm-tv-section-head' }, head)];
+
+      if (keys.phase === 'loading' && slots.length === 0) {
+        section.push(h('p', { key: 'loading', className: 'dsm-tv-line' }, t('keyLoading')));
+      } else if (keys.phase === 'error') {
+        section.push(notice('keyError', { kind: 'error', text: t('keyLoadFailed', { reason: keys.reason }) }));
+      }
+
+      if (configured.length > 0) {
+        const rows = configured.map((slot) => {
+          const name = keyName(slot);
+          const row = [
+            h(
+              'div',
+              { key: 'main', className: 'dsm-tv-keyrow-main' },
+              h('span', { className: 'dsm-tv-keyrow-index' }, `#${slots.indexOf(slot) + 1}`),
+              h('span', { className: 'dsm-tv-code' }, name),
+              slot.tail ? h('span', { className: 'dsm-tv-keyrow-ref' }, slot.ref) : null,
+            ),
+          ];
+          if (slot.writable === false) {
+            row.push(h('span', { key: 'readOnly', className: 'dsm-tv-keyrow-ref' }, t('keyReadOnly')));
+          } else {
+            const label = model.keyBusy === slot.ref ? t('removing') : t('remove');
+            row.push(button('remove', 'danger', label, () => actions.askRemove(slot.ref), busy || model.confirmRemove === slot.ref));
+          }
+          if (model.confirmRemove === slot.ref) {
+            row.push(
+              h(
+                'div',
+                { key: 'confirm', className: 'dsm-tv-confirm' },
+                h('div', { className: 'dsm-tv-line' }, h('strong', null, t(configured.length === 1 ? 'removeLastTitle' : 'removeTitle', { name }))),
+                h(
+                  'div',
+                  { className: 'dsm-tv-toolbar' },
+                  button('cancel', 'outline', t('cancel'), actions.cancelRemove, busy),
+                  button('confirm', 'danger', t('removeConfirm'), () => actions.removeKey(slot.ref), busy),
+                ),
+              ),
+            );
+          }
+          return h('li', { key: slot.ref, className: 'dsm-tv-keyrow' }, row);
+        });
+        section.push(h('ul', { key: 'list', className: 'dsm-tv-keys' }, rows));
+      }
+      if (configured.length > 1) section.push(h('p', { key: 'rotate', className: 'dsm-tv-hint' }, t('keyRotate')));
+
+      // 槽位列表还没读到时不知道该写哪个引用，先禁用添加
+      const canAdd = keys.phase === 'ready' && Boolean(free);
+      section.push(
+        h(
+          'div',
+          { key: 'field', className: 'dsm-tv-key' },
+          h(SecretField, {
+            id: 'dsh-tavily-search-key',
+            label: t('keyAddLabel'),
+            hint: free ? t('keyAddHint', { ref: free.ref }) : keys.phase === 'ready' ? t('keyFull', { max: slots.length }) : '',
+            disabled: !canAdd || busy,
+            text: model.draft,
+            configured: false,
+            stateLabel: free ? free.ref : '',
+            onEdit: actions.editDraft,
+          }),
+        ),
+        h(
+          'div',
+          { key: 'toolbar', className: 'dsm-tv-toolbar' },
+          button('add', 'primary', model.keyBusy === 'add' ? t('adding') : t('add'), () => actions.addKey(free?.ref), !model.draft.trim() || busy || !canAdd),
+        ),
+      );
+      section.push(notice('keyNotice', model.keyNotice));
+      if (keys.phase === 'ready' && configured.length === 0) {
+        section.push(h('p', { key: 'get', className: 'dsm-tv-hint' }, t('keyGet'), externalLink(TAVILY_CONSOLE_URL)));
+      }
+      return section;
+    }
+
     /**
      * 纯渲染：view model + 动作 → 元素树。与 hooks 分开，测试可以直接喂各种状态断言输出。
      *
@@ -566,58 +687,11 @@ window.__ModuleLoader__.load({
      * @param {(key: string, params?: object) => string} t
      */
     function renderCard(model, actions, t) {
-      const { status, key, web, test } = model;
-      const ref = status.apiKeyRef ?? DEFAULT_REF;
+      const { status, web, test } = model;
       const endpoint = status.endpoint ?? DEFAULT_ENDPOINT;
 
-      // ---- API Key ----
-      const keyWritable = key.writable !== false;
-      const keyBusy = Boolean(model.keyBusy);
-      const keySection = [
-        h('div', { key: 'head', className: 'dsm-tv-section-head' }, h('span', { className: 'dsm-tv-section-title' }, t('keyTitle'))),
-        h(
-          'div',
-          { key: 'field', className: 'dsm-tv-key' },
-          h(SecretField, {
-            id: 'dsh-tavily-search-key',
-            label: t('keyLabel'),
-            hint: keyWritable ? t('keyHint', { ref }) : t('keyReadOnly', { ref }),
-            disabled: !keyWritable || keyBusy || key.phase === 'loading',
-            text: model.draft,
-            configured: key.configured === true,
-            stateLabel: key.phase === 'loading' ? t('keyLoading') : key.configured ? t('keySet') : t('keyUnset'),
-            onEdit: actions.editDraft,
-          }),
-        ),
-        h(
-          'div',
-          { key: 'toolbar', className: 'dsm-tv-toolbar' },
-          button('save', 'primary', model.keyBusy === 'save' ? t('saving') : t('save'), actions.saveKey, !model.draft.trim() || keyBusy || !keyWritable),
-          key.configured && keyWritable
-            ? button('clear', 'danger', t('clear'), actions.askClear, keyBusy || model.confirmClear)
-            : null,
-        ),
-      ];
-      if (model.confirmClear) {
-        keySection.push(
-          h(
-            'div',
-            { key: 'confirm', className: 'dsm-tv-confirm' },
-            h('div', { className: 'dsm-tv-line' }, h('strong', null, t('clearTitle'))),
-            h(
-              'div',
-              { className: 'dsm-tv-toolbar' },
-              button('cancel', 'outline', t('cancel'), actions.cancelClear, keyBusy),
-              button('confirm', 'danger', t('clearConfirm'), actions.clearKey, keyBusy),
-            ),
-          ),
-        );
-      }
-      if (key.phase === 'error') keySection.push(notice('keyError', { kind: 'error', text: key.reason }));
-      keySection.push(notice('keyNotice', model.keyNotice));
-      if (!key.configured) {
-        keySection.push(h('p', { key: 'get', className: 'dsm-tv-hint' }, t('keyGet'), externalLink(TAVILY_CONSOLE_URL)));
-      }
+      // ---- API Key（可以多个）----
+      const keySection = renderKeySection(model, actions, t);
 
       // ---- 搜索接口 ----
       const serverSection = [];
@@ -895,10 +969,10 @@ window.__ModuleLoader__.load({
      */
     function TavilyCard({ t, view, api }) {
       const [status, setStatus] = useState({ phase: 'loading' });
-      const [key, setKey] = useState({ phase: 'loading' });
+      const [keys, setKeys] = useState({ phase: 'loading', slots: [] });
       const [draft, setDraft] = useState('');
       const [keyBusy, setKeyBusy] = useState(undefined);
-      const [confirmClear, setConfirmClear] = useState(false);
+      const [confirmRemove, setConfirmRemove] = useState(undefined);
       const [keyNotice, setKeyNotice] = useState(undefined);
       const [webSnapshot, setWebSnapshot] = useState(() => api.webForm?.getSnapshot?.());
       const [webKeyConfigured, setWebKeyConfigured] = useState(undefined);
@@ -907,7 +981,6 @@ window.__ModuleLoader__.load({
       const [test, setTest] = useState({ busy: false, result: undefined });
       const updater = useUpdater(t);
 
-      const ref = status.apiKeyRef ?? DEFAULT_REF;
       const web = webModel(webSnapshot);
 
       const loadStatus = useCallback(async () => {
@@ -920,15 +993,16 @@ window.__ModuleLoader__.load({
         }
       }, []);
 
-      const loadKey = useCallback(async () => {
+      const loadKeys = useCallback(async () => {
+        // 保留旧列表：刷新期间列表不闪
+        setKeys((previous) => ({ ...previous, phase: 'loading' }));
         try {
-          const views = unwrap(await api.describe([ref]));
-          const info = views?.[ref] ?? {};
-          setKey({ phase: 'ready', configured: info.configured === true, writable: info.writable !== false, source: info.source });
+          const payload = await request(KEYS_PATH, 'GET');
+          setKeys({ phase: 'ready', slots: Array.isArray(payload.keys) ? payload.keys : [] });
         } catch (error) {
-          setKey({ phase: 'error', reason: errorText(error) });
+          setKeys((previous) => ({ phase: 'error', slots: previous.slots, reason: errorText(error) }));
         }
-      }, [api, ref]);
+      }, []);
 
       const loadWebKey = useCallback(async () => {
         if (web.phase !== 'ready') return;
@@ -945,8 +1019,8 @@ window.__ModuleLoader__.load({
       }, [loadStatus]);
 
       useEffect(() => {
-        loadKey();
-      }, [loadKey]);
+        loadKeys();
+      }, [loadKeys]);
 
       useEffect(() => {
         loadWebKey();
@@ -960,47 +1034,57 @@ window.__ModuleLoader__.load({
         return form.subscribe(() => setWebSnapshot(form.getSnapshot()));
       }, [api]);
 
-      // 凭据在别处被改（内置网页搜索页 / 模型页写同一个引用）时刷新"已配置"徽标
+      // 凭据在别处被改（内置网页搜索页 / 模型页写同一个引用）时刷新 key 列表与徽标。
+      // 依赖用拼接串而不是数组：每次渲染的新数组会让订阅反复重挂
+      const keyRefs = (status.apiKeyRefs ?? keys.slots.map((slot) => slot.ref)).join(',');
       useEffect(
         () =>
           api.onCredentialUpdated?.((changed) => {
-            if (changed === ref) loadKey();
+            if (changed === DEFAULT_REF || keyRefs.split(',').includes(changed)) loadKeys();
             if (changed === web.apiKeyEnv) loadWebKey();
           }),
-        [api, ref, web.apiKeyEnv, loadKey, loadWebKey],
+        [api, keyRefs, web.apiKeyEnv, loadKeys, loadWebKey],
       );
 
-      const saveKey = useCallback(async () => {
-        const value = draft.trim();
-        if (!value) return;
-        setKeyBusy('save');
-        setKeyNotice(undefined);
-        try {
-          unwrap(await api.setKey(ref, value));
-          setDraft('');
-          setKeyNotice({ kind: 'ok', text: t('keySaved') });
-          await loadKey();
-        } catch (error) {
-          setKeyNotice({ kind: 'error', text: errorText(error) });
-        } finally {
-          setKeyBusy(undefined);
-        }
-      }, [api, draft, ref, loadKey, t]);
+      const addKey = useCallback(
+        async (ref) => {
+          const value = draft.trim();
+          if (!value || !ref) return;
+          setKeyBusy('add');
+          setKeyNotice(undefined);
+          try {
+            unwrap(await api.setKey(ref, value));
+            setDraft('');
+            setKeyNotice({ kind: 'ok', text: t('keyAdded') });
+            await loadKeys();
+          } catch (error) {
+            setKeyNotice({ kind: 'error', text: errorText(error) });
+          } finally {
+            setKeyBusy(undefined);
+          }
+        },
+        [api, draft, loadKeys, t],
+      );
 
-      const clearKey = useCallback(async () => {
-        setConfirmClear(false);
-        setKeyBusy('clear');
-        setKeyNotice(undefined);
-        try {
-          unwrap(await api.unsetKey(ref));
-          setKeyNotice({ kind: 'ok', text: t('keyCleared') });
-          await loadKey();
-        } catch (error) {
-          setKeyNotice({ kind: 'error', text: errorText(error) });
-        } finally {
-          setKeyBusy(undefined);
-        }
-      }, [api, ref, loadKey, t]);
+      const removeKey = useCallback(
+        async (ref) => {
+          const slot = keys.slots.find((item) => item.ref === ref);
+          const label = slot ? keyName(slot) : ref;
+          setConfirmRemove(undefined);
+          setKeyBusy(ref);
+          setKeyNotice(undefined);
+          try {
+            unwrap(await api.unsetKey(ref));
+            setKeyNotice({ kind: 'ok', text: t('keyRemoved', { name: label }) });
+            await loadKeys();
+          } catch (error) {
+            setKeyNotice({ kind: 'error', text: errorText(error) });
+          } finally {
+            setKeyBusy(undefined);
+          }
+        },
+        [api, keys.slots, loadKeys, t],
+      );
 
       const writeWeb = useCallback(
         async (op, okText) => {
@@ -1035,10 +1119,10 @@ window.__ModuleLoader__.load({
       return renderCard(
         {
           status,
-          key,
+          keys,
           draft,
           keyBusy,
-          confirmClear,
+          confirmRemove,
           keyNotice,
           web: { ...web, keyConfigured: webKeyConfigured },
           webBusy,
@@ -1052,16 +1136,16 @@ window.__ModuleLoader__.load({
             setDraft(text);
             setKeyNotice(undefined);
           },
-          saveKey,
-          askClear: () => setConfirmClear(true),
-          cancelClear: () => setConfirmClear(false),
-          clearKey,
+          addKey,
+          askRemove: (ref) => setConfirmRemove(ref),
+          cancelRemove: () => setConfirmRemove(undefined),
+          removeKey,
           wire: () => writeWeb('set', t('wired')),
           unwire: () => writeWeb('unset', t('unwired')),
           runTest,
           reload: () => {
             loadStatus();
-            loadKey();
+            loadKeys();
           },
         },
         t,

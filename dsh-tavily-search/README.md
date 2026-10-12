@@ -19,7 +19,7 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 
 | 区块 | 做什么 | 走哪条通道 |
 | --- | --- | --- |
-| **API Key** | 填写 / 替换 / 清除 Tavily API Key；只显示"已配置 / 未配置"，从不回显值 | DSH 凭据库（`remote.credentials`），与内置「网页搜索」页同一条路 |
+| **API Key** | 可添加多个 Tavily API Key（最多 10 个），逐个列出、各自单独删除（删除前二次确认）；列表只显示末 4 位用于辨认，从不回显完整值 | 写入 / 删除走 DSH 凭据库（`remote.credentials`），与内置「网页搜索」页同一条路；列表走宿主半侧路由 `/plugins/dsh-tavily-search/keys` |
 | **搜索接口** | 显示 `127.0.0.1:8787/v1` 的状态（运行中 / 外部实例 / 端口被占用 / 启动失败）；「测试搜索」按 DSH 的请求形状真打一次 | 宿主半侧路由 `/plugins/dsh-tavily-search/status`、`/test` |
 | **网页搜索接入** | 显示「网页搜索」当前的接口地址；未接入时一键改成本插件的端点，已接入时可恢复默认 | `configForms.get('web-search-deepseek')`，即内置网页搜索页编辑的同一个设置命名空间 |
 | **插件更新** | 显示当前运行版本与 npm 最新版本；装了 [dshmarket](https://www.npmjs.com/package/dshmarket) 时一键更新并显示进度，没装时只提示有新版本 | 版本检查走宿主半侧路由 `/plugins/dsh-tavily-search/version`（同时问 npm 官方源与 npmmirror，取较高者，缓存 10 分钟）；更新走 dshmarket 的公开更新 API v1 |
@@ -43,6 +43,9 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 - **失败不阻断**：监听不上只写日志，DSH 本身照常可用。
 - **API Key 存在 DSH 凭据库**：引用名默认 `TAVILY_API_KEY`，值在 `~/.dsh/.credentials.yaml`，不写进任何设置文件。
   每次请求现取，改 key 不用重启；缺 key 时搜索返回明确的错误，提示去哪里填写。
+- **多个 key**：第 1 个是 `TAVILY_API_KEY`，其余依次是 `TAVILY_API_KEY_2` … `TAVILY_API_KEY_10`。请求间轮流使用，
+  均摊各 key 的额度；某个 key 被 Tavily 拒绝（401 / 403 / 429 / 432 / 433：无效、禁用、限流、额度用尽）时当场换下一个重试。
+  5xx、网络错误、超时与 key 无关，不换 key 重试。
 - **只依赖 Node 内置模块**：不声明 Host Service 依赖；凭据服务缺席时退回同名环境变量。
 
 ## 安装到 profile
@@ -87,7 +90,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-tavily-search"
 | --- | --- | --- |
 | `enabled` | `true` | 只有显式 `false` 才不监听 |
 | `host` / `port` | `127.0.0.1` / `8787` | 监听地址；改了端口要同步改网页搜索的接口地址 |
-| `apiKeyRef` | `TAVILY_API_KEY` | 凭据引用名（环境变量名形状） |
+| `apiKeyRef` | `TAVILY_API_KEY` | 第 1 个 key 的凭据引用名（环境变量名形状）；其余 key 为 `<apiKeyRef>_2` … `_10` |
 | `importEnvFile` | 空 | 一次性导入：凭据库里还没有 key 时，从这个 `.env` 里取同名变量写进凭据库 |
 | `tavilyBaseUrl` | `https://api.tavily.com` | Tavily 端点，测试时可指向 mock |
 | `maxResults` | `8` | 单次检索返回条数 |
@@ -101,7 +104,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-tavily-search"
 ## 独立运行
 
 不开 DSH 也能起一个同样的接口（排障、给别的客户端用）。没有凭据库，配置从环境变量读
-（`TAVILY_API_KEY`、`LISTEN`、`TAVILY_MAX_RESULTS`、`TAVILY_SEARCH_DEPTH`……）：
+（`TAVILY_API_KEY`，多个 key 再加 `TAVILY_API_KEY_2` …；`LISTEN`、`TAVILY_MAX_RESULTS`、`TAVILY_SEARCH_DEPTH`……）：
 
 ```powershell
 $env:TAVILY_API_KEY = 'tvly-…'

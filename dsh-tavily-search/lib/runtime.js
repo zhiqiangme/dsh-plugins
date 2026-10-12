@@ -62,20 +62,62 @@ export function whenService(ctx, name, callback) {
   callback(getService(ctx, name));
 }
 
+/** 单个引用现取：凭据库优先（它内部已经包含"启动环境变量"这一层），凭据服务缺席时才退回本进程的环境变量。 */
+async function resolveRef(credentials, ref, env) {
+  if (typeof credentials?.resolve === 'function') {
+    const hit = await credentials.resolve(ref);
+    return typeof hit?.value === 'string' ? hit.value.trim() : '';
+  }
+  return typeof env[ref] === 'string' ? env[ref].trim() : '';
+}
+
 /**
- * 按凭据引用现取 API Key：DSH 凭据库优先（它内部已经包含"启动环境变量"这一层），
- * 凭据服务缺席时才退回本进程的环境变量。
+ * 按凭据引用现取 API Key。传一组引用时返回按引用顺序排列的非空 key 列表（多 key 轮询用），
+ * 传单个引用时返回那一个 key 或 undefined。
  */
-export function createKeyResolver(ctx, ref, env = process.env) {
+export function createKeyResolver(ctx, refs, env = process.env) {
+  const list = Array.isArray(refs) ? refs : [refs];
   return async () => {
     const credentials = getService(ctx, 'credentials');
-    if (typeof credentials?.resolve === 'function') {
-      const hit = await credentials.resolve(ref);
-      if (typeof hit?.value === 'string' && hit.value.trim()) return hit.value.trim();
-      return undefined;
-    }
-    const ambient = typeof env[ref] === 'string' ? env[ref].trim() : '';
-    return ambient || undefined;
+    const values = await Promise.all(list.map((ref) => resolveRef(credentials, ref, env)));
+    const keys = values.filter(Boolean);
+    return Array.isArray(refs) ? keys : keys[0];
+  };
+}
+
+/** 卡片里用来区分各个 key 的尾巴：只露最后 4 位；太短的 key 露尾巴等于露一半，干脆不露。 */
+const KEY_TAIL_CHARS = 4;
+const KEY_TAIL_MIN_LENGTH = 12;
+
+export function keyTail(value) {
+  return typeof value === 'string' && value.length >= KEY_TAIL_MIN_LENGTH ? value.slice(-KEY_TAIL_CHARS) : '';
+}
+
+/**
+ * 给插件页卡片列出每个 key 槽位：有没有配置、能不能改、来源，以及末 4 位用于辨认。
+ * 完整的值绝不离开宿主进程。凭据服务缺席时按环境变量报告（只读）。
+ *
+ * @returns {() => Promise<Array<{ ref: string, configured: boolean, writable: boolean, source?: string, tail: string }>>}
+ */
+export function createKeyInspector(ctx, refs, env = process.env) {
+  return async () => {
+    const credentials = getService(ctx, 'credentials');
+    return Promise.all(
+      refs.map(async (ref) => {
+        const value = await resolveRef(credentials, ref, env);
+        if (typeof credentials?.describe !== 'function') {
+          return { ref, configured: Boolean(value), writable: false, ...(value ? { source: 'env' } : {}), tail: keyTail(value) };
+        }
+        const info = (await credentials.describe(ref)) ?? {};
+        return {
+          ref,
+          configured: info.configured === true || Boolean(value),
+          writable: info.writable !== false,
+          ...(info.source ? { source: info.source } : {}),
+          tail: keyTail(value),
+        };
+      }),
+    );
   };
 }
 
