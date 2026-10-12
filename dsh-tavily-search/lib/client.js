@@ -170,7 +170,7 @@ window.__ModuleLoader__.load({
       keyAddLabel: '添加 Tavily API Key',
       keyAddHint: '存入 DSH 凭据库（{ref}），不写入设置文件。',
       keyFull: '已达到上限（{max} 个），删除一个后才能再添加。',
-      keyGet: '没有 key？到 Tavily 控制台申请：',
+      keyGet: '获取 Tavily API Key：',
       add: '添加',
       adding: '添加中…',
       remove: '删除',
@@ -258,7 +258,7 @@ window.__ModuleLoader__.load({
       keyAddLabel: 'Add a Tavily API key',
       keyAddHint: 'Stored in the DSH credential store ({ref}), never in a settings file.',
       keyFull: 'Limit reached ({max} keys). Remove one before adding another.',
-      keyGet: 'No key yet? Get one from the Tavily console: ',
+      keyGet: 'Get a Tavily API key: ',
       add: 'Add',
       adding: 'Adding…',
       remove: 'Remove',
@@ -699,9 +699,6 @@ window.__ModuleLoader__.load({
         ),
       );
       section.push(notice('keyNotice', model.keyNotice));
-      if (keys.phase === 'ready' && configured.length === 0) {
-        section.push(h('p', { key: 'get', className: 'dsm-tv-hint' }, t('keyGet'), externalLink(TAVILY_CONSOLE_URL)));
-      }
       return section;
     }
 
@@ -806,6 +803,8 @@ window.__ModuleLoader__.load({
         { className: 'dsm-tv-card' },
         h('div', { className: 'dsm-tv-title' }, t('title')),
         h('p', { className: 'dsm-tv-desc' }, t('description')),
+        // 申请链接常驻标题下方：加第二个、第三个 key 时同样要去控制台拿，不只在一个都没配时才需要
+        h('p', { key: 'get', className: 'dsm-tv-desc' }, t('keyGet'), externalLink(TAVILY_CONSOLE_URL)),
         h('div', { key: 'key', className: 'dsm-tv-section' }, keySection),
         h('div', { key: 'server', className: 'dsm-tv-section' }, serverSection),
         h('div', { key: 'web', className: 'dsm-tv-section' }, webSection),

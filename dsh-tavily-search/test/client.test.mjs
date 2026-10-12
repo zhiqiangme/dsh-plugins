@@ -364,7 +364,7 @@ test('API Key：删除某个 key 只确认那一个；删最后一个时警告�
   assert.match(collectText(last).join('|'), /…abcd 是最后一个 key/);
 });
 
-test('API Key：草稿为空时添加禁用；写入第一个空槽位；只读 key 无删除按钮；未配置时给出申请链接；满了不能再加', () => {
+test('API Key：草稿为空时添加禁用；写入第一个空槽位；只读 key 无删除按钮；申请链接常驻描述下方；满了不能再加', () => {
   const { module, t } = boot();
   const empty = render(module.renderCard(readyModel(), actions, t));
   assert.equal(buttonByLabel(empty, '添加').props.disabled, true);
@@ -386,10 +386,14 @@ test('API Key：草稿为空时添加禁用；写入第一个空槽位；只读 
   const text = collectText(unset).join('|');
   assert.match(text, /未配置密钥/);
   assert.match(text, /存入 DSH 凭据库（TAVILY_API_KEY）/);
-  const links = collect(unset, (node) => node.type === 'a');
-  assert.equal(links.length, 1);
-  assert.equal(links[0].props.target, '_blank');
-  assert.match(links[0].props.href, /^https:\/\/app\.tavily\.com/);
+  // 有没有 key 都给申请链接（加第二个 key 也要去控制台拿），且只出现一次
+  for (const tree of [unset, empty]) {
+    const links = collect(tree, (node) => node.type === 'a');
+    assert.equal(links.length, 1);
+    assert.equal(links[0].props.target, '_blank');
+    assert.equal(links[0].props.href, 'https://app.tavily.com/home');
+    assert.match(collectText(tree).join('|'), /获取 Tavily API Key：/);
+  }
 
   const full = render(
     module.renderCard(readyModel({ draft: 'x', keys: { phase: 'ready', slots: slots(Array(10).fill('zzzz')) } }), actions, t),
