@@ -701,11 +701,51 @@ test('插件更新区：成功后徽章显示"等待重启/等待刷新"，且�
   assert.doesNotMatch(live.text, /等待重启/);
 });
 
-test('插件更新区：装上的版本低于目标时警告；高于目标不警告', () => {
+test('插件更新区：成功后重新检查发现更高版本，恢复徽章和可用的更新按钮', async () => {
+  for (const outcome of [{ restartRequired: true }, { refreshRequired: true }, {}]) {
+    const model = updateModel({
+      operation: { state: 'succeeded', installedVersion: '26.10.12', outcome },
+      target: '26.10.12',
+    });
+    const requests = [];
+    const { renderCard } = boot([
+      ...backendStates({}),
+      model.version, model.market, model.operation, model.target, model.busy, model.notice, model.restart,
+    ], {
+      fetchImpl: async (path, options) => {
+        requests.push({ path, method: options.method });
+        return {
+          ok: true,
+          json: async () => ({ ok: true, currentVersion: '26.10.11', latestVersion: '26.10.13', updateAvailable: true }),
+        };
+      },
+    });
+    const section = () => collectByType(renderCard(), 'div').find((node) => node.props.key === 'pluginUpdate');
+    assert.equal(button(collectByType(section(), 'button'), '更新到 v26.10.12'), undefined);
+
+    button(collectByType(section(), 'button'), '检查更新').props.onClick();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const tree = section();
+    const text = collectText(tree).join('|');
+    assert.deepEqual(requests, [{ path: '/plugins/dsh-autostart-workbuddy/version?force=1', method: 'GET' }]);
+    assert.match(text, /有新版本/);
+    assert.doesNotMatch(text, /等待重启|等待刷新|已是最新/);
+    assert.equal(button(collectByType(tree, 'button'), '更新到 v26.10.13')?.props.disabled, false);
+    assert.match(text, /已更新到 v26\.10\.12/, '保留上次更新结果，不靠清空任务恢复入口');
+  }
+});
+
+test('插件更新区：装上的版本低于目标时警告并允许重试；高于目标不警告也不重复更新', () => {
   const below = renderUpdate(updateModel({ target: '26.10.12', operation: { state: 'succeeded', installedVersion: '26.10.11', outcome: {} } }));
   assert.match(below.text, /注意：装上的是 v26\.10\.11，不是预期的 v26\.10\.12/);
+  assert.match(below.text, /有新版本/);
+  assert.doesNotMatch(below.text, /已是最新/);
+  assert.equal(button(below.buttons, '更新到 v26.10.12')?.props.disabled, false);
   const above = renderUpdate(updateModel({ target: '26.10.12', operation: { state: 'succeeded', installedVersion: '26.10.13', outcome: {} } }));
   assert.doesNotMatch(above.text, /注意：装上的是/);
+  assert.match(above.text, /已是最新/);
+  assert.equal(button(above.buttons, '更新到 v26.10.12'), undefined);
 });
 
 test('插件更新区：发布冷却期 / 版本未变时给"强制更新"，其它失败不给', () => {
