@@ -220,7 +220,8 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     // 插件自身更新区（与后端版本区无关）
     'restartFailed', 'restartNow', 'restarting', 'updateAvailable', 'updateCancelled', 'updateCheck',
     'updateCheckFailed', 'updateChecking', 'updateCurrent', 'updateFailed', 'updateForce', 'updateLatestVersion',
-    'updateLinked', 'updateLost', 'updateManaged', 'updateMismatch', 'updateNoMarket', 'updateNow', 'updateProgress', 'updateRefreshHint',
+    'updateLinked', 'updateLost', 'updateManaged', 'updateMismatch', 'updateNoMarket', 'updateNow', 'updatePendingRefresh',
+    'updatePendingRestart', 'updateProgress', 'updateRefreshHint',
     'updateRestartHint', 'updateRolledBack', 'updateRunning', 'updateStartFailed', 'updateSucceeded',
     'updateTitle', 'updateTooFresh', 'updateUpToDate',
   ];
@@ -674,6 +675,30 @@ test('插件更新区：成功后按 restartRequired 提示重启；市场支持
 
   const web = renderUpdate(updateModel({ operation, target: '26.10.12', market: { phase: 'ready', restartSupported: true } }));
   assert.ok(button(web.buttons, '立即重启 DSH'));
+});
+
+test('插件更新区：成功后徽章显示"等待重启/等待刷新"，且不再给"更新到"按钮', () => {
+  // 更新成功后当前运行版本仍是旧版，单看版本号会永远说"有新版本"并留着更新按钮，
+  // 再点只会重装同一版。徽章要改口，按钮要收走。
+  const restart = renderUpdate(
+    updateModel({ operation: { state: 'succeeded', installedVersion: '26.10.12', outcome: { restartRequired: true } }, target: '26.10.12' }),
+  );
+  assert.match(restart.text, /等待重启/);
+  assert.doesNotMatch(restart.text, /有新版本/);
+  assert.equal(button(restart.buttons, '更新到 v26.10.12'), undefined);
+  assert.ok(button(restart.buttons, '检查更新'), '重新检查仍然可用');
+
+  const refresh = renderUpdate(
+    updateModel({ operation: { state: 'succeeded', installedVersion: '26.10.12', outcome: { refreshRequired: true } }, target: '26.10.12' }),
+  );
+  assert.match(refresh.text, /等待刷新/);
+  assert.equal(button(refresh.buttons, '更新到 v26.10.12'), undefined);
+
+  const live = renderUpdate(
+    updateModel({ operation: { state: 'succeeded', installedVersion: '26.10.12', outcome: {} }, target: '26.10.12' }),
+  );
+  assert.match(live.text, /已是最新/);
+  assert.doesNotMatch(live.text, /等待重启/);
 });
 
 test('插件更新区：装上的版本低于目标时警告；高于目标不警告', () => {
