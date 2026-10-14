@@ -449,7 +449,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** `x.y.z` 数字段比较（与 lib/update.js 同口径的简化版，只用来判断"装上的是否低于目标"）。 */
+    /** `x.y.z` 数字段比较（与 lib/update.js 同口径的简化版，用来核对实际安装版本与目标/最新版本）。 */
     function versionBelow(installed, target) {
       const parse = (value) => /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(value ?? ''))?.slice(1, 4).map(Number);
       const left = parse(installed);
@@ -474,12 +474,12 @@ window.__ModuleLoader__.load({
       const { version, market, operation } = update;
       const running = Boolean(update.busy) || isActiveOperation(operation);
       const ready = version.phase === 'ready';
-      // 更新成功后徽章不再按版本号说"有新版本"：当前运行版本要等重启/刷新才换，
-      // 那一刻起它描述的已是上一版，再说"有新版本"就是误导。
-      const succeeded = operation?.state === 'succeeded';
+      // 当前运行版本要等重启/刷新才换；仅当实际安装版本覆盖当前查到的最新版时，
+      // 才用成功结果覆盖徽章。镜像落后或再查到更高版本时，仍需提供更新入口。
+      const latestInstalled = operation?.state === 'succeeded' && !versionBelow(operation.installedVersion, version.latestVersion);
       const head = [h('span', { key: 'title', className: 'dsm-tv-section-title' }, t('updateTitle'))];
       if (ready) {
-        const tone = succeeded
+        const tone = latestInstalled
           ? operation.outcome?.restartRequired
             ? { kind: 'warn', text: t('updatePendingRestart') }
             : operation.outcome?.refreshRequired
@@ -491,8 +491,8 @@ window.__ModuleLoader__.load({
         head.push(badge('badge', tone.kind, tone.text));
       }
       head.push(button('check', 'outline', t('updateCheck'), actions.checkUpdate, version.phase === 'loading' || running));
-      // 更新已成功就藏起"更新到"按钮：npm 最新版没变，再点只会装同一个版本并空转一次。
-      if (ready && !succeeded && version.updateAvailable && market.phase === 'ready' && market.updatable !== false) {
+      // 只隐藏已安装版本覆盖的更新，避免重复安装，同时允许补齐或继续升级。
+      if (ready && !latestInstalled && version.updateAvailable && market.phase === 'ready' && market.updatable !== false) {
         head.push(
           button('update', 'primary', running ? t('updateRunning') : t('updateNow', { version: version.latestVersion }), () => actions.startUpdate(false), running),
         );

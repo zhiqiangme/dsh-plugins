@@ -25,7 +25,7 @@ const React = {
   useEffect: () => {},
 };
 
-function loadModule({ withPrimitives = true } = {}) {
+function loadModule({ withPrimitives = true, react = React, fetchImpl = globalThis.fetch } = {}) {
   let registration;
   const window = { __ModuleLoader__: { load: (value) => { registration = value; } } };
   const document = {
@@ -34,11 +34,11 @@ function loadModule({ withPrimitives = true } = {}) {
     head: { appendChild: () => {} },
   };
   // eslint-disable-next-line no-new-func -- 故意在沙箱里跑浏览器 bundle
-  new Function('window', 'document', 'console', SOURCE)(window, document, console);
+  new Function('window', 'document', 'console', 'fetch', SOURCE)(window, document, console, fetchImpl);
   assert.equal(registration.id, PACKAGE_NAME);
-  const primitives = { SettingsSecretField: (props) => React.createElement('host-secret-field', props) };
+  const primitives = { SettingsSecretField: (props) => react.createElement('host-secret-field', props) };
   return registration.factory((id) => {
-    if (id === 'react') return React;
+    if (id === 'react') return react;
     if (id === '@deepseek-ai/dsh-client-ui-primitives') {
       if (withPrimitives) return primitives;
       throw new Error('not available');
@@ -568,7 +568,57 @@ test('插件更新：成功后徽章显示"等待重启/等待刷新"，且不�
   assert.doesNotMatch(liveText, /等待重启/);
 });
 
-test('插件更新：装上的版本低于目标时额外警告；高于目标（latest 期间前移）不警告', () => {
+test('插件更新：成功后重新检查发现更高版本，恢复徽章和可用的更新按钮', async () => {
+  for (const outcome of [{ restartRequired: true }, { refreshRequired: true }, {}]) {
+    const update = updateModel({
+      operation: { state: 'succeeded', installedVersion: '26.10.12', outcome },
+      target: '26.10.12',
+    }).update;
+    // 卡片自身的 11 个 state 后，才是 useUpdater 的 7 个 state；空槽按初值初始化。
+    const states = new Array(11);
+    states.push(update.version, update.market, update.operation, update.target, update.busy, update.notice, update.restart);
+    let index = 0;
+    const react = {
+      ...React,
+      useState: (initial) => {
+        const slot = index++;
+        if (!(slot in states)) states[slot] = typeof initial === 'function' ? initial() : initial;
+        return [states[slot], (value) => { states[slot] = typeof value === 'function' ? value(states[slot]) : value; }];
+      },
+    };
+    const requests = [];
+    const { cards } = boot({
+      react,
+      fetchImpl: async (path, options) => {
+        requests.push({ path, method: options.method });
+        return {
+          ok: true,
+          json: async () => ({ ok: true, currentVersion: '26.10.11', latestVersion: '26.10.13', updateAvailable: true }),
+        };
+      },
+    });
+    const section = () => {
+      index = 0;
+      const card = cards[0];
+      const tree = render(card.component({ ...card.spec.inject(), view: 'page' }));
+      return collect(tree, (node) => node.props.key === 'update')[0];
+    };
+    assert.equal(buttonByLabel(section(), '更新到 v26.10.12'), undefined);
+
+    buttonByLabel(section(), '检查更新').props.onClick();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const tree = section();
+    const text = collectText(tree).join('|');
+    assert.deepEqual(requests, [{ path: '/plugins/dsh-tavily-search/version?force=1', method: 'GET' }]);
+    assert.match(text, /有新版本/);
+    assert.doesNotMatch(text, /等待重启|等待刷新|已是最新/);
+    assert.equal(buttonByLabel(tree, '更新到 v26.10.13')?.props.disabled, false);
+    assert.match(text, /已更新到 v26\.10\.12/, '保留上次更新结果，不靠清空任务恢复入口');
+  }
+});
+
+test('插件更新：装上的版本低于目标时警告并允许重试；高于目标不警告也不重复更新', () => {
   const { module, t } = boot();
   const below = render(
     module.renderCard(
@@ -578,6 +628,9 @@ test('插件更新：装上的版本低于目标时额外警告；高于目标�
     ),
   );
   assert.match(collectText(below).join('|'), /注意：装上的是 v26\.10\.11，不是预期的 v26\.10\.12/);
+  assert.match(collectText(below).join('|'), /有新版本/);
+  assert.doesNotMatch(collectText(below).join('|'), /已是最新/);
+  assert.equal(buttonByLabel(below, '更新到 v26.10.12')?.props.disabled, false);
 
   const above = render(
     module.renderCard(
@@ -587,6 +640,8 @@ test('插件更新：装上的版本低于目标时额外警告；高于目标�
     ),
   );
   assert.doesNotMatch(collectText(above).join('|'), /注意：装上的是/);
+  assert.match(collectText(above).join('|'), /已是最新/);
+  assert.equal(buttonByLabel(above, '更新到 v26.10.12'), undefined);
 });
 
 test('插件更新：发布冷却期 / 版本未变时给"强制更新"，其它失败不给', () => {
