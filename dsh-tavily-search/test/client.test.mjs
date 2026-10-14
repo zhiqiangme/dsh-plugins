@@ -532,6 +532,42 @@ test('插件更新：成功后按 restartRequired 提示重启；市场支持重
   assert.ok(buttonByLabel(web, '立即重启 DSH'));
 });
 
+test('插件更新：成功后徽章显示"等待重启/等待刷新"，且不再给"更新到"按钮', () => {
+  // 更新成功后当前运行版本仍是旧版，单看版本号会永远说"有新版本"并留着更新按钮，
+  // 再点只会重装同一版。徽章要改口，按钮要收走。
+  const { module, t } = boot();
+  const base = { installedVersion: '26.10.12' };
+  const restart = render(
+    module.renderCard(
+      updateModel({ operation: { ...base, state: 'succeeded', outcome: { restartRequired: true } }, target: '26.10.12' }),
+      actions,
+      t,
+    ),
+  );
+  const restartText = collectText(restart).join('|');
+  assert.match(restartText, /等待重启/);
+  assert.doesNotMatch(restartText, /有新版本/);
+  assert.equal(buttonByLabel(restart, '更新到 v26.10.12'), undefined);
+  assert.ok(buttonByLabel(restart, '检查更新'), '重新检查仍然可用');
+
+  const refresh = render(
+    module.renderCard(
+      updateModel({ operation: { ...base, state: 'succeeded', outcome: { refreshRequired: true } }, target: '26.10.12' }),
+      actions,
+      t,
+    ),
+  );
+  assert.match(collectText(refresh).join('|'), /等待刷新/);
+  assert.equal(buttonByLabel(refresh, '更新到 v26.10.12'), undefined);
+
+  const live = render(
+    module.renderCard(updateModel({ operation: { ...base, state: 'succeeded', outcome: {} }, target: '26.10.12' }), actions, t),
+  );
+  const liveText = collectText(live).join('|');
+  assert.match(liveText, /已是最新/);
+  assert.doesNotMatch(liveText, /等待重启/);
+});
+
 test('插件更新：装上的版本低于目标时额外警告；高于目标（latest 期间前移）不警告', () => {
   const { module, t } = boot();
   const below = render(

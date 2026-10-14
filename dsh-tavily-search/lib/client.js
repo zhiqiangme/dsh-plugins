@@ -222,6 +222,8 @@ window.__ModuleLoader__.load({
       updateLatestVersion: 'npm 最新版本：',
       updateUpToDate: '已是最新',
       updateAvailable: '有新版本',
+      updatePendingRestart: '等待重启',
+      updatePendingRefresh: '等待刷新',
       updateNow: '更新到 v{version}',
       updateNoMarket: '装上 DSH 插件市场（dshmarket）后可以在这里一键更新；也可以在「插件」页卸载本插件，再重新安装新版。',
       updateLinked: '本插件是从本地目录（file:）安装的，dshmarket 不更新本地安装。请在源码目录拉取新代码后重新安装；改为从 npm 安装后，才能在这里一键更新。',
@@ -310,6 +312,8 @@ window.__ModuleLoader__.load({
       updateLatestVersion: 'Latest on npm: ',
       updateUpToDate: 'up to date',
       updateAvailable: 'update available',
+      updatePendingRestart: 'waiting for restart',
+      updatePendingRefresh: 'waiting for reload',
       updateNow: 'Update to v{version}',
       updateNoMarket: 'Install the DSH plugin market (dshmarket) to update from here, or uninstall this plugin on the Plugins page and install the new version.',
       updateLinked: 'This plugin is installed from a local directory (file:), which dshmarket does not update. Pull the new code in the source directory and reinstall, or reinstall it from npm to update from here.',
@@ -470,12 +474,25 @@ window.__ModuleLoader__.load({
       const { version, market, operation } = update;
       const running = Boolean(update.busy) || isActiveOperation(operation);
       const ready = version.phase === 'ready';
+      // 更新成功后徽章不再按版本号说"有新版本"：当前运行版本要等重启/刷新才换，
+      // 那一刻起它描述的已是上一版，再说"有新版本"就是误导。
+      const succeeded = operation?.state === 'succeeded';
       const head = [h('span', { key: 'title', className: 'dsm-tv-section-title' }, t('updateTitle'))];
       if (ready) {
-        head.push(badge('badge', version.updateAvailable ? 'warn' : 'ok', version.updateAvailable ? t('updateAvailable') : t('updateUpToDate')));
+        const tone = succeeded
+          ? operation.outcome?.restartRequired
+            ? { kind: 'warn', text: t('updatePendingRestart') }
+            : operation.outcome?.refreshRequired
+              ? { kind: 'warn', text: t('updatePendingRefresh') }
+              : { kind: 'ok', text: t('updateUpToDate') }
+          : version.updateAvailable
+            ? { kind: 'warn', text: t('updateAvailable') }
+            : { kind: 'ok', text: t('updateUpToDate') };
+        head.push(badge('badge', tone.kind, tone.text));
       }
       head.push(button('check', 'outline', t('updateCheck'), actions.checkUpdate, version.phase === 'loading' || running));
-      if (ready && version.updateAvailable && market.phase === 'ready' && market.updatable !== false) {
+      // 更新已成功就藏起"更新到"按钮：npm 最新版没变，再点只会装同一个版本并空转一次。
+      if (ready && !succeeded && version.updateAvailable && market.phase === 'ready' && market.updatable !== false) {
         head.push(
           button('update', 'primary', running ? t('updateRunning') : t('updateNow', { version: version.latestVersion }), () => actions.startUpdate(false), running),
         );
