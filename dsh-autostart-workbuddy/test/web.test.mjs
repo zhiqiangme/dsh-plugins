@@ -23,7 +23,7 @@ import {
   VERSION_PATH,
   applySelection,
   describeModels,
-  loopbackOrigin,
+  requestRejection,
   registerPanelRoutes,
 } from '../lib/web.js';
 import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
@@ -98,12 +98,14 @@ function fakeRes() {
   };
 }
 
-function fakeReq(method, { origin, body, url } = {}) {
+/** POST 默认带 JSON 头，与卡片的真实请求一致；对端默认是回环地址。 */
+function fakeReq(method, { origin, body, url, contentType = method === 'POST' ? 'application/json' : undefined, remoteAddress = '127.0.0.1' } = {}) {
   const chunks = body === undefined ? [] : [Buffer.from(body, 'utf8')];
   return {
     method,
     url,
-    headers: origin === undefined ? {} : { origin },
+    socket: { remoteAddress },
+    headers: { host: '127.0.0.1:19387', ...(origin === undefined ? {} : { origin }), ...(contentType ? { 'content-type': contentType } : {}) },
     async *[Symbol.asyncIterator]() {
       for (const chunk of chunks) yield chunk;
     },
@@ -539,11 +541,31 @@ test('控制台密钥路由：POST 给出 config.json 的 api_key；GET 405、�
   assert.match(missing.body.reason, /找不到后端配置文件/);
 });
 
-test('loopbackOrigin：无 Origin 放行，loopback 放行，其它拒绝', () => {
-  assert.equal(loopbackOrigin({ headers: {} }), true);
-  assert.equal(loopbackOrigin({ headers: { origin: 'http://127.0.0.1:19387' } }), true);
-  assert.equal(loopbackOrigin({ headers: { origin: 'http://localhost:5173' } }), true);
-  assert.equal(loopbackOrigin({ headers: { origin: 'http://[::1]:19387' } }), true);
-  assert.equal(loopbackOrigin({ headers: { origin: 'https://evil.example' } }), false);
-  assert.equal(loopbackOrigin({ headers: { origin: 'null' } }), false);
+test('requestRejection：有 connection 时以宿主结论为准，否则只放行回环对端的同源请求', () => {
+  const local = (headers = {}, remoteAddress = '127.0.0.1') => ({ headers: { host: '127.0.0.1:19387', ...headers }, socket: { remoteAddress } });
+  assert.equal(requestRejection(local()), undefined);
+  assert.equal(requestRejection(local({ origin: 'http://127.0.0.1:19387' })), undefined);
+  assert.equal(requestRejection(local({}, '::1')), undefined);
+  assert.equal(requestRejection(local({ origin: 'http://localhost:5173' })), 403);
+  assert.equal(requestRejection(local({ origin: 'https://evil.example' })), 403);
+  assert.equal(requestRejection(local({ origin: 'null' })), 403);
+  assert.equal(requestRejection(local({}, '192.168.1.5')), 403);
+  assert.equal(requestRejection(local(), { requestRejection: () => 401 }), 401);
+  assert.equal(requestRejection(local({}, '10.0.0.2'), { requestRejection: () => undefined }), undefined);
+});
+
+test('面板路由：宿主未登录返回 401，text/plain 的 POST 返回 415', async () => {
+  const ctx = fakeCtx();
+  let verdict = 401;
+  ctx.connection = { requestRejection: () => verdict };
+  registerPanelRoutes(ctx, { logger: ctx.logger, resolved: configFor(await freePort()), env: process.env });
+  const handler = ctx.routes.find((route) => route.path === PANEL_KEY_PATH).handler;
+  const denied = fakeRes();
+  await handler(fakeReq('POST'), denied);
+  assert.equal(denied.status, 401);
+  assert.equal(denied.body.key, undefined);
+  verdict = undefined;
+  const plainText = fakeRes();
+  await handler(fakeReq('POST', { body: '{}', contentType: 'text/plain' }), plainText);
+  assert.equal(plainText.status, 415);
 });

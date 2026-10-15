@@ -241,7 +241,8 @@ test('面板首次开启同步：不重启托管后端，保存后立即补建�
   let result;
   await routes.find((route) => route.path === MODELS_PATH).handler({
     method: 'POST',
-    headers: {},
+    headers: { 'content-type': 'application/json' },
+    socket: { remoteAddress: '127.0.0.1' },
     async *[Symbol.asyncIterator]() {
       yield Buffer.from(JSON.stringify({ only: ['cn:alpha'], enabled: true }));
     },
