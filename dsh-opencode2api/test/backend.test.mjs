@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +30,7 @@ import {
   listVersions,
   uninstallBackend,
   versionDirName,
+  writeManifest,
 } from '../lib/backend.js';
 import { isFile } from '../lib/services.js';
 
@@ -419,6 +420,21 @@ test('pruneVersions：只保留最近 N 个历史版本', () => {
   const removed = pruneVersions(paths, 2);
   assert.equal(removed.length, 2);
   assert.equal(readdirSync(paths.versions).length, 2);
+});
+
+test('pruneVersions：回滚目标即使最旧也保留，-failed 不占名额', () => {
+  const { paths } = tempBackendRoot();
+  // exe 修改时间是当初下载的时间：回滚过再更新时，上一版本可能是最旧的那个。
+  const stamps = { v1: 1, v2: 2, v3: 3, 'v4-failed': 4 };
+  for (const [name, at] of Object.entries(stamps)) {
+    const exe = join(paths.versions, name, 'opencode2api.exe');
+    mkdirSync(join(paths.versions, name), { recursive: true });
+    writeFileSync(exe, fakeExe('d'.repeat(40)));
+    utimesSync(exe, at * 1000, at * 1000);
+  }
+  writeManifest(paths, { tag: 'v5', commit: 'e'.repeat(40), previous: { tag: 'v1', revision: 'a'.repeat(40) } });
+  assert.deepEqual(pruneVersions(paths, 2).sort(), ['v2', 'v4-failed']);
+  assert.deepEqual(readdirSync(paths.versions).sort(), ['v1', 'v3']);
 });
 
 test('installBackend：已安装时拒绝，一个字节都不动', async () => {
