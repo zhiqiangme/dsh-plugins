@@ -14,6 +14,9 @@ export const catalog = [
 ];
 export function memoryCredentials() {
   const values = new Map();
-  return { values, resolve: async (ref) => values.get(ref), describe: async () => ({ writable: true }),
-    set: async (ref, value) => { values.set(ref, value); } };
+  // 与 DSH 宿主凭据服务同形：resolve 返回 { value, source }，未配置时为 undefined。
+  const writes = [];
+  return { values, writes, resolve: async (ref) => (values.has(ref) ? { value: values.get(ref), source: 'file' } : undefined),
+    describe: async () => ({ writable: true }),
+    set: async (ref, value) => { writes.push(ref); values.set(ref, value); } };
 }

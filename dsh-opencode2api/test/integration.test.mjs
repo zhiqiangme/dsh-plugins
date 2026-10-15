@@ -38,7 +38,7 @@ function fakeContext(services = {}) {
   const disposers = [];
   const lines = [];
   const updateHooks = [];
-  services.credentials ??= {resolve: async()=> 'test-key', set: async()=>{}, describe:async()=>({writable:true})};
+  services.credentials ??= {resolve: async()=> ({ value: 'test-key', source: 'file' }), set: async()=>{}, describe:async()=>({writable:true})};
   const record = (level) => (...args) => lines.push(`${level} ${args.join(' ')}`);
   return {
     lines,

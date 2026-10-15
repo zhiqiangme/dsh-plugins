@@ -222,6 +222,18 @@ export function panelApiKey(panelConfigPath) {
   return backendApiKey(panelConfigPath);
 }
 
+/**
+ * 从 DSH 凭据库取一个引用的值。
+ *
+ * 宿主 `credentials.resolve(ref)` 返回 `{ value, source }`（未配置时为 undefined），不是字符串；
+ * 直接当字符串用会拼出 `Bearer [object Object]`，比较时也永远不等。
+ */
+export async function resolveCredential(credentials, ref) {
+  if (typeof credentials?.resolve !== 'function') return '';
+  const hit = await credentials.resolve(ref);
+  return typeof hit?.value === 'string' ? hit.value.trim() : '';
+}
+
 /** 拉取模型清单；任何失败都返回 ok:false，由调用方决定是否保持现有配置。 */
 export async function fetchModels(options = {}) {
   const { baseURL, apiKey = '', timeoutMs = 30_000, signal } = options;
@@ -407,7 +419,7 @@ export async function syncModels(options) {
 
   const ref = models.apiKeyRef || 'OPENCODE2API_PROXY_KEY';
   const apiKey = models.apiKey || env[ref]?.trim() || panelApiKey(models.panelConfig) ||
-    (typeof credentials?.resolve === 'function' ? await credentials.resolve(ref) : '');
+    await resolveCredential(credentials, ref);
 
   const fetched = await fetchModels({
     baseURL: models.baseURL || `http://${spec.host}:${spec.port}`,
@@ -433,7 +445,8 @@ export async function syncModels(options) {
       if (!apiKey || typeof credentials?.set !== 'function') {
         return { state: 'failed', reason: '缺少本地 API Key 或 DSH 凭据服务，未写入模型配置', documentPath };
       }
-      const current = await credentials.resolve?.(ref);
+      // 值未变就不写：每次写入都会广播 credentials/reference-updated。
+      const current = await resolveCredential(credentials, ref);
       if (current !== apiKey) {
         const info = await credentials.describe?.(ref);
         if (info?.writable === false) return { state: 'failed', reason: `${ref} 为只读凭据，未写入模型配置`, documentPath };

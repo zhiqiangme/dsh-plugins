@@ -4,6 +4,7 @@ import { resolvePluginConfig } from '../lib/config.js';
 import { fetchModels, modelDisplayName, planModelEntries, priceLabel, syncModels } from '../lib/models.js';
 import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
 import { catalog, memoryCredentials, serve } from '../fixtures/http-fixture.mjs';
+import { describeModels } from '../lib/web.js';
 
 test('真实网关元数据：视觉、上下文、输出限制与思考；过滤 System One 和重复 id', () => {
   const entries = planModelEntries([...catalog, catalog[0]]);
@@ -64,6 +65,22 @@ test('本地 Key 写入凭据库，profile 只存引用并保留其他 provider'
   assert.equal(config.providers.opencode2api.baseURL,`${url}/v1/`);
   assert.equal(config.providers.opencode2api.apiKeyEnv,'OPENCODE2API_PROXY_KEY');
   assert.ok(!JSON.stringify(config).includes('local-test-secret'));
+});
+test('Key 只在凭据库时按 { value } 读取；值未变时不重写凭据', async (t) => {
+  const url = await serve(t, (req, res) => {
+    if (req.headers.authorization !== 'Bearer vault-secret') { res.statusCode = 401; res.end('{}'); return; }
+    res.end(JSON.stringify({ data: catalog }));
+  });
+  // panelConfig 指向不存在的文件：外部后端没有可读的 config.json，只能从凭据库取 Key。
+  const resolved = resolvePluginConfig({ models: { enabled: true, baseURL: url, panelConfig: `${url}-missing.json` } }, {});
+  const editor = createFakeConfigEditor(profileRows());
+  const credentials = memoryCredentials();
+  credentials.values.set('OPENCODE2API_PROXY_KEY', 'vault-secret');
+  assert.equal((await syncModels({ ...resolved, editor, credentials, env: {} })).state, 'updated');
+  assert.equal((await syncModels({ ...resolved, editor, credentials, env: {} })).state, 'unchanged');
+  assert.deepEqual(credentials.writes, []);
+  const snapshot = await describeModels({ ...resolved, editor, credentials, env: {} });
+  assert.equal(snapshot.ok, true);
 });
 for(const scenario of ['empty','unauthorized','invalid-json','no-credentials','read-only','vault-failed']) {
   test(`失败保持模型配置：${scenario}`,async(t)=>{

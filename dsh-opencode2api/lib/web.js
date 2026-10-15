@@ -13,7 +13,7 @@ import {
   rollbackBackend,
   uninstallBackend,
 } from './backend.js';
-import { priceLabel, modelMetadata, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, syncModels } from './models.js';
+import { priceLabel, modelMetadata, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, resolveCredential, syncModels } from './models.js';
 import { initialAdmin } from './backend-config.js';
 import { isFile } from './services.js';
 import { createVersionChecker } from './update.js';
@@ -128,7 +128,7 @@ export async function describeModels({ spec, models, editor, credentials, env = 
 
   const fetched = await fetchModels({
     baseURL: models.baseURL || `http://${spec.host}:${spec.port}`,
-    apiKey: resolveApiKey(models, env) || await credentials?.resolve?.(models.apiKeyRef || 'OPENCODE2API_PROXY_KEY') || '',
+    apiKey: resolveApiKey(models, env) || await resolveCredential(credentials, models.apiKeyRef || 'OPENCODE2API_PROXY_KEY'),
     timeoutMs: models.timeoutMs,
   });
   if (!fetched.ok) {
