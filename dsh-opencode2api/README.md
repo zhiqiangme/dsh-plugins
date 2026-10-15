@@ -42,7 +42,7 @@ Web / CLI 使用 `web` / `headless` profile。后端安装器支持 Windows x64�
 - 模型同步默认关闭，通过 DSH `configEditor` 写配置；只修改自己的 provider 模型列表，保留其他 provider。勾选与同步开关变化不重启后端。
 - 本地 API Key 保存到 DSH 凭据库的 `OPENCODE2API_PROXY_KEY` 引用，profile 中不写密钥明文。它与 Zen / Go 的上游 Key 是不同的凭据。
 - 从 `/v1/models` 同步上下文、最大输出、视觉模态和上游声明的思考档位。`System One` 专用模型不导入普通对话选择器；未知价格显示 `—`，价格单位为 USD / 百万 token。
-- 展示名按连字符分段、各段首字母大写，例如 `Deepseek-V4.1-Flash-Free`，模型 id 保持不变。选中的模型都支持 Max 时，OpenCode 提供商默认使用 Max；混有不支持 Max 的模型时不强设默认档位。
+- 展示名按连字符分段、各段首字母大写，例如 `Deepseek-V4.1-Flash-Free`，模型 id 保持不变。选中的模型都支持 Max 时，OpenCode 提供商默认使用 Max；混有不支持 Max 的模型时不强设默认档位。在 DSH 里手动改过的默认档位，只要新清单的模型都支持就保持不变，否则移除。
 - 模型列表与 `/healthz` 正常只代表目录和服务状态；真实推理仍可能被上游拒绝或限流。
 - 本地 `file:` / `link:` 安装显示「本地安装」，跳过 npm 检查，通过仓库安装脚本更新。npm 安装才检查注册表版本并提供 dshmarket 更新入口。
 - 安装脚本会把旧包名 `@zhiqiangme/dsh-autostart-opencode2api` 和旧配置行迁移到新名称，保留模型勾选与同步开关。后端数据目录继续沿用 `~/.dsh/autostart-opencode2api`，保留已安装程序和凭据。

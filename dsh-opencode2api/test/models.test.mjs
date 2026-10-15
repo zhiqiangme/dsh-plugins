@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolvePluginConfig } from '../lib/config.js';
-import { fetchModels, modelDisplayName, planModelEntries, priceLabel, syncModels } from '../lib/models.js';
+import { fetchModels, modelDisplayName, planModelEntries, priceLabel, providerSkeleton, syncModels, withProviderModels } from '../lib/models.js';
 import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
 import { catalog, memoryCredentials, serve } from '../fixtures/http-fixture.mjs';
 import { describeModels } from '../lib/web.js';
@@ -44,6 +44,18 @@ test('支持 Max 的模型同步后默认 Max，重复同步不改配置；能�
   assert.equal((await syncModels(options)).state, 'updated');
   assert.equal(provider().reasoning, undefined);
   assert.equal((await syncModels(options)).state, 'unchanged');
+});
+test('用户手设的默认档位在新清单都支持时保留，不再支持时移除', () => {
+  const full = { id: 'a', name: 'A', input: ['text'], reasoningEfforts: { low: 'low', high: 'high', max: 'max' } };
+  const lowHigh = { id: 'b', name: 'B', input: ['text'], reasoningEfforts: { low: 'low', high: 'high' } };
+  const config = (reasoning) => ({ providers: { opencode2api: { displayName: 'OpenCode', reasoning, models: [] } } });
+  const sync = (reasoning, entries) => withProviderModels(config(reasoning), 'opencode2api', entries,
+    providerSkeleton({ provider: 'opencode2api', baseURL: 'http://127.0.0.1:8080' }, {}, entries)).config.providers.opencode2api.reasoning;
+  assert.equal(sync('high', [full]), 'high', '全部支持 Max 也不覆盖用户选的 high');
+  assert.equal(sync('high', [full, lowHigh]), 'high');
+  assert.equal(sync('max', [full, lowHigh]), undefined, '有模型不支持 Max 时移除');
+  assert.equal(sync(undefined, [full]), 'max');
+  assert.equal(sync('high', [full, { id: 'c', name: 'C', input: ['text'] }]), undefined);
 });
 test('白名单顺序、空白名单、排除和未知 id', () => {
   assert.deepEqual(planModelEntries(catalog, { only: ['text-model','missing','vision-free'] }).map(m=>m.id), ['text-model','vision-free']);

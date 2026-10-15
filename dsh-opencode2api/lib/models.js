@@ -169,15 +169,29 @@ export function withProviderModels(config, providerName, entries, skeleton) {
   const providers = plainObject(base.providers);
   const existing = providers[providerName];
   const created = Object.keys(plainObject(existing)).length === 0;
-  // 地址、凭据引用和默认档位随同步更新；取消 Max 支持时也要移除之前写入的默认值。
+  // 地址和凭据引用随同步更新；默认档位见 providerReasoning。
   const existingOptions = { ...plainObject(existing) };
+  const reasoning = providerReasoning(existingOptions.reasoning, entries, skeleton);
   delete existingOptions.reasoning;
   const provider = created ? { ...skeleton, models: entries } : {
-    ...existingOptions, ...('reasoning' in skeleton ? { reasoning: skeleton.reasoning } : {}),
+    ...existingOptions, ...(reasoning ? { reasoning } : {}),
     baseURL: skeleton.baseURL, apiKeyEnv: skeleton.apiKeyEnv, models: entries,
   };
   const changed = created || !isDeepStrictEqual(existing, provider);
   return { changed, created, config: { ...base, providers: { ...providers, [providerName]: provider } } };
+}
+
+/**
+ * provider 同步后的默认档位。
+ *
+ * 默认档位属于整个 provider，选中模型里有一个不支持就会被拒绝请求。所以：已有的档位（用户手设的，
+ * 或之前同步写入的 max）只要新清单里每个模型都支持就原样保留；不再全部支持时移除，
+ * 再按骨架决定是否用 max。这样换模型时不会留下必然失败的默认值，也不会覆盖用户自己选的档位。
+ */
+export function providerReasoning(current, entries, skeleton) {
+  const supportedByAll = (level) => entries.length > 0 && entries.every((entry) => Boolean(entry.reasoningEfforts?.[level]));
+  if (typeof current === 'string' && current && supportedByAll(current)) return current;
+  return skeleton?.reasoning;
 }
 
 /** 补建 provider 用的骨架：与 llm-pi-ai 的 OpenAI 兼容 provider 字段一致。 */
