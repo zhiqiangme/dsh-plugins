@@ -292,6 +292,8 @@ test('applyUpdate：包内 exe 与 tag 的 commit 不符 → 拒绝安装', asyn
     const result = await applyUpdate({ paths, env: {}, apiBase, service: fakeService(await freePort()) });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'binary-mismatch');
+    // 未通过校验的暂存 exe 不留在 cache/ 里。
+    assert.deepEqual(readdirSync(paths.cache).filter((name) => name.startsWith('staged-')), []);
     assert.deepEqual(readFileSync(paths.exe), before);
   } finally {
     release.stop();
