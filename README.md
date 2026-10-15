@@ -5,7 +5,7 @@
 | 插件 | npm 包 | 作用 |
 | --- | --- | --- |
 | [dsh-autostart-workbuddy](dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | DSH 启动时自动拉起 WorkBuddy Panel（`wb2api.exe`, 127.0.0.1:7863），可选接管 profile 里的 workbuddy 模型列表 |
-| [dsh-opencode2api](dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api`（尚未发布） | 自动启动 opencode2api，管理后端安装更新、模型同步与 WebUI；当前从本地源码安装 |
+| [dsh-opencode2api](dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | 自动启动 opencode2api，管理后端安装更新、模型同步与 WebUI |
 | [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内提供 `127.0.0.1:8787/v1` 搜索接口，插件页卡片里配 API Key、一键接入网页搜索 |
 
 插件自身的行为与配置见各自目录下的 README。
@@ -16,15 +16,16 @@
 
 ```powershell
 dsh plugin --profile desktop add @zhiqiangme/dsh-autostart-workbuddy
+dsh plugin --profile desktop add @zhiqiangme/dsh-opencode2api
 dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search
 ```
 
-重新打开 DSH 即生效，插件出现在「插件」页。可按需单独安装；装到 Web / CLI 就把 `desktop` 换成 `web` / `headless`。opencode2api 插件当前使用下文的源码安装入口。
+重新打开 DSH 即生效，插件出现在「插件」页。可按需单独安装；装到 Web / CLI 就把 `desktop` 换成 `web` / `headless`。
 
 更新与卸载：
 
 ```powershell
-dsh plugin --profile desktop update --latest @zhiqiangme/dsh-autostart-workbuddy @zhiqiangme/dsh-tavily-search
+dsh plugin --profile desktop update --latest @zhiqiangme/dsh-autostart-workbuddy @zhiqiangme/dsh-opencode2api @zhiqiangme/dsh-tavily-search
 dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 ```
 
@@ -69,7 +70,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 ## 版本号
 
 各插件独立发版，版本号用发布日期 `年.月.日`（年取后两位，不补零）：2026-10-11 发布即 `26.10.11`。
-git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`opencode2api-v26.10.15`、`tavily-search-v26.10.11`。
+git tag 通常带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.11`；opencode2api 的 `26.10.15` 版本使用标签 `v26.10.15`。
 
 ## 参与开发
 

@@ -5,7 +5,13 @@
 
 ## 使用
 
-当前先从本地源码安装：完全退出 DSH（包括托盘），在本仓库运行：
+完全退出 DSH（包括托盘），从 npm 安装：
+
+```powershell
+dsh plugin --profile desktop add @zhiqiangme/dsh-opencode2api@26.10.15
+```
+
+也可以在本仓库从本地源码安装：
 
 ```powershell
 .\install-plugins.cmd --action install --plugins opencode2api --profiles desktop --yes
@@ -18,10 +24,10 @@
 3. 需要时在后端管理页配置 Zen / Go Key。初始配置启用匿名通道；它是否可用取决于上游，并不承诺解决免费层 403。
 4. 勾选「同步到 DSH 模型列表」，选择模型并「保存并同步」。模型分组为 `OpenCode`，provider id 为 `opencode2api`。
 
-包名预留为 `@zhiqiangme/dsh-opencode2api`，**本次开发未发布 npm**；发布后可用：
+后续更新到 npm 最新版：
 
 ```powershell
-dsh plugin --profile desktop add @zhiqiangme/dsh-opencode2api
+dsh plugin --profile desktop update --latest @zhiqiangme/dsh-opencode2api
 ```
 
 Web / CLI 使用 `web` / `headless` profile。后端安装器支持 Windows x64、ARM64；现有外部实例可用自定义 `exe` / `cwd` 接入，版本需自行维护。
