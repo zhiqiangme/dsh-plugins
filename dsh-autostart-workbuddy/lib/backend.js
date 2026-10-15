@@ -40,6 +40,9 @@ export const DEFAULT_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
 /** 默认保留的历史版本数。 */
 export const DEFAULT_KEEP_VERSIONS = 3;
 
+/** 更新失败时新包被挪去的目录后缀（见 rollbackSwap）；这些目录只留作排查，不能回滚。 */
+const FAILED_SUFFIX = '-failed';
+
 /**
  * 目录布局。`DSH_WORKBUDDY_BACKEND_ROOT` 可整体改根目录（测试与多环境用）。
  */
@@ -306,7 +309,7 @@ export function swapIn(paths, stagedExe, { from, to }) {
  */
 export function rollbackSwap(paths, swap, to, { returnTo } = {}) {
   if (isFile(paths.exe)) {
-    const target = returnTo ?? join(paths.versions, `${versionDirName(to?.tag, to?.commit)}-failed`, EXE_ENTRY);
+    const target = returnTo ?? join(paths.versions, `${versionDirName(to?.tag, to?.commit)}${FAILED_SUFFIX}`, EXE_ENTRY);
     try {
       moveFile(paths.exe, target);
     } catch {
@@ -318,11 +321,26 @@ export function rollbackSwap(paths, swap, to, { returnTo } = {}) {
   forgetBuildInfo(paths.exe);
 }
 
-/** 只保留最近 N 个历史版本（失败的 -failed 目录一并计入清理）。 */
+/**
+ * 只保留 N 个可回滚的历史版本；只在更新成功后调用。
+ *
+ * listVersions 按 exe 的修改时间排序，而换文件用 rename，修改时间是当初下载的时间，不是归档时间：
+ * 回滚过再更新时，installed.json 里的上一版本未必排在最前。所以上一版本无条件保留并占一个名额，
+ * 其余按时间补足。-failed 不占名额：更新已经成功，之前失败的包没有排查价值，一并清掉；
+ * 否则几次失败就能把真正的回滚目标挤出去。
+ */
 export function pruneVersions(paths, keep = DEFAULT_KEEP_VERSIONS) {
   if (keep <= 0) return [];
+  const previous = readManifest(paths)?.previous;
+  const previousName = previous?.revision ? versionDirName(previous.tag, previous.revision) : null;
+  const all = listVersions(paths);
+  const kept = new Set(all.some((item) => item.name === previousName) ? [previousName] : []);
+  for (const item of all) {
+    if (kept.size >= keep) break;
+    if (!item.name.endsWith(FAILED_SUFFIX)) kept.add(item.name);
+  }
   const removed = [];
-  for (const item of listVersions(paths).slice(keep)) {
+  for (const item of all.filter((entry) => !kept.has(entry.name))) {
     try {
       rmSync(item.dir, { recursive: true, force: true });
       removed.push(item.name);
