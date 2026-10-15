@@ -33,6 +33,7 @@ const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
  */
 const CATALOG = [
   { folder: 'dsh-autostart-workbuddy', alias: 'workbuddy', title: 'WorkBuddy 自动启动 + 模型同步', legacy: ['dsh-autostart-workbuddy'] },
+  { folder: 'dsh-autostart-opencode2api', alias: 'opencode2api', title: 'OpenCode API 自动启动 + 模型同步', legacy: [] },
   { folder: 'dsh-tavily-search', alias: 'tavily-search', title: 'Tavily 网页搜索', legacy: ['dsh-tavily-search', 'dsh-autostart-websearch'] },
 ].map((plugin) => {
   const dir = join(REPO_ROOT, plugin.folder);
@@ -477,7 +478,7 @@ function resolveProfiles(value) {
   return result;
 }
 
-const HELP = `用法：install-plugins.cmd [--action install|uninstall|status] [--plugins all|workbuddy|tavily-search]
+const HELP = `用法：install-plugins.cmd [--action install|uninstall|status] [--plugins all|workbuddy|opencode2api|tavily-search]
                            [--profiles desktop|web|cli|all|<其它 profile 名>] [--yes]
 不带参数时逐项询问；--plugins / --profiles 可用逗号分隔多个值。`;
 

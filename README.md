@@ -5,6 +5,7 @@
 | 插件 | npm 包 | 作用 |
 | --- | --- | --- |
 | [dsh-autostart-workbuddy](dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | DSH 启动时自动拉起 WorkBuddy Panel（`wb2api.exe`, 127.0.0.1:7863），可选接管 profile 里的 workbuddy 模型列表 |
+| [dsh-autostart-opencode2api](dsh-autostart-opencode2api/) | `@zhiqiangme/dsh-autostart-opencode2api`（尚未发布） | 自动启动 opencode2api，管理后端安装更新、模型同步与 WebUI；当前从本地源码安装 |
 | [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内提供 `127.0.0.1:8787/v1` 搜索接口，插件页卡片里配 API Key、一键接入网页搜索 |
 
 插件自身的行为与配置见各自目录下的 README。
@@ -18,7 +19,7 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-autostart-workbuddy
 dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search
 ```
 
-重新打开 DSH 即生效，插件出现在「插件」页。只装其中一个也可以；装到 Web / CLI 就把 `desktop` 换成 `web` / `headless`。
+重新打开 DSH 即生效，插件出现在「插件」页。可按需单独安装；装到 Web / CLI 就把 `desktop` 换成 `web` / `headless`。opencode2api 插件当前使用下文的源码安装入口。
 
 更新与卸载：
 
@@ -37,13 +38,14 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 双击仓库根目录的 `install-plugins.cmd`（Windows），按提示选（直接回车都是默认项）：
 
 1. 操作：**安装 / 更新**（默认）、卸载、查看安装状态
-2. 插件：**全部**（默认）、`dsh-autostart-workbuddy`、`dsh-tavily-search`
+2. 插件：**全部**（默认）、`dsh-autostart-workbuddy`、`dsh-autostart-opencode2api`、`dsh-tavily-search`
 3. 装到哪个 DSH：**Desktop**（默认）、Web（`dsh web`）、CLI（`dsh headless`）、全部三个
 
 完成后重启对应的 DSH 生效。也可以在终端里带参数一行跑完（参数都可省略，省略的会询问）：
 
 ```powershell
 .\install-plugins.cmd --action install --plugins all --profiles desktop --yes
+.\install-plugins.cmd --action install --plugins opencode2api --profiles desktop --yes
 .\install-plugins.cmd --action status --profiles desktop,web,cli
 .\install-plugins.cmd --help
 ```
@@ -62,18 +64,18 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 - 在 DSH 插件管理里**停用**过的插件，再选"安装"会重新启用。
 - 改 desktop profile 前要**完全退出桌面版**（DSH 自己的要求）；脚本检测到对应 profile 的 DSH 进程在跑会停下等你关掉，
   也可以跳过这个 profile。desktop profile 需要先打开过一次桌面版才存在；web / CLI 的 profile 第一次安装时自动创建。
-- 卸载不删 `cordis.patch.yml` 里的配置，也不删 WorkBuddy 后端（`~/.dsh/autostart-workbuddy`）。
+- 卸载不删 `cordis.patch.yml` 里的配置，也不删各插件自管的后端数据（如 `~/.dsh/autostart-workbuddy`、`~/.dsh/autostart-opencode2api`）。
 
 ## 版本号
 
-两个插件各自发版，版本号用发布日期 `年.月.日`（年取后两位，不补零）：2026-10-11 发布即 `26.10.11`。
-git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.11`。
+各插件独立发版，版本号用发布日期 `年.月.日`（年取后两位，不补零）：2026-10-11 发布即 `26.10.11`。
+git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`opencode2api-v26.10.15`、`tavily-search-v26.10.11`。
 
 ## 参与开发
 
 各插件目录下 `node --test test/*.test.mjs` 跑测试（别写 `node --test test/`）。
 
-两个插件共用一个仓库，提交信息带范围前缀，`git log --oneline` 里一眼分得清是哪个插件在动：
+各插件共用一个仓库，提交信息带范围前缀，`git log --oneline` 里一眼分得清是哪个插件在动：
 
 ```
 新增(workbuddy)：插件页的模型勾选面板
@@ -81,8 +83,8 @@ git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.1
 文档(repo)：…
 ```
 
-- **范围 = 改动涉及的插件**：`workbuddy` / `tavily-search`
-- 只涉及仓库级文件（根 `README.md`、`install-plugins.cmd`、`scripts/`），或**同时**涉及两个插件时，用 `repo`
+- **范围 = 改动涉及的插件**：`workbuddy` / `opencode2api` / `tavily-search`
+- 只涉及仓库级文件（根 `README.md`、`install-plugins.cmd`、`scripts/`），或**同时**涉及多个插件时，用 `repo`
 - 格式为 `类型(范围)：描述`，类型用 `新增 / 修复 / 文档 / 移除 / 调整 / 改进 / 测试`
 
 ## 许可

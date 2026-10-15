@@ -1,0 +1,1339 @@
+/**
+ * 浏览器半侧：DSH「插件」页里的 OpenCode 模型卡片。
+ *
+ * 为什么手写而不是过打包器：本插件是 file: 挂载的私有包，仓库里没有构建链。
+ * DSH 的客户端模块加载器只要求这个文件按 `__ModuleLoader__.load({ id, factory })`
+ * 注册一个 Cordis 插件（导出 name / inject / apply），React 由 factory 的 require 提供
+ * （react 在平台的 seed 模块表里），所以直接写一份可读的 JS 即可，改完不用构建。
+ *
+ * 卡片挂在哪（与 Trae / Qoder 同款）：
+ *   - `plugins.bundle.config`：key = npm 包名，显示在组合包页面的描述与组件列表之间；
+ *   - `plugins.row.config`：key = `<包名>#<行 id>`，给本插件那一行一个"配置"入口。
+ * 两处共用同一个组件。key 必须逐字等于包名，写错不会报错——只是卡片不出现。
+ *
+ * 数据从哪来：宿主半侧（lib/web.js）开的两条 loopback 路由。页面自己够不到
+ * 127.0.0.1:8080（跨源 + 无 CORS），也改不了 profile 里的白名单；而 DSH 的
+ * configForms 通道要求宿主半侧声明带 .volatile() 的 schemastery Config，
+ * 本插件刻意不引这个依赖，所以走自建路由。
+ *
+ * 插件更新（卡片最底部，与上面"后端版本"那块无关——那块管 opencode2api，这块管本插件自己）：
+ * 版本检查走宿主半侧的 version 路由（问 npm）；一键更新交给 dshmarket 的公开更新 API v1，
+ * 装了市场才有按钮，没装只提示有新版本，本插件不自己跑 pnpm。
+ *
+ * 样式：全部自带（data-plugin-css 标记，避免重复注入），类名统一 `dsm-oc-*`，
+ * 颜色只取 `--dsw-alias-*` 令牌，跟随主题。刻意不借用其它插件注入的类名
+ * （Trae/Qoder 的 `dsm-btn` / `dsm-plugin-card` 是它们自己的 CSS，不是宿主全局类）。
+ */
+
+// 模块 id 必须是 npm 包名：宿主的客户端模块表按包名登记，对不上就加载不到本 bundle。
+window.__ModuleLoader__.load({
+  id: '@zhiqiangme/dsh-autostart-opencode2api',
+  factory: (require) => {
+    // ModuleLoader 的 factory 只注入 require；这里自行建立 CommonJS 导出对象，
+    // 与 DSH 其它客户端 bundle 的包装约定一致。
+    const module = { exports: {} };
+    const exports = module.exports;
+
+    const React = require('react');
+    const h = React.createElement;
+    const { useCallback, useEffect, useMemo, useState } = React;
+
+    /**
+     * 宿主 UI 组件（primitives 在客户端的 seed 模块表里）。只取 Modal 做"二次确认"弹窗；
+     * 拿不到就退回卡片内的行内确认——不能因为一个可选依赖让整块卡片加载失败。
+     */
+    let Modal;
+    try {
+      Modal = require('@deepseek-ai/dsh-client-ui-primitives')?.Modal;
+    } catch {
+      Modal = undefined;
+    }
+
+    const name = 'dsh-autostart-opencode2api-client';
+    const inject = ['slots', 'locale'];
+    const namespace = 'settings.dsh-autostart-opencode2api';
+    /** 与 lib/web.js 的两个端点必须一致。 */
+    const MODELS_PATH = '/plugins/dsh-autostart-opencode2api/models';
+    const BACKEND_PATH = '/plugins/dsh-autostart-opencode2api/backend';
+    /**
+     * 后端管理面板地址的兜底值。宿主会在 /backend 的应答里给出真实地址
+     * （host/port 可被 profile 覆盖），拿不到时才用这个。
+     */
+    const DEFAULT_PANEL_URL = 'http://127.0.0.1:8081/';
+    /** 宿主半侧的控制台访问密钥路由（lib/web.js）：POST 才给，点「复制访问密钥」时取一次。 */
+    const PANEL_KEY_PATH = '/plugins/dsh-autostart-opencode2api/panel-key';
+
+    /** 本插件的 npm 包名：dshmarket 按它定位要更新的依赖。 */
+    const PACKAGE_NAME = '@zhiqiangme/dsh-autostart-opencode2api';
+    /** 宿主半侧的版本检查路由（lib/web.js），?force=1 绕过它的 10 分钟缓存。 */
+    const VERSION_PATH = '/plugins/dsh-autostart-opencode2api/version';
+    /**
+     * dshmarket 的公开更新 API v1（其包内 UPDATE-API-V1.md）。只认 capabilities 这一个固定入口，
+     * 其余路径按它答复里的 endpoints 走；答复的 schema 对不上就当市场不存在，不去猜旧路由。
+     */
+    const MARKET_CAPABILITIES_PATH = '/dsh-market/api/v1/capabilities';
+    const MARKET_SCHEMA = 'dsh-market/update-api/v1';
+    const MARKET_DEFAULT_ENDPOINTS = {
+      updates: '/dsh-market/api/v1/updates',
+      operations: '/dsh-market/api/v1/operations',
+      restart: '/dsh-market/api/v1/restart',
+    };
+    /** 轮询更新任务的间隔：pnpm 一次更新通常十几秒，1s 足够跟上进度又不刷屏。 */
+    const POLL_MS = 1000;
+    /**
+     * 进行中的更新任务记在 sessionStorage：更新本插件自己时 DSH 可能热重载本 bundle，
+     * 卡片会被卸下再挂上，靠它接着轮询同一个任务，而不是丢掉进度。
+     */
+    const OPERATION_STORAGE_KEY = 'dsh-autostart-opencode2api:update-operation';
+    /** dshmarket 认为"可以带 force 重试"的两种失败：发布冷却期未过 / 装完版本没变。 */
+    const FORCEABLE_FAILURES = new Set(['RELEASE_TOO_FRESH', 'VERSION_UNCHANGED']);
+
+    /** 后端动作 → 成功后的提示文案 key。 */
+    const BACKEND_NOTICE = {
+      install: 'backendInstalled',
+      update: 'backendUpdated',
+      rollback: 'backendRolledBack',
+      uninstall: 'backendUninstalled',
+    };
+
+    const CSS = `
+.dsm-oc-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;padding:14px 16px}
+.dsm-oc-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:15px;font-weight:600;line-height:1.4}
+.dsm-oc-desc{margin:4px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
+.dsm-oc-panel{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
+/* 外链用 DSH 自己那套：http(s) + target=_blank，宿主主窗口的 setWindowOpenHandler
+   会把它交给 shell.openExternal，即默认浏览器打开。 */
+.dsm-oc-link{color:var(--dsw-alias-state-business-primary,#5686fe);text-decoration:none;cursor:pointer}
+.dsm-oc-link:hover{text-decoration:underline}
+.dsm-oc-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 0 8px}
+.dsm-oc-count{flex:1;min-width:120px;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
+.dsm-oc-sync{display:flex;align-items:center;gap:8px;margin-top:12px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;cursor:pointer}
+.dsm-oc-sync input{margin:0;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
+.dsm-oc-btn{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 14px;font-size:13px;line-height:1.5}
+.dsm-oc-btn:disabled{cursor:default}
+/* 主按钮用"反色"配色，不用 --dsw-alias-brand-primary 当底色：本主题把
+   brand-primary 定义成 --dsw-alias-label-primary（深色模式下 #f9fafb，接近纯白），
+   拿它当背景再配白字就是白底白字。label-primary 当底 + bg-layer-3 当字，
+   明暗两种主题都成立（Trae 的 .dsm-btn-primary 也是这个写法）。 */
+.dsm-oc-btn-primary{background:var(--dsw-alias-label-primary,#e6e6e6);color:var(--dsw-alias-bg-layer-3,#202126)}
+.dsm-oc-btn-primary:hover:not(:disabled){opacity:.88}
+.dsm-oc-btn-outline{background:transparent;border-color:var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-oc-btn-outline:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed,#777);color:var(--dsw-alias-label-primary,#e6e6e6)}
+/* 禁用态给明确的弱化配色，而不是整体降透明度——降透明度会把文字一起洗掉，
+   深色主题下就变成"看不清字"的灰块。 */
+.dsm-oc-btn-primary:disabled{background:var(--dsw-alias-bg-layer-2,#25262b);color:var(--dsw-alias-label-dimmed,#8a8f99);border-color:var(--dsw-alias-border-l2,#36373b)}
+.dsm-oc-btn-outline:disabled{color:var(--dsw-alias-label-dimmed,#8a8f99)}
+.dsm-oc-list{display:flex;flex-direction:column;gap:2px;max-height:340px;overflow:auto;padding:2px 0}
+.dsm-oc-row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;cursor:pointer}
+.dsm-oc-row:hover{background:var(--dsw-alias-bg-layer-2,#25262b)}
+.dsm-oc-row input{margin:0;flex:none;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
+.dsm-oc-label{flex:1;min-width:0;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsm-oc-meta{flex:none;display:flex;align-items:center;gap:6px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px}
+.dsm-oc-credits{flex:none;font-variant-numeric:tabular-nums;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;padding:1px 6px;font-size:12px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-oc-credits-free{color:var(--dsw-alias-state-success-primary,#3fb950);border-color:currentColor}
+.dsm-oc-tag{flex:none;border-radius:6px;padding:1px 6px;font-size:12px;border:1px solid var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-tertiary,#999)}
+.dsm-oc-hint{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
+.dsm-oc-notice{margin:8px 0 0;font-size:13px;line-height:1.6}
+.dsm-oc-notice-ok{color:var(--dsw-alias-state-success-primary,#3fb950)}
+.dsm-oc-notice-error{color:var(--dsw-alias-state-error-primary,#d92d20)}
+.dsm-oc-empty{padding:12px 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px}
+.dsm-oc-panel-key{margin-left:8px;padding:1px 10px;font-size:12px}
+.dsm-oc-key{display:inline-block;margin-left:4px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;font-family:ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary,#e6e6e6);user-select:all;word-break:break-all}
+.dsm-oc-path{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;word-break:break-all}
+.dsm-oc-backend{margin-top:14px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px}
+.dsm-oc-backend-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dsm-oc-backend-title{flex:1;min-width:100px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
+.dsm-oc-backend-line{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6;word-break:break-all}
+.dsm-oc-backend-line strong{color:var(--dsw-alias-label-secondary,#c6c9d0);font-weight:500}
+.dsm-oc-badge{flex:none;border-radius:6px;padding:1px 6px;font-size:12px;border:1px solid var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-tertiary,#999)}
+.dsm-oc-badge-new{color:var(--dsw-alias-state-warning-primary,#d29922);border-color:currentColor}
+.dsm-oc-badge-ok{color:var(--dsw-alias-state-success-primary,#3fb950);border-color:currentColor}
+/* 危险动作（卸载）用错误色描边；不做成实心红，避免误点。 */
+.dsm-oc-btn-danger{background:transparent;border-color:var(--dsw-alias-state-error-primary,#d92d20);color:var(--dsw-alias-state-error-primary,#d92d20)}
+.dsm-oc-btn-danger:hover:not(:disabled){background:rgba(217,45,32,.12)}
+.dsm-oc-confirm{margin-top:10px;border:1px solid var(--dsw-alias-state-warning-primary,#d29922);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#25262b);padding:12px 14px}
+.dsm-oc-confirm-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
+.dsm-oc-confirm-body{margin-top:4px}
+`;
+
+    // 字典值必须是**字符串**：DSH 的 t(key, params) 用 `{name}` 占位符插值
+    // （见 @deepseek-ai/dsh-client-locale 的 bind）。放函数会让 t() 返回函数本身，
+    // React 拿它当 child 直接抛错，整块卡片从页面上消失——这个坑已经踩过一次。
+    const zh = {
+      title: 'OpenCode 模型列表',
+      description: '勾选要同步到 DSH 的模型。价格为每百万 token 的输入 / 输出美元单价；目录可见不代表推理可用。',
+      summary: '由插件接管 OpenCode 的模型列表（勾选与能力同步）。',
+      loading: '正在读取后端模型…',
+      retry: '重试',
+      selectAll: '全部勾选',
+      clearAll: '全部取消',
+      refresh: '刷新',
+      save: '保存',
+      saveSync: '保存并同步',
+      syncEnabled: '同步到 DSH 模型列表',
+      syncHint: '开启后，保存会立即更新 OpenCode 模型列表，以后启动 DSH 时也会自动同步。',
+      saving: '保存中…',
+      count: '后端共 {total} 个模型，已勾选 {picked} 个',
+      vision: '视觉',
+      emptyBackend: '后端没有返回任何模型。',
+      emptyHint: '一个都没勾 = 同步后端全部模型（白名单留空的既有语义）。',
+      disabledHint: '模型同步已关闭，保存只更新勾选结果。勾选“同步到 DSH 模型列表”并保存，即可生成模型清单。',
+      savedSync: '已保存，并已重新生成模型清单：{count} 个模型。',
+      savedNoSync: '已保存白名单；模型清单未更新（{state}）。',
+      savedDisabled: '已保存，同步已关闭；保留现有 DSH 模型列表。',
+      saveFailed: '保存失败。',
+      patchPath: '写入目标：{path}',
+      panelHint: '后端面板：',
+      panelKeyCopy: '复制初始管理密码',
+      panelKeyWorking: '读取中…',
+      panelKeyCopied: 'Initial admin password copied. Sign in as admin; use your new password if you have changed it.',
+      panelKeyManual: '没能写入剪贴板，请手动选中复制：',
+      panelKeyNone: 'Use the admin credentials configured for your backend.',
+      backendTitle: '后端版本',
+      backendCurrent: '当前 {version}',
+      backendLatest: '上游 {tag}',
+      backendUpToDate: '已是最新',
+      backendAvailable: '可更新到 {tag}',
+      backendCheck: '检查更新',
+      backendUpdate: '更新',
+      backendRollback: '回滚',
+      backendWorking: '处理中…',
+      backendUpdated: '已更新到 {tag}，健康检查通过。',
+      backendRolledBack: '已回滚到 {tag}。',
+      backendUnmanaged: '未纳管',
+      backendNoHistory: '历史版本：无',
+      backendHistory: '历史版本：{list}',
+      backendBuilt: '构建于 {time}',
+      backendInstall: '安装',
+      backendUninstall: '卸载',
+      backendInstalled: '后端已安装 {tag}。',
+      backendNoAccounts: '后端进程已启动，模型目录尚未就绪；请打开管理页检查上游配置与连接状态。',
+      backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
+      cancel: '取消',
+      uninstallTitle: '卸载后端？',
+      uninstallDesc: '会停止后端，并删除程序文件：opencode2api.exe、历史版本、下载缓存。',
+      uninstallKept: '账号凭证与状态（data/）以及 config.json 会保留。',
+      uninstallConfirm: '确认卸载',
+      updateTitle: '插件更新',
+      updateChecking: '正在检查更新…',
+      updateCheck: '检查更新',
+      updateCheckFailed: '检查更新失败：{reason}',
+      updateCurrent: '当前运行版本：',
+      updateLatestVersion: 'npm 最新版本：',
+      updateUpToDate: '已是最新',
+      updateAvailable: '有新版本',
+      updatePendingRestart: '等待重启',
+      updatePendingRefresh: '等待刷新',
+      updateNow: '更新到 v{version}',
+      updateNoMarket: '装上 DSH 插件市场（dshmarket）后可以在这里一键更新；也可以在「插件」页卸载本插件，再重新安装新版。',
+      updateLinked: '本插件是从本地目录（file:）安装的，dshmarket 不更新本地安装。请在源码目录拉取新代码后重新安装；改为从 npm 安装后，才能在这里一键更新。',
+      updateManaged: '本插件由 DSH 桌面端统一管理，dshmarket 不会更新它。请在「插件」页卸载后重新安装新版。',
+      updateRunning: '正在更新…',
+      updateProgress: '正在更新… {percent}%',
+      updateStartFailed: '没能开始更新：{reason}',
+      updateSucceeded: '已更新到 v{version}。',
+      updateRestartHint: '重启 DSH 后生效。',
+      updateRefreshHint: '刷新页面后生效。',
+      updateMismatch: '注意：装上的是 v{installed}，不是预期的 v{target}。',
+      updateFailed: '更新失败：{reason}',
+      updateTooFresh: '新版本刚发布，还没过 pnpm 的发布冷却期。可以稍后再试，或强制更新。',
+      updateForce: '强制更新',
+      updateCancelled: '更新已取消。',
+      updateRolledBack: '更新已回滚，插件保持在 v{version}。',
+      updateLost: '上次的更新任务已经结束或 DSH 已重启，以当前显示的版本为准。',
+      restartNow: '立即重启 DSH',
+      restarting: '正在重启 DSH…',
+      restartFailed: '重启失败：{reason}',
+    };
+
+    const en = {
+      title: 'OpenCode models',
+      description: 'Select models for DSH. Prices are input / output USD per million tokens. A catalog entry does not prove inference availability.',
+      summary: 'This plugin manages the OpenCode model list (selection and capabilities).',
+      loading: 'Reading models from the backend…',
+      retry: 'Retry',
+      selectAll: 'Select all',
+      clearAll: 'Clear all',
+      refresh: 'Refresh',
+      save: 'Save',
+      saveSync: 'Save and sync',
+      syncEnabled: 'Sync to the DSH model list',
+      syncHint: 'When enabled, saving updates the OpenCode model list immediately and DSH syncs it again on startup.',
+      saving: 'Saving…',
+      count: '{total} models on the backend, {picked} selected',
+      vision: 'vision',
+      emptyBackend: 'The backend returned no models.',
+      emptyHint: 'Selecting nothing means “sync every backend model” (the existing meaning of an empty allow-list).',
+      disabledHint: 'Model sync is off; saving only updates the selection. Enable “Sync to the DSH model list” and save to generate the list.',
+      savedSync: 'Saved and regenerated the model list: {count} models.',
+      savedNoSync: 'Allow-list saved; the model list was not updated ({state}).',
+      savedDisabled: 'Saved with sync off; the existing DSH model list is kept.',
+      saveFailed: 'Save failed.',
+      patchPath: 'Written to: {path}',
+      panelHint: 'Panel: ',
+      panelKeyCopy: 'Copy initial admin password',
+      panelKeyWorking: 'Reading…',
+      panelKeyCopied: 'Initial admin password copied. Sign in as admin; use your new password if you have changed it.',
+      panelKeyManual: 'Could not write to the clipboard; select and copy it manually: ',
+      panelKeyNone: 'Use the admin credentials configured for your backend.',
+      backendTitle: 'Backend version',
+      backendCurrent: 'current {version}',
+      backendLatest: 'upstream {tag}',
+      backendUpToDate: 'up to date',
+      backendAvailable: 'update to {tag} available',
+      backendCheck: 'Check',
+      backendUpdate: 'Update',
+      backendRollback: 'Roll back',
+      backendWorking: 'Working…',
+      backendUpdated: 'Updated to {tag}; health check passed.',
+      backendRolledBack: 'Rolled back to {tag}.',
+      backendUnmanaged: 'unmanaged',
+      backendNoHistory: 'History: none',
+      backendHistory: 'History: {list}',
+      backendBuilt: 'built {time}',
+      backendInstall: 'Install',
+      backendUninstall: 'Uninstall',
+      backendInstalled: 'Backend installed: {tag}.',
+      backendNoAccounts: 'The backend is running but its catalog is not ready. Check upstream configuration and connectivity in the admin UI.',
+      backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
+      cancel: 'Cancel',
+      uninstallTitle: 'Uninstall the backend?',
+      uninstallDesc: 'Stops the backend and deletes its program files: opencode2api.exe, archived versions, download cache.',
+      uninstallKept: 'Credentials and state (data/) plus config.json are kept.',
+      uninstallConfirm: 'Uninstall',
+      updateTitle: 'Plugin update',
+      updateChecking: 'Checking for updates…',
+      updateCheck: 'Check for updates',
+      updateCheckFailed: 'Update check failed: {reason}',
+      updateCurrent: 'Running version: ',
+      updateLatestVersion: 'Latest on npm: ',
+      updateUpToDate: 'up to date',
+      updateAvailable: 'update available',
+      updatePendingRestart: 'waiting for restart',
+      updatePendingRefresh: 'waiting for reload',
+      updateNow: 'Update to v{version}',
+      updateNoMarket: 'Install the DSH plugin market (dshmarket) to update from here, or uninstall this plugin on the Plugins page and install the new version.',
+      updateLinked: 'This plugin is installed from a local directory (file:), which dshmarket does not update. Pull the new code in the source directory and reinstall, or reinstall it from npm to update from here.',
+      updateManaged: 'This plugin is managed by the DSH desktop app, so dshmarket will not update it. Uninstall it on the Plugins page and install the new version.',
+      updateRunning: 'Updating…',
+      updateProgress: 'Updating… {percent}%',
+      updateStartFailed: 'Could not start the update: {reason}',
+      updateSucceeded: 'Updated to v{version}.',
+      updateRestartHint: 'Restart DSH to apply it.',
+      updateRefreshHint: 'Reload the page to apply it.',
+      updateMismatch: 'Note: v{installed} was installed, not the expected v{target}.',
+      updateFailed: 'Update failed: {reason}',
+      updateTooFresh: 'The new version is still inside pnpm\'s release cool-down. Try again later, or force the update.',
+      updateForce: 'Force update',
+      updateCancelled: 'Update cancelled.',
+      updateRolledBack: 'Update rolled back; the plugin stays at v{version}.',
+      updateLost: 'The previous update task has finished or DSH restarted; the version shown here is current.',
+      restartNow: 'Restart DSH now',
+      restarting: 'Restarting DSH…',
+      restartFailed: 'Restart failed: {reason}',
+    };
+
+    function ensureStyle() {
+      const id = `${name}/client.css`;
+      if (document.querySelector(`style[data-plugin-css="${id}"]`)) return;
+      const tag = document.createElement('style');
+      tag.dataset.plugin = name;
+      tag.dataset.pluginCss = id;
+      tag.textContent = CSS;
+      document.head.appendChild(tag);
+    }
+
+    /** 调宿主半侧的路由；HTTP 层的失败也翻成 Error，交给卡片显示。 */
+    async function request(path, method, body) {
+      const response = await fetch(path, {
+        method,
+        headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      let payload;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = undefined;
+      }
+      if (!payload) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) throw new Error(payload.reason ?? `HTTP ${response.status}`);
+      return payload;
+    }
+
+    /** 区域排序：cn 在前、global 在后（与 profile 里模型清单的既有排布一致）。 */
+    function regionRank(id) {
+      if (id.startsWith('cn:')) return 0;
+      if (id.startsWith('global:')) return 1;
+      return 2;
+    }
+
+    /** 面板的展示顺序：区域（cn → global → 其它），区域内保持后端返回顺序。 */
+    function sortRows(rows) {
+      return rows
+        .map((row, index) => ({ row, index }))
+        .sort((a, b) => regionRank(a.row.id) - regionRank(b.row.id) || a.index - b.index)
+        .map((entry) => entry.row);
+    }
+
+    /**
+     * 保存用的白名单：按面板展示顺序排，而不是勾选的先后。
+     *
+     * 白名单的顺序就是 DSH 模型选择器里的展示顺序（见 models.js 的 planModelEntries）；
+     * 用 Set 的插入顺序会让"取消再勾上"的模型跑到最后，每改一次顺序就漂一次。
+     */
+    function orderedSelection(rows, picked) {
+      return sortRows(rows)
+        .filter((row) => picked.has(row.id))
+        .map((row) => row.id);
+    }
+
+    function formatTokens(value) {
+      if (!value) return undefined;
+      if (value >= 1_000_000) return `${Math.round((value / 1_000_000) * 10) / 10}M`;
+      if (value >= 1000) return `${Math.round(value / 1000)}K`;
+      return String(value);
+    }
+
+    function sameSet(a, b) {
+      if (a.size !== b.size) return false;
+      for (const item of a) if (!b.has(item)) return false;
+      return true;
+    }
+
+    /**
+     * 卸载的二次确认。优先用宿主的 Modal（真弹窗，走 portal）；拿不到宿主组件就退回
+     * 卡片内的行内确认——两种形态都保证"再点一次才真的删"。
+     */
+    function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm }) {
+      const cancel = h(
+        'button',
+        { key: 'cancel', type: 'button', className: 'dsm-oc-btn dsm-oc-btn-outline', onClick: onCancel },
+        t('cancel'),
+      );
+      const confirm = h(
+        'button',
+        { key: 'confirm', type: 'button', className: 'dsm-oc-btn dsm-oc-btn-danger', onClick: onConfirm },
+        t('uninstallConfirm'),
+      );
+      const detail = h(
+        'div',
+        { className: 'dsm-oc-confirm-body' },
+        h('p', { className: 'dsm-oc-hint' }, t('uninstallDesc')),
+        h('p', { className: 'dsm-oc-hint' }, t('uninstallKept')),
+      );
+
+      if (typeof Modal === 'function') {
+        return h(
+          Modal,
+          {
+            key: 'confirm',
+            open: true,
+            onClose: onCancel,
+            title: t('uninstallTitle'),
+            description: t('uninstallDesc'),
+            footer: [cancel, confirm],
+          },
+          detail,
+        );
+      }
+      return h(
+        'div',
+        { key: 'confirm', className: 'dsm-oc-confirm' },
+        h('div', { className: 'dsm-oc-confirm-title' }, t('uninstallTitle')),
+        detail,
+        h('div', { className: 'dsm-oc-toolbar' }, cancel, confirm),
+      );
+    }
+
+    function errorText(error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+
+    function wbButton(key, kind, label, onClick, disabled) {
+      return h('button', { key, type: 'button', className: `dsm-oc-btn dsm-oc-btn-${kind}`, disabled, onClick }, label);
+    }
+
+    function wbNotice(key, value) {
+      if (!value) return null;
+      return h(
+        'p',
+        { key, className: `dsm-oc-notice ${value.kind === 'error' ? 'dsm-oc-notice-error' : 'dsm-oc-notice-ok'}` },
+        value.text,
+      );
+    }
+
+    /**
+     * 调 dshmarket 的 v1 API。与 request() 分开：市场的失败体是 `{ error, failure }` 而不是 `{ reason }`，
+     * 409 / 404 这类状态码本身就是要展示的结果，所以这里不抛，原样交回状态码与响应体。
+     */
+    async function marketRequest(path, method, body) {
+      const response = await fetch(path, {
+        method,
+        headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      let payload;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = undefined;
+      }
+      return { status: response.status, body: payload };
+    }
+
+    /**
+     * dshmarket 只一键更新从 npm / git 装的插件。file:/link: 的本地目录安装（source 'linked'）它会直接拒绝
+     * （"locally linked plugins update from their checkout"），桌面端自带的 generation 安装也只报版本、不给更新。
+     * 所以先问一次本插件的安装来源，免得按钮点下去才失败。问不到（市场报错、网络抖动）时不拦着，
+     * 真点了失败也还有失败提示兜底。
+     */
+    const MARKET_UNMANAGED_SOURCES = new Set(['linked', 'generation']);
+
+    async function installSourceOf(updatesPath) {
+      try {
+        const result = await marketRequest(`${updatesPath}?name=${encodeURIComponent(PACKAGE_NAME)}`, 'GET');
+        const source = result.status === 200 ? result.body?.package?.source : undefined;
+        if (typeof source !== 'string') return {};
+        return { source, updatable: !MARKET_UNMANAGED_SOURCES.has(source) };
+      } catch {
+        return {};
+      }
+    }
+
+    /** 市场失败体 → 一句可展示的原因。 */
+    function marketReason(result) {
+      return result.body?.failure?.message ?? result.body?.error ?? `HTTP ${result.status}`;
+    }
+
+    /** sessionStorage 读写都可能抛（隐私模式、存储被禁），失败就当没有记录。 */
+    function readStoredOperation() {
+      try {
+        const value = JSON.parse(window.sessionStorage.getItem(OPERATION_STORAGE_KEY) ?? 'null');
+        return typeof value?.operationId === 'string' ? value : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+
+    function storeOperation(value) {
+      try {
+        if (value) window.sessionStorage.setItem(OPERATION_STORAGE_KEY, JSON.stringify(value));
+        else window.sessionStorage.removeItem(OPERATION_STORAGE_KEY);
+      } catch {
+        /* 存不下只是少了"重挂后接着轮询"，不影响本次更新 */
+      }
+    }
+
+    /** `x.y.z` 数字段比较（与 lib/update.js 同口径的简化版，用来核对实际安装版本与目标/最新版本）。 */
+    function versionBelow(installed, target) {
+      const parse = (value) => /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(value ?? ''))?.slice(1, 4).map(Number);
+      const left = parse(installed);
+      const right = parse(target);
+      if (!left || !right) return String(installed ?? '') !== String(target ?? '');
+      for (let index = 0; index < 3; index += 1) {
+        if (left[index] !== right[index]) return left[index] < right[index];
+      }
+      return false;
+    }
+
+    function isActiveOperation(operation) {
+      return operation?.state === 'queued' || operation?.state === 'running';
+    }
+
+    /**
+     * 「插件更新」区块的纯渲染（与后端版本区同款排版）。
+     * version / market 缺省时按"读取中"处理：首屏和测试替身里 hooks 状态可能还是 undefined。
+     *
+     * @param {{ version?: object, market?: object, operation?: object, target?: string, notice?: object, busy?: boolean, restart?: object }} update
+     */
+    function renderUpdateSection(update, actions, t) {
+      const version = update.version ?? { phase: 'loading' };
+      const market = update.market ?? { phase: 'loading' };
+      const operation = update.operation;
+      const running = Boolean(update.busy) || isActiveOperation(operation);
+      const ready = version.phase === 'ready';
+
+      // 当前运行版本要等重启/刷新才换；仅当实际安装版本覆盖当前查到的最新版时，
+      // 才用成功结果覆盖徽章。镜像落后或再查到更高版本时，仍需提供更新入口。
+      const latestInstalled = operation?.state === 'succeeded' && !versionBelow(operation.installedVersion, version.latestVersion);
+      const head = [h('span', { key: 'title', className: 'dsm-oc-backend-title' }, t('updateTitle'))];
+      if (ready) {
+        const badge = latestInstalled
+          ? operation.outcome?.restartRequired
+            ? { tone: 'new', text: t('updatePendingRestart') }
+            : operation.outcome?.refreshRequired
+              ? { tone: 'new', text: t('updatePendingRefresh') }
+              : { tone: 'ok', text: t('updateUpToDate') }
+          : version.updateAvailable
+            ? { tone: 'new', text: t('updateAvailable') }
+            : { tone: 'ok', text: t('updateUpToDate') };
+        head.push(h('span', { key: 'badge', className: `dsm-oc-badge dsm-oc-badge-${badge.tone}` }, badge.text));
+      }
+      head.push(wbButton('check', 'outline', t('updateCheck'), actions.checkUpdate, version.phase === 'loading' || running));
+      // 只隐藏已安装版本覆盖的更新，避免重复安装，同时允许补齐或继续升级。
+      if (ready && !latestInstalled && version.updateAvailable && market.phase === 'ready' && market.updatable !== false) {
+        head.push(
+          wbButton('update', 'primary', running ? t('updateRunning') : t('updateNow', { version: version.latestVersion }), () => actions.startUpdate(false), running),
+        );
+      }
+
+      const section = [h('div', { key: 'head', className: 'dsm-oc-backend-head' }, head)];
+      if (version.phase === 'loading') {
+        section.push(h('p', { key: 'checking', className: 'dsm-oc-backend-line' }, t('updateChecking')));
+      } else if (version.phase === 'error') {
+        section.push(wbNotice('checkError', { kind: 'error', text: t('updateCheckFailed', { reason: version.reason }) }));
+      }
+      if (version.currentVersion) {
+        section.push(
+          h(
+            'p',
+            { key: 'versions', className: 'dsm-oc-backend-line' },
+            t('updateCurrent'),
+            h('strong', null, `v${version.currentVersion}`),
+            ready ? '  ·  ' : null,
+            ready ? t('updateLatestVersion') : null,
+            ready ? h('strong', null, `v${version.latestVersion}`) : null,
+          ),
+        );
+      }
+      if (ready && version.updateAvailable && market.phase === 'absent' && !operation) {
+        section.push(h('p', { key: 'noMarket', className: 'dsm-oc-hint' }, t('updateNoMarket')));
+      }
+      if (ready && version.updateAvailable && market.phase === 'ready' && market.updatable === false && !operation) {
+        section.push(h('p', { key: 'unmanaged', className: 'dsm-oc-hint' }, t(market.source === 'linked' ? 'updateLinked' : 'updateManaged')));
+      }
+
+      if (isActiveOperation(operation)) {
+        const percent = operation.progress?.percent;
+        section.push(
+          h('p', { key: 'progress', className: 'dsm-oc-backend-line' }, typeof percent === 'number' ? t('updateProgress', { percent }) : t('updateRunning')),
+        );
+        if (operation.progress?.detail) section.push(h('p', { key: 'detail', className: 'dsm-oc-hint' }, operation.progress.detail));
+      } else if (operation?.state === 'succeeded') {
+        const parts = [t('updateSucceeded', { version: operation.installedVersion })];
+        if (operation.outcome?.restartRequired) parts.push(t('updateRestartHint'));
+        else if (operation.outcome?.refreshRequired) parts.push(t('updateRefreshHint'));
+        section.push(wbNotice('done', { kind: 'ok', text: parts.join(' ') }));
+        // 文档要求客户端自己再核对一次：市场回报成功，不等于装上的就是卡片上答应的那个版本
+        if (update.target && versionBelow(operation.installedVersion, update.target)) {
+          section.push(wbNotice('mismatch', { kind: 'error', text: t('updateMismatch', { installed: operation.installedVersion, target: update.target }) }));
+        }
+        if (operation.outcome?.restartRequired && market.restartSupported) {
+          const restartBusy = update.restart?.phase === 'busy' || update.restart?.phase === 'done';
+          section.push(
+            h(
+              'div',
+              { key: 'restart', className: 'dsm-oc-toolbar' },
+              wbButton('restart', 'primary', restartBusy ? t('restarting') : t('restartNow'), actions.restart, restartBusy),
+            ),
+          );
+        }
+      } else if (operation?.state === 'failed') {
+        const code = operation.failure?.code;
+        const reason = code === 'RELEASE_TOO_FRESH' ? t('updateTooFresh') : t('updateFailed', { reason: operation.failure?.message ?? code ?? '' });
+        section.push(wbNotice('failed', { kind: 'error', text: reason }));
+        if (FORCEABLE_FAILURES.has(code)) {
+          section.push(
+            h('div', { key: 'force', className: 'dsm-oc-toolbar' }, wbButton('force', 'danger', t('updateForce'), () => actions.startUpdate(true), running)),
+          );
+        }
+      } else if (operation?.state === 'cancelled') {
+        section.push(wbNotice('cancelled', { kind: 'error', text: t('updateCancelled') }));
+      } else if (operation?.state === 'rolled-back') {
+        section.push(wbNotice('rolledBack', { kind: 'error', text: t('updateRolledBack', { version: operation.installedVersion }) }));
+      }
+      if (update.restart?.phase === 'error') {
+        section.push(wbNotice('restartError', { kind: 'error', text: t('restartFailed', { reason: update.restart.reason }) }));
+      }
+      section.push(wbNotice('updateNotice', update.notice));
+      return section;
+    }
+
+    /**
+     * 「插件更新」区块的状态与动作：版本检查走本插件的宿主路由，更新与重启交给 dshmarket，
+     * 本插件不碰 pnpm，也不自己改 profile。
+     * 读状态处都带 `?.`：测试替身按调用顺序喂 useState，这几个状态在那里可能是 undefined。
+     */
+    function useUpdater(t) {
+      const [version, setVersion] = useState({ phase: 'loading' });
+      const [market, setMarket] = useState({ phase: 'loading' });
+      const [operation, setOperation] = useState(undefined);
+      const [target, setTarget] = useState(undefined);
+      const [busy, setBusy] = useState(false);
+      const [notice, setNotice] = useState(undefined);
+      const [restart, setRestart] = useState(undefined);
+
+      const loadVersion = useCallback(async (force) => {
+        // 保留上一次的版本号：重新检查时"当前运行版本"那一行不闪
+        setVersion((previous) => ({ ...previous, phase: 'loading' }));
+        try {
+          const payload = await request(force ? `${VERSION_PATH}?force=1` : VERSION_PATH, 'GET');
+          setVersion(
+            payload.ok
+              ? { phase: 'ready', ...payload }
+              : { phase: 'error', currentVersion: payload.currentVersion, reason: payload.reason },
+          );
+        } catch (error) {
+          setVersion({ phase: 'error', reason: errorText(error) });
+        }
+      }, []);
+
+      const probeMarket = useCallback(async () => {
+        try {
+          const result = await marketRequest(MARKET_CAPABILITIES_PATH, 'GET');
+          const body = result.body;
+          // 没装 dshmarket 时这条路径由宿主答 404（多半不是 JSON），schema 对不上同样当作不存在
+          if (result.status !== 200 || body?.schema !== MARKET_SCHEMA || body.features?.update !== true) {
+            setMarket({ phase: 'absent' });
+            return;
+          }
+          const ready = {
+            phase: 'ready',
+            bootId: typeof body.bootId === 'string' ? body.bootId : undefined,
+            // 桌面版的重启归桌面壳管，市场会答 supported:false，此时不显示重启按钮
+            restartSupported: body.restart?.supported === true,
+            endpoints: { ...MARKET_DEFAULT_ENDPOINTS, ...body.endpoints },
+          };
+          Object.assign(ready, await installSourceOf(ready.endpoints.updates));
+          setMarket(ready);
+          // 卡片被卸下再挂上（例如本插件被热重载）时接着轮询原来的任务。
+          // 任务 id 以市场进程的 bootId 开头：对不上说明 DSH 已重启，旧记录直接丢弃
+          const stored = readStoredOperation();
+          if (stored && ready.bootId && !stored.operationId.startsWith(`${ready.bootId}-`)) {
+            storeOperation(undefined);
+          } else if (stored) {
+            setTarget(stored.target);
+            setOperation((current) => current ?? { operationId: stored.operationId, state: 'running' });
+          }
+        } catch {
+          setMarket({ phase: 'absent' });
+        }
+      }, []);
+
+      useEffect(() => {
+        loadVersion(false);
+        probeMarket();
+      }, [loadVersion, probeMarket]);
+
+      // 轮询进行中的任务。用 setTimeout 链而不是 setInterval：慢响应时不会叠出并发请求
+      const operationId = operation?.operationId;
+      const active = isActiveOperation(operation);
+      const operationsPath = market?.endpoints?.operations;
+      useEffect(() => {
+        if (!operationId || !active || !operationsPath) return undefined;
+        let stopped = false;
+        let timer;
+        const tick = async () => {
+          let result;
+          try {
+            result = await marketRequest(`${operationsPath}?operationId=${encodeURIComponent(operationId)}`, 'GET');
+          } catch {
+            result = undefined; // 网络抖动或宿主正在重载：下一拍再问
+          }
+          if (stopped) return;
+          if (result?.status === 404) {
+            // 任务记录只活在市场当前进程里，查不到说明进程已经换过
+            storeOperation(undefined);
+            setOperation(undefined);
+            setNotice({ kind: 'ok', text: t('updateLost') });
+            return;
+          }
+          const next = result?.body?.operation;
+          if (next && typeof next.state === 'string') {
+            setOperation(next);
+            if (!isActiveOperation(next)) {
+              storeOperation(undefined);
+              return;
+            }
+          }
+          timer = setTimeout(tick, POLL_MS);
+        };
+        timer = setTimeout(tick, POLL_MS);
+        return () => {
+          stopped = true;
+          clearTimeout(timer);
+        };
+      }, [operationId, active, operationsPath, t]);
+
+      const startUpdate = useCallback(
+        async (force) => {
+          const path = market?.endpoints?.updates;
+          if (!path) return;
+          const goal = version?.latestVersion;
+          setBusy(true);
+          setNotice(undefined);
+          setRestart(undefined);
+          setOperation(undefined);
+          try {
+            // force 只在市场报了发布冷却期 / 版本未变之后由用户显式选择（文档的约定）
+            const result = await marketRequest(path, 'POST', force ? { packageName: PACKAGE_NAME, force: true } : { packageName: PACKAGE_NAME });
+            const next = result.body?.operation;
+            if (result.status === 202 && typeof next?.operationId === 'string') {
+              setTarget(goal);
+              setOperation(next);
+              storeOperation({ operationId: next.operationId, target: goal });
+            } else {
+              setNotice({ kind: 'error', text: t('updateStartFailed', { reason: marketReason(result) }) });
+            }
+          } catch (error) {
+            setNotice({ kind: 'error', text: t('updateStartFailed', { reason: errorText(error) }) });
+          } finally {
+            setBusy(false);
+          }
+        },
+        [market?.endpoints, version?.latestVersion, t],
+      );
+
+      const restartHost = useCallback(async () => {
+        const path = market?.endpoints?.restart;
+        if (!path) return;
+        setRestart({ phase: 'busy' });
+        try {
+          const result = await marketRequest(path, 'POST', {});
+          setRestart(result.status >= 200 && result.status < 300 ? { phase: 'done' } : { phase: 'error', reason: marketReason(result) });
+        } catch {
+          // 宿主可能在答复前就开始退出，连接随之断开——这正说明重启已经开始
+          setRestart({ phase: 'done' });
+        }
+      }, [market?.endpoints]);
+
+      return {
+        model: { version, market, operation, target, busy, notice, restart },
+        actions: {
+          checkUpdate: () => {
+            setNotice(undefined);
+            loadVersion(true);
+            if (market?.phase !== 'ready') probeMarket();
+          },
+          startUpdate,
+          restart: restartHost,
+        },
+      };
+    }
+
+    function ModelsCard({ t, view }) {
+      const [phase, setPhase] = useState('loading');
+      const [rows, setRows] = useState([]);
+      const [meta, setMeta] = useState({});
+      const [reason, setReason] = useState('');
+      const [picked, setPicked] = useState(() => new Set());
+      const [savedPicked, setSavedPicked] = useState(() => new Set());
+      const [saving, setSaving] = useState(false);
+      const [notice, setNotice] = useState(undefined);
+
+      const load = useCallback(async () => {
+        setPhase('loading');
+        setNotice(undefined);
+        try {
+          const payload = await request(MODELS_PATH, 'GET');
+          if (!payload.ok) {
+            setRows([]);
+            setPicked(new Set());
+            setSavedPicked(new Set());
+            setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, patchPath: payload.patchPath });
+            setReason(payload.reason ?? '');
+            setPhase('error');
+            return;
+          }
+          const list = payload.models ?? [];
+          const selected = new Set(list.filter((row) => row.selected).map((row) => row.id));
+          setRows(list);
+          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, patchPath: payload.patchPath, url: payload.url });
+          setPicked(selected);
+          setSavedPicked(new Set(selected));
+          setPhase('ready');
+        } catch (error) {
+          setMeta({});
+          setReason(error instanceof Error ? error.message : String(error));
+          setPhase('error');
+        }
+      }, []);
+
+      useEffect(() => {
+        load();
+      }, [load]);
+
+      const sorted = useMemo(() => sortRows(rows), [rows]);
+
+      const toggle = useCallback((id) => {
+        setPicked((previous) => {
+          const next = new Set(previous);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+        setNotice(undefined);
+      }, []);
+
+      const save = useCallback(async () => {
+        setSaving(true);
+        setNotice(undefined);
+        try {
+          const payload = await request(MODELS_PATH, 'POST', {
+            enabled: meta.enabled === true,
+            only: orderedSelection(rows, picked),
+          });
+          if (!payload.ok) {
+            setNotice({ kind: 'error', text: payload.reason ?? t('saveFailed') });
+            return;
+          }
+          const sync = payload.sync ?? {};
+          // 先重载再出提示：load() 开头会清空 notice，反过来写会把结果（尤其是同步失败的原因）立刻抹掉。
+          await load();
+          if (sync.state === 'updated' || sync.state === 'unchanged') {
+            setNotice({ kind: 'ok', text: t('savedSync', { count: sync.count ?? 0 }) });
+          } else if (sync.state === 'disabled') {
+            setNotice({ kind: 'ok', text: t('savedDisabled') });
+          } else {
+            // failed / skipped 意味着 DSH 的模型清单没跟上白名单，用错误色提示；disabled 是用户自己关的，不算错。
+            const kind = sync.state === 'failed' || sync.state === 'skipped' ? 'error' : 'ok';
+            setNotice({ kind, text: t('savedNoSync', { state: sync.reason ?? sync.state ?? '' }) });
+          }
+        } catch (error) {
+          setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) });
+        } finally {
+          setSaving(false);
+        }
+      }, [rows, picked, meta.enabled, load, t]);
+
+      // ---- 后端版本（更新检查 / 安装 / 更新 / 卸载 / 回滚）----
+      const [backend, setBackend] = useState(undefined);
+      const [check, setCheck] = useState(undefined);
+      const [backendBusy, setBackendBusy] = useState(undefined);
+      const [backendNotice, setBackendNotice] = useState(undefined);
+      /** 卸载的二次确认弹窗是否打开。 */
+      const [confirming, setConfirming] = useState(false);
+
+      const loadBackend = useCallback(async () => {
+        try {
+          const payload = await request(BACKEND_PATH, 'GET');
+          setBackend(payload.backend ?? {});
+        } catch (error) {
+          setBackend({ error: error instanceof Error ? error.message : String(error) });
+        }
+      }, []);
+
+      useEffect(() => {
+        loadBackend();
+      }, [loadBackend]);
+
+      const runBackend = useCallback(
+        async (action, extra) => {
+          setBackendBusy(action);
+          setBackendNotice(undefined);
+          try {
+            const payload = await request(BACKEND_PATH, 'POST', { action, ...(extra ?? {}) });
+            if (payload.backend) setBackend(payload.backend);
+            if (action === 'check') {
+              setCheck(payload.check?.error ? { error: payload.check.error } : payload.check);
+            } else if (payload.ok) {
+              setCheck(undefined);
+              const done = t(BACKEND_NOTICE[action] ?? 'backendUpdated', {
+                tag: payload.latest?.tag ?? payload.local?.tag ?? '',
+              });
+              // 刚装好的后端还没登录账号：/healthz 是 503，但进程是好的，提示去面板登录。
+              const noAccounts = payload.health?.servable === false ? ` ${t('backendNoAccounts')}` : '';
+              setBackendNotice({ kind: 'ok', text: done + noAccounts });
+              // 后端换过/新起来了，模型区可能还停在"fetch failed"，重读一次。
+              if (action !== 'uninstall') load();
+            } else {
+              setBackendNotice({ kind: 'error', text: payload.reason ?? payload.state ?? '' });
+            }
+          } catch (error) {
+            setBackendNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) });
+          } finally {
+            setBackendBusy(undefined);
+          }
+        },
+        [t, load],
+      );
+
+      // 放在所有既有 useState 之后：hooks 按调用顺序配对，插到前面会打乱上面那些状态
+      const updater = useUpdater(t);
+
+      // 同样排在既有 hooks 之后。控制台的密钥只存在用户浏览器的 localStorage 里（按来源隔离），
+      // 插件不代填管理页登录表单，用户显式复制保存在 data/ 中的初始密码。
+      const [panelKey, setPanelKey] = useState(undefined);
+      const copyPanelKey = useCallback(async () => {
+        setPanelKey({ busy: true });
+        try {
+          const payload = await request(PANEL_KEY_PATH, 'POST', {});
+          if (!payload.key) {
+            setPanelKey({ kind: 'ok', text: t('panelKeyNone') });
+            return;
+          }
+          try {
+            await navigator.clipboard.writeText(payload.key);
+            setPanelKey({ kind: 'ok', text: t('panelKeyCopied') });
+          } catch {
+            // 剪贴板 API 可能被宿主/非安全上下文拒绝：退回显示原文，让用户自己选中复制。
+            setPanelKey({ kind: 'manual', key: payload.key });
+          }
+        } catch (error) {
+          setPanelKey({ kind: 'error', text: errorText(error) });
+        }
+      }, [t]);
+
+      // 行详情页在缺少包描述时才用 summary 视图；本包有 description，正常走 page。
+      if (view === 'summary') {
+        return h('p', { className: 'dsm-oc-desc' }, t('summary'));
+      }
+
+      // enabled 是开关草稿，savedEnabled 是上次读取的配置；只切换开关也必须允许保存。
+      const dirty = !sameSet(picked, savedPicked) || meta.enabled !== meta.savedEnabled;
+      const body = [];
+
+      if (phase === 'loading') {
+        body.push(h('div', { key: 'loading', className: 'dsm-oc-empty' }, t('loading')));
+      } else if (phase === 'error') {
+        body.push(
+          h(
+            'div',
+            { key: 'error', className: 'dsm-oc-empty' },
+            h('div', { className: 'dsm-oc-notice dsm-oc-notice-error' }, reason),
+            h('button', { type: 'button', className: 'dsm-oc-btn dsm-oc-btn-outline', onClick: load }, t('retry')),
+          ),
+        );
+      } else {
+        body.push(
+          h(
+            'label',
+            { key: 'sync', className: 'dsm-oc-sync' },
+            h('input', {
+              type: 'checkbox',
+              checked: meta.enabled === true,
+              disabled: saving,
+              onChange: (event) => {
+                const enabled = event.target.checked;
+                setMeta((previous) => ({ ...previous, enabled }));
+                setNotice(undefined);
+              },
+            }),
+            t('syncEnabled'),
+          ),
+          h('p', { key: 'syncHint', className: 'dsm-oc-hint' }, t(meta.enabled === true ? 'syncHint' : 'disabledHint')),
+        );
+        body.push(
+          h(
+            'div',
+            { key: 'toolbar', className: 'dsm-oc-toolbar' },
+            h('span', { className: 'dsm-oc-count' }, t('count', { total: sorted.length, picked: picked.size })),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsm-oc-btn dsm-oc-btn-outline',
+                disabled: saving,
+                onClick: () => {
+                  setPicked(new Set(sorted.map((row) => row.id)));
+                  setNotice(undefined);
+                },
+              },
+              t('selectAll'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsm-oc-btn dsm-oc-btn-outline',
+                disabled: saving,
+                onClick: () => {
+                  setPicked(new Set());
+                  setNotice(undefined);
+                },
+              },
+              t('clearAll'),
+            ),
+            h('button', { type: 'button', className: 'dsm-oc-btn dsm-oc-btn-outline', disabled: saving, onClick: load }, t('refresh')),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsm-oc-btn dsm-oc-btn-primary',
+                // 同步已开启时允许重复保存，修复旧清单或重试上次失败无需先改勾选。
+                disabled: saving || (!dirty && meta.enabled !== true),
+                onClick: save,
+              },
+              saving ? t('saving') : t(meta.enabled === true ? 'saveSync' : 'save'),
+            ),
+          ),
+        );
+
+        if (sorted.length === 0) {
+          body.push(h('div', { key: 'empty', className: 'dsm-oc-empty' }, t('emptyBackend')));
+        } else {
+          body.push(
+            h(
+              'div',
+              { key: 'list', className: 'dsm-oc-list' },
+              sorted.map((row) =>
+                h(
+                  'label',
+                  { key: row.id, className: 'dsm-oc-row', title: row.id },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: picked.has(row.id),
+                    disabled: saving,
+                    onChange: () => toggle(row.id),
+                  }),
+                  h('span', { className: 'dsm-oc-label' }, row.label),
+                  h(
+                    'span',
+                    { className: 'dsm-oc-meta' },
+                    row.vision ? h('span', { className: 'dsm-oc-tag' }, t('vision')) : null,
+                    formatTokens(row.contextWindow)
+                      ? h('span', { className: 'dsm-oc-tag' }, formatTokens(row.contextWindow))
+                      : null,
+                    h(
+                      'span',
+                      { className: `dsm-oc-credits${row.credits === 'Free' ? ' dsm-oc-credits-free' : ''}` },
+                      row.credits,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+
+        if (picked.size === 0 && sorted.length > 0) {
+          body.push(h('p', { key: 'emptyHint', className: 'dsm-oc-hint' }, t('emptyHint')));
+        }
+      }
+
+      if (notice) {
+        body.push(
+          h(
+            'p',
+            {
+              key: 'notice',
+              className: `dsm-oc-notice ${notice.kind === 'error' ? 'dsm-oc-notice-error' : 'dsm-oc-notice-ok'}`,
+            },
+            notice.text,
+          ),
+        );
+      }
+      if (meta.patchPath) {
+        body.push(h('p', { key: 'path', className: 'dsm-oc-path' }, t('patchPath', { path: meta.patchPath })));
+      }
+
+      // 后端版本区：检查 / 安装 / 更新 / 卸载 / 回滚。数据来自宿主半侧的 /backend 端点，
+      // 首屏那次 GET 不联网（快），点"检查更新"才真去查 release。
+      if (backend) {
+        const version = backend.version ?? {};
+        const currentTag =
+          version.tag ?? (version.revision ? version.revision.slice(0, 7) : null) ?? t('backendUnmanaged');
+        const history = Array.isArray(backend.history) ? backend.history : [];
+        const latestTag = check?.latest?.tag ?? '';
+        // 老快照没有 exeExists 字段时按"已安装"处理，避免误显示成未安装。
+        const installed = backend.exeExists !== false;
+
+        const section = [
+          h(
+            'div',
+            { key: 'head', className: 'dsm-oc-backend-head' },
+            h('span', { className: 'dsm-oc-backend-title' }, t('backendTitle')),
+            check && !check.error
+              ? h(
+                  'span',
+                  { className: `dsm-oc-badge ${check.upToDate ? 'dsm-oc-badge-ok' : 'dsm-oc-badge-new'}` },
+                  check.upToDate ? t('backendUpToDate') : t('backendAvailable', { tag: latestTag }),
+                )
+              : null,
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsm-oc-btn dsm-oc-btn-outline',
+                disabled: Boolean(backendBusy),
+                onClick: () => runBackend('check'),
+              },
+              backendBusy === 'check' ? t('backendWorking') : t('backendCheck'),
+            ),
+            // 安装与卸载互斥：没装才显示"安装"，装了才显示"卸载"。
+            // 顺序按使用频率排：更新 → 回滚 → 卸载（卸载放最后，离"检查更新"最远，减少误点）。
+            installed
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsm-oc-btn dsm-oc-btn-primary',
+                    disabled: Boolean(backendBusy),
+                    onClick: () => runBackend('update'),
+                  },
+                  backendBusy === 'update' ? t('backendWorking') : t('backendUpdate'),
+                )
+              : h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsm-oc-btn dsm-oc-btn-primary',
+                    disabled: Boolean(backendBusy),
+                    onClick: () => runBackend('install'),
+                  },
+                  backendBusy === 'install' ? t('backendWorking') : t('backendInstall'),
+                ),
+            installed
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsm-oc-btn dsm-oc-btn-outline',
+                    disabled: Boolean(backendBusy),
+                    onClick: () => runBackend('rollback'),
+                  },
+                  backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'),
+                )
+              : null,
+            installed
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsm-oc-btn dsm-oc-btn-danger',
+                    disabled: Boolean(backendBusy),
+                    onClick: () => setConfirming(true),
+                  },
+                  t('backendUninstall'),
+                )
+              : null,
+          ),
+          h(
+            'p',
+            { key: 'current', className: 'dsm-oc-backend-line' },
+            h('strong', null, t('backendCurrent', { version: currentTag })),
+            version.builtAt ? ` · ${t('backendBuilt', { time: version.builtAt })}` : '',
+          ),
+        ];
+
+        if (confirming) {
+          section.push(renderUninstallConfirm({ t, Modal, h, onCancel: () => setConfirming(false), onConfirm: () => { setConfirming(false); runBackend('uninstall', { confirm: true }); } }));
+        }
+
+        if (check?.error) {
+          section.push(h('p', { key: 'checkError', className: 'dsm-oc-backend-line' }, check.error));
+        } else if (check) {
+          section.push(
+            h(
+              'p',
+              { key: 'latest', className: 'dsm-oc-backend-line' },
+              h('strong', null, t('backendLatest', { tag: latestTag })),
+            ),
+          );
+        }
+
+        section.push(
+          h(
+            'p',
+            { key: 'history', className: 'dsm-oc-backend-line' },
+            history.length ? t('backendHistory', { list: history.map((item) => item.name).join(', ') }) : t('backendNoHistory'),
+          ),
+        );
+
+        if (backendNotice) {
+          section.push(
+            h(
+              'p',
+              {
+                key: 'backendNotice',
+                className: `dsm-oc-notice ${backendNotice.kind === 'error' ? 'dsm-oc-notice-error' : 'dsm-oc-notice-ok'}`,
+              },
+              backendNotice.text,
+            ),
+          );
+        }
+
+        body.push(h('div', { key: 'backend', className: 'dsm-oc-backend' }, section));
+      }
+
+      // 插件自身的更新：放在最底部，与上面管 opencode2api 的"后端版本"区分开
+      body.push(h('div', { key: 'pluginUpdate', className: 'dsm-oc-backend' }, renderUpdateSection(updater.model, updater.actions, t)));
+
+      // 后端管理面板地址：宿主在 /backend 应答里给（端口可配），拿不到就用兜底值。
+      const panelUrl = backend?.panelUrl ?? DEFAULT_PANEL_URL;
+      const panelLabel = String(panelUrl).replace(/^https?:\/\//, '');
+
+      return h(
+        'div',
+        { className: 'dsm-oc-card' },
+        h('div', { className: 'dsm-oc-title' }, t('title')),
+        h('p', { className: 'dsm-oc-desc' }, t('description')),
+        h(
+          'p',
+          { className: 'dsm-oc-panel' },
+          t('panelHint'),
+          h(
+            'a',
+            {
+              href: panelUrl,
+              target: '_blank',
+              rel: 'noopener noreferrer',
+              className: 'dsm-oc-link',
+              title: panelUrl,
+            },
+            panelLabel,
+          ),
+          wbButton(
+            'panelKey',
+            'outline dsm-oc-panel-key',
+            panelKey?.busy ? t('panelKeyWorking') : t('panelKeyCopy'),
+            copyPanelKey,
+            Boolean(panelKey?.busy),
+          ),
+        ),
+        panelKey?.kind === 'manual'
+          ? h(
+              'p',
+              { className: 'dsm-oc-notice dsm-oc-notice-error' },
+              t('panelKeyManual'),
+              h('code', { className: 'dsm-oc-key' }, panelKey.key),
+            )
+          : wbNotice('panelKeyNotice', panelKey?.busy ? undefined : panelKey),
+        body,
+      );
+    }
+
+    function apply(ctx) {
+      ctx.effect(() => ctx.locale.register(namespace, { zh, en }), `${name}: locale`);
+      const t = ctx.locale.bind(namespace);
+      ensureStyle();
+
+      /**
+       * 两处注册共用一份组件：组合包页面与"本插件那一行"的配置页。
+       * 整段包在 try 里——DSH 的 slot API 还在 rc 阶段（id→key、order→priority 改过名），
+       * 注册失败只该少一张卡片，不该把整个客户端模块图带崩。
+       */
+      const registerCard = (slotName, key) => {
+        try {
+          ctx.slots.inject(slotName, () =>
+            ctx.slots.register(
+              {
+                name: slotName,
+                key,
+                priority: 30,
+                locale: namespace,
+                inject: () => ({ t }),
+              },
+              ModelsCard,
+            ),
+          );
+        } catch (error) {
+          console.error(`[${name}] 卡片注册失败（slot ${slotName}）：`, error);
+        }
+      };
+
+      // 插件页按"包名"找 bundle 卡片、按"包名#行 id"找行卡片（DSH plugin-manager 的 rowConfigKey）。
+      registerCard('plugins.bundle.config', '@zhiqiangme/dsh-autostart-opencode2api');
+      registerCard('plugins.row.config', '@zhiqiangme/dsh-autostart-opencode2api#dsh-autostart-opencode2api');
+    }
+
+    // 纯函数，导出给测试；宿主只认 name / inject / apply。
+    exports.orderedSelection = orderedSelection;
+    exports.renderUpdateSection = renderUpdateSection;
+    exports.apply = apply;
+    exports.inject = inject;
+    exports.name = name;
+    return module.exports;
+  },
+});

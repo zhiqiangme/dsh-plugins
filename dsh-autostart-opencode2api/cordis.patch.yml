@@ -1,0 +1,4 @@
+# 插件行 id 不随 npm 版本变化，profile 配置按此 id 覆盖。
+- insert:
+    - id: dsh-autostart-opencode2api
+      name: '@zhiqiangme/dsh-autostart-opencode2api'

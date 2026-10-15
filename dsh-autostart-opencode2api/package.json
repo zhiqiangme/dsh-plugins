@@ -1,0 +1,70 @@
+{
+  "name": "@zhiqiangme/dsh-autostart-opencode2api",
+  "version": "26.10.15",
+  "description": "随 DSH 启动 opencode2api，支持后端安装更新、模型同步与管理页入口。",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "opencode",
+    "opencode2api"
+  ],
+  "author": "zhiqiangme",
+  "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-autostart-opencode2api#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhiqiangme/dsh-plugins.git",
+    "directory": "dsh-autostart-opencode2api"
+  },
+  "bugs": {
+    "url": "https://github.com/zhiqiangme/dsh-plugins/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "icon": "icons/opencode2api.svg",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "lib",
+    "icons",
+    "locale/*.json",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "sync-models": "node lib/sync-cli.js",
+    "backend": "node lib/backend-cli.js",
+    "backend-check": "node lib/backend-cli.js --check",
+    "print-config": "node -e \"import('./lib/config.js').then(({ resolvePluginConfig, describeConfig }) => console.log(JSON.stringify(describeConfig(resolvePluginConfig({}, process.env)), null, 2)))\""
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

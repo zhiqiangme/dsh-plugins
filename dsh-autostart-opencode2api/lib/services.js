@@ -1,0 +1,409 @@
+/**
+ * Node 内置模块实现的进程托管原语，沿用 WorkBuddy 插件。
+ * windowsHide 静默启动；记录进程归属，退出时只回收本实例创建的进程。
+ */
+
+import { spawn } from 'node:child_process';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { connect } from 'node:net';
+import { homedir } from 'node:os';
+import { delimiter, join, resolve } from 'node:path';
+
+/**
+ * 被托管服务的默认规格；任何字段都可以被 profile 的 config 覆盖。
+ *
+ * 这里**没有** exe / cwd：后端的安装位置由插件自己管理，默认值是
+ * `<DSH home>/autostart-opencode2api/backend/current/...`，要 hostEnv 才推导得出来，
+ * 所以由 config.js 用 backend.js 的 backendPaths() 填（services.js 不能反向依赖它们，
+ * 否则 backend.js → services.js → backend.js 成环）。
+ */
+export const SERVICE_DEFAULTS = Object.freeze({
+  enabled: true,
+  title: 'OpenCode API',
+  key: 'opencode2api',
+  /** opencode2api 的固定监听端口；config.json 里已收紧到 127.0.0.1:8080。 */
+  port: 8080,
+  host: '127.0.0.1',
+  args: ['-config', 'config.json'],
+  logName: 'opencode2api',
+});
+
+/** DSH home：优先 DSH_HOME，其次 ~/.dsh（与 @deepseek-ai/dsh-home-paths 的约定一致）。 */
+export function resolveDshHome(env = process.env) {
+  const explicit = typeof env.DSH_HOME === 'string' ? env.DSH_HOME.trim() : '';
+  return explicit ? resolve(explicit) : join(homedir(), '.dsh');
+}
+
+/** 日志文件名用的时间戳，与脚本里 `yyyyMMdd-HHmmss` 同格式，便于两处日志对照。 */
+function timestamp(date = new Date()) {
+  const p = (n, w = 2) => String(n).padStart(w, '0');
+  return (
+    `${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}` +
+    `-${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}`
+  );
+}
+
+/** 在 PATH 中按 Windows 习惯补全扩展名，解析一个可执行文件；找不到返回 undefined。 */
+export function resolveExecutableOnPath(command, env = process.env) {
+  if (!command) return undefined;
+  // 带分隔符的按显式路径处理，不做 PATH 搜索（与 subprocess 契约一致：相对路径不猜）。
+  if (command.includes('/') || command.includes('\\')) {
+    return isFile(command) ? command : undefined;
+  }
+  const pathValue = env.PATH || env.Path || '';
+  const exts = (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  for (const dir of pathValue.split(delimiter)) {
+    if (!dir) continue;
+    const base = join(dir, command);
+    if (isFile(base)) return base;
+    for (const ext of exts) {
+      const withExt = base + ext.toLowerCase();
+      if (isFile(withExt)) return withExt;
+      const upper = base + ext.toUpperCase();
+      if (isFile(upper)) return upper;
+    }
+  }
+  return undefined;
+}
+
+export function isFile(path) {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** 探测 host:port 是否已能建立 TCP 连接；连接成功即视为服务就绪。 */
+export function probeTcp(port, host = '127.0.0.1', timeoutMs = 800) {
+  return new Promise((done) => {
+    const socket = connect({ port, host });
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      done(ok);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 轮询等待端口就绪。
+ *
+ * @param shouldContinue 返回 false 时立即放弃（用于「子进程已提前退出」这种必然失败的情况，
+ *                       避免白等满超时）。
+ */
+export async function waitForPort(port, options = {}) {
+  const {
+    host = '127.0.0.1',
+    timeoutMs = 30_000,
+    intervalMs = 300,
+    signal,
+    shouldContinue,
+  } = options;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) return false;
+    if (shouldContinue && !shouldContinue()) return false;
+    if (await probeTcp(port, host)) return true;
+    await sleep(intervalMs);
+  }
+  return false;
+}
+
+/**
+ * 一个被托管的外部服务：负责「按需拉起一次 + 记录归属 + 只停止自己拉起的进程」。
+ *
+ * 幂等性来源（与 OpenCode API.ps1 的既有策略一致）：先探测端口。
+ * 端口已在监听就认为服务已就绪，绝不重复启动第二个实例——重复启动只会端口冲突。
+ */
+export class ManagedService {
+  /**
+   * @param {object} spec 解析合并后的服务规格（见 resolvePluginConfig）。
+   * @param {{ info: Function, warn: Function, error: Function }} logger
+   */
+  constructor(spec, logger) {
+    this.spec = spec;
+    this.logger = logger;
+    this.child = undefined;
+    /** 只有本实例真正 spawn 出来的进程才会在停止阶段被结束，避免误杀用户手动起的服务。 */
+    this.startedByUs = false;
+    this.pid = undefined;
+    this.exitInfo = undefined;
+    /** stderr 环形缓冲：启动失败时用来给出可诊断的原因，而不是只说「超时」。 */
+    this.recentStderr = [];
+    /** 主动停止中：此时的退出是预期的，不报警。每次拉起都会重置（见 #spawn）。 */
+    this.stopping = false;
+  }
+
+  get key() {
+    return this.spec.key;
+  }
+
+  get title() {
+    return this.spec.title;
+  }
+
+  get port() {
+    return this.spec.port;
+  }
+
+  isAlive() {
+    const child = this.child;
+    return Boolean(child) && child.exitCode === null && child.signalCode === null;
+  }
+
+  /**
+   * 确保服务在监听。
+   * @returns {Promise<{ state: 'already-running' | 'started' | 'failed', reason?: string }>}
+   */
+  async ensureRunning(signal) {
+    const { port, host } = this.spec;
+
+    if (await probeTcp(port, host)) {
+      this.logger.info(
+        `[opencode2api] ${this.title} 已在 ${host}:${port} 监听，跳过启动（不重复拉起第二个实例）`,
+      );
+      return { state: 'already-running' };
+    }
+
+    if (signal?.aborted) return { state: 'failed', reason: '宿主已开始关闭' };
+
+    const spawnFailure = this.#spawn();
+    if (spawnFailure) {
+      return { state: 'failed', reason: spawnFailure };
+    }
+
+    const ready = await waitForPort(port, {
+      host,
+      timeoutMs: this.spec.readinessTimeoutMs,
+      signal,
+      // 子进程已经退出就不必再等满超时：端口永远不会起来了。
+      shouldContinue: () => this.isAlive(),
+    });
+
+    if (ready) {
+      this.logger.info(`[opencode2api] ${this.title} 已启动 (PID ${this.pid}) → ${host}:${port}`);
+      return { state: 'started' };
+    }
+
+    const reason = this.#failureReason();
+    // 关键：启动失败必须回收自己拉起的进程。否则会留下一个既不监听端口、
+    // 又持有日志文件句柄的僵尸进程，并且它会一直挂在宿主进程树里。
+    await this.stop('启动失败，回收进程');
+    return { state: 'failed', reason };
+  }
+
+  #spawn() {
+    const spec = this.spec;
+    if (!isFile(spec.exe)) {
+      return `未找到可执行文件: ${spec.exe}`;
+    }
+    if (spec.requiredEnv) {
+      const missing = spec.requiredEnv.filter((name) => !spec.env[name]);
+      if (missing.length > 0) {
+        return `缺少环境变量 ${missing.join(', ')}（应在 ${spec.envFile ?? '启动环境'} 中配置）`;
+      }
+    }
+
+    let out;
+    let err;
+    try {
+      mkdirSync(spec.logDir, { recursive: true });
+      const stamp = timestamp();
+      out = createWriteStream(join(spec.logDir, `${spec.logName}.${stamp}.out.log`), { flags: 'a' });
+      err = createWriteStream(join(spec.logDir, `${spec.logName}.${stamp}.err.log`), { flags: 'a' });
+    } catch (error) {
+      return `无法创建日志文件: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    // 日志流必须有 error 监听：打开失败（权限、磁盘满）或写入出错时，没有监听的 'error'
+    // 会变成宿主进程里的未捕获异常，把整个 DSH 带崩。日志写不进去只值得一条 warn。
+    let logFailed = false;
+    for (const stream of [out, err]) {
+      stream.on('error', (error) => {
+        if (logFailed) return;
+        logFailed = true;
+        this.logger.warn(`[opencode2api] ${this.title} 日志写入失败: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+    const streams = [out, err];
+    const write = (stream, chunk) => {
+      if (!stream.writableEnded && !stream.destroyed) stream.write(chunk);
+    };
+
+    let child;
+    try {
+      child = spawn(spec.exe, spec.args, {
+        cwd: spec.cwd,
+        env: spec.env,
+        // 宿主是 GUI 进程：不隐藏窗口会让 opencode2api.exe 弹出控制台窗口
+        // （对应脚本里的 -WindowStyle Hidden）。
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      closeStreams(streams);
+      return `无法启动进程: ${error instanceof Error ? error.message : String(error)}`;
+    }
+
+    // 每次拉起都是新的一轮：上一轮（更新/回滚前被停掉的那个进程）留下的退出信息、
+    // stderr 与"正在停止"标记都不能带进来，否则新进程崩了不报警、超时时报的是旧进程的退出原因。
+    this.child = child;
+    this.startedByUs = true;
+    this.pid = child.pid;
+    this.exitInfo = undefined;
+    this.recentStderr = [];
+    this.stopping = false;
+    const current = () => this.child === child;
+
+    child.stdout?.on('data', (chunk) => write(out, chunk));
+    child.stderr?.on('data', (chunk) => {
+      write(err, chunk);
+      if (current()) this.#rememberStderr(String(chunk));
+    });
+    child.once('error', (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (current()) this.exitInfo = { error: message };
+      this.logger.error(`[opencode2api] ${this.title} 进程错误: ${message}`);
+    });
+    child.once('exit', (code, signal) => {
+      // 迟到的旧进程退出事件只关它自己的日志，不能改写新一轮的状态。
+      if (!current()) return;
+      this.exitInfo = { code, signal };
+      // 正常停止（disposer 主动 kill）不算异常，只有「非预期退出」才值得报警。
+      if (!this.stopping) {
+        this.logger.warn(`[opencode2api] ${this.title} 已退出 (code=${code}, signal=${signal})`);
+      }
+    });
+    // 日志流在 'close' 才关：'exit' 触发时 stdio 可能还没读完（Go panic 的大段堆栈就是这样），
+    // 此时关流，后续的 'data' 会写到已结束的流上。'close' 保证 stdio 已全部结束。
+    child.once('close', () => closeStreams(streams));
+
+    return undefined;
+  }
+
+  #rememberStderr(text) {
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      this.recentStderr.push(trimmed);
+      if (this.recentStderr.length > 20) this.recentStderr.shift();
+    }
+  }
+
+  #failureReason() {
+    if (this.exitInfo?.error) return `启动失败: ${this.exitInfo.error}`;
+    if (this.exitInfo) {
+      return `${this.title} 提前退出 (code=${this.exitInfo.code}, signal=${this.exitInfo.signal})`;
+    }
+    const tail = this.recentStderr.length > 0 ? `；stderr: ${this.recentStderr.slice(-3).join(' | ')}` : '';
+    return `${this.spec.readinessTimeoutMs}ms 内未确认 ${this.spec.host}:${this.spec.port} 监听${tail}`;
+  }
+
+  /**
+   * 停止本实例拉起的进程。
+   *
+   * 只处理 startedByUs 的进程：DSH 启动前就已在运行的服务（用户手动起的、或另一个
+   * DSH 实例留下的）不属于本实例，跟着停会误杀用户自己起的服务。
+   */
+  async stop(reason) {
+    if (!this.startedByUs || !this.child) {
+      return { stopped: false, skipped: true };
+    }
+    const child = this.child;
+    if (!this.isAlive()) {
+      return { stopped: false, skipped: true };
+    }
+
+    this.stopping = true;
+    this.logger.info(`[opencode2api] 停止 ${this.title} (PID ${this.pid})：${reason}`);
+    try {
+      child.kill();
+    } catch (error) {
+      this.logger.warn(`[opencode2api] 停止 ${this.title} 失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    const exited = await waitForExit(child, this.spec.stopTimeoutMs);
+    if (!exited) {
+      this.logger.warn(`[opencode2api] ${this.title} 未在 ${this.spec.stopTimeoutMs}ms 内退出，强制结束`);
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* 已经死了：忽略 */
+      }
+      await waitForExit(child, 2000);
+    }
+    // 日志流由该进程自己的 'close' 事件收尾（见 #spawn），这里不提前关。
+    return { stopped: true, skipped: false };
+  }
+
+  /**
+   * 进程退出钩子里用的同步版本：只发信号、不等待。
+   * `process.on('exit')` 阶段不允许异步操作，所以这里不能复用 stop()。
+   */
+  stopSync() {
+    if (!this.startedByUs || !this.isAlive()) return;
+    this.stopping = true;
+    try {
+      this.child.kill();
+    } catch {
+      /* 已经死了：忽略 */
+    }
+  }
+
+}
+
+function closeStreams(streams) {
+  for (const stream of streams) {
+    try {
+      stream.end();
+    } catch {
+      /* 忽略 */
+    }
+  }
+}
+
+/** 等待子进程退出；返回是否在超时前退出。 */
+export function waitForExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((done) => {
+    const timer = setTimeout(() => {
+      child.removeListener('exit', onExit);
+      done(false);
+    }, timeoutMs);
+    const onExit = () => {
+      clearTimeout(timer);
+      done(true);
+    };
+    child.once('exit', onExit);
+  });
+}
+
+/** 供测试与 CLI 复用：读取 .env（本插件自身不需要，保留以对齐同类插件的接口）。 */
+export function parseEnvFile(path) {
+  const out = {};
+  if (!path || !existsSync(path)) return out;
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return out;
+  }
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const idx = line.indexOf('=');
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key) out[key] = value;
+  }
+  return out;
+}
