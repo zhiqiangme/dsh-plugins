@@ -28,7 +28,7 @@ function requestHeaders(env) {
     : '';
   return {
     accept: 'application/vnd.github+json',
-    'user-agent': 'dsh-autostart-opencode2api',
+    'user-agent': 'dsh-opencode2api',
     ...(token ? { authorization: `Bearer ${token}` } : {}),
   };
 }

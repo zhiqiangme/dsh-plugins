@@ -13,7 +13,7 @@ import { resolvePluginConfig, describeConfig } from './config.js';
 import { modelsEndpoint, readPluginModelsConfig, resolveProfilePatchPath } from './models.js';
 import { isFile, probeTcp } from './services.js';
 
-const PLUGIN_ID = 'dsh-autostart-opencode2api';
+const PLUGIN_ID = 'dsh-opencode2api';
 const check = process.argv.includes('--check');
 
 // 插件运行时由宿主把 config 传进来；命令行里没有宿主，所以直接从 profile 读同一份配置，

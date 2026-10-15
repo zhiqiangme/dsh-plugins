@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolvePluginConfig } from '../lib/config.js';
-import { fetchModels, planModelEntries, priceLabel, syncModels } from '../lib/models.js';
+import { fetchModels, modelDisplayName, planModelEntries, priceLabel, syncModels } from '../lib/models.js';
 import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
 import { catalog, memoryCredentials, serve } from '../fixtures/http-fixture.mjs';
 
@@ -10,11 +10,37 @@ test('真实网关元数据：视觉、上下文、输出限制与思考；过�
   assert.equal(entries.length, 2);
   assert.deepEqual(entries[0], { id: 'vision-free', name: 'Vision', contextWindow: 200000,
     maxTokens: 32000, input: ['text', 'image'], reasoningEfforts: { low: 'low', high: 'high' } });
-  assert.deepEqual(entries[1], { id: 'text-model', name: 'text-model', contextWindow: 100000,
+  assert.deepEqual(entries[1], { id: 'text-model', name: 'Text-model', contextWindow: 100000,
     maxTokens: 8192, input: ['text'] });
   assert.equal(priceLabel(catalog[0]), 'Free');
   assert.equal(priceLabel(catalog[1]), '$0.2 / $0.8');
   assert.equal(priceLabel({ id: 'unknown' }), '—');
+});
+
+test('展示名首字母大写，保留其余拼写和上游 id', () => {
+  assert.equal(modelDisplayName({ id: 'deepseek-v4.1-flash-free' }), 'Deepseek-v4.1-flash-free');
+  assert.equal(modelDisplayName({ id: 'opaque-id', name: '  mimo v2.6 Flash  ' }), 'Mimo v2.6 Flash');
+  assert.equal(modelDisplayName({ id: 'opaque-id', name: 'OpenCode' }), 'OpenCode');
+  assert.equal(planModelEntries([{ id: 'cat-jam-free' }])[0].id, 'cat-jam-free');
+});
+
+test('支持 Max 的模型同步后默认 Max，重复同步不改配置；能力改变后不会发送不支持的档位', async (t) => {
+  let models = [{ id: 'deepseek-free', supports_reasoning: true, reasoning_efforts: ['low', 'high', 'max'] }];
+  const url = await serve(t, (_req, res) => res.end(JSON.stringify({ data: models })));
+  const resolved = resolvePluginConfig({ models: { enabled: true, apiKey: 'key', baseURL: url } }, {});
+  const editor = createFakeConfigEditor(profileRows());
+  const credentials = memoryCredentials();
+  const options = { ...resolved, editor, credentials, env: {} };
+  assert.equal((await syncModels(options)).state, 'updated');
+  const provider = () => editor.entry('llm-pi-ai').options.config.providers.opencode2api;
+  assert.equal(provider().reasoning, 'max');
+  assert.equal(provider().models[0].reasoningEfforts.max, 'max');
+  assert.equal(provider().models[0].name, 'Deepseek-free');
+  assert.equal((await syncModels(options)).state, 'unchanged');
+  models = catalog;
+  assert.equal((await syncModels(options)).state, 'updated');
+  assert.equal(provider().reasoning, undefined);
+  assert.equal((await syncModels(options)).state, 'unchanged');
 });
 test('白名单顺序、空白名单、排除和未知 id', () => {
   assert.deepEqual(planModelEntries(catalog, { only: ['text-model','missing','vision-free'] }).map(m=>m.id), ['text-model','vision-free']);

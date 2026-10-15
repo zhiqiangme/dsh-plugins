@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "OpenCode API autostart",
+    "title": "OpenCode API",
     "description": "Manage opencode2api, install and roll back backend releases, and sync selected models to DSH."
   }
 }

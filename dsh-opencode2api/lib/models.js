@@ -31,9 +31,10 @@ export const LLM_PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
 /** 默认保留的思考档位：与 DSH 既有的三档 UI 对齐（低/高/最大）。 */
 export const DEFAULT_EFFORTS = Object.freeze(['low', 'high', 'max']);
 
-/** 模型展示名使用网关名称，缺省保留原始 id。 */
+/** 只改展示名的首字母，发送给上游的模型 id 保持原样。 */
 export function modelDisplayName(model) {
-  return typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
+  const name = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 export function priceLabel(model) {
@@ -168,21 +169,26 @@ export function withProviderModels(config, providerName, entries, skeleton) {
   const providers = plainObject(base.providers);
   const existing = providers[providerName];
   const created = Object.keys(plainObject(existing)).length === 0;
-  // 托管后端换端口、用户换凭据引用后，调用端必须一起跟随；其余用户参数保留。
+  // 地址、凭据引用和默认档位随同步更新；取消 Max 支持时也要移除之前写入的默认值。
+  const existingOptions = { ...plainObject(existing) };
+  delete existingOptions.reasoning;
   const provider = created ? { ...skeleton, models: entries } : {
-    ...existing, baseURL: skeleton.baseURL, apiKeyEnv: skeleton.apiKeyEnv, models: entries,
+    ...existingOptions, ...('reasoning' in skeleton ? { reasoning: skeleton.reasoning } : {}),
+    baseURL: skeleton.baseURL, apiKeyEnv: skeleton.apiKeyEnv, models: entries,
   };
   const changed = created || !isDeepStrictEqual(existing, provider);
   return { changed, created, config: { ...base, providers: { ...providers, [providerName]: provider } } };
 }
 
 /** 补建 provider 用的骨架：与 llm-pi-ai 的 OpenAI 兼容 provider 字段一致。 */
-export function providerSkeleton(models, spec) {
+export function providerSkeleton(models, spec, entries = []) {
   return {
     displayName: models.provider === 'opencode2api' ? 'OpenCode' : models.provider,
     apiKeyEnv: models.apiKeyRef || 'OPENCODE2API_PROXY_KEY',
     baseURL: providerBaseURL(models.baseURL || `http://${spec.host}:${spec.port}`),
     api: 'openai-completions',
+    // DSH 的默认档位属于整个 provider；混有不支持 Max 的模型时不能强设，否则会拒绝请求。
+    ...(entries.length > 0 && entries.every((entry) => entry.reasoningEfforts?.max) ? { reasoning: 'max' } : {}),
   };
 }
 
@@ -275,8 +281,8 @@ function parseScalar(raw) {
  *
  * 只认一种形状（也就是本机 profile 的实际形状）：
  *
- *     - id: dsh-autostart-opencode2api
- *       name: dsh-autostart-opencode2api
+ *     - id: dsh-opencode2api
+ *       name: dsh-opencode2api
  *       config:
  *         models:
  *           enabled: true
@@ -336,7 +342,7 @@ function locatePluginModelsBlock(lines, entryId) {
  *
  * 形状见 locatePluginModelsBlock；认不出就返回 undefined。
  */
-export function readPluginModelsConfig(text, entryId = 'dsh-autostart-opencode2api') {
+export function readPluginModelsConfig(text, entryId = 'dsh-opencode2api') {
   const lines = String(text).split(/\r?\n/);
   const located = locatePluginModelsBlock(lines, entryId);
   if (!located.ok) return undefined;
@@ -438,7 +444,7 @@ export async function syncModels(options) {
     }
   }
 
-  const skeleton = providerSkeleton(models, spec);
+  const skeleton = providerSkeleton(models, spec, entries);
   const planned = withProviderModels(target.options?.config, models.provider, entries, skeleton);
   if (!planned.changed) return { state: 'unchanged', entries, documentPath };
   if (dryRun) return { state: 'dry-run', entries, created: planned.created, documentPath };

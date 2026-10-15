@@ -31,6 +31,7 @@ export const DEFAULT_KEEP_VERSIONS = 3;
  */
 export function backendPaths(env = process.env) {
   const explicit = typeof env?.DSH_OPENCODE2API_BACKEND_ROOT === 'string' ? env.DSH_OPENCODE2API_BACKEND_ROOT.trim() : '';
+  // 包名已去掉 autostart，数据目录沿用首版位置，避免重装后丢失后端配置和管理密码。
   const root = explicit ? resolve(explicit) : join(resolveDshHome(env), 'autostart-opencode2api');
   return {
     root,

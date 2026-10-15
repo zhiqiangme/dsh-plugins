@@ -44,6 +44,6 @@ test('模型卡片显示真实能力和价格，保存勾选立即同步',async(
   assert.equal(snapshot.models[0].vision,true);
   const result=await applySelection({resolved,editor,credentials,env:{},enabled:true,only:['vision-free']});
   assert.equal(result.sync.state,'updated');assert.equal(result.sync.count,1);
-  assert.deepEqual(editor.entry('dsh-autostart-opencode2api').options.config.models.only,['vision-free']);
+  assert.deepEqual(editor.entry('dsh-opencode2api').options.config.models.only,['vision-free']);
   assert.equal((await applySelection({resolved,editor,only:'bad'})).ok,false);
 });

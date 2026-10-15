@@ -15,8 +15,8 @@ import { readFileSync } from 'node:fs';
 const SOURCE = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
 /** 宿主按 npm 包名登记客户端模块、寻址插件页卡片；行 id 则沿用改作用域包之前的名字。 */
 const PACKAGE_NAME = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).name;
-const ROW_ID = 'dsh-autostart-opencode2api';
-const NAMESPACE = 'settings.dsh-autostart-opencode2api';
+const ROW_ID = 'dsh-opencode2api';
+const NAMESPACE = 'settings.dsh-opencode2api';
 
 /** 把 bundle 放进沙箱执行，拿回它注册进 __ModuleLoader__ 的 registration 与注入的样式。 */
 function loadBundle({ fetchImpl = globalThis.fetch } = {}) {
@@ -171,7 +171,7 @@ const ROWS = [
 
 test('bundle 契约：模块名、注入的服务名、两个 slot 的 key', () => {
   const { module, cards } = boot();
-  assert.equal(module.name, 'dsh-autostart-opencode2api-client');
+  assert.equal(module.name, 'dsh-opencode2api-client');
   assert.deepEqual(module.inject, ['slots', 'locale']);
   assert.equal(typeof module.apply, 'function');
   assert.equal(cards.length, 2);
@@ -223,9 +223,11 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'updateLinked', 'updateLost', 'updateManaged', 'updateMismatch', 'updateNoMarket', 'updateNow', 'updatePendingRefresh',
     'updatePendingRestart', 'updateProgress', 'updateRefreshHint',
     'updateRestartHint', 'updateRolledBack', 'updateRunning', 'updateStartFailed', 'updateSucceeded',
-    'updateTitle', 'updateTooFresh', 'updateUpToDate',
+    'updateTitle', 'updateTooFresh', 'updateUpToDate', 'updateLocal',
   ];
   assert.deepEqual(Object.keys(entry.zh).sort(), expected.sort());
+  assert.match(entry.zh.panelKeyCopied, /初始管理密码已复制/);
+  assert.match(entry.zh.panelKeyNone, /管理员账号和密码/);
 });
 
 test('渲染（含后端版本区）：显示当前/上游/历史版本，三个操作按钮都在', () => {
@@ -350,7 +352,7 @@ test('模型开关：只开启同步就能保存，POST 同时传开关和白名
   assert.equal(save.props.disabled, false, '只改开关、白名单不变也必须能保存');
   await save.props.onClick();
 
-  assert.equal(requests[0].path, '/plugins/dsh-autostart-opencode2api/models');
+  assert.equal(requests[0].path, '/plugins/dsh-opencode2api/models');
   assert.equal(requests[0].method, 'POST');
   assert.deepEqual(JSON.parse(requests[0].body), { enabled: true, only: ['cn:alpha'] });
   assert.equal(requests[1].method, 'GET');
@@ -637,6 +639,17 @@ test('插件更新区：有新版本且装了市场 → 两个版本号与"更�
   assert.deepEqual(started, [false], '普通更新不带 force');
 });
 
+test('本地安装显示渠道说明，不报 npm 检查错误，也不提供 npm 更新按钮', () => {
+  const { text, buttons } = renderUpdate(updateModel({
+    version: { phase: 'ready', ok: true, currentVersion: '26.10.15', installSource: 'local', updateAvailable: false },
+  }));
+  assert.match(text, /本地安装/);
+  assert.match(text, /源码目录/);
+  assert.match(text, /v26\.10\.15/);
+  assert.doesNotMatch(text, /检查更新失败|npm 最新版本|undefined|已是最新/);
+  assert.equal(buttons.length, 0);
+});
+
 test('插件更新区：没装市场 → 只提示，没有更新按钮', () => {
   const { text, buttons } = renderUpdate(updateModel({ market: { phase: 'absent' } }));
   assert.equal(button(buttons, '更新到 v26.10.12'), undefined);
@@ -728,7 +741,7 @@ test('插件更新区：成功后重新检查发现更高版本，恢复徽章�
 
     const tree = section();
     const text = collectText(tree).join('|');
-    assert.deepEqual(requests, [{ path: '/plugins/dsh-autostart-opencode2api/version?force=1', method: 'GET' }]);
+    assert.deepEqual(requests, [{ path: '/plugins/dsh-opencode2api/version?force=1', method: 'GET' }]);
     assert.match(text, /有新版本/);
     assert.doesNotMatch(text, /等待重启|等待刷新|已是最新/);
     assert.equal(button(collectByType(tree, 'button'), '更新到 v26.10.13')?.props.disabled, false);

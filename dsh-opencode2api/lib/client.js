@@ -27,7 +27,7 @@
 
 // 模块 id 必须是 npm 包名：宿主的客户端模块表按包名登记，对不上就加载不到本 bundle。
 window.__ModuleLoader__.load({
-  id: '@zhiqiangme/dsh-autostart-opencode2api',
+  id: '@zhiqiangme/dsh-opencode2api',
   factory: (require) => {
     // ModuleLoader 的 factory 只注入 require；这里自行建立 CommonJS 导出对象，
     // 与 DSH 其它客户端 bundle 的包装约定一致。
@@ -49,24 +49,24 @@ window.__ModuleLoader__.load({
       Modal = undefined;
     }
 
-    const name = 'dsh-autostart-opencode2api-client';
+    const name = 'dsh-opencode2api-client';
     const inject = ['slots', 'locale'];
-    const namespace = 'settings.dsh-autostart-opencode2api';
+    const namespace = 'settings.dsh-opencode2api';
     /** 与 lib/web.js 的两个端点必须一致。 */
-    const MODELS_PATH = '/plugins/dsh-autostart-opencode2api/models';
-    const BACKEND_PATH = '/plugins/dsh-autostart-opencode2api/backend';
+    const MODELS_PATH = '/plugins/dsh-opencode2api/models';
+    const BACKEND_PATH = '/plugins/dsh-opencode2api/backend';
     /**
      * 后端管理面板地址的兜底值。宿主会在 /backend 的应答里给出真实地址
      * （host/port 可被 profile 覆盖），拿不到时才用这个。
      */
     const DEFAULT_PANEL_URL = 'http://127.0.0.1:8081/';
     /** 宿主半侧的控制台访问密钥路由（lib/web.js）：POST 才给，点「复制访问密钥」时取一次。 */
-    const PANEL_KEY_PATH = '/plugins/dsh-autostart-opencode2api/panel-key';
+    const PANEL_KEY_PATH = '/plugins/dsh-opencode2api/panel-key';
 
     /** 本插件的 npm 包名：dshmarket 按它定位要更新的依赖。 */
-    const PACKAGE_NAME = '@zhiqiangme/dsh-autostart-opencode2api';
+    const PACKAGE_NAME = '@zhiqiangme/dsh-opencode2api';
     /** 宿主半侧的版本检查路由（lib/web.js），?force=1 绕过它的 10 分钟缓存。 */
-    const VERSION_PATH = '/plugins/dsh-autostart-opencode2api/version';
+    const VERSION_PATH = '/plugins/dsh-opencode2api/version';
     /**
      * dshmarket 的公开更新 API v1（其包内 UPDATE-API-V1.md）。只认 capabilities 这一个固定入口，
      * 其余路径按它答复里的 endpoints 走；答复的 schema 对不上就当市场不存在，不去猜旧路由。
@@ -84,7 +84,7 @@ window.__ModuleLoader__.load({
      * 进行中的更新任务记在 sessionStorage：更新本插件自己时 DSH 可能热重载本 bundle，
      * 卡片会被卸下再挂上，靠它接着轮询同一个任务，而不是丢掉进度。
      */
-    const OPERATION_STORAGE_KEY = 'dsh-autostart-opencode2api:update-operation';
+    const OPERATION_STORAGE_KEY = 'dsh-opencode2api:update-operation';
     /** dshmarket 认为"可以带 force 重试"的两种失败：发布冷却期未过 / 装完版本没变。 */
     const FORCEABLE_FAILURES = new Set(['RELEASE_TOO_FRESH', 'VERSION_UNCHANGED']);
 
@@ -186,9 +186,9 @@ window.__ModuleLoader__.load({
       panelHint: '后端面板：',
       panelKeyCopy: '复制初始管理密码',
       panelKeyWorking: '读取中…',
-      panelKeyCopied: 'Initial admin password copied. Sign in as admin; use your new password if you have changed it.',
+      panelKeyCopied: '初始管理密码已复制。请使用 admin 登录；如果已修改密码，请使用新密码。',
       panelKeyManual: '没能写入剪贴板，请手动选中复制：',
-      panelKeyNone: 'Use the admin credentials configured for your backend.',
+      panelKeyNone: '请使用后端已配置的管理员账号和密码。',
       backendTitle: '后端版本',
       backendCurrent: '当前 {version}',
       backendLatest: '上游 {tag}',
@@ -219,6 +219,7 @@ window.__ModuleLoader__.load({
       updateCheck: '检查更新',
       updateCheckFailed: '检查更新失败：{reason}',
       updateCurrent: '当前运行版本：',
+      updateLocal: '本地安装',
       updateLatestVersion: 'npm 最新版本：',
       updateUpToDate: '已是最新',
       updateAvailable: '有新版本',
@@ -306,6 +307,7 @@ window.__ModuleLoader__.load({
       updateCheck: 'Check for updates',
       updateCheckFailed: 'Update check failed: {reason}',
       updateCurrent: 'Running version: ',
+      updateLocal: 'Local installation',
       updateLatestVersion: 'Latest on npm: ',
       updateUpToDate: 'up to date',
       updateAvailable: 'update available',
@@ -552,12 +554,14 @@ window.__ModuleLoader__.load({
       const market = update.market ?? { phase: 'loading' };
       const operation = update.operation;
       const running = Boolean(update.busy) || isActiveOperation(operation);
-      const ready = version.phase === 'ready';
+      const local = version.installSource === 'local';
+      const ready = version.phase === 'ready' && !local;
 
       // 当前运行版本要等重启/刷新才换；仅当实际安装版本覆盖当前查到的最新版时，
       // 才用成功结果覆盖徽章。镜像落后或再查到更高版本时，仍需提供更新入口。
       const latestInstalled = operation?.state === 'succeeded' && !versionBelow(operation.installedVersion, version.latestVersion);
       const head = [h('span', { key: 'title', className: 'dsm-oc-backend-title' }, t('updateTitle'))];
+      if (local) head.push(h('span', { key: 'local', className: 'dsm-oc-badge' }, t('updateLocal')));
       if (ready) {
         const badge = latestInstalled
           ? operation.outcome?.restartRequired
@@ -570,7 +574,7 @@ window.__ModuleLoader__.load({
             : { tone: 'ok', text: t('updateUpToDate') };
         head.push(h('span', { key: 'badge', className: `dsm-oc-badge dsm-oc-badge-${badge.tone}` }, badge.text));
       }
-      head.push(wbButton('check', 'outline', t('updateCheck'), actions.checkUpdate, version.phase === 'loading' || running));
+      if (!local) head.push(wbButton('check', 'outline', t('updateCheck'), actions.checkUpdate, version.phase === 'loading' || running));
       // 只隐藏已安装版本覆盖的更新，避免重复安装，同时允许补齐或继续升级。
       if (ready && !latestInstalled && version.updateAvailable && market.phase === 'ready' && market.updatable !== false) {
         head.push(
@@ -579,7 +583,9 @@ window.__ModuleLoader__.load({
       }
 
       const section = [h('div', { key: 'head', className: 'dsm-oc-backend-head' }, head)];
-      if (version.phase === 'loading') {
+      if (local) {
+        section.push(h('p', { key: 'localHint', className: 'dsm-oc-hint' }, t('updateLinked')));
+      } else if (version.phase === 'loading') {
         section.push(h('p', { key: 'checking', className: 'dsm-oc-backend-line' }, t('updateChecking')));
       } else if (version.phase === 'error') {
         section.push(wbNotice('checkError', { kind: 'error', text: t('updateCheckFailed', { reason: version.reason }) }));
@@ -1324,8 +1330,8 @@ window.__ModuleLoader__.load({
       };
 
       // 插件页按"包名"找 bundle 卡片、按"包名#行 id"找行卡片（DSH plugin-manager 的 rowConfigKey）。
-      registerCard('plugins.bundle.config', '@zhiqiangme/dsh-autostart-opencode2api');
-      registerCard('plugins.row.config', '@zhiqiangme/dsh-autostart-opencode2api#dsh-autostart-opencode2api');
+      registerCard('plugins.bundle.config', '@zhiqiangme/dsh-opencode2api');
+      registerCard('plugins.row.config', '@zhiqiangme/dsh-opencode2api#dsh-opencode2api');
     }
 
     // 纯函数，导出给测试；宿主只认 name / inject / apply。

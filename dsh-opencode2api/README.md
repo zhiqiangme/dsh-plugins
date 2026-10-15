@@ -1,4 +1,4 @@
-# @zhiqiangme/dsh-autostart-opencode2api
+# @zhiqiangme/dsh-opencode2api
 
 让 [opencode2api](https://github.com/jasonxu114514/opencode2api) 随 DSH 启动，沿用本仓库 WorkBuddy 插件的结构。
 它托管独立的 Windows 程序，无需 Docker 或本机 OpenCode CLI。
@@ -11,17 +11,17 @@
 .\install-plugins.cmd --action install --plugins opencode2api --profiles desktop --yes
 ```
 
-重新打开 DSH，在「插件 → OpenCode API 自动启动」中：
+重新打开 DSH，在「插件 → OpenCode API」中：
 
 1. 点击后端「安装」，从 `jasonxu114514/opencode2api` 最新 GitHub Release 下载对应 Windows x64 / ARM64 产物，核对同一发布中的 `.sha256` 与 Go 构建 revision。
 2. 点击后端管理页链接。首次登录用户名为 `admin`，点击「复制初始管理密码」获取随机密码；管理页改过密码后使用新密码。
 3. 需要时在后端管理页配置 Zen / Go Key。初始配置启用匿名通道；它是否可用取决于上游，并不承诺解决免费层 403。
 4. 勾选「同步到 DSH 模型列表」，选择模型并「保存并同步」。模型分组为 `OpenCode`，provider id 为 `opencode2api`。
 
-包名预留为 `@zhiqiangme/dsh-autostart-opencode2api`，**本次开发未发布 npm**；发布后可用：
+包名预留为 `@zhiqiangme/dsh-opencode2api`，**本次开发未发布 npm**；发布后可用：
 
 ```powershell
-dsh plugin --profile desktop add @zhiqiangme/dsh-autostart-opencode2api
+dsh plugin --profile desktop add @zhiqiangme/dsh-opencode2api
 ```
 
 Web / CLI 使用 `web` / `headless` profile。后端安装器支持 Windows x64、ARM64；现有外部实例可用自定义 `exe` / `cwd` 接入，版本需自行维护。
@@ -36,16 +36,18 @@ Web / CLI 使用 `web` / `headless` profile。后端安装器支持 Windows x64�
 - 模型同步默认关闭，通过 DSH `configEditor` 写配置；只修改自己的 provider 模型列表，保留其他 provider。勾选与同步开关变化不重启后端。
 - 本地 API Key 保存到 DSH 凭据库的 `OPENCODE2API_PROXY_KEY` 引用，profile 中不写密钥明文。它与 Zen / Go 的上游 Key 是不同的凭据。
 - 从 `/v1/models` 同步上下文、最大输出、视觉模态和上游声明的思考档位。`System One` 专用模型不导入普通对话选择器；未知价格显示 `—`，价格单位为 USD / 百万 token。
+- 展示名首字母大写，模型 id 保持不变。选中的模型都支持 Max 时，OpenCode 提供商默认使用 Max；混有不支持 Max 的模型时不强设默认档位。
 - 模型列表与 `/healthz` 正常只代表目录和服务状态；真实推理仍可能被上游拒绝或限流。
-- 插件自身版本检查和 dshmarket 更新入口沿用 WorkBuddy 卡片；本地 `file:` 安装通过仓库安装脚本更新。
+- 本地 `file:` / `link:` 安装显示「本地安装」，跳过 npm 检查，通过仓库安装脚本更新。npm 安装才检查注册表版本并提供 dshmarket 更新入口。
+- 安装脚本会把旧包名 `@zhiqiangme/dsh-autostart-opencode2api` 和旧配置行迁移到新名称，保留模型勾选与同步开关。后端数据目录继续沿用 `~/.dsh/autostart-opencode2api`，保留已安装程序和凭据。
 
 ## 配置
 
 在当前 profile 的 `cordis.patch.yml` 中按行 id 覆盖：
 
 ```yaml
-- id: dsh-autostart-opencode2api
-  name: '@zhiqiangme/dsh-autostart-opencode2api'
+- id: dsh-opencode2api
+  name: '@zhiqiangme/dsh-opencode2api'
   config:
     enabled: true
     host: 127.0.0.1
@@ -86,7 +88,7 @@ logs/             后端标准输出、错误日志
 程序和数据不放进 npm 安装目录，插件更新或重装不会丢失配置。
 
 ```powershell
-dsh plugin --profile desktop remove @zhiqiangme/dsh-autostart-opencode2api
+dsh plugin --profile desktop remove @zhiqiangme/dsh-opencode2api
 ```
 
 卸载插件保留后端和配置。卡片「卸载后端」删除 exe、版本与下载缓存，保留 `config.json`、后端状态、`data/` 和日志。若已同步过模型，卸载后需在 DSH 删除 `opencode2api` provider，并重新选择其他默认模型；本插件不会擅自删除会话或用户模型设置。

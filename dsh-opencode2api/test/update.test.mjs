@@ -5,9 +5,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { checkLatestVersion, compareVersions, createVersionChecker, PACKAGE_NAME, RUNNING_VERSION } from '../lib/update.js';
+import { checkLatestVersion, compareVersions, createVersionChecker, installationSource, PACKAGE_NAME, RUNNING_VERSION } from '../lib/update.js';
 
 const PACKAGE = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -37,6 +39,29 @@ test('compareVersions：日期版本号、预发布、非法输入', () => {
 test('运行版本取自 package.json', () => {
   assert.equal(PACKAGE_NAME, PACKAGE.name);
   assert.equal(RUNNING_VERSION, PACKAGE.version);
+});
+
+test('file/link 安装由 profile 清单识别，强制检查也不请求 npm；npm 安装仍查注册表', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-opencode-update-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const packageDir = join(root, 'node_modules', '@zhiqiangme', 'dsh-opencode2api');
+  mkdirSync(packageDir, { recursive: true });
+  const manifestPath = join(root, 'package.json');
+  let requests = 0;
+  const fetchImpl = async () => { requests++; return { ok: true, json: async () => ({ latest: '26.10.16' }) }; };
+  for (const spec of ['file:D:/Project/plugin', 'link:../plugin']) {
+    writeFileSync(manifestPath, JSON.stringify({ dependencies: { [PACKAGE_NAME]: spec } }));
+    assert.equal(installationSource({ packageDir }), 'local');
+    const check = createVersionChecker({ packageDir, fetchImpl });
+    const result = await check({ force: true });
+    assert.equal(result.ok, true);
+    assert.equal(result.installSource, 'local');
+    assert.equal(result.updateAvailable, false);
+  }
+  assert.equal(requests, 0);
+  writeFileSync(manifestPath, JSON.stringify({ dependencies: { [PACKAGE_NAME]: '^26.10.15' } }));
+  assert.equal((await checkLatestVersion({ packageDir, fetchImpl })).latestVersion, '26.10.16');
+  assert.equal(requests, 2);
 });
 
 test('checkLatestVersion：作用域包名编码正确，取各注册表里最高的版本', async (t) => {

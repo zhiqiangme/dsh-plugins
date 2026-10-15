@@ -1,5 +1,5 @@
 {
-  "name": "@zhiqiangme/dsh-autostart-opencode2api",
+  "name": "@zhiqiangme/dsh-opencode2api",
   "version": "26.10.15",
   "description": "随 DSH 启动 opencode2api，支持后端安装更新、模型同步与管理页入口。",
   "keywords": [
@@ -10,11 +10,11 @@
     "opencode2api"
   ],
   "author": "zhiqiangme",
-  "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-autostart-opencode2api#readme",
+  "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-opencode2api#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zhiqiangme/dsh-plugins.git",
-    "directory": "dsh-autostart-opencode2api"
+    "directory": "dsh-opencode2api"
   },
   "bugs": {
     "url": "https://github.com/zhiqiangme/dsh-plugins/issues"

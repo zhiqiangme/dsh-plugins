@@ -99,7 +99,7 @@ function dummyEnv(port, mode = 'http-health') {
 }
 
 test('插件导出 Cordis 契约：name / inject / apply', () => {
-  assert.equal(name, 'dsh-autostart-opencode2api');
+  assert.equal(name, 'dsh-opencode2api');
   assert.deepEqual(inject, []);
   assert.equal(typeof apply, 'function');
 });

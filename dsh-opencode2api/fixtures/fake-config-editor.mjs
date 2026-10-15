@@ -63,6 +63,6 @@ export function llmPiAiConfig({ withProvider = true } = {}) {
 export function profileRows({ withProvider = true, models = { enabled: true } } = {}) {
   return [
     { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai', config: llmPiAiConfig({ withProvider }) },
-    { id: 'dsh-autostart-opencode2api', name: 'dsh-autostart-opencode2api', config: { models } },
+    { id: 'dsh-opencode2api', name: 'dsh-opencode2api', config: { models } },
   ];
 }

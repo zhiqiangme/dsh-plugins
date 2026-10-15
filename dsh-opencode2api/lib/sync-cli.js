@@ -8,7 +8,7 @@
  * 热重载，见 lib/models.js 顶部注释）。命令行里没有宿主，直接改 cordis.patch.yml 会和运行中的
  * DSH 互相覆盖。真正的同步发生在 DSH 启动后（插件自动做一次）与插件页点「保存」时。
  *
- * 配置来源与插件运行时一致：读 profile 的 cordis.patch.yml 里 `- id: dsh-autostart-opencode2api`
+ * 配置来源与插件运行时一致：读 profile 的 cordis.patch.yml 里 `- id: dsh-opencode2api`
  * 那一行的 config.models——命令行里没有宿主，只能读文件。
  */
 
@@ -25,7 +25,7 @@ import {
 } from './models.js';
 import { isFile } from './services.js';
 
-const PLUGIN_ID = 'dsh-autostart-opencode2api';
+const PLUGIN_ID = 'dsh-opencode2api';
 
 /** 预览里 `- id:` 的缩进：与本机 profile 里 providers.<name>.models 下的条目一致。 */
 const PREVIEW_ITEM_INDENT = 10;

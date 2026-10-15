@@ -9,6 +9,8 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** 本插件的 npm 包名与版本：模块加载时读一次，代表"正在运行的代码"，而不是磁盘上可能已被换掉的那份。 */
 const PACKAGE = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -27,6 +29,20 @@ const REGISTRY_TIMEOUT_MS = 5_000;
 
 /** 结果缓存 10 分钟：卡片每次打开都会问一次，没必要每次都打注册表；"检查更新"按钮带 force 绕过。 */
 const CACHE_TTL_MS = 10 * 60_000;
+
+/** file: 包也会被复制进 node_modules，不能用是否符号链接判断安装渠道。 */
+export function installationSource({ name = PACKAGE_NAME, manifestPath, packageDir = fileURLToPath(new URL('..', import.meta.url)) } = {}) {
+  let directory = packageDir;
+  for (;;) {
+    let manifest;
+    try { manifest = JSON.parse(readFileSync(manifestPath ?? join(directory, 'package.json'), 'utf8')); } catch { /* 非 profile 目录，继续向上找。 */ }
+    const spec = manifest?.dependencies?.[name];
+    if (typeof spec === 'string') return /^(file|link|workspace):/.test(spec) ? 'local' : 'npm';
+    const parent = dirname(directory);
+    if (manifestPath || parent === directory) return 'unknown';
+    directory = parent;
+  }
+}
 
 /**
  * 比较两个 `x.y.z[-pre]` 版本号；本插件的版本是日期（26.10.11），恰好也是合法 semver。
@@ -82,6 +98,9 @@ async function fetchLatest(registry, name, { fetchImpl, timeoutMs }) {
 export async function checkLatestVersion(options = {}) {
   const name = options.name ?? PACKAGE_NAME;
   const current = options.current ?? RUNNING_VERSION;
+  if (installationSource({ ...options, name }) === 'local') {
+    return { ok: true, name, currentVersion: current, installSource: 'local', updateAvailable: false, checkedAt: new Date().toISOString() };
+  }
   const registries = options.registries ?? DEFAULT_REGISTRIES;
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? REGISTRY_TIMEOUT_MS;

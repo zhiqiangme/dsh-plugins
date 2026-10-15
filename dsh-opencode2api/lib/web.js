@@ -19,7 +19,7 @@ import { isFile } from './services.js';
 import { createVersionChecker } from './update.js';
 
 /** 插件名：与 package.json / cordis.patch.yml 里的 name 保持一致。 */
-const PLUGIN_ID = 'dsh-autostart-opencode2api';
+const PLUGIN_ID = 'dsh-opencode2api';
 
 /** 面板路由前缀：DSH 给每个插件留的命名空间，浏览器半侧用同一份常量。 */
 export const PANEL_BASE = `/plugins/${PLUGIN_ID}`;

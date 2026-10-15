@@ -20,6 +20,7 @@ import { delimiter, join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { migratePluginRows } from './plugin-row-migration.mjs';
 
 /** 仓库根目录：从脚本自身位置推，与 cwd 无关。 */
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -27,13 +28,13 @@ const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 /**
  * 本仓库提供的插件。
  * - folder：仓库里的目录名；name：npm 包名，以该目录 package.json 为准（发布到 npm 后带 @zhiqiangme 作用域）。
- * - rowId：插件在 cordis 配置树里的行 id。改作用域包时刻意没变，用户 cordis.patch.yml 里的设置按 id 覆盖，因此不用迁移。
+ * - rowId：插件在 cordis 配置树里的行 id，默认为目录名；改行 id 时以 legacyRowIds 列出旧名供迁移。
  * - legacy：以前用过的包名（改作用域前的无作用域名、更早的旧名）。profile 里还以 file:/link: 指向本地拷贝时
  *   一并移除——旧名和新名会各自插入同一个行 id，并存会冲突；不是本地来源的同名包可能是别人发布的，不碰。
  */
 const CATALOG = [
   { folder: 'dsh-autostart-workbuddy', alias: 'workbuddy', title: 'WorkBuddy 自动启动 + 模型同步', legacy: ['dsh-autostart-workbuddy'] },
-  { folder: 'dsh-autostart-opencode2api', alias: 'opencode2api', title: 'OpenCode API 自动启动 + 模型同步', legacy: [] },
+  { folder: 'dsh-opencode2api', alias: 'opencode2api', title: 'OpenCode API', legacy: ['@zhiqiangme/dsh-autostart-opencode2api'], legacyRowIds: ['dsh-autostart-opencode2api'] },
   { folder: 'dsh-tavily-search', alias: 'tavily-search', title: 'Tavily 网页搜索', legacy: ['dsh-tavily-search', 'dsh-autostart-websearch'] },
 ].map((plugin) => {
   const dir = join(REPO_ROOT, plugin.folder);
@@ -219,11 +220,11 @@ function specPointsHere(spec, plugin) {
 }
 
 /**
- * profile 的 cordis.patch.yml 里，本插件那一行（按行 id 找）若还写着旧包名的 `name:`，改成新包名。
+ * 迁移 profile 中本插件的旧包名和旧行 id；原有 config 保留。
  *
  * 为什么要改：`name` 是 DSH 加载的模块名，用户层的行会覆盖 bundle 层，旧名留着 DSH 就会去加载一个
  * 已经移除的包。DSH 的 configEditor 只能在 DSH 运行时用，这里只能改文本——所以只做最窄的一处替换：
- * 顶层行（`- ` 开头）范围内、id 等于 rowId、`name:` 的值恰好是某个旧包名的那一行，其余字节原样保留，
+ * 只处理顶层行（`- ` 开头），id 与包名必须匹配本仓库的新旧名称，其余字节原样保留，
  * 写之前留一份带时间戳的备份。新包名以 @ 开头，YAML 里必须加引号。
  * @returns 改了的行 id 列表（没有可改的返回空数组）。
  */
@@ -231,31 +232,11 @@ function migrateRowNames(profile, plugins) {
   const file = join(profileDir(profile), 'cordis.patch.yml');
   if (!existsSync(file)) return [];
   const text = readFileSync(file, 'utf8');
-  const lines = text.split('\n');
-  const starts = lines.map((line, i) => (/^-\s/.test(line) ? i : -1)).filter((i) => i >= 0);
-  const scalar = '[\'"]?([^\'"\\s#]+)[\'"]?\\s*(?:#.*)?\\r?$';
-  const idPattern = new RegExp(`^(?:- |  )id:\\s*${scalar}`);
-  const namePattern = new RegExp(`^(- |  )name:\\s*${scalar}`);
-  const migrated = [];
-  starts.forEach((start, k) => {
-    const end = k + 1 < starts.length ? starts[k + 1] : lines.length;
-    let id;
-    let nameAt = -1;
-    for (let i = start; i < end; i++) {
-      id ??= idPattern.exec(lines[i])?.[1];
-      if (nameAt < 0 && namePattern.test(lines[i])) nameAt = i;
-    }
-    const plugin = plugins.find((candidate) => candidate.rowId === id);
-    if (!plugin || nameAt < 0) return;
-    const [, lead, value] = namePattern.exec(lines[nameAt]);
-    if (!plugin.legacy.includes(value)) return;
-    lines[nameAt] = `${lead}name: '${plugin.name}'${lines[nameAt].endsWith('\r') ? '\r' : ''}`;
-    migrated.push(id);
-  });
+  const { text: updated, migrated } = migratePluginRows(text, plugins);
   if (migrated.length === 0) return [];
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
   writeFileSync(`${file}.bak-before-scoped-name-${stamp}`, text);
-  writeFileSync(file, lines.join('\n'));
+  writeFileSync(file, updated);
   return migrated;
 }
 
@@ -414,7 +395,7 @@ async function installInto(profile, selected) {
 function migrateRows(profile, selected) {
   try {
     const migrated = migrateRowNames(profile, selected);
-    if (migrated.length > 0) ok(`cordis.patch.yml：行 ${migrated.join(', ')} 的 name 已改为新包名（原文件已备份）`);
+    if (migrated.length > 0) ok(`cordis.patch.yml：行 ${migrated.join(', ')} 已迁移到新名称（原文件已备份）`);
     return true;
   } catch (error) {
     bad(`修正 cordis.patch.yml 失败：${error instanceof Error ? error.message : String(error)}`);

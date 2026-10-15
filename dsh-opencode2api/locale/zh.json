@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "OpenCode API 自动启动",
+    "title": "OpenCode API",
     "description": "托管 opencode2api 后端，安装、更新、回滚，并将选中的模型同步到 DSH。"
   }
 }

@@ -14,7 +14,7 @@ import { ensureBackendConfig } from './backend-config.js';
 import { configEditorOf, credentialsOf, registerPanelRoutes } from './web.js';
 
 /** 插件名（日志前缀）。 */
-export const name = 'dsh-autostart-opencode2api';
+export const name = 'dsh-opencode2api';
 
 /**
  * 不注入任何 Host Service：本插件的核心工作（spawn 外部进程 + 探测端口）
