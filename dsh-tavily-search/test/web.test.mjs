@@ -10,8 +10,8 @@ import { ShimRuntime } from '../lib/runtime.js';
 import {
   describeStatus,
   KEYS_PATH,
-  loopbackOrigin,
   registerPanelRoutes,
+  requestRejection,
   runTestSearch,
   STATUS_PATH,
   TEST_PATH,
@@ -94,20 +94,27 @@ test('runTestSearch：缺 key / Tavily 故障 / 连不上接口都返回 ok:fals
   assert.match(unreachable.reason, /连不上搜索接口/);
 });
 
-test('loopbackOrigin：无 Origin 或本机来源放行，外部来源拒绝', () => {
-  assert.equal(loopbackOrigin({ headers: {} }), true);
-  assert.equal(loopbackOrigin({ headers: { origin: 'http://127.0.0.1:5173' } }), true);
-  assert.equal(loopbackOrigin({ headers: { origin: 'http://localhost' } }), true);
-  assert.equal(loopbackOrigin({ headers: { origin: 'https://evil.example' } }), false);
-  assert.equal(loopbackOrigin({ headers: { origin: 'not a url' } }), false);
+test('requestRejection：有 connection 时以宿主结论为准，否则只放行回环对端的同源请求', () => {
+  const local = (headers = {}, remoteAddress = '127.0.0.1') => ({ headers: { host: '127.0.0.1:3000', ...headers }, socket: { remoteAddress } });
+  assert.equal(requestRejection(local()), undefined);
+  assert.equal(requestRejection(local({ origin: 'http://127.0.0.1:3000' })), undefined);
+  assert.equal(requestRejection(local({}, '::ffff:127.0.0.1')), undefined);
+  assert.equal(requestRejection(local({ origin: 'http://localhost:5173' })), 403);
+  assert.equal(requestRejection(local({ origin: 'https://evil.example' })), 403);
+  assert.equal(requestRejection(local({ origin: 'not a url' })), 403);
+  assert.equal(requestRejection(local({ 'sec-fetch-site': 'cross-site' })), 403);
+  assert.equal(requestRejection(local({}, '192.168.1.5')), 403);
+  assert.equal(requestRejection(local(), { requestRejection: () => 401 }), 401);
+  assert.equal(requestRejection(local({}, '10.0.0.2'), { requestRejection: () => undefined }), undefined);
 });
 
-/** 替身 req / res：够路由处理函数用即可。 */
-function fakeRequest(method, { origin, body, url } = {}) {
+/** 替身 req / res：够路由处理函数用即可。POST 默认带 JSON 头，与卡片的真实请求一致。 */
+function fakeRequest(method, { origin, body, url, contentType = method === 'POST' ? 'application/json' : undefined, remoteAddress = '127.0.0.1' } = {}) {
   const req = Readable.from(body === undefined ? [] : [Buffer.from(body)]);
   req.method = method;
   req.url = url;
-  req.headers = origin ? { origin } : {};
+  req.socket = { remoteAddress };
+  req.headers = { host: '127.0.0.1:3000', ...(origin ? { origin } : {}), ...(contentType ? { 'content-type': contentType } : {}) };
   return req;
 }
 
@@ -160,6 +167,11 @@ test('registerPanelRoutes：注册四条路由，校验来源与方法，卸载�
   const foreign = fakeResponse();
   await routes.get(STATUS_PATH).handler(fakeRequest('GET', { origin: 'https://evil.example' }), foreign);
   assert.equal(foreign.status, 403);
+
+  // 本机其他端口的网页可用 text/plain 绕开 CORS 预检，test 路由会真实消耗 Tavily 额度。
+  const plainText = fakeResponse();
+  await routes.get(TEST_PATH).handler(fakeRequest('POST', { body: '{}', contentType: 'text/plain' }), plainText);
+  assert.equal(plainText.status, 415);
 
   const wrongMethod = fakeResponse();
   await routes.get(TEST_PATH).handler(fakeRequest('GET'), wrongMethod);

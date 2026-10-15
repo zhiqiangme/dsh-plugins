@@ -1,5 +1,5 @@
 /**
- * 插件页卡片的宿主半侧：四条 loopback 路由。
+ * 插件页卡片的宿主半侧：四条面板路由（经宿主浏览器会话鉴权）。
  *
  *   GET  /plugins/dsh-tavily-search/status   搜索接口状态（在不在监听、端点、凭据引用名）
  *   POST /plugins/dsh-tavily-search/test     端到端测试一次搜索：按 DSH 的请求形状打本插件的接口
@@ -47,18 +47,37 @@ export function json(res, status, body) {
 }
 
 /**
- * 只接受本机来源：没有 Origin 头（curl、同源导航）放行；有则必须是 loopback。
- * DSH 的页面本身就是从 127.0.0.1 加载的，任何外部页面都触发不了这些路由。
+ * 面板路由的准入检查：返回拒绝用的 HTTP 状态码，放行返回 undefined。
+ *
+ * 宿主 webServer 本身不鉴权，插件路由默认对任何连得上端口的请求开放。有 connection 服务时
+ * 沿用宿主 /api 与 open-in-app 的同一道关：Host/Origin 校验（防 DNS 重绑定与跨站）加浏览器会话
+ * Cookie（桌面端由 Electron 转发请求时附上）。没有 connection 的旧组合退回本地规则：对端必须是
+ * 回环地址，带 Origin 时必须与 Host 同源——只放行"任意 loopback 来源"会让本机其他端口的网页也能调，
+ * 例如反复调 test 路由消耗 Tavily 额度。
  */
-export function loopbackOrigin(req) {
+export function requestRejection(req, connection) {
+  if (typeof connection?.requestRejection === 'function') return connection.requestRejection(req);
+  if (!isLoopbackAddress(req.socket?.remoteAddress)) return 403;
+  if (req.headers?.['sec-fetch-site'] === 'cross-site') return 403;
   const origin = req.headers?.origin;
-  if (origin === undefined) return true;
+  if (origin === undefined) return undefined;
   try {
-    const { hostname } = new URL(origin);
-    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]';
+    return new URL(origin).host === req.headers?.host ? undefined : 403;
   } catch {
-    return false;
+    return 403;
   }
+}
+
+function isLoopbackAddress(address) {
+  if (typeof address !== 'string') return false;
+  const plain = address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
+  return plain === '::1' || plain.startsWith('127.');
+}
+
+/** POST 只收 JSON：text/plain 之类的"简单请求"跨源时不触发 CORS 预检，只能在服务端拒掉。 */
+export function isJsonRequest(req) {
+  const type = String(req.headers?.['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+  return type === 'application/json';
 }
 
 /** 读 POST 的 JSON 体；空体视为 `{}`，其它形状问题返回 ok:false 而不是抛。 */
@@ -157,6 +176,22 @@ function resolveWebServer(ctx) {
   return candidates.find((candidate) => typeof candidate?.register === 'function');
 }
 
+/** 宿主的 connection 服务（浏览器会话鉴权）；拿不到时 guard 退回本地规则。 */
+function resolveConnection(ctx) {
+  const candidates = [];
+  try {
+    candidates.push(ctx?.connection);
+  } catch {
+    /* 服务未就绪时读属性可能抛，忽略 */
+  }
+  try {
+    if (typeof ctx?.get === 'function') candidates.push(ctx.get('connection'));
+  } catch {
+    /* 同上 */
+  }
+  return candidates.find((candidate) => typeof candidate?.requestRejection === 'function');
+}
+
 /** `?force=1` / `?force=true` 视为强制刷新；其它值（含缺省）走缓存。 */
 function forceFrom(req) {
   try {
@@ -183,10 +218,16 @@ export function registerPanelRoutes(ctx, { logger, resolved, runtime, inspectKey
       return;
     }
 
-    /** 来源校验与异常兜底：各路由共用。 */
+    /** 准入校验与异常兜底：各路由共用。 */
     const guard = (handler) => async (req, res) => {
-      if (!loopbackOrigin(req)) {
-        json(res, 403, { ok: false, reason: 'origin-not-trusted' });
+      // connection 每次现取：它与 webServer 谁先挂上不确定。
+      const rejection = requestRejection(req, resolveConnection(ctx));
+      if (rejection !== undefined) {
+        json(res, rejection, { ok: false, reason: rejection === 401 ? 'unauthorized' : 'origin-not-trusted' });
+        return;
+      }
+      if (req.method === 'POST' && !isJsonRequest(req)) {
+        json(res, 415, { ok: false, reason: 'content-type 必须是 application/json' });
         return;
       }
       try {
