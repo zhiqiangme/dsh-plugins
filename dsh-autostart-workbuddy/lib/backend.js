@@ -416,23 +416,29 @@ export async function applyUpdate({
   ensureLayout(paths);
   const stagedExe = join(paths.cache, `staged-${versionDirName(latest.tag, latest.commit)}.exe`);
   writeFileSync(stagedExe, exeBuffer);
+  // 暂存文件只在换上去时被挪走；之前任何一步拒绝安装，都把它删掉，不在 cache/ 里留一个未通过校验的 exe。
+  const discardStaged = (result) => {
+    rmSync(stagedExe, { force: true });
+    forgetBuildInfo(stagedExe);
+    return result;
+  };
 
   // 落地校验：包里的 exe 必须自称是目标 commit，否则说明资产与 tag 对不上
   const stagedInfo = readBuildInfo(stagedExe);
   if (!stagedInfo) {
-    return { ok: false, state: 'binary-unknown', reason: '下载到的 exe 里读不到构建信息，拒绝安装', latest };
+    return discardStaged({ ok: false, state: 'binary-unknown', reason: '下载到的 exe 里读不到构建信息，拒绝安装', latest });
   }
   if (latest.commit && stagedInfo.revision !== latest.commit) {
-    return {
+    return discardStaged({
       ok: false,
       state: 'binary-mismatch',
       reason: `包内 exe 的 revision（${stagedInfo.revision.slice(0, 7)}）与 release 的 commit（${latest.commit.slice(0, 7)}）不一致`,
       latest,
-    };
+    });
   }
 
   const stop = await stopForUpdate(service, logger);
-  if (!stop.ok) return { ok: false, state: 'not-owned', reason: stop.reason, latest };
+  if (!stop.ok) return discardStaged({ ok: false, state: 'not-owned', reason: stop.reason, latest });
 
   const swap = swapIn(paths, stagedExe, { from: local, to: latest });
 
