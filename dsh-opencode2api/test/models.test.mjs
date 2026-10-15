@@ -10,15 +10,17 @@ test('真实网关元数据：视觉、上下文、输出限制与思考；过�
   assert.equal(entries.length, 2);
   assert.deepEqual(entries[0], { id: 'vision-free', name: 'Vision', contextWindow: 200000,
     maxTokens: 32000, input: ['text', 'image'], reasoningEfforts: { low: 'low', high: 'high' } });
-  assert.deepEqual(entries[1], { id: 'text-model', name: 'Text-model', contextWindow: 100000,
+  assert.deepEqual(entries[1], { id: 'text-model', name: 'Text-Model', contextWindow: 100000,
     maxTokens: 8192, input: ['text'] });
   assert.equal(priceLabel(catalog[0]), 'Free');
   assert.equal(priceLabel(catalog[1]), '$0.2 / $0.8');
   assert.equal(priceLabel({ id: 'unknown' }), '—');
 });
 
-test('展示名首字母大写，保留其余拼写和上游 id', () => {
-  assert.equal(modelDisplayName({ id: 'deepseek-v4.1-flash-free' }), 'Deepseek-v4.1-flash-free');
+test('展示名各连字符分段首字母大写，保留其余拼写和上游 id', () => {
+  assert.equal(modelDisplayName({ id: 'deepseek-v4.1-flash-free' }), 'Deepseek-V4.1-Flash-Free');
+  assert.equal(modelDisplayName({ id: 'step-5-preview-free' }), 'Step-5-Preview-Free');
+  assert.equal(modelDisplayName({ id: 'opaque-id', name: 'GLM-5.3-flash' }), 'GLM-5.3-Flash');
   assert.equal(modelDisplayName({ id: 'opaque-id', name: '  mimo v2.6 Flash  ' }), 'Mimo v2.6 Flash');
   assert.equal(modelDisplayName({ id: 'opaque-id', name: 'OpenCode' }), 'OpenCode');
   assert.equal(planModelEntries([{ id: 'cat-jam-free' }])[0].id, 'cat-jam-free');
@@ -35,7 +37,7 @@ test('支持 Max 的模型同步后默认 Max，重复同步不改配置；能�
   const provider = () => editor.entry('llm-pi-ai').options.config.providers.opencode2api;
   assert.equal(provider().reasoning, 'max');
   assert.equal(provider().models[0].reasoningEfforts.max, 'max');
-  assert.equal(provider().models[0].name, 'Deepseek-free');
+  assert.equal(provider().models[0].name, 'Deepseek-Free');
   assert.equal((await syncModels(options)).state, 'unchanged');
   models = catalog;
   assert.equal((await syncModels(options)).state, 'updated');

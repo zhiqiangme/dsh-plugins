@@ -31,10 +31,10 @@ export const LLM_PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
 /** 默认保留的思考档位：与 DSH 既有的三档 UI 对齐（低/高/最大）。 */
 export const DEFAULT_EFFORTS = Object.freeze(['low', 'high', 'max']);
 
-/** 只改展示名的首字母，发送给上游的模型 id 保持原样。 */
+/** 连字符分隔的各段首字母大写；保留原分隔符和上游模型 id。 */
 export function modelDisplayName(model) {
   const name = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
-  return name.charAt(0).toUpperCase() + name.slice(1);
+  return name.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('-');
 }
 
 export function priceLabel(model) {
