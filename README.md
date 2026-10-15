@@ -70,7 +70,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 ## 版本号
 
 各插件独立发版，版本号用发布日期 `年.月.日`（年取后两位，不补零）：2026-10-11 发布即 `26.10.11`。
-git tag 通常带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.11`；opencode2api 的 `26.10.15` 版本使用标签 `v26.10.15`。
+git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.11`、`opencode2api-v26.10.15`。
 
 ## 参与开发
 
