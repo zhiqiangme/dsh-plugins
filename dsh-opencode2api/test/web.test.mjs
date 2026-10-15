@@ -10,9 +10,10 @@ import { applySelection, describeModels, registerPanelRoutes, MODELS_PATH, PANEL
 import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
 import { catalog, memoryCredentials, serve } from '../fixtures/http-fixture.mjs';
 
-async function request(handler,{method='GET',origin,body}={}) {
+async function request(handler,{method='GET',origin,body,remoteAddress='127.0.0.1',contentType}={}) {
   const req=Readable.from(body===undefined?[]:[Buffer.from(JSON.stringify(body))]);
-  req.method=method;req.url='/';req.headers=origin?{origin}:{};
+  req.method=method;req.url='/';req.socket={remoteAddress};
+  req.headers={host:'127.0.0.1:3000',...(origin?{origin}:{}),...(body===undefined?{}:{'content-type':contentType??'application/json'})};
   const res={writeHead(status){this.status=status;},end(text){this.body=JSON.parse(text);}};
   await handler(req,res);return res;
 }
@@ -26,6 +27,12 @@ test('路由鉴权边界，管理页与 API 独立端口，普通状态接口不
   t.after(()=>{for(const dispose of disposers)dispose?.();});
   assert.equal((await request(routes.get(PANEL_KEY_PATH))).status,405);
   assert.equal((await request(routes.get(PANEL_KEY_PATH),{method:'POST',origin:'https://evil.example',body:{}})).status,403);
+  // 本机其他端口的网页、局域网来的请求、绕开 CORS 预检的 text/plain 都要拒掉。
+  assert.equal((await request(routes.get(PANEL_KEY_PATH),{method:'POST',origin:'http://localhost:5173',body:{}})).status,403);
+  assert.equal((await request(routes.get(PANEL_KEY_PATH),{method:'POST',remoteAddress:'192.168.1.5',body:{}})).status,403);
+  assert.equal((await request(routes.get(BACKEND_PATH),{method:'POST',contentType:'text/plain',body:{action:'uninstall',confirm:true}})).status,415);
+  assert.equal((await request(routes.get(PANEL_KEY_PATH),{method:'POST',origin:'http://127.0.0.1:3000',body:{}})).status,200);
+  assert.equal((await request(routes.get(BACKEND_PATH),{remoteAddress:'::ffff:127.0.0.1'})).status,200);
   const password=await request(routes.get(PANEL_KEY_PATH),{method:'POST',body:{}});
   assert.equal(password.status,200);assert.ok(password.body.key.length>=20);
   const snapshot=await request(routes.get(BACKEND_PATH));
@@ -33,6 +40,24 @@ test('路由鉴权边界，管理页与 API 独立端口，普通状态接口不
   assert.ok(!JSON.stringify(snapshot.body).includes(password.body.key));
   assert.equal((await request(routes.get(MODELS_PATH),{method:'DELETE'})).status,405);
   assert.equal((await request(routes.get(BACKEND_PATH),{method:'POST',body:{action:'uninstall'}})).status,400);
+});
+test('有 connection 服务时按宿主浏览器会话鉴权，未登录返回 401',async(t)=>{
+  const root=mkdtempSync(join(tmpdir(),'opencode-web-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const env={DSH_OPENCODE2API_BACKEND_ROOT:root};const resolved=resolvePluginConfig({},env);
+  ensureBackendConfig(resolved.paths,resolved.spec);
+  let verdict=401;const seen=[];
+  const connection={requestRejection:(req)=>{seen.push(req);return verdict;}};
+  const routes=new Map(),disposers=[];
+  const ctx={webServer:{register:({path,handler})=>{routes.set(path,handler);return()=>routes.delete(path);}},effect:(f)=>disposers.push(f()),
+    get:(name)=>(name==='connection'?connection:undefined)};
+  registerPanelRoutes(ctx,{resolved,env,logger:{warn(){}},checkVersion:async()=>({ok:false})});
+  t.after(()=>{for(const dispose of disposers)dispose?.();});
+  const denied=await request(routes.get(PANEL_KEY_PATH),{method:'POST',body:{}});
+  assert.equal(denied.status,401);assert.equal(denied.body.key,undefined);
+  verdict=undefined;
+  // 宿主放行即可，不再叠加本地的回环地址规则（桌面端请求经 Electron 转发，宿主已校验）。
+  assert.equal((await request(routes.get(PANEL_KEY_PATH),{method:'POST',remoteAddress:'10.0.0.2',body:{}})).status,200);
+  assert.equal(seen.length,2);
 });
 test('模型卡片显示真实能力和价格，保存勾选立即同步',async(t)=>{
   const url=await serve(t,(_req,res)=>res.end(JSON.stringify({data:catalog})));
