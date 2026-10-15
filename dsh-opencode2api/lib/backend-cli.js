@@ -13,8 +13,10 @@
  * 需要按 profile 配置操作时请用面板。
  *
  * 关于停进程：--update / --rollback 需要先停掉后端（Windows 下运行中的 exe 被锁）。
- * 本 CLI 自己 new 一个 ManagedService，因此**只能停它自己拉起的进程**；
+ * 本 CLI 自己 new 一个 GatewayService，因此**只能停它自己拉起的进程**；
  * 如果后端是 DSH 拉起的，会明确拒绝并提示改用面板——不会去杀别人的进程。
+ * 更新/回滚后为做健康检查拉起的后端是本 CLI 的子进程，结束前停掉它：否则 CLI 要等后端退出才返回，
+ * 而后端本来就该由 DSH 下次启动时托管。
  */
 
 import {
@@ -26,7 +28,7 @@ import {
   rollbackBackend,
 } from './backend.js';
 import { resolvePluginConfig } from './config.js';
-import { ManagedService } from './services.js';
+import { GatewayService } from './gateway-service.js';
 
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(flag);
@@ -78,22 +80,27 @@ async function main() {
   }
 
   if (has('--update') || has('--rollback')) {
-    const service = new ManagedService(resolved.spec, logger);
-    if (has('--update')) {
-      const result = await applyUpdate({
-        paths,
-        env: process.env,
-        apiBase,
-        service,
-        logger,
-        keepVersions: backend.keepVersions,
-      });
+    // 与插件同一个 GatewayService：端口上不是 opencode2api 时不当作启动成功。
+    const service = new GatewayService(resolved.spec, logger);
+    try {
+      if (has('--update')) {
+        const result = await applyUpdate({
+          paths,
+          env: process.env,
+          apiBase,
+          service,
+          logger,
+          keepVersions: backend.keepVersions,
+        });
+        printResult(result);
+        return result.ok ? undefined : exitWith(`更新失败：${result.reason ?? result.state}`);
+      }
+      const result = await rollbackBackend({ paths, service, logger });
       printResult(result);
-      return result.ok ? undefined : exitWith(`更新失败：${result.reason ?? result.state}`);
+      return result.ok ? undefined : exitWith(`回滚失败：${result.reason ?? result.state}`);
+    } finally {
+      await service.stop('命令行操作完成，后端交给 DSH 下次启动时托管');
     }
-    const result = await rollbackBackend({ paths, service, logger });
-    printResult(result);
-    return result.ok ? undefined : exitWith(`回滚失败：${result.reason ?? result.state}`);
   }
 
   printStatus();
