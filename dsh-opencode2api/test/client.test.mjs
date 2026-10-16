@@ -625,39 +625,39 @@ test('卸载二次确认：拿不到宿主 Modal 时退回行内确认（仍是�
   assert.ok(collectByType(tree, 'div').some((node) => node.props.className === 'dsm-oc-confirm'), '应走行内确认');
 });
 
-test('清除后端数据：目录存在时单独一行显示危险色按钮，不打乱 更新/回滚/卸载 的顺序', () => {
+test('彻底卸载：目录存在时紧跟在卸载右侧显示危险色按钮', () => {
   const { cards, t } = boot(
     backendStates({ exeExists: true, rootExists: true, root: 'C:/Users/me/.dsh/autostart-opencode2api', version: {}, history: [] }),
   );
   const tree = cards[0].component({ t, view: 'page' });
   const labels = buttonLabels(backendSection(tree));
-  assert.deepEqual(labels.slice(-5), ['检查更新', '更新', '回滚', '卸载', '清除后端数据']);
+  assert.deepEqual(labels.slice(-5), ['检查更新', '更新', '回滚', '卸载', '彻底卸载']);
 
-  const purge = collectByType(tree, 'button').find((node) => collectText(node).join('') === '清除后端数据');
+  const purge = collectByType(tree, 'button').find((node) => collectText(node).join('') === '彻底卸载');
   assert.match(purge.props.className, /dsm-oc-btn-danger/);
   assert.ok(collectText(tree).some((text) => text.includes('C:/Users/me/.dsh/autostart-opencode2api')), '提示里应写明会删哪个目录');
 
   // 后端没装但目录还在（只剩日志 / 凭证）时同样可以清。
   const leftover = boot(backendStates({ exeExists: false, rootExists: true, root: 'x', version: {}, history: [] }));
-  assert.ok(buttonLabels(backendSection(leftover.cards[0].component({ t: leftover.t, view: 'page' }))).includes('清除后端数据'));
+  assert.ok(buttonLabels(backendSection(leftover.cards[0].component({ t: leftover.t, view: 'page' }))).includes('彻底卸载'));
 
   const gone = boot(backendStates({ exeExists: false, rootExists: false, version: {}, history: [] }));
-  assert.equal(buttonLabels(backendSection(gone.cards[0].component({ t: gone.t, view: 'page' }))).includes('清除后端数据'), false, '目录不在时不显示');
+  assert.equal(buttonLabels(backendSection(gone.cards[0].component({ t: gone.t, view: 'page' }))).includes('彻底卸载'), false, '目录不在时不显示');
 });
 
-test('清除后端数据二次确认：弹窗说明会删整个目录且不可撤销', () => {
+test('彻底卸载二次确认：弹窗说明会删整个目录且不可撤销', () => {
   const { cards, t } = boot(
     backendStates({ exeExists: true, rootExists: true, root: 'D:/dsh/autostart-opencode2api', version: {}, history: [] }, { confirming: 'purge' }),
   );
   const tree = render(cards[0].component({ t, view: 'page' }));
   const texts = collectText(tree);
 
-  assert.ok(texts.includes('清除后端数据？'));
+  assert.ok(texts.includes('彻底卸载后端？'));
   assert.ok(texts.some((text) => text.includes('D:/dsh/autostart-opencode2api') && text.includes('账号凭证')), '应说明删哪个目录、含凭证');
   assert.ok(texts.some((text) => text.includes('无法撤销')));
   assert.equal(texts.includes('卸载后端？'), false, '不能弹成卸载的确认');
   const labels = buttonLabels(tree);
-  assert.ok(labels.includes('确认清除'));
+  assert.ok(labels.includes('确认彻底卸载'));
   assert.ok(labels.includes('取消'));
 });
 

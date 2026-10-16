@@ -219,13 +219,13 @@ window.__ModuleLoader__.load({
       uninstallDesc: '会停止后端，并删除程序文件：opencode2api.exe、历史版本、下载缓存。',
       uninstallKept: '账号凭证与状态（data/）以及 config.json 会保留。',
       uninstallConfirm: '确认卸载',
-      backendPurge: '清除后端数据',
-      backendPurgeHint: 'DSH 卸载本插件时不会删除 {root}；卸载前点一下即可清干净。',
+      backendPurge: '彻底卸载',
+      backendPurgeHint: 'DSH 卸载本插件时不会删除 {root}；卸载插件前先点「彻底卸载」即可清干净。',
       backendPurged: '已清除 {root}，现在可以去「插件」页卸载本插件。',
-      purgeTitle: '清除后端数据？',
+      purgeTitle: '彻底卸载后端？',
       purgeDesc: '会停止后端，并删除 {root} 整个目录：程序、历史版本、config.json、账号凭证与状态（data/）、缓存和日志。',
       purgeKept: '无法撤销。之后想继续用，需要重新安装后端并重新登录账号。',
-      purgeConfirm: '确认清除',
+      purgeConfirm: '确认彻底卸载',
       updateTitle: '插件更新',
       updateChecking: '正在检查更新…',
       updateCheck: '检查更新',
@@ -315,13 +315,13 @@ window.__ModuleLoader__.load({
       uninstallDesc: 'Stops the backend and deletes its program files: opencode2api.exe, archived versions, download cache.',
       uninstallKept: 'Credentials and state (data/) plus config.json are kept.',
       uninstallConfirm: 'Uninstall',
-      backendPurge: 'Clear backend data',
-      backendPurgeHint: 'Uninstalling this plugin in DSH does not delete {root}; click this first to remove it.',
+      backendPurge: 'Fully uninstall',
+      backendPurgeHint: 'Uninstalling this plugin in DSH does not delete {root}; click "Fully uninstall" first to remove it.',
       backendPurged: 'Cleared {root}. You can now uninstall this plugin on the Plugins page.',
-      purgeTitle: 'Clear backend data?',
+      purgeTitle: 'Fully uninstall the backend?',
       purgeDesc: 'Stops the backend and deletes the whole {root} directory: program, archived versions, config.json, credentials and state (data/), cache and logs.',
       purgeKept: 'This cannot be undone. To use it again you will need to reinstall the backend and sign in to your accounts again.',
-      purgeConfirm: 'Clear',
+      purgeConfirm: 'Fully uninstall',
       updateTitle: 'Plugin update',
       updateChecking: 'Checking for updates…',
       updateCheck: 'Check for updates',
@@ -1204,7 +1204,7 @@ window.__ModuleLoader__.load({
               backendBusy === 'check' ? t('backendWorking') : t('backendCheck'),
             ),
             // 安装与卸载互斥：没装才显示"安装"，装了才显示"卸载"。
-            // 顺序按使用频率排：更新 → 回滚 → 卸载（卸载放最后，离"检查更新"最远，减少误点）。
+            // 顺序按使用频率排：更新 → 回滚 → 卸载 → 彻底卸载（删除类放最后，离"检查更新"最远，减少误点）。
             installed
               ? h(
                   'button',
@@ -1250,6 +1250,20 @@ window.__ModuleLoader__.load({
                   t('backendUninstall'),
                 )
               : null,
+            // 「彻底卸载」紧挨「卸载」：两者都是删除动作，放一起便于对比；它比卸载多删 config.json、
+            // data/ 凭证与日志。只看目录在不在，后端没装但还剩凭证 / 日志时也要能清。
+            backend.rootExists === true
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsm-oc-btn dsm-oc-btn-danger',
+                    disabled: Boolean(backendBusy),
+                    onClick: () => setConfirming('purge'),
+                  },
+                  backendBusy === 'purge' ? t('backendWorking') : t('backendPurge'),
+                )
+              : null,
           ),
           h(
             'p',
@@ -1289,24 +1303,13 @@ window.__ModuleLoader__.load({
           ),
         );
 
-        // 「清除后端数据」：DSH 卸载插件时不通知插件，数据目录只能靠用户在卸载前显式清掉。
-        // 单独成行、放在历史版本之后，与 更新/回滚/卸载 分开，减少误点；目录不在时不显示。
+        // DSH 卸载插件时不通知插件，数据目录只能靠用户在卸载前点「彻底卸载」清掉，这里写明会删哪个目录。
         if (backend.rootExists === true) {
           section.push(
             h(
-              'div',
-              { key: 'purge', className: 'dsm-oc-toolbar' },
-              h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dsm-oc-btn dsm-oc-btn-danger',
-                  disabled: Boolean(backendBusy),
-                  onClick: () => setConfirming('purge'),
-                },
-                backendBusy === 'purge' ? t('backendWorking') : t('backendPurge'),
-              ),
-              h('span', { className: 'dsm-oc-hint' }, t('backendPurgeHint', { root: backend.root ?? '' })),
+              'p',
+              { key: 'purgeHint', className: 'dsm-oc-backend-line' },
+              t('backendPurgeHint', { root: backend.root ?? '' }),
             ),
           );
         }

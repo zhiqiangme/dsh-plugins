@@ -338,7 +338,7 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
   }
 
   if ((action === 'uninstall' || action === 'purge') && body.value.confirm !== true) {
-    json(res, 400, { ok: false, reason: `${action === 'purge' ? '清除后端数据' : '卸载'}需要二次确认（confirm: true）` });
+    json(res, 400, { ok: false, reason: `${action === 'purge' ? '彻底卸载' : '卸载'}需要二次确认（confirm: true）` });
     return;
   }
 
