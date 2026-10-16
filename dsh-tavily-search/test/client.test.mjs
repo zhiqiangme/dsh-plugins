@@ -161,6 +161,19 @@ function slots(tails = []) {
   });
 }
 
+/** 接入时网页搜索改读的占位凭据引用（与 lib/client.js 一致）。 */
+const SHIM_REF = 'DSH_TAVILY_SEARCH_PLACEHOLDER';
+/** 完整接入后的网页搜索快照：接口地址与凭据引用都由本插件覆盖，占位凭据有值。 */
+const WIRED_WEB = {
+  phase: 'ready',
+  baseURL: 'http://127.0.0.1:8787/v1',
+  apiKeyEnv: SHIM_REF,
+  overridden: true,
+  keyRefOverridden: true,
+  writable: true,
+  keyConfigured: true,
+};
+
 /** 一份"一切就绪"的基准 model，各用例在此基础上改。 */
 function readyModel(overrides = {}) {
   return {
@@ -175,7 +188,7 @@ function readyModel(overrides = {}) {
     keyBusy: undefined,
     confirmRemove: undefined,
     keyNotice: undefined,
-    web: { phase: 'ready', baseURL: 'http://127.0.0.1:8787/v1', overridden: true, writable: true, keyConfigured: true },
+    web: WIRED_WEB,
     webBusy: false,
     webNotice: undefined,
     test: { busy: false, result: undefined },
@@ -272,26 +285,90 @@ test('未接入：显示"接入网页搜索"与将要写入的地址；末尾斜
   assert.match(collectText(notWired).join('|'), /默认（DeepSeek 官方接口）/);
   assert.match(collectText(notWired).join('|'), /接口地址改为 http:\/\/127\.0\.0\.1:8787\/v1/);
 
-  const slash = render(
-    module.renderCard(
-      readyModel({ web: { phase: 'ready', baseURL: 'http://127.0.0.1:8787/v1/', overridden: true, writable: true } }),
-      actions,
-      t,
-    ),
-  );
+  assert.match(collectText(notWired).join('|'), /改读本插件的占位凭据 DSH_TAVILY_SEARCH_PLACEHOLDER/);
+
+  const slash = render(module.renderCard(readyModel({ web: { ...WIRED_WEB, baseURL: 'http://127.0.0.1:8787/v1/' } }), actions, t));
   assert.match(collectText(slash).join('|'), /已接入/);
 });
 
-test('已接入但网页搜索页的 API Key 为空：提示填任意非空值', () => {
+test('旧版接入（只改了接口地址、仍读 DEEPSEEK_API_KEY）：标"待修复"，给"修复接入"并说明会与聊天 key 混用', () => {
   const { module, t } = boot();
-  const tree = render(
-    module.renderCard(
-      readyModel({ web: { phase: 'ready', baseURL: 'http://127.0.0.1:8787/v1', overridden: true, writable: true, keyConfigured: false } }),
-      actions,
-      t,
-    ),
-  );
-  assert.match(collectText(tree).join('|'), /填任意非空字符串即可/);
+  const calls = [];
+  const spy = new Proxy({}, { get: (_target, name) => (...args) => calls.push([name, ...args]) });
+  const legacy = { ...WIRED_WEB, apiKeyEnv: 'DEEPSEEK_API_KEY', keyRefOverridden: false, keyConfigured: false };
+  const tree = render(module.renderCard(readyModel({ web: legacy }), spy, t));
+  const text = collectText(tree).join('|');
+  assert.match(text, /待修复/);
+  assert.doesNotMatch(text, /已接入/);
+  assert.match(text, /仍读凭据 DEEPSEEK_API_KEY/);
+  buttonByLabel(tree, '修复接入').props.onClick();
+  assert.deepEqual(calls, [['wire']]);
+  assert.ok(buttonByLabel(tree, '恢复默认'), '接口地址仍是本插件写的，可以撤销');
+});
+
+test('已改读占位凭据但它被清空：标"待修复"，提示重新写入', () => {
+  const { module, t } = boot();
+  const tree = render(module.renderCard(readyModel({ web: { ...WIRED_WEB, keyConfigured: false } }), actions, t));
+  const text = collectText(tree).join('|');
+  assert.match(text, /待修复/);
+  assert.match(text, /占位凭据 DSH_TAVILY_SEARCH_PLACEHOLDER 是空的/);
+  assert.ok(buttonByLabel(tree, '修复接入'));
+});
+
+test('wireWebSearch：占位凭据为空时先写入，再一次 mutate 改凭据引用与接口地址', async () => {
+  const { module } = boot();
+  const calls = [];
+  const api = {
+    describe: async (refs) => (calls.push(['describe', refs]), { ok: true, value: { [SHIM_REF]: { configured: false } } }),
+    setKey: async (ref, value) => (calls.push(['setKey', ref, value]), { ok: true, value: undefined }),
+    webForm: { mutate: async (ops) => (calls.push(['mutate', ops]), true) },
+  };
+  assert.equal(await module.wireWebSearch(api, 'http://127.0.0.1:8787/v1'), true);
+  assert.deepEqual(calls, [
+    ['describe', [SHIM_REF]],
+    ['setKey', SHIM_REF, 'dsh-tavily-search'],
+    [
+      'mutate',
+      [
+        { op: 'set', path: ['apiKeyEnv'], value: SHIM_REF },
+        { op: 'set', path: ['baseURL'], value: 'http://127.0.0.1:8787/v1' },
+      ],
+    ],
+  ]);
+});
+
+test('wireWebSearch：占位凭据已有值时不覆盖；表单没有 mutate 时逐个 set，被拒即停', async () => {
+  const { module } = boot();
+  const calls = [];
+  const api = {
+    describe: async () => ({ ok: true, value: { [SHIM_REF]: { configured: true } } }),
+    setKey: async (...args) => (calls.push(['setKey', ...args]), { ok: true }),
+    webForm: { set: async (field, value) => (calls.push(['set', field, value]), field !== 'apiKeyEnv') },
+  };
+  assert.equal(await module.wireWebSearch(api, 'http://e/v1'), false);
+  assert.deepEqual(calls, [['set', 'apiKeyEnv', SHIM_REF]], '不写占位凭据；apiKeyEnv 被拒后不再改接口地址');
+});
+
+test('restoreWebSearch：只撤销本插件写的覆盖，撤销凭据引用后删掉占位凭据；没东西可撤销时不写', async () => {
+  const { module } = boot();
+  const calls = [];
+  const api = {
+    unsetKey: async (ref) => (calls.push(['unsetKey', ref]), { ok: true }),
+    webForm: { mutate: async (ops) => (calls.push(['mutate', ops]), true) },
+  };
+  assert.equal(await module.restoreWebSearch(api, { web: true, webKeyRef: true }), true);
+  assert.deepEqual(calls, [
+    ['mutate', [{ op: 'unset', path: ['baseURL'] }, { op: 'unset', path: ['apiKeyEnv'] }]],
+    ['unsetKey', SHIM_REF],
+  ]);
+
+  calls.length = 0;
+  assert.equal(await module.restoreWebSearch(api, { web: true, webKeyRef: false }), true);
+  assert.deepEqual(calls, [['mutate', [{ op: 'unset', path: ['baseURL'] }]]], '凭据引用不是本插件写的就不碰，也不删占位凭据');
+
+  calls.length = 0;
+  assert.equal(await module.restoreWebSearch(api, { web: false, webKeyRef: false }), undefined);
+  assert.deepEqual(calls, []);
 });
 
 test('网页搜索插件未加载 / 设置只读', () => {
@@ -431,8 +508,9 @@ test('webModel：按用户层"有没有这个键"判断覆盖，缺省凭据引�
   assert.deepEqual(module.webModel({ status: 'unavailable' }), { phase: 'unavailable' });
   assert.deepEqual(
     module.webModel({ status: 'ready', value: { baseURL: 'http://x/v1' }, user: { baseURL: 'http://x/v1' }, writable: true }),
-    { phase: 'ready', baseURL: 'http://x/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', overridden: true, writable: true },
+    { phase: 'ready', baseURL: 'http://x/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', overridden: true, keyRefOverridden: false, writable: true },
   );
+  assert.equal(module.webModel({ status: 'ready', value: { apiKeyEnv: SHIM_REF }, user: { apiKeyEnv: SHIM_REF } }).keyRefOverridden, true);
   assert.equal(module.webModel({ status: 'ready', value: {}, user: {}, writable: true }).overridden, false);
   assert.equal(module.webModel({ status: 'ready', value: { apiKeyEnv: 'K' }, writable: false }).apiKeyEnv, 'K');
 });
@@ -729,7 +807,7 @@ test('清除插件数据二次确认：列出要删的 key 数与接口恢复，
   assert.match(text, /删除 2 个 Tavily API Key/, '只读来源的 key 不算在内');
   assert.match(text, /恢复为 DSH 默认/);
   buttonByLabel(section, '确认清除').props.onClick();
-  assert.deepEqual(calls, [['purge', { refs: ['TAVILY_API_KEY', 'TAVILY_API_KEY_3'], readOnly: 1, web: true }]]);
+  assert.deepEqual(calls, [['purge', { refs: ['TAVILY_API_KEY', 'TAVILY_API_KEY_3'], readOnly: 1, web: true, webKeyRef: true }]]);
 });
 
 test('purgePluginData：逐个删 key、单个失败不打断，接口指向本插件时恢复默认', async () => {
@@ -758,6 +836,13 @@ test('purgePluginData：逐个删 key、单个失败不打断，接口指向本�
   const keysOnly = await module.purgePluginData({ api, targets: { refs: [], readOnly: 0, web: false } });
   assert.equal(keysOnly.restored, false);
   assert.deepEqual(webCalls, []);
+
+  // 凭据引用也是本插件写的：一并恢复，并删掉占位凭据。
+  unset.length = 0;
+  const both = await module.purgePluginData({ api, targets: { refs: [], readOnly: 0, web: true, webKeyRef: true } });
+  assert.equal(both.restored, true);
+  assert.deepEqual(webCalls, ['baseURL', 'apiKeyEnv']);
+  assert.deepEqual(unset, [SHIM_REF]);
 });
 
 test('清除插件数据：清完后仍显示结果提示（引导去卸载），不再给按钮', () => {
