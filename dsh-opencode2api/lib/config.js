@@ -17,7 +17,18 @@ const MODELS_DEFAULTS = Object.freeze({
   provider: 'opencode2api',
   // 面板的模型列表是缓存 1h 的；冷缓存时要等上游，给它 60s（面板自己那侧上限是 120s）。
   timeoutMs: 60_000,
+  // 运行中定时重同步：后端约 5 分钟刷新一次上游目录，10 分钟一轮足以跟上下架，又不频繁写配置。
+  resyncIntervalMs: 10 * 60_000,
 });
+
+/** 定时重同步的下限：再短只会反复打 /v1/models，上游目录本身也没刷新那么快。 */
+const MIN_RESYNC_INTERVAL_MS = 60_000;
+
+/** 0 = 关闭定时重同步；其它非法值退回默认，过小的值抬到下限。 */
+function resyncInterval(value) {
+  if (value === 0 || value === '0') return 0;
+  return Math.max(positiveNumber(value, MODELS_DEFAULTS.resyncIntervalMs), MIN_RESYNC_INTERVAL_MS);
+}
 
 /** 布尔字段的宽容解析：只有显式 false 才关闭（与 DSH 配置里 enabled 的 opt-out 语义一致）。 */
 function bool(value, fallback) {
@@ -106,6 +117,7 @@ function resolveModelsConfig(raw, spec) {
     apiKeyRef: /^[A-Za-z_][A-Za-z0-9_]*$/.test(models.apiKeyRef ?? '') ? models.apiKeyRef : 'OPENCODE2API_PROXY_KEY',
     baseURL: stringOr(models.baseURL, `http://${spec.host}:${spec.port}`),
     timeoutMs: positiveNumber(models.timeoutMs, MODELS_DEFAULTS.timeoutMs),
+    resyncIntervalMs: resyncInterval(models.resyncIntervalMs),
   };
 }
 

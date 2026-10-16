@@ -40,6 +40,7 @@ Web / CLI 使用 `web` / `headless` profile。后端安装器支持 Windows x64�
 - DSH 退出或停用插件时，只停止该实例自己拉起的进程；外部手动启动的进程保留。
 - 后端更新由用户点击；支持保留历史版本、失败回滚、卸载程序。更新不覆盖配置和密钥。
 - 模型同步默认关闭，通过 DSH `configEditor` 写配置；只修改自己的 provider 模型列表，保留其他 provider。勾选与同步开关变化不重启后端。
+- 开启同步后，除启动时和卡片保存时，运行中每 10 分钟（`models.resyncIntervalMs`，`0` 关闭，最小 1 分钟）再同步一次，跟上后端下架或新增的模型。后端 `/healthz` 未就绪时跳过；后端返回空列表时不清空；某个模型要连续两轮缺席才会移除，避免目录刷新抖动误删。
 - 本地 API Key 保存到 DSH 凭据库的 `OPENCODE2API_PROXY_KEY` 引用，profile 中不写密钥明文。它与 Zen / Go 的上游 Key 是不同的凭据。
 - 从 `/v1/models` 同步上下文、最大输出、视觉模态和上游声明的思考档位。`System One` 专用模型不导入普通对话选择器；未知价格显示 `—`，价格单位为 USD / 百万 token。
 - 展示名按连字符分段、各段首字母大写，例如 `Deepseek-V4.1-Flash-Free`，模型 id 保持不变。选中的模型都支持 Max 时，OpenCode 提供商默认使用 Max；混有不支持 Max 的模型时不强设默认档位。在 DSH 里手动改过的默认档位，只要新清单的模型都支持就保持不变，否则移除。
@@ -68,6 +69,7 @@ Web / CLI 使用 `web` / `headless` profile。后端安装器支持 Windows x64�
       exclude: []
       efforts: auto           # 按上游声明；也可显式列出档位
       apiKeyRef: OPENCODE2API_PROXY_KEY
+      resyncIntervalMs: 600000  # 运行中定时重同步；0 = 关闭
     backend:
       checkOnStart: true      # 只提示，不自动下载
       keepVersions: 3

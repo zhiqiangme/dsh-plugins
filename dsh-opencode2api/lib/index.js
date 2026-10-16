@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { checkForUpdate } from './backend.js';
 import { resolvePluginConfig } from './config.js';
 import { syncModels } from './models.js';
+import { createModelResync } from './resync.js';
 import { isFile } from './services.js';
 import { GatewayService } from './gateway-service.js';
 import { ensureBackendConfig } from './backend-config.js';
@@ -58,8 +59,14 @@ export function apply(ctx, config) {
   // 这样后端还没起来（或没装）时打开面板也能看到状态、并就地安装。
   registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service });
 
+  // 运行中定时重同步模型列表（见 lib/resync.js）：后端下架模型后，DSH 不重启也能跟上。
+  const resync = createModelResync({
+    resolved, logger, env: hostEnv, name,
+    editor: () => configEditorOf(ctx), credentials: () => credentialsOf(ctx),
+  });
+
   // 白名单等 models.* 的改动就地生效，不重启插件（见 watchConfigUpdates）。
-  watchConfigUpdates(ctx, resolved, hostEnv, logger, config);
+  watchConfigUpdates(ctx, resolved, hostEnv, logger, config, resync);
 
   // 启动时查一次后端更新（**只提示**，安装永远由用户在面板里点）。
   checkBackendUpdateOnStart(resolved, hostEnv, logger);
@@ -71,6 +78,10 @@ export function apply(ctx, config) {
   // 模型列表同步：等后端就绪后再拉 `/v1/models`，经宿主 configEditor 写进 llm-pi-ai（见 lib/models.js）。
   // 同样不 await：拉取可能耗时数十秒，不能拖住插件树加载。
   if (!notInstalled) syncAfterStartup(ctx, startup, resolved, hostEnv, logger);
+
+  // 启动流程落地后才开始计时，第一轮不会和启动同步撞在一起。没装后端时也排上：
+  // 用户之后在面板里装好并拉起后端，定时同步会接手；后端不在时每轮只探测 /healthz 就跳过。
+  startup.finally(() => resync.start()).catch(() => undefined);
 
   ctx.effect(() => {
     // exit 钩子只做同步发信号：进程退出阶段不允许异步等待，异步等待在下面的 disposer 里。
@@ -84,6 +95,7 @@ export function apply(ctx, config) {
       if (disposed) return;
       disposed = true;
       process.removeListener('exit', onExit);
+      resync.stop();
       // 先等启动流程落地，避免「正在启动」与「正在停止」互相打架。
       await startup.catch(() => undefined);
       try {
@@ -111,7 +123,7 @@ export function apply(ctx, config) {
  * 两边就永远不等，每次保存白名单都会落到默认重启——托管的 opencode2api 被停掉重拉，紧接着的
  * /v1/models 拉取就是 fetch failed，白名单写进去了、模型清单却没跟上（实际遇到过）。
  */
-function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig) {
+function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig, resync) {
   if (typeof ctx?.on !== 'function') return;
   let currentConfig = initialConfig;
   ctx.on('internal/update', (config, _noSave, next) => {
@@ -124,6 +136,8 @@ function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig) {
     }
     currentConfig = config;
     resolved.models = updated.models;
+    // 定时同步原先被关掉（resyncIntervalMs: 0）时，按新配置重新排上；已在计时则不动。
+    resync?.start();
     logger.info(`[${name}] models 配置已更新（就地生效，不重启插件）`);
     return undefined;
   });

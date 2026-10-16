@@ -194,6 +194,29 @@ export function providerReasoning(current, entries, skeleton) {
   return skeleton?.reasoning;
 }
 
+/** provider 当前配置里的模型 id（按配置顺序）；provider 不在时为空。 */
+export function providerModelIds(config, providerName) {
+  const models = plainObject(plainObject(plainObject(config).providers)[providerName]).models;
+  return Array.isArray(models) ? models.map((model) => model?.id).filter((id) => typeof id === 'string') : [];
+}
+
+/**
+ * 定时同步的移除确认：本轮要从 provider 里删掉的模型，必须上一轮也已缺席才放行。
+ *
+ * 后端每隔几分钟刷新一次上游目录，刷新途中或某个上游临时失败时 `/v1/models` 可能短暂少几个模型；
+ * 只看一次就删，会把用户正在用的模型从 DSH 里抹掉，下一轮再加回来。连续两轮缺席才算真的下架。
+ * guard 是调用方持有的可变状态（{ missing: Set }），每轮都按本轮结果覆盖。
+ *
+ * @returns {{ ok: boolean, missing: string[] }} ok=false 表示本轮应推迟写入
+ */
+export function confirmRemovals(guard, currentIds, nextIds) {
+  const next = new Set(nextIds);
+  const missing = currentIds.filter((id) => !next.has(id));
+  const previous = guard.missing instanceof Set ? guard.missing : new Set();
+  guard.missing = new Set(missing);
+  return { ok: missing.every((id) => previous.has(id)), missing };
+}
+
 /** 补建 provider 用的骨架：与 llm-pi-ai 的 OpenAI 兼容 provider 字段一致。 */
 export function providerSkeleton(models, spec, entries = []) {
   return {
@@ -418,9 +441,10 @@ export function readPluginModelsConfig(text, entryId = 'dsh-opencode2api') {
  * @param {object} [options.editor] 宿主的 configEditor 服务；没有就无法写入
  * @param {NodeJS.ProcessEnv} [options.env]
  * @param {boolean} [options.dryRun] 只算不写
+ * @param {{ missing?: Set<string> }} [options.removalGuard] 定时同步传入：移除模型需连续两轮确认（见 confirmRemovals）
  */
 export async function syncModels(options) {
-  const { spec, models, editor, credentials, env = process.env, dryRun = false } = options;
+  const { spec, models, editor, credentials, env = process.env, dryRun = false, removalGuard } = options;
 
   if (!models?.enabled) return { state: 'disabled' };
   if (typeof editor?.edit !== 'function') {
@@ -450,6 +474,13 @@ export async function syncModels(options) {
   const entries = planModelEntries(fetched.models, models);
   if (entries.length === 0) {
     return { state: 'skipped', reason: '按 only/exclude 过滤后没有可写的模型', documentPath };
+  }
+
+  if (removalGuard) {
+    const removal = confirmRemovals(removalGuard, providerModelIds(target.options?.config, models.provider), entries.map((entry) => entry.id));
+    if (!removal.ok) {
+      return { state: 'deferred', reason: `后端暂未提供 ${removal.missing.join(', ')}，下一轮仍缺席再移除`, missing: removal.missing, entries, documentPath };
+    }
   }
 
   // 网关本地 Key 与上游 Zen/Go Key 不同。只在显式同步时写入 DSH 凭据库，
