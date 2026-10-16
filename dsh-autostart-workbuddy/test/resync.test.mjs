@@ -1,0 +1,226 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { resolvePluginConfig } from '../lib/config.js';
+import { confirmRemovals, syncModels } from '../lib/models.js';
+import { createModelResync, healthTarget } from '../lib/resync.js';
+import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
+
+const READY = async () => ({ ok: true, servable: true });
+const ALPHA = { id: 'cn:alpha', name: 'Alpha', credits: 'x0.11' };
+const BETA = { id: 'global:beta', name: 'Beta', credits: 'x0.00' };
+
+function memoryLogger() {
+  const lines = [];
+  const push = (level) => (line) => lines.push([level, line]);
+  return { lines, info: push('info'), warn: push('warn'), error: push('error') };
+}
+
+/** 进程内的 /v1/models：目录可随时替换，记录请求次数。 */
+async function serve(t, backend) {
+  const server = createServer((_req, res) => {
+    backend.hits += 1;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ object: 'list', data: backend.models }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  return `http://127.0.0.1:${server.address().port}`;
+}
+
+/**
+ * 已经过一次启动同步的 profile（与真实运行顺序一致：启动同步不带移除确认，之后才轮到定时同步）。
+ * credentials 默认是空凭据库：启动同步会补一次 WORKBUDDY_PROXY_KEY。
+ */
+async function setup(t, { probe = READY, credentials = createFakeCredentials() } = {}) {
+  const backend = { models: [ALPHA, BETA], hits: 0 };
+  const url = await serve(t, backend);
+  const resolved = resolvePluginConfig({ models: { enabled: true, apiKey: 'gw-key', baseURL: url } }, { PATH: '' });
+  const editor = createFakeConfigEditor(profileRows());
+  assert.equal((await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} })).state, 'updated');
+  backend.hits = 0;
+  const logger = memoryLogger();
+  const resync = createModelResync({ resolved, logger, env: {}, probe, editor: () => editor, credentials: () => credentials });
+  const ids = () => editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((model) => model.id);
+  return { backend, resolved, editor, credentials, logger, resync, ids };
+}
+
+test('上游下架的模型连续两轮缺席后从 DSH 移除，之后保持不变', async (t) => {
+  const { backend, editor, resync, ids } = await setup(t);
+  const edits = editor.edits.length;
+  assert.equal((await resync.tick()).state, 'unchanged');
+
+  backend.models = [ALPHA];
+  const first = await resync.tick();
+  assert.equal(first.state, 'deferred');
+  assert.deepEqual(first.missing, ['global:beta']);
+  assert.deepEqual(ids(), ['cn:alpha', 'global:beta'], '只缺席一轮不删');
+  assert.equal(editor.edits.length, edits);
+
+  assert.equal((await resync.tick()).state, 'updated');
+  assert.deepEqual(ids(), ['cn:alpha']);
+  assert.equal((await resync.tick()).state, 'unchanged');
+});
+
+test('上游抖动：缺席一轮又回来的模型不会被删，确认状态随之清零', async (t) => {
+  const { backend, editor, resync, ids } = await setup(t);
+  const edits = editor.edits.length;
+  backend.models = [ALPHA];
+  assert.equal((await resync.tick()).state, 'deferred');
+  backend.models = [ALPHA, BETA];
+  assert.equal((await resync.tick()).state, 'unchanged');
+  backend.models = [ALPHA];
+  assert.equal((await resync.tick()).state, 'deferred', '中间恢复过一轮，要重新确认');
+  assert.deepEqual(ids(), ['cn:alpha', 'global:beta']);
+  assert.equal(editor.edits.length, edits);
+});
+
+test('只新增模型时当轮写入；白名单里已不存在的 id 被滤掉', async (t) => {
+  const { backend, resolved, resync, ids } = await setup(t);
+  backend.models = [ALPHA, BETA, { id: 'cn:gamma', name: 'Gamma' }];
+  assert.equal((await resync.tick()).state, 'updated');
+  assert.deepEqual(ids(), ['cn:alpha', 'global:beta', 'cn:gamma']);
+
+  resolved.models = { ...resolved.models, only: ['cn:gamma', 'cn:gone', 'cn:alpha', 'global:beta'] };
+  assert.equal((await resync.tick()).state, 'updated', '只是换顺序，没有移除');
+  assert.deepEqual(ids(), ['cn:gamma', 'cn:alpha', 'global:beta']);
+});
+
+test('后端返回空列表时不清空，也不算作缺席', async (t) => {
+  const { backend, editor, resync, ids } = await setup(t);
+  const edits = editor.edits.length;
+  backend.models = [];
+  assert.equal((await resync.tick()).state, 'skipped');
+  assert.deepEqual(ids(), ['cn:alpha', 'global:beta']);
+  assert.equal(editor.edits.length, edits);
+  assert.deepEqual([...resync.removalGuard.missing], []);
+});
+
+test('网关密钥只在启动同步时补一次，定时同步不会每轮重写', async (t) => {
+  const { backend, credentials, resync } = await setup(t);
+  assert.deepEqual(credentials.sets, [{ ref: 'WORKBUDDY_PROXY_KEY', value: 'gw-key' }]);
+  for (let i = 0; i < 3; i += 1) assert.equal((await resync.tick()).state, 'unchanged');
+  backend.models = [ALPHA, BETA, { id: 'cn:gamma' }];
+  assert.equal((await resync.tick()).state, 'updated');
+  assert.equal(credentials.sets.length, 1);
+});
+
+test('用户自己存的网关密钥不被定时同步覆盖；推迟的那一轮不读凭据库', async (t) => {
+  const credentials = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY: 'user-key' } });
+  let resolves = 0;
+  const resolve = credentials.resolve.bind(credentials);
+  credentials.resolve = (ref) => { resolves += 1; return resolve(ref); };
+  const { backend, resync } = await setup(t, { credentials });
+  assert.equal((await resync.tick()).state, 'unchanged');
+  assert.deepEqual(credentials.sets, []);
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'user-key');
+
+  const before = resolves;
+  backend.models = [ALPHA];
+  assert.equal((await resync.tick()).state, 'deferred');
+  assert.equal(resolves, before);
+});
+
+for (const [label, health] of [['/healthz 不通', { ok: false, reason: '探测 /healthz 失败：ECONNREFUSED' }], ['账号池暂无可用账号', { ok: true, servable: false }]]) {
+  test(`后端未就绪（${label}）时整轮跳过，不拉目录不写配置，同一原因只记一次日志`, async (t) => {
+    const { backend, editor, logger, resync } = await setup(t, { probe: async () => health });
+    const edits = editor.edits.length;
+    backend.models = [ALPHA];
+    assert.equal((await resync.tick()).state, 'not-ready');
+    assert.equal((await resync.tick()).state, 'not-ready');
+    assert.equal(backend.hits, 0);
+    assert.equal(editor.edits.length, edits);
+    assert.equal(logger.lines.length, 1);
+  });
+}
+
+test('同步开关关闭时不探测后端', async () => {
+  let probed = 0;
+  const resolved = resolvePluginConfig({ models: { enabled: false } }, { PATH: '' });
+  const resync = createModelResync({
+    resolved, logger: memoryLogger(), probe: async () => { probed += 1; return { ok: true, servable: true }; },
+    editor: () => undefined, credentials: () => undefined,
+  });
+  assert.equal((await resync.tick()).state, 'disabled');
+  assert.equal(probed, 0);
+});
+
+test('上一轮未结束时再次触发不会并发同步', async () => {
+  let calls = 0;
+  let release;
+  const resolved = resolvePluginConfig({ models: { enabled: true } }, { PATH: '' });
+  const resync = createModelResync({
+    resolved, logger: memoryLogger(), probe: READY, editor: () => undefined, credentials: () => undefined,
+    sync: () => { calls += 1; return new Promise((resolve) => { release = () => resolve({ state: 'unchanged' }); }); },
+  });
+  const a = resync.tick();
+  assert.equal(resync.tick(), a);
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  await a;
+  assert.equal(calls, 1);
+});
+
+test('定时器按间隔触发，stop 后不再触发', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0;
+  const resolved = resolvePluginConfig({ models: { enabled: true, resyncIntervalMs: 60_000 } }, { PATH: '' });
+  const resync = createModelResync({
+    resolved, logger: memoryLogger(), probe: READY, editor: () => undefined, credentials: () => undefined,
+    sync: async () => { calls += 1; return { state: 'unchanged' }; },
+  });
+  const flush = async () => { for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
+
+  resync.start();
+  resync.start();
+  t.mock.timers.tick(59_999);
+  await flush();
+  assert.equal(calls, 0);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(calls, 1, '重复 start 只排一条定时链');
+  t.mock.timers.tick(60_000);
+  await flush();
+  assert.equal(calls, 2);
+
+  resync.stop();
+  t.mock.timers.tick(120_000);
+  await flush();
+  assert.equal(calls, 2);
+});
+
+test('间隔为 0 时 start 不排定时器', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0;
+  const resolved = resolvePluginConfig({ models: { enabled: true, resyncIntervalMs: 0 } }, { PATH: '' });
+  const resync = createModelResync({
+    resolved, logger: memoryLogger(), probe: READY, editor: () => undefined, credentials: () => undefined,
+    sync: async () => { calls += 1; return { state: 'unchanged' }; },
+  });
+  resync.start();
+  t.mock.timers.tick(10 * 60_000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 0);
+});
+
+test('resyncIntervalMs：默认 10 分钟，0 关闭，过小抬到 1 分钟，非法值退回默认', () => {
+  const interval = (value) => resolvePluginConfig({ models: { resyncIntervalMs: value } }, { PATH: '' }).models.resyncIntervalMs;
+  assert.equal(interval(undefined), 600_000);
+  assert.equal(interval(0), 0);
+  assert.equal(interval(5_000), 60_000);
+  assert.equal(interval('bad'), 600_000);
+  assert.equal(interval(1_800_000), 1_800_000);
+});
+
+test('confirmRemovals：缺席集合是上一轮的子集才放行', () => {
+  const guard = {};
+  assert.equal(confirmRemovals(guard, ['a', 'b'], ['a', 'b']).ok, true);
+  assert.equal(confirmRemovals(guard, ['a', 'b', 'c'], ['a']).ok, false);
+  assert.equal(confirmRemovals(guard, ['a', 'b', 'c'], ['a', 'b']).ok, true, 'c 上一轮已缺席');
+  assert.equal(confirmRemovals({}, [], ['x']).ok, true, '新 provider 没有可删的');
+});
+
+test('healthTarget 跟随 models.baseURL，解析不了退回托管端口', () => {
+  assert.deepEqual(healthTarget('http://127.0.0.1:9090/v1', { host: '127.0.0.1', port: 7863 }), { host: '127.0.0.1', port: 9090 });
+  assert.deepEqual(healthTarget('', { host: '127.0.0.1', port: 7863 }), { host: '127.0.0.1', port: 7863 });
+});
