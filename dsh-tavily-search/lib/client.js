@@ -1029,10 +1029,11 @@ window.__ModuleLoader__.load({
         // 申请链接常驻标题下方：加第二个、第三个 key 时同样要去控制台拿，不只在一个都没配时才需要
         h('p', { key: 'get', className: 'dsm-tv-desc' }, t('keyGet'), externalLink(TAVILY_CONSOLE_URL)),
         h('div', { key: 'key', className: 'dsm-tv-section' }, keySection),
-        h('div', { key: 'server', className: 'dsm-tv-section' }, serverSection),
+        // 常用的接入状态与更新排前面，排障用的搜索接口次之，卸载前才用的清除放最后
         h('div', { key: 'web', className: 'dsm-tv-section' }, webSection),
-        purgeSection ? h('div', { key: 'purge', className: 'dsm-tv-section' }, purgeSection) : null,
         model.update ? h('div', { key: 'update', className: 'dsm-tv-section' }, renderUpdateSection(model.update, actions, t)) : null,
+        h('div', { key: 'server', className: 'dsm-tv-section' }, serverSection),
+        purgeSection ? h('div', { key: 'purge', className: 'dsm-tv-section' }, purgeSection) : null,
       );
     }
 
