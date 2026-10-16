@@ -101,17 +101,17 @@ function ask(prompt) {
   return new Promise((done) => { reader.waiter = done; });
 }
 
-/** 单选菜单：直接回车取第一项（默认）。返回选中项下标。 */
+/** 单选菜单：序号从 0 开始，与返回的下标一致；直接回车取第一项 [0]（默认）。 */
 async function choose(question, options) {
   console.log(`\n${question}`);
-  options.forEach((option, i) => console.log(`  [${i + 1}] ${option}${i === 0 ? '（默认）' : ''}`));
+  options.forEach((option, i) => console.log(`  [${i}] ${option}${i === 0 ? '（默认）' : ''}`));
   for (;;) {
     const answer = (await ask('请输入序号，直接回车用默认：'))?.trim();
     // stdin 已结束：没人在场作答，不能拿默认值替用户做决定（否则会悄悄装进 desktop）
     if (answer === undefined) throw new Error(NO_INPUT);
     if (answer === '') return 0;
     const number = Number(answer);
-    if (Number.isInteger(number) && number >= 1 && number <= options.length) return number - 1;
+    if (Number.isInteger(number) && number >= 0 && number < options.length) return number;
     warn(`无效输入：${answer}`);
   }
 }
