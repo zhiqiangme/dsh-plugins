@@ -94,6 +94,7 @@ window.__ModuleLoader__.load({
       update: 'backendUpdated',
       rollback: 'backendRolledBack',
       uninstall: 'backendUninstalled',
+      purge: 'backendPurged',
     };
 
     const CSS = `
@@ -214,6 +215,13 @@ window.__ModuleLoader__.load({
       uninstallDesc: '会停止后端，并删除程序文件：opencode2api.exe、历史版本、下载缓存。',
       uninstallKept: '账号凭证与状态（data/）以及 config.json 会保留。',
       uninstallConfirm: '确认卸载',
+      backendPurge: '清除后端数据',
+      backendPurgeHint: 'DSH 卸载本插件时不会删除 {root}；卸载前点一下即可清干净。',
+      backendPurged: '已清除 {root}，现在可以去「插件」页卸载本插件。',
+      purgeTitle: '清除后端数据？',
+      purgeDesc: '会停止后端，并删除 {root} 整个目录：程序、历史版本、config.json、账号凭证与状态（data/）、缓存和日志。',
+      purgeKept: '无法撤销。之后想继续用，需要重新安装后端并重新登录账号。',
+      purgeConfirm: '确认清除',
       updateTitle: '插件更新',
       updateChecking: '正在检查更新…',
       updateCheck: '检查更新',
@@ -302,6 +310,13 @@ window.__ModuleLoader__.load({
       uninstallDesc: 'Stops the backend and deletes its program files: opencode2api.exe, archived versions, download cache.',
       uninstallKept: 'Credentials and state (data/) plus config.json are kept.',
       uninstallConfirm: 'Uninstall',
+      backendPurge: 'Clear backend data',
+      backendPurgeHint: 'Uninstalling this plugin in DSH does not delete {root}; click this first to remove it.',
+      backendPurged: 'Cleared {root}. You can now uninstall this plugin on the Plugins page.',
+      purgeTitle: 'Clear backend data?',
+      purgeDesc: 'Stops the backend and deletes the whole {root} directory: program, archived versions, config.json, credentials and state (data/), cache and logs.',
+      purgeKept: 'This cannot be undone. To use it again you will need to reinstall the backend and sign in to your accounts again.',
+      purgeConfirm: 'Clear',
       updateTitle: 'Plugin update',
       updateChecking: 'Checking for updates…',
       updateCheck: 'Check for updates',
@@ -404,10 +419,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 卸载的二次确认。优先用宿主的 Modal（真弹窗，走 portal）；拿不到宿主组件就退回
+     * 卸载 / 清除数据的二次确认。优先用宿主的 Modal（真弹窗，走 portal）；拿不到宿主组件就退回
      * 卡片内的行内确认——两种形态都保证"再点一次才真的删"。
+     *
+     * kind 决定文案前缀（uninstall* / purge*），params 给文案插值（如 {root}）。
      */
-    function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm }) {
+    function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm, kind = 'uninstall', params }) {
       const cancel = h(
         'button',
         { key: 'cancel', type: 'button', className: 'dsm-oc-btn dsm-oc-btn-outline', onClick: onCancel },
@@ -416,13 +433,13 @@ window.__ModuleLoader__.load({
       const confirm = h(
         'button',
         { key: 'confirm', type: 'button', className: 'dsm-oc-btn dsm-oc-btn-danger', onClick: onConfirm },
-        t('uninstallConfirm'),
+        t(`${kind}Confirm`, params),
       );
       const detail = h(
         'div',
         { className: 'dsm-oc-confirm-body' },
-        h('p', { className: 'dsm-oc-hint' }, t('uninstallDesc')),
-        h('p', { className: 'dsm-oc-hint' }, t('uninstallKept')),
+        h('p', { className: 'dsm-oc-hint' }, t(`${kind}Desc`, params)),
+        h('p', { className: 'dsm-oc-hint' }, t(`${kind}Kept`, params)),
       );
 
       if (typeof Modal === 'function') {
@@ -432,8 +449,8 @@ window.__ModuleLoader__.load({
             key: 'confirm',
             open: true,
             onClose: onCancel,
-            title: t('uninstallTitle'),
-            description: t('uninstallDesc'),
+            title: t(`${kind}Title`, params),
+            description: t(`${kind}Desc`, params),
             footer: [cancel, confirm],
           },
           detail,
@@ -442,7 +459,7 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { key: 'confirm', className: 'dsm-oc-confirm' },
-        h('div', { className: 'dsm-oc-confirm-title' }, t('uninstallTitle')),
+        h('div', { className: 'dsm-oc-confirm-title' }, t(`${kind}Title`, params)),
         detail,
         h('div', { className: 'dsm-oc-toolbar' }, cancel, confirm),
       );
@@ -908,7 +925,7 @@ window.__ModuleLoader__.load({
       const [check, setCheck] = useState(undefined);
       const [backendBusy, setBackendBusy] = useState(undefined);
       const [backendNotice, setBackendNotice] = useState(undefined);
-      /** 卸载的二次确认弹窗是否打开。 */
+      /** 正在二次确认的动作：'uninstall' / 'purge'；false 表示没有弹窗。 */
       const [confirming, setConfirming] = useState(false);
 
       const loadBackend = useCallback(async () => {
@@ -937,12 +954,13 @@ window.__ModuleLoader__.load({
               setCheck(undefined);
               const done = t(BACKEND_NOTICE[action] ?? 'backendUpdated', {
                 tag: payload.latest?.tag ?? payload.local?.tag ?? '',
+                root: payload.root ?? '',
               });
               // 刚装好的后端还没登录账号：/healthz 是 503，但进程是好的，提示去面板登录。
               const noAccounts = payload.health?.servable === false ? ` ${t('backendNoAccounts')}` : '';
               setBackendNotice({ kind: 'ok', text: done + noAccounts });
               // 后端换过/新起来了，模型区可能还停在"fetch failed"，重读一次。
-              if (action !== 'uninstall') load();
+              if (action !== 'uninstall' && action !== 'purge') load();
             } else {
               setBackendNotice({ kind: 'error', text: payload.reason ?? payload.state ?? '' });
             }
@@ -1199,7 +1217,7 @@ window.__ModuleLoader__.load({
                     type: 'button',
                     className: 'dsm-oc-btn dsm-oc-btn-danger',
                     disabled: Boolean(backendBusy),
-                    onClick: () => setConfirming(true),
+                    onClick: () => setConfirming('uninstall'),
                   },
                   t('backendUninstall'),
                 )
@@ -1214,7 +1232,13 @@ window.__ModuleLoader__.load({
         ];
 
         if (confirming) {
-          section.push(renderUninstallConfirm({ t, Modal, h, onCancel: () => setConfirming(false), onConfirm: () => { setConfirming(false); runBackend('uninstall', { confirm: true }); } }));
+          // 老状态里可能是 true（改成动作名之前的写法），按卸载处理。
+          const kind = confirming === 'purge' ? 'purge' : 'uninstall';
+          section.push(renderUninstallConfirm({
+            t, Modal, h, kind, params: { root: backend.root ?? '' },
+            onCancel: () => setConfirming(false),
+            onConfirm: () => { setConfirming(false); runBackend(kind, { confirm: true }); },
+          }));
         }
 
         if (check?.error) {
@@ -1236,6 +1260,28 @@ window.__ModuleLoader__.load({
             history.length ? t('backendHistory', { list: history.map((item) => item.name).join(', ') }) : t('backendNoHistory'),
           ),
         );
+
+        // 「清除后端数据」：DSH 卸载插件时不通知插件，数据目录只能靠用户在卸载前显式清掉。
+        // 单独成行、放在历史版本之后，与 更新/回滚/卸载 分开，减少误点；目录不在时不显示。
+        if (backend.rootExists === true) {
+          section.push(
+            h(
+              'div',
+              { key: 'purge', className: 'dsm-oc-toolbar' },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsm-oc-btn dsm-oc-btn-danger',
+                  disabled: Boolean(backendBusy),
+                  onClick: () => setConfirming('purge'),
+                },
+                backendBusy === 'purge' ? t('backendWorking') : t('backendPurge'),
+              ),
+              h('span', { className: 'dsm-oc-hint' }, t('backendPurgeHint', { root: backend.root ?? '' })),
+            ),
+          );
+        }
 
         if (backendNotice) {
           section.push(

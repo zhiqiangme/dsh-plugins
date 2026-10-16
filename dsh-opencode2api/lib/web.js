@@ -10,6 +10,7 @@ import {
   checkForUpdate,
   describeBackend,
   installBackend,
+  purgeBackendData,
   rollbackBackend,
   uninstallBackend,
 } from './backend.js';
@@ -308,8 +309,8 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
     return;
   }
 
-  // 会改动磁盘的动作：都要串行执行（见 backendBusy），其中卸载还要求显式二次确认。
-  const MUTATING_ACTIONS = new Set(['install', 'update', 'rollback', 'uninstall']);
+  // 会改动磁盘的动作：都要串行执行（见 backendBusy），其中卸载与清除数据还要求显式二次确认。
+  const MUTATING_ACTIONS = new Set(['install', 'update', 'rollback', 'uninstall', 'purge']);
 
   if (MUTATING_ACTIONS.has(action) && resolved.managedExe === false) {
     json(res, 400, { ok: false, reason: '自定义 exe 不由插件管理版本，请在外部维护该后端。' });
@@ -321,8 +322,8 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
     return;
   }
 
-  if (action === 'uninstall' && body.value.confirm !== true) {
-    json(res, 400, { ok: false, reason: '卸载需要二次确认（confirm: true）' });
+  if ((action === 'uninstall' || action === 'purge') && body.value.confirm !== true) {
+    json(res, 400, { ok: false, reason: `${action === 'purge' ? '清除后端数据' : '卸载'}需要二次确认（confirm: true）` });
     return;
   }
 
@@ -344,6 +345,8 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
       });
     } else if (action === 'uninstall') {
       result = await uninstallBackend({ paths, service, logger });
+    } else if (action === 'purge') {
+      result = await purgeBackendData({ paths, service, logger, env });
     } else if (action === 'update') {
       result = await applyUpdate({
         paths,

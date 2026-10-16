@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,7 @@ import {
   localVersion,
   pruneVersions,
   probeHealthz,
+  purgeBackendData,
   readBuildInfo,
   readManifest,
   rollbackBackend,
@@ -539,5 +540,61 @@ test('uninstallBackend：端口被非本插件进程占用时拒绝，什么都�
     assert.equal(isFile(paths.config), true);
   } finally {
     occupied.stop();
+  }
+});
+
+test('purgeBackendData：停掉后端后整个删掉数据根目录（含 config.json、data/、日志）', async () => {
+  const { paths } = tempBackendRoot();
+  mkdirSync(paths.data, { recursive: true });
+  writeFileSync(join(paths.data, 'initial-admin.json'), '{}');
+  mkdirSync(paths.logs, { recursive: true });
+  writeFileSync(join(paths.logs, 'opencode2api.log'), 'log');
+  assert.equal(describeBackend(paths).rootExists, true);
+
+  const service = fakeService(await freePort());
+  const result = await purgeBackendData({ paths, service, env: {} });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.state, 'purged');
+  assert.equal(existsSync(paths.root), false, '数据根目录应整个删掉');
+  assert.equal(describeBackend(paths).rootExists, false);
+});
+
+test('purgeBackendData：目录不存在时直接成功，不去碰后端', async () => {
+  const { paths } = tempBackendRoot();
+  rmSync(paths.root, { recursive: true, force: true });
+  const service = fakeService(await freePort());
+  const result = await purgeBackendData({ paths, service, env: {} });
+  assert.equal(result.ok, true);
+  assert.equal(result.state, 'nothing-to-purge');
+  assert.deepEqual(service.calls, []);
+});
+
+test('purgeBackendData：端口被非本插件进程占用时拒绝，什么都不删', async () => {
+  const occupied = startFixture({ TEST_MODE: 'listen' });
+  const port = await occupied.ready;
+  const { paths } = tempBackendRoot();
+  try {
+    const service = fakeService(port, { stopResult: { stopped: false, skipped: true } });
+    const result = await purgeBackendData({ paths, service, env: {} });
+    assert.equal(result.ok, false);
+    assert.equal(result.state, 'not-owned');
+    assert.equal(isFile(paths.exe), true, '拒绝时不能删任何文件');
+  } finally {
+    occupied.stop();
+  }
+});
+
+test('purgeBackendData：根目录配成 DSH home 或其上级时拒绝删除', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'oc-dsh-home-'));
+  try {
+    const env = { DSH_HOME: join(home, '.dsh') };
+    mkdirSync(env.DSH_HOME, { recursive: true });
+    for (const root of [env.DSH_HOME, home]) {
+      const paths = backendPaths({ DSH_OPENCODE2API_BACKEND_ROOT: root });
+      await assert.rejects(purgeBackendData({ paths, service: fakeService(await freePort()), env }), /拒绝清除/);
+    }
+    assert.equal(existsSync(env.DSH_HOME), true, '受保护目录必须原样保留');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });

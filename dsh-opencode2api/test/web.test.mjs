@@ -40,6 +40,10 @@ test('路由鉴权边界，管理页与 API 独立端口，普通状态接口不
   assert.ok(!JSON.stringify(snapshot.body).includes(password.body.key));
   assert.equal((await request(routes.get(MODELS_PATH),{method:'DELETE'})).status,405);
   assert.equal((await request(routes.get(BACKEND_PATH),{method:'POST',body:{action:'uninstall'}})).status,400);
+  // 清除后端数据同样必须带 confirm，否则一个误发的请求就能删掉凭证。
+  const purge=await request(routes.get(BACKEND_PATH),{method:'POST',body:{action:'purge'}});
+  assert.equal(purge.status,400);assert.match(purge.body.reason,/二次确认/);
+  assert.equal(snapshot.body.backend.rootExists,true);
 });
 test('有 connection 服务时按宿主浏览器会话鉴权，未登录返回 401',async(t)=>{
   const root=mkdtempSync(join(tmpdir(),'opencode-web-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
