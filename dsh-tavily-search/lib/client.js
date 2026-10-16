@@ -211,6 +211,20 @@ window.__ModuleLoader__.load({
       unwireHint: '恢复后网页搜索改回 DeepSeek 官方接口。',
       wired: '已接入：网页搜索现在使用本插件的接口。',
       unwired: '已恢复网页搜索的默认接口地址。',
+      purgeTitle: '清除插件数据',
+      purgeHint: 'DSH 卸载插件时不会删除这里保存的 Tavily API Key，也不会把网页搜索的接口地址改回默认（卸载后 127.0.0.1:8787 没人监听，网页搜索会直接失败）。卸载前点一下即可清干净。',
+      purge: '清除插件数据',
+      purging: '清除中…',
+      purgeConfirmTitle: '清除插件数据？',
+      purgeConfirmKeys: '删除 {count} 个 Tavily API Key（凭据库里的值会被清掉，无法撤销）。',
+      purgeConfirmWeb: '把网页搜索的接口地址恢复为 DSH 默认。',
+      purgeConfirm: '确认清除',
+      purgeKeysRemoved: '已删除 {count} 个 API Key。',
+      purgeWebRestored: '网页搜索接口已恢复为默认。',
+      purgeKeysFailed: '{count} 个 Key 没删掉：{reason}',
+      purgeWebFailed: '网页搜索接口没能恢复：{reason}',
+      purgeSkipped: '{count} 个 Key 来自环境变量等只读来源，需要在外部删除。',
+      purgeDone: '现在可以去「插件」页卸载本插件。',
       webKeyMissing: '「网页搜索」页的 API Key 目前为空：DSH 只在它非空时才发起搜索（DeepSeek 账号模型除外）。本插件不校验这个值，填任意非空字符串即可。',
       webReadOnly: '本部署的设置为只读。',
       writeRejected: '宿主没有接受这次修改。',
@@ -301,6 +315,20 @@ window.__ModuleLoader__.load({
       unwireHint: 'Web search goes back to the DeepSeek official endpoint.',
       wired: 'Wired: web search now uses this plugin.',
       unwired: 'Web-search endpoint reset to default.',
+      purgeTitle: 'Clear plugin data',
+      purgeHint: 'Uninstalling this plugin in DSH keeps the Tavily API keys saved here and leaves web search pointing at this plugin (nothing listens on 127.0.0.1:8787 afterwards, so web search fails). Click this before uninstalling to clean up.',
+      purge: 'Clear plugin data',
+      purging: 'Clearing…',
+      purgeConfirmTitle: 'Clear plugin data?',
+      purgeConfirmKeys: 'Delete {count} Tavily API key(s) from the credential store. This cannot be undone.',
+      purgeConfirmWeb: 'Reset the web-search endpoint to the DSH default.',
+      purgeConfirm: 'Clear',
+      purgeKeysRemoved: 'Deleted {count} API key(s).',
+      purgeWebRestored: 'Web-search endpoint reset to default.',
+      purgeKeysFailed: '{count} key(s) could not be deleted: {reason}',
+      purgeWebFailed: 'Could not reset the web-search endpoint: {reason}',
+      purgeSkipped: '{count} key(s) come from read-only sources such as environment variables; remove them there.',
+      purgeDone: 'You can now uninstall this plugin on the Plugins page.',
       webKeyMissing: 'The web-search page has no API key, and DSH only searches when it is non-empty (DeepSeek Account models aside). This plugin does not check it; any non-empty value works.',
       webReadOnly: 'This deployment stores settings read-only.',
       writeRejected: 'The host did not accept the change.',
@@ -720,6 +748,103 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 「清除插件数据」要清的东西：卡片能删的 key，以及用户层里指向本插件的网页搜索接口地址。
+     * 只读来源（环境变量等）的 key 删不掉，单独计数提示。
+     */
+    function purgeTargets(model, endpoint) {
+      const slots = Array.isArray(model.keys?.slots) ? model.keys.slots : [];
+      const web = model.web ?? {};
+      return {
+        refs: slots.filter((slot) => slot.configured && slot.writable !== false).map((slot) => slot.ref),
+        readOnly: slots.filter((slot) => slot.configured && slot.writable === false).length,
+        // 只撤销"用户层覆盖成本插件端点"这一种：默认值或别人改的地址不归本插件管
+        web: web.phase === 'ready' && web.overridden === true && web.writable !== false && sameEndpoint(web.baseURL, endpoint),
+      };
+    }
+
+    /**
+     * 执行清除：逐个删 key（走与「删除」按钮同一条 remote.credentials.unset），再恢复网页搜索接口。
+     * 单个失败不打断其余步骤，结果汇总给卡片提示。
+     */
+    async function purgePluginData({ api, targets }) {
+      const removed = [];
+      const failed = [];
+      for (const ref of targets.refs) {
+        try {
+          unwrap(await api.unsetKey(ref));
+          removed.push(ref);
+        } catch (error) {
+          failed.push({ ref, reason: errorText(error) });
+        }
+      }
+      let restored = false;
+      let restoreError;
+      if (targets.web && api.webForm) {
+        try {
+          const accepted = await api.webForm.unset('baseURL');
+          if (accepted === false) restoreError = 'rejected';
+          else restored = true;
+        } catch (error) {
+          restoreError = errorText(error);
+        }
+      }
+      return { removed, failed, restored, restoreError, readOnly: targets.readOnly };
+    }
+
+    /** 把清除结果拼成一条提示；有任何一步失败就用错误色。 */
+    function purgeNoticeOf(result, t) {
+      const parts = [];
+      if (result.removed.length > 0) parts.push(t('purgeKeysRemoved', { count: result.removed.length }));
+      if (result.restored) parts.push(t('purgeWebRestored'));
+      if (result.failed.length > 0) {
+        parts.push(t('purgeKeysFailed', { count: result.failed.length, reason: result.failed.map((item) => `${item.ref}: ${item.reason}`).join('; ') }));
+      }
+      if (result.restoreError) {
+        parts.push(t('purgeWebFailed', { reason: result.restoreError === 'rejected' ? t('writeRejected') : result.restoreError }));
+      }
+      if (result.readOnly > 0) parts.push(t('purgeSkipped', { count: result.readOnly }));
+      const ok = result.failed.length === 0 && !result.restoreError;
+      if (ok) parts.push(t('purgeDone'));
+      return { kind: ok ? 'ok' : 'error', text: parts.join(' ') };
+    }
+
+    /** 「清除插件数据」区块：没东西可清（也没有待显示的结果）时整块不出现。 */
+    function renderPurgeSection(model, actions, t, endpoint) {
+      const targets = purgeTargets(model, endpoint);
+      const hasWork = targets.refs.length > 0 || targets.web;
+      if (!hasWork && !model.purgeNotice) return null;
+      const busy = Boolean(model.purgeBusy);
+      const section = [
+        h(
+          'div',
+          { key: 'head', className: 'dsm-tv-section-head' },
+          h('span', { className: 'dsm-tv-section-title' }, t('purgeTitle')),
+          hasWork ? button('purge', 'danger', busy ? t('purging') : t('purge'), actions.askPurge, busy || model.confirmPurge === true) : null,
+        ),
+      ];
+      if (hasWork) section.push(h('p', { key: 'hint', className: 'dsm-tv-hint' }, t('purgeHint')));
+      if (hasWork && model.confirmPurge === true) {
+        section.push(
+          h(
+            'div',
+            { key: 'confirm', className: 'dsm-tv-confirm' },
+            h('div', { className: 'dsm-tv-line' }, h('strong', null, t('purgeConfirmTitle'))),
+            targets.refs.length > 0 ? h('p', { className: 'dsm-tv-hint' }, t('purgeConfirmKeys', { count: targets.refs.length })) : null,
+            targets.web ? h('p', { className: 'dsm-tv-hint' }, t('purgeConfirmWeb')) : null,
+            h(
+              'div',
+              { className: 'dsm-tv-toolbar' },
+              button('cancel', 'outline', t('cancel'), actions.cancelPurge, busy),
+              button('confirm', 'danger', t('purgeConfirm'), () => actions.purge(targets), busy),
+            ),
+          ),
+        );
+      }
+      section.push(notice('purgeNotice', model.purgeNotice));
+      return section;
+    }
+
+    /**
      * 纯渲染：view model + 动作 → 元素树。与 hooks 分开，测试可以直接喂各种状态断言输出。
      *
      * @param {object} model 见 TavilyCard 里的组装
@@ -815,6 +940,9 @@ window.__ModuleLoader__.load({
       }
       webSection.push(notice('webNotice', model.webNotice));
 
+      // ---- 清除插件数据（卸载前用）----
+      const purgeSection = renderPurgeSection(model, actions, t, endpoint);
+
       return h(
         'div',
         { className: 'dsm-tv-card' },
@@ -825,6 +953,7 @@ window.__ModuleLoader__.load({
         h('div', { key: 'key', className: 'dsm-tv-section' }, keySection),
         h('div', { key: 'server', className: 'dsm-tv-section' }, serverSection),
         h('div', { key: 'web', className: 'dsm-tv-section' }, webSection),
+        purgeSection ? h('div', { key: 'purge', className: 'dsm-tv-section' }, purgeSection) : null,
         model.update ? h('div', { key: 'update', className: 'dsm-tv-section' }, renderUpdateSection(model.update, actions, t)) : null,
       );
     }
@@ -1023,6 +1152,10 @@ window.__ModuleLoader__.load({
       const [webNotice, setWebNotice] = useState(undefined);
       const [test, setTest] = useState({ busy: false, result: undefined });
       const updater = useUpdater(t);
+      // 「清除插件数据」的状态排在既有 hooks 之后，不打乱它们的调用顺序
+      const [confirmPurge, setConfirmPurge] = useState(false);
+      const [purgeBusy, setPurgeBusy] = useState(false);
+      const [purgeNotice, setPurgeNotice] = useState(undefined);
 
       const web = webModel(webSnapshot);
 
@@ -1147,6 +1280,24 @@ window.__ModuleLoader__.load({
         [api, status.endpoint, t],
       );
 
+      const purge = useCallback(
+        async (targets) => {
+          setConfirmPurge(false);
+          setPurgeBusy(true);
+          setPurgeNotice(undefined);
+          try {
+            setPurgeNotice(purgeNoticeOf(await purgePluginData({ api, targets }), t));
+            // 网页搜索的快照靠订阅自己刷新；key 列表要重读
+            await loadKeys();
+          } catch (error) {
+            setPurgeNotice({ kind: 'error', text: errorText(error) });
+          } finally {
+            setPurgeBusy(false);
+          }
+        },
+        [api, loadKeys, t],
+      );
+
       const runTest = useCallback(async () => {
         setTest({ busy: true, result: undefined });
         try {
@@ -1171,6 +1322,9 @@ window.__ModuleLoader__.load({
           webBusy,
           webNotice,
           test,
+          confirmPurge,
+          purgeBusy,
+          purgeNotice,
           update: updater.model,
         },
         {
@@ -1186,6 +1340,12 @@ window.__ModuleLoader__.load({
           wire: () => writeWeb('set', t('wired')),
           unwire: () => writeWeb('unset', t('unwired')),
           runTest,
+          askPurge: () => {
+            setConfirmPurge(true);
+            setPurgeNotice(undefined);
+          },
+          cancelPurge: () => setConfirmPurge(false),
+          purge,
           reload: () => {
             loadStatus();
             loadKeys();
@@ -1256,6 +1416,7 @@ window.__ModuleLoader__.load({
     // 只给测试用：纯渲染函数与快照映射，宿主不会读这两个导出
     exports.renderCard = renderCard;
     exports.webModel = webModel;
+    exports.purgePluginData = purgePluginData;
     return module.exports;
   },
 });

@@ -679,3 +679,93 @@ test('插件更新：本地目录安装（file:）→ 不给更新按钮，说�
   const npm = render(module.renderCard(updateModel({ market: { ...market, source: 'npm', updatable: true } }), actions, t));
   assert.ok(buttonByLabel(npm, '更新到 v26.10.12'), 'npm 安装照常给按钮');
 });
+
+/** 「清除插件数据」区块（没有时返回 undefined）。 */
+function purgeSectionOf(tree) {
+  return collect(tree, (node) => node.props?.className === 'dsm-tv-section').find((node) =>
+    collectText(node).includes('清除插件数据'),
+  );
+}
+
+test('清除插件数据：有可删的 key 或接口正指向本插件时显示危险色按钮；都没有时整块不出现', () => {
+  const { module, t } = boot();
+  const calls = [];
+  const spy = new Proxy({}, { get: (_target, name) => (...args) => calls.push([name, ...args]) });
+  const tree = render(module.renderCard(readyModel(), spy, t));
+  const section = purgeSectionOf(tree);
+  assert.ok(section, '已配 key 且已接入时应显示');
+  const purge = buttonByLabel(section, '清除插件数据');
+  assert.match(purge.props.className, /dsm-tv-btn-danger/);
+  assert.match(collectText(section).join('|'), /卸载前点一下/);
+  purge.props.onClick();
+  assert.deepEqual(calls, [['askPurge']]);
+
+  // 没有 key、网页搜索也没指向本插件：没东西可清。
+  const nothing = render(
+    module.renderCard(
+      readyModel({ keys: { phase: 'ready', slots: slots([]) }, web: { phase: 'ready', baseURL: '', overridden: false, writable: true } }),
+      actions,
+      t,
+    ),
+  );
+  assert.equal(purgeSectionOf(nothing), undefined);
+
+  // 只有接口指向本插件（没 key）也要显示：卸载后网页搜索会连不上。
+  const webOnly = render(module.renderCard(readyModel({ keys: { phase: 'ready', slots: slots([]) } }), actions, t));
+  assert.ok(purgeSectionOf(webOnly));
+});
+
+test('清除插件数据二次确认：列出要删的 key 数与接口恢复，确认时带上目标', () => {
+  const { module, t } = boot();
+  const calls = [];
+  const spy = new Proxy({}, { get: (_target, name) => (...args) => calls.push([name, ...args]) });
+  const model = readyModel({
+    keys: { phase: 'ready', slots: slots(['aaaa', { writable: false, source: 'env' }, 'cccc']) },
+    confirmPurge: true,
+  });
+  const section = purgeSectionOf(render(module.renderCard(model, spy, t)));
+  const text = collectText(section).join('|');
+  assert.match(text, /清除插件数据？/);
+  assert.match(text, /删除 2 个 Tavily API Key/, '只读来源的 key 不算在内');
+  assert.match(text, /恢复为 DSH 默认/);
+  buttonByLabel(section, '确认清除').props.onClick();
+  assert.deepEqual(calls, [['purge', { refs: ['TAVILY_API_KEY', 'TAVILY_API_KEY_3'], readOnly: 1, web: true }]]);
+});
+
+test('purgePluginData：逐个删 key、单个失败不打断，接口指向本插件时恢复默认', async () => {
+  const { module } = boot();
+  const unset = [];
+  const webCalls = [];
+  const api = {
+    unsetKey: async (ref) => {
+      unset.push(ref);
+      return ref === 'TAVILY_API_KEY_2' ? { ok: false, error: { message: 'locked' } } : { ok: true, value: true };
+    },
+    webForm: { unset: async (key) => (webCalls.push(key), true) },
+  };
+  const result = await module.purgePluginData({
+    api,
+    targets: { refs: ['TAVILY_API_KEY', 'TAVILY_API_KEY_2', 'TAVILY_API_KEY_3'], readOnly: 0, web: true },
+  });
+  assert.deepEqual(unset, ['TAVILY_API_KEY', 'TAVILY_API_KEY_2', 'TAVILY_API_KEY_3'], '一个失败后仍继续删后面的');
+  assert.deepEqual(result.removed, ['TAVILY_API_KEY', 'TAVILY_API_KEY_3']);
+  assert.deepEqual(result.failed, [{ ref: 'TAVILY_API_KEY_2', reason: 'locked' }]);
+  assert.equal(result.restored, true);
+  assert.deepEqual(webCalls, ['baseURL']);
+
+  // 接口没指向本插件：不碰网页搜索设置。
+  webCalls.length = 0;
+  const keysOnly = await module.purgePluginData({ api, targets: { refs: [], readOnly: 0, web: false } });
+  assert.equal(keysOnly.restored, false);
+  assert.deepEqual(webCalls, []);
+});
+
+test('清除插件数据：清完后仍显示结果提示（引导去卸载），不再给按钮', () => {
+  const { module, t } = boot();
+  const nothingLeft = { keys: { phase: 'ready', slots: slots([]) }, web: { phase: 'ready', baseURL: '', overridden: false, writable: true } };
+  const ok = render(module.renderCard(readyModel({ ...nothingLeft, purgeNotice: { kind: 'ok', text: '已删除 1 个 API Key。 现在可以去「插件」页卸载本插件。' } }), actions, t));
+  const section = purgeSectionOf(ok);
+  assert.ok(section, '清完之后仍要显示结果');
+  assert.equal(buttonByLabel(section, '清除插件数据'), undefined, '没东西可清时不再给按钮');
+  assert.match(collectText(section).join('|'), /去「插件」页卸载/);
+});
