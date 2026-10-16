@@ -386,17 +386,19 @@ export function readPluginModelsConfig(text, entryId = 'dsh-autostart-workbuddy'
 }
 
 /**
- * 同步一次模型列表：拉 /v1/models → 按白名单规划 → 通过 configEditor 写进 llm-pi-ai 的配置。
+ * 同步一次模型列表：拉 /v1/models → 按白名单规划 → 通过 configEditor 写进 llm-pi-ai 的配置，
+ * 写入（或判定无变化）后再确保 provider 引用的网关密钥在凭据库里有值（见 ensureProxyCredential）。
  *
  * @param {object} options
  * @param {object} options.spec     已解析的服务规格（取 host/port 拼 /v1/models）
  * @param {object} options.models   已解析的 models 配置
  * @param {object} [options.editor] 宿主的 configEditor 服务；没有就无法写入
+ * @param {object} [options.credentials] 宿主的 credentials 服务；没有就只同步模型、不补密钥
  * @param {NodeJS.ProcessEnv} [options.env]
  * @param {boolean} [options.dryRun] 只算不写
  */
 export async function syncModels(options) {
-  const { spec, models, editor, env = process.env, dryRun = false } = options;
+  const { spec, models, editor, credentials, env = process.env, dryRun = false } = options;
 
   if (!models?.enabled) return { state: 'disabled' };
   if (typeof editor?.edit !== 'function') {
@@ -431,20 +433,86 @@ export async function syncModels(options) {
 
   const skeleton = providerSkeleton(models, spec);
   const planned = withProviderModels(target.options?.config, models.provider, entries, skeleton);
-  if (!planned.changed) return { state: 'unchanged', entries, documentPath };
-  if (dryRun) return { state: 'dry-run', entries, created: planned.created, documentPath };
+  if (dryRun) {
+    return planned.changed
+      ? { state: 'dry-run', entries, created: planned.created, documentPath }
+      : { state: 'unchanged', entries, documentPath };
+  }
+  if (!planned.changed) {
+    const credential = await ensureProxyCredential({
+      credentials, ref: providerKeyRef(planned.config, models.provider), apiKey,
+    });
+    return { state: 'unchanged', entries, credential, documentPath };
+  }
 
   // change 回调拿的是 configEditor 在锁内重新读出的最新配置：在它上面重算，
   // 而不是用上面的 planned，避免把锁外读到的旧配置写回去。
   let created = planned.created;
+  let written = planned.config;
   try {
     await editor.edit(target, (current) => {
       const next = withProviderModels(current, models.provider, entries, skeleton);
       created = next.created;
+      written = next.config;
       return next.config;
     });
   } catch (error) {
     return { state: 'failed', reason: error instanceof Error ? error.message : String(error), entries, documentPath };
   }
-  return { state: 'updated', entries, created, documentPath };
+  const credential = await ensureProxyCredential({
+    credentials, ref: providerKeyRef(written, models.provider), apiKey,
+  });
+  return { state: 'updated', entries, created, credential, documentPath };
+}
+
+/**
+ * 网关不鉴权（wb2api 的 config.json 里 `api_key` 为空）时写进凭据库的占位值。
+ *
+ * 需要它是因为两条宿主规则叠在一起：provider 配了 `apiKeyEnv` 时，llm-pi-ai 每轮都要从凭据库
+ * 解析出非空值，解析不到就整轮报 MISSING_CREDENTIAL；而凭据库又拒绝存空串。
+ * 不鉴权的 wb2api 不看 Authorization 头，所以随便一个非空值都能用。用固定值是为了日后认得出
+ * "这是插件补的占位"：面板后来设了密钥，就可以把它换掉，而不会碰用户自己存的值。
+ */
+export const PLACEHOLDER_PROXY_KEY = 'workbuddy-no-auth';
+
+/** 凭据引用的语法（与 @deepseek-ai/dsh-credentials 一致）：不合法的名字根本存不进去。 */
+const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** provider 实际使用的凭据引用名（`apiKeyEnv`）；没有或不合法时返回 undefined。 */
+export function providerKeyRef(config, providerName) {
+  const ref = plainObject(plainObject(plainObject(config).providers)[providerName]).apiKeyEnv;
+  return typeof ref === 'string' && CREDENTIAL_REF_PATTERN.test(ref) ? ref : undefined;
+}
+
+/**
+ * 确保 provider 引用的网关密钥在凭据库里有值，否则 llm-pi-ai 一发消息就报 MISSING_CREDENTIAL。
+ *
+ * 实际遇到过的情况：新装的机器上同步补建了 workbuddy provider（只写变量名），模型选择器里有了
+ * WorkBuddy 模型，但凭据库里没有 WORKBUDDY_PROXY_KEY，于是每轮都失败。
+ *
+ * 规则：
+ *   - 已有非空值（凭据库存的、或启动环境给的）且不是本插件的占位值 → 一律不动，用户设的优先；
+ *   - 没有值 → 写入同步时拉模型用的那个密钥（插件配置 apiKey / config.json 的 api_key），
+ *     密钥为空（网关不鉴权）就写占位值；
+ *   - 现值是占位值而网关后来设了密钥 → 换成真密钥。
+ * 失败只体现在返回值里，不影响模型列表的同步结果。
+ *
+ * @param {{ credentials?: object, ref?: string, apiKey?: string }} options
+ *   `credentials` 是宿主的 credentials 服务（resolve / set）。
+ */
+export async function ensureProxyCredential({ credentials, ref, apiKey = '' }) {
+  if (!ref) return { state: 'skipped', reason: 'provider 没有可用的 apiKeyEnv' };
+  if (typeof credentials?.resolve !== 'function' || typeof credentials?.set !== 'function') {
+    return { state: 'skipped', ref, reason: '宿主没有 credentials 服务' };
+  }
+  const desired = apiKey || PLACEHOLDER_PROXY_KEY;
+  try {
+    const current = await credentials.resolve(ref);
+    const value = typeof current?.value === 'string' ? current.value : '';
+    if (value === desired || (value && value !== PLACEHOLDER_PROXY_KEY)) return { state: 'kept', ref };
+    await credentials.set(ref, desired);
+    return { state: value ? 'replaced' : 'created', ref, placeholder: !apiKey };
+  } catch (error) {
+    return { state: 'failed', ref, reason: error instanceof Error ? error.message : String(error) };
+  }
 }

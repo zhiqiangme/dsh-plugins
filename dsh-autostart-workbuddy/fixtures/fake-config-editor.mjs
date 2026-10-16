@@ -66,3 +66,35 @@ export function profileRows({ withWorkbuddy = true, models = { enabled: true } }
     { id: 'dsh-autostart-workbuddy', name: 'dsh-autostart-workbuddy', config: { models } },
   ];
 }
+
+/**
+ * 测试用 credentials 服务替身，契约对齐 @deepseek-ai/dsh-credentials 的 host 侧：
+ *
+ *   - resolve(ref)：{ value, source } | undefined；空串视同不存在；
+ *   - set(ref, value)：拒绝空串；被启动环境（只读来源）遮蔽的 ref 拒绝写入。
+ *
+ * @param {{ stored?: Record<string,string>, env?: Record<string,string> }} [initial]
+ *   stored 是凭据库里已存的值，env 是启动环境给的值（优先级更高、只读）。
+ */
+export function createFakeCredentials({ stored = {}, env = {} } = {}) {
+  const values = { ...stored };
+  const sets = [];
+  return {
+    values,
+    sets,
+    /** 设成 Error 时 set 直接抛（模拟存储写失败）。 */
+    failWith: undefined,
+    async resolve(ref) {
+      if (env[ref]) return { value: env[ref], source: 'env' };
+      if (values[ref]) return { value: values[ref], source: 'store' };
+      return undefined;
+    },
+    async set(ref, value) {
+      if (this.failWith) throw this.failWith;
+      if (!value) throw new Error('credential value must not be empty');
+      if (env[ref]) throw new Error(`credential "${ref}" is shadowed by a read-only source`);
+      values[ref] = value;
+      sets.push({ ref, value });
+    },
+  };
+}

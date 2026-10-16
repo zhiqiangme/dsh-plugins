@@ -30,6 +30,10 @@
   校验、原子写、只热重载被改的那一行，失败自动回滚。不再自己改 `cordis.patch.yml` 的文本，
   所以不会和设置页的保存互相覆盖。代价是 llm-pi-ai 那一行会按 DSH 的格式重新排版（行内注释不保留）。
 - workbuddy provider 整段不在时会按原有形状补建（`apiKeyEnv: WORKBUDDY_PROXY_KEY`，密钥不落明文）。
+- 同步后会检查 DSH 凭据库里有没有 provider 引用的密钥（`WORKBUDDY_PROXY_KEY`）：没有就写入拉模型用的那个
+  网关密钥（插件配置 `apiKey`，否则面板 `config.json` 的 `api_key`）；`api_key` 为空（网关不鉴权）时写占位值
+  `workbuddy-no-auth`，因为 llm-pi-ai 解析不到非空密钥会整轮报 `MISSING_CREDENTIAL`，而凭据库不收空串。
+  凭据库里已存的或启动环境给的值一律不覆盖；只有现值是这个占位值、而面板后来设了密钥时才换成真密钥。
 - 展示名统一成 `<CN|GL> <上游名> <倍率>`：`cn:` → `CN`、`global:` → `GL`；
   倍率取上游的 `credits`（`x0.11` → `0.11`，`x0.00` 或缺失 → `Free`）。
 - 每个模型默认给**低/高/最大**三个思考档位（`efforts: auto` 则按上游声明的档位）。

@@ -210,11 +210,11 @@ export async function describeModels({ spec, models, editor, env = process.env }
  * 白名单写的是本插件自己那一行：configEditor 改完会触发本插件的 internal/update，
  * index.js 的钩子只就地刷新 models，不重启插件（重启会把托管的 wb2api 一起停掉）。
  *
- * @param {{ resolved: object, editor?: object, env?: object, only: unknown, enabled?: boolean }} options
+ * @param {{ resolved: object, editor?: object, credentials?: object, env?: object, only: unknown, enabled?: boolean }} options
  *   `resolved` 是插件手里那份配置对象；钩子会就地换掉它的 models，这里也同步刷新一次，
  *   宿主没有转发 internal/update 时（测试、旧版本）保存结果照样立即可见。
  */
-export async function applySelection({ resolved, editor, env = process.env, only, enabled }) {
+export async function applySelection({ resolved, editor, credentials, env = process.env, only, enabled }) {
   if (!Array.isArray(only) || only.some((id) => typeof id !== 'string')) {
     return { ok: false, reason: 'only 必须是字符串数组' };
   }
@@ -247,7 +247,7 @@ export async function applySelection({ resolved, editor, env = process.env, only
   }
   resolved.models = { ...resolved.models, ...enabledPatch, only: ids };
 
-  const synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, env });
+  const synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env });
   return {
     ok: true,
     patchPath,
@@ -259,6 +259,7 @@ export async function applySelection({ resolved, editor, env = process.env, only
       count: Array.isArray(synced.entries) ? synced.entries.length : undefined,
       reason: synced.reason,
       created: synced.created,
+      credential: synced.credential?.state,
     },
   };
 }
@@ -414,6 +415,15 @@ export function configEditorOf(ctx) {
   return hostService(ctx, 'configEditor', (candidate) => typeof candidate?.edit === 'function');
 }
 
+/** 宿主的 credentials 服务（凭据库，host 侧可 resolve / set）；每次用时现取，拿不到返回 undefined。 */
+export function credentialsOf(ctx) {
+  return hostService(
+    ctx,
+    'credentials',
+    (candidate) => typeof candidate?.resolve === 'function' && typeof candidate?.set === 'function',
+  );
+}
+
 /** 宿主的 connection 服务（浏览器会话鉴权）；拿不到时 guard 退回本地规则。 */
 export function connectionOf(ctx) {
   return hostService(ctx, 'connection', (candidate) => typeof candidate?.requestRejection === 'function');
@@ -484,7 +494,12 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               return;
             }
             const result = await applySelection({
-              resolved, editor: configEditorOf(ctx), env, only: body.value.only, enabled: body.value.enabled,
+              resolved,
+              editor: configEditorOf(ctx),
+              credentials: credentialsOf(ctx),
+              env,
+              only: body.value.only,
+              enabled: body.value.enabled,
             });
             json(res, result.ok ? 200 : 400, result);
             return;

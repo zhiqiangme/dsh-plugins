@@ -31,7 +31,7 @@ import { checkForUpdate } from './backend.js';
 import { resolvePluginConfig } from './config.js';
 import { syncModels } from './models.js';
 import { ManagedService, isFile } from './services.js';
-import { configEditorOf, registerPanelRoutes } from './web.js';
+import { configEditorOf, credentialsOf, registerPanelRoutes } from './web.js';
 
 /** 插件名（日志前缀）。 */
 export const name = 'dsh-autostart-workbuddy';
@@ -197,8 +197,14 @@ function syncAfterStartup(ctx, startup, resolved, hostEnv, logger) {
         logger.warn(`[${name}] 后端未就绪，跳过模型列表同步`);
         return undefined;
       }
-      // configEditor 现取：它和本插件谁先加载不确定，等到后端就绪时通常早已挂好。
-      return syncModels({ spec: resolved.spec, models: resolved.models, editor: configEditorOf(ctx), env: hostEnv });
+      // configEditor / credentials 现取：它们和本插件谁先加载不确定，等到后端就绪时通常早已挂好。
+      return syncModels({
+        spec: resolved.spec,
+        models: resolved.models,
+        editor: configEditorOf(ctx),
+        credentials: credentialsOf(ctx),
+        env: hostEnv,
+      });
     })
     .then((result) => {
       if (!result) return;
@@ -209,10 +215,22 @@ function syncAfterStartup(ctx, startup, resolved, hostEnv, logger) {
       } else if (result.state !== 'disabled' && result.state !== 'dry-run') {
         logger.warn(`[${name}] 模型列表未同步：${result.reason ?? result.state}`);
       }
+      logCredential(result.credential, logger);
     })
     .catch((error) => {
       logger.warn(`[${name}] 模型列表同步出错：${error instanceof Error ? error.message : String(error)}`);
     });
+}
+
+/** 补密钥的结果只在真的写了或失败时记一条；已有值（kept）不打扰。 */
+function logCredential(credential, logger) {
+  if (!credential) return;
+  if (credential.state === 'created' || credential.state === 'replaced') {
+    const what = credential.placeholder ? '占位值（网关不鉴权）' : '网关密钥';
+    logger.info(`[${name}] 凭据库里没有 ${credential.ref}，已写入${what}`);
+  } else if (credential.state === 'failed' || credential.state === 'skipped') {
+    logger.warn(`[${name}] 未能补齐网关密钥 ${credential.ref ?? ''}：${credential.reason}`);
+  }
 }
 
 /**

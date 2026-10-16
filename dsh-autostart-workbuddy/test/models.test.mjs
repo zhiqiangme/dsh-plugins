@@ -2,23 +2,29 @@
  * 模型列表同步测试：命名/筛选/渲染/定位是纯函数；拉取与回写用真 HTTP 假服务跑通。
  *
  * 写入走宿主 configEditor（这里用 fixtures/fake-config-editor.mjs 替身），重点覆盖：
- * 只动目标 provider、provider 丢失时补建、空列表/请求失败不写、编辑失败如实报错。
+ * 只动目标 provider、provider 丢失时补建、空列表/请求失败不写、编辑失败如实报错；
+ * 以及同步后在凭据库里补齐 provider 引用的网关密钥（用户已设的不覆盖）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolvePluginConfig } from '../lib/config.js';
 import {
+  PLACEHOLDER_PROXY_KEY,
   creditsLabel,
+  ensureProxyCredential,
   fetchModels,
   findConfigEntry,
   modelDisplayName,
   modelsEndpoint,
   planModelEntries,
   providerBaseURL,
+  providerKeyRef,
   readPluginModelsConfig,
   renderModelsBlock,
   resolveProfilePatchPath,
@@ -26,7 +32,12 @@ import {
   withProviderModels,
   yamlScalar,
 } from '../lib/models.js';
-import { createFakeConfigEditor, llmPiAiConfig, profileRows } from '../fixtures/fake-config-editor.mjs';
+import {
+  createFakeConfigEditor,
+  createFakeCredentials,
+  llmPiAiConfig,
+  profileRows,
+} from '../fixtures/fake-config-editor.mjs';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
 
@@ -414,4 +425,123 @@ test('syncModels：dry-run 只算不写；未开启时直接跳过', async (t) =
 
   const off = configFor(port, { enabled: false });
   assert.deepEqual(await syncModels({ spec: off.spec, models: off.models, editor }), { state: 'disabled' });
+});
+
+test('providerKeyRef：取 provider 的 apiKeyEnv，缺失或不合法时为 undefined', () => {
+  assert.equal(providerKeyRef(llmPiAiConfig(), 'workbuddy'), 'WORKBUDDY_PROXY_KEY');
+  assert.equal(providerKeyRef(llmPiAiConfig({ withWorkbuddy: false }), 'workbuddy'), undefined);
+  assert.equal(providerKeyRef({ providers: { workbuddy: { apiKeyEnv: 'bad-name' } } }, 'workbuddy'), undefined);
+  assert.equal(providerKeyRef(undefined, 'workbuddy'), undefined);
+});
+
+test('ensureProxyCredential：缺失时写入网关密钥，api_key 为空写占位值', async () => {
+  const credentials = createFakeCredentials();
+  assert.deepEqual(
+    await ensureProxyCredential({ credentials, ref: 'WORKBUDDY_PROXY_KEY', apiKey: 'sk-gw' }),
+    { state: 'created', ref: 'WORKBUDDY_PROXY_KEY', placeholder: false },
+  );
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'sk-gw');
+
+  const noAuth = createFakeCredentials();
+  const result = await ensureProxyCredential({ credentials: noAuth, ref: 'WORKBUDDY_PROXY_KEY', apiKey: '' });
+  assert.equal(result.state, 'created');
+  assert.equal(result.placeholder, true);
+  assert.equal(noAuth.values.WORKBUDDY_PROXY_KEY, PLACEHOLDER_PROXY_KEY, '凭据库拒存空串，只能写占位值');
+});
+
+test('ensureProxyCredential：用户已设（凭据库或启动环境）的值一律不覆盖', async () => {
+  const stored = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY: 'user-key' } });
+  const keptStored = await ensureProxyCredential({ credentials: stored, ref: 'WORKBUDDY_PROXY_KEY', apiKey: 'sk-gw' });
+  assert.equal(keptStored.state, 'kept');
+  assert.equal(stored.values.WORKBUDDY_PROXY_KEY, 'user-key');
+  assert.equal(stored.sets.length, 0);
+
+  const fromEnv = createFakeCredentials({ env: { WORKBUDDY_PROXY_KEY: 'env-key' } });
+  const keptEnv = await ensureProxyCredential({ credentials: fromEnv, ref: 'WORKBUDDY_PROXY_KEY', apiKey: '' });
+  assert.equal(keptEnv.state, 'kept');
+  assert.equal(fromEnv.sets.length, 0);
+});
+
+test('ensureProxyCredential：占位值在网关设了密钥后换成真密钥，否则保持', async () => {
+  const credentials = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY: PLACEHOLDER_PROXY_KEY } });
+  assert.equal((await ensureProxyCredential({ credentials, ref: 'WORKBUDDY_PROXY_KEY', apiKey: '' })).state, 'kept');
+  assert.equal(credentials.sets.length, 0, '仍不鉴权时不必重写');
+
+  const replaced = await ensureProxyCredential({ credentials, ref: 'WORKBUDDY_PROXY_KEY', apiKey: 'sk-gw' });
+  assert.equal(replaced.state, 'replaced');
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'sk-gw');
+});
+
+test('ensureProxyCredential：没有服务 / 没有引用跳过，写入失败如实报告', async () => {
+  assert.equal((await ensureProxyCredential({ credentials: undefined, ref: 'WORKBUDDY_PROXY_KEY' })).state, 'skipped');
+  assert.equal((await ensureProxyCredential({ credentials: createFakeCredentials(), ref: undefined })).state, 'skipped');
+
+  const broken = createFakeCredentials();
+  broken.failWith = new Error('disk full');
+  const failed = await ensureProxyCredential({ credentials: broken, ref: 'WORKBUDDY_PROXY_KEY', apiKey: 'sk-gw' });
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /disk full/);
+});
+
+test('syncModels：补建 provider 后把拉模型用的密钥写进凭据库，再次同步不重复写', async (t) => {
+  const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
+  t.after(fixture.stop);
+  const resolved = configFor(await fixture.ready);
+  const editor = createFakeConfigEditor(profileRows({ withWorkbuddy: false }));
+  const credentials = createFakeCredentials();
+
+  const result = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: { PATH: '' } });
+  assert.equal(result.state, 'updated');
+  assert.equal(result.created, true);
+  assert.deepEqual(result.credential, { state: 'created', ref: 'WORKBUDDY_PROXY_KEY', placeholder: false });
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'test-key');
+
+  const again = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: { PATH: '' } });
+  assert.equal(again.state, 'unchanged');
+  assert.equal(again.credential.state, 'kept');
+  assert.equal(credentials.sets.length, 1);
+});
+
+test('syncModels：模型无变化时也补密钥（来自 config.json），用户已设的不覆盖', async (t) => {
+  const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'panel-key' });
+  t.after(fixture.stop);
+  const dir = mkdtempSync(join(tmpdir(), 'wb-cred-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const panelConfig = join(dir, 'config.json');
+  writeFileSync(panelConfig, JSON.stringify({ api_key: 'panel-key' }));
+  const resolved = configFor(await fixture.ready, { apiKey: '', panelConfig });
+
+  // 先把模型同步到最新，模拟“已同步过、只缺密钥”的机器。
+  const editor = createFakeConfigEditor(profileRows());
+  await syncModels({ spec: resolved.spec, models: resolved.models, editor, env: { PATH: '' } });
+  assert.equal(editor.edits.length, 1);
+
+  const credentials = createFakeCredentials();
+  const unchanged = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: { PATH: '' } });
+  assert.equal(unchanged.state, 'unchanged');
+  assert.equal(unchanged.credential.state, 'created');
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'panel-key');
+
+  const userSet = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY: 'user-key' } });
+  const kept = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials: userSet, env: { PATH: '' } });
+  assert.equal(kept.credential.state, 'kept');
+  assert.equal(userSet.values.WORKBUDDY_PROXY_KEY, 'user-key');
+});
+
+test('syncModels：dry-run 与写配置失败都不碰凭据库', async (t) => {
+  const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
+  t.after(fixture.stop);
+  const resolved = configFor(await fixture.ready);
+  const credentials = createFakeCredentials();
+
+  const plan = await syncModels({
+    spec: resolved.spec, models: resolved.models, editor: createFakeConfigEditor(profileRows()), credentials, dryRun: true,
+  });
+  assert.equal(plan.state, 'dry-run');
+
+  const editor = createFakeConfigEditor(profileRows());
+  editor.failWith = new Error('validation failed');
+  const failed = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials });
+  assert.equal(failed.state, 'failed');
+  assert.equal(credentials.sets.length, 0);
 });

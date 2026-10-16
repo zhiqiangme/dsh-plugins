@@ -26,7 +26,7 @@ import {
   requestRejection,
   registerPanelRoutes,
 } from '../lib/web.js';
-import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
+import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
 const PLUGIN_ID = 'dsh-autostart-workbuddy';
@@ -244,14 +244,17 @@ test('POST：首次开启同步，即使白名单没变也会保存开关并补�
     if (previousEnabled !== undefined) models.enabled = previousEnabled;
     const resolved = resolvePluginConfig({ port, models: { ...models, apiKey: 'test-key' } }, { PATH: '' });
     const editor = createFakeConfigEditor(profileRows({ models, withWorkbuddy: false }));
+    const credentials = createFakeCredentials();
 
-    const result = await applySelection({ resolved, editor, only: ['cn:alpha'], enabled: true });
+    const result = await applySelection({ resolved, editor, credentials, only: ['cn:alpha'], enabled: true });
 
     assert.equal(result.ok, true);
     assert.equal(result.changed, true);
     assert.equal(result.enabled, true);
     assert.equal(result.sync.state, 'updated');
     assert.equal(result.sync.created, true);
+    assert.equal(result.sync.credential, 'created', '补建 provider 的同时要把网关密钥补进凭据库');
+    assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'test-key');
     assert.equal(resolved.models.enabled, true);
     assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models, { ...models, enabled: true });
     const provider = editor.entry('llm-pi-ai').options.config.providers.workbuddy;
