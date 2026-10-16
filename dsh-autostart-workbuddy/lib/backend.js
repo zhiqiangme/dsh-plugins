@@ -158,7 +158,7 @@ export function localVersion(paths) {
 export function describeBackend(paths) {
   return {
     root: paths.root,
-    // 面板据此决定是否显示「清除后端数据」：目录都不在时没东西可清。
+    // 面板据此决定是否显示「彻底卸载」：目录都不在时没东西可清。
     rootExists: existsSync(paths.root),
     exe: paths.exe,
     config: paths.config,
@@ -234,7 +234,7 @@ function readReleaseCache(paths, ttlMs, force, now) {
 }
 
 function writeReleaseCache(paths, latest, now) {
-  // 数据根目录不在（从没装过，或刚被「清除后端数据」删掉）就不写：查更新是联网的慢操作，
+  // 数据根目录不在（从没装过，或刚被「彻底卸载」删掉）就不写：查更新是联网的慢操作，
   // 启动时那次检查晚于清除才返回的话，会凭空把 cache/ 建回来。首次安装由 ensureLayout 建目录。
   if (!existsSync(paths.root)) return;
   try {
