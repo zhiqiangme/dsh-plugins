@@ -19,7 +19,8 @@
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve, dirname, relative, isAbsolute, parse } from 'node:path';
 
 import {
   downloadAsset,
@@ -157,6 +158,8 @@ export function localVersion(paths) {
 export function describeBackend(paths) {
   return {
     root: paths.root,
+    // 面板据此决定是否显示「清除后端数据」：目录都不在时没东西可清。
+    rootExists: existsSync(paths.root),
     exe: paths.exe,
     config: paths.config,
     data: paths.data,
@@ -231,6 +234,9 @@ function readReleaseCache(paths, ttlMs, force, now) {
 }
 
 function writeReleaseCache(paths, latest, now) {
+  // 数据根目录不在（从没装过，或刚被「清除后端数据」删掉）就不写：查更新是联网的慢操作，
+  // 启动时那次检查晚于清除才返回的话，会凭空把 cache/ 建回来。首次安装由 ensureLayout 建目录。
+  if (!existsSync(paths.root)) return;
   try {
     mkdirSync(paths.cache, { recursive: true });
     writeFileSync(paths.releaseCache, `${JSON.stringify({ fetchedAt: new Date(now).toISOString(), latest }, null, 2)}\n`);
@@ -601,4 +607,55 @@ export async function uninstallBackend({ paths, service, logger, alsoCache = tru
     removed: removed.map((item) => item.replace(paths.root, '.')),
     kept: ['backend/current/config.json', 'data/', 'logs/'],
   };
+}
+
+/**
+ * 清除后端数据：停掉本插件拉起的后端，再整个删掉数据根目录（程序、历史版本、config.json、
+ * data/ 里的凭证、缓存、日志）。
+ *
+ * 为什么要用户手动点：DSH 卸载插件时不通知插件（dshmarket 与 dsh CLI 都只跑 pnpm remove，
+ * pnpm 也不执行 preuninstall），插件的 dispose 又分不清"卸载"与"停用 / 重启 / 更新"，
+ * 在那里自动删会在更新插件时误删已装好的后端。所以只给一个显式入口，卸载插件前点一下。
+ */
+export async function purgeBackendData({ paths, service, logger, env = process.env } = {}) {
+  assertPurgeableRoot(paths.root, env);
+  if (!existsSync(paths.root)) {
+    return { ok: true, state: 'nothing-to-purge', root: paths.root };
+  }
+
+  // 与卸载同一道关：端口上是别人起的进程就拒绝，什么都不删（它可能正用着这个目录）。
+  const stop = await stopForUpdate(service, logger);
+  if (!stop.ok) return { ok: false, state: 'not-owned', reason: stop.reason };
+
+  try {
+    // Windows 上进程刚退出时 exe 与日志句柄可能还没释放，rmSync 自带的重试能跨过这段窗口
+    // （10 次 × 200ms ≈ 2s，够一个正常退出的 Go 进程释放文件）。
+    rmSync(paths.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    logger?.warn?.(`[workbuddy] 清除 ${paths.root} 失败：${reason}`);
+    return { ok: false, state: 'failed', reason: `清除 ${paths.root} 失败：${reason}`, root: paths.root };
+  }
+  forgetBuildInfo(paths.exe);
+
+  logger?.info?.(`[workbuddy] 已清除后端数据目录 ${paths.root}`);
+  return { ok: true, state: 'purged', root: paths.root };
+}
+
+/**
+ * 整目录删除前的兜底：根目录可被 DSH_WORKBUDDY_BACKEND_ROOT 改到任意位置，
+ * 配错成盘符根、用户目录或 DSH home（或它们的上级）时，删下去就是灾难，直接拒绝。
+ */
+function assertPurgeableRoot(root, env) {
+  const fold = (value) => (process.platform === 'win32' ? resolve(value).toLowerCase() : resolve(value));
+  const target = fold(root);
+  const guarded = [parse(resolve(root)).root, homedir(), resolveDshHome(env)].map(fold);
+  // target 等于或包含任一受保护目录 → 拒绝。
+  const covers = (dir) => {
+    const inside = relative(target, dir);
+    return !inside.startsWith('..') && !isAbsolute(inside);
+  };
+  if (guarded.some(covers)) {
+    throw new Error(`拒绝清除 ${root}：它是（或包含）盘符根、用户目录或 DSH home`);
+  }
 }

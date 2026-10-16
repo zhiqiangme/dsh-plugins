@@ -217,6 +217,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'saveSync', 'savedDisabled', 'savedNoSync', 'savedSync',
     'saving', 'selectAll', 'summary', 'syncEnabled', 'syncHint', 'title', 'uninstallConfirm', 'uninstallDesc', 'uninstallKept',
     'uninstallTitle', 'vision',
+    'modelsNotInstalled', 'backendPurge', 'backendPurgeHint', 'backendPurged', 'purgeConfirm', 'purgeDesc', 'purgeKept', 'purgeTitle',
     // 插件自身更新区（与后端版本区无关）
     'restartFailed', 'restartNow', 'restarting', 'updateAvailable', 'updateCancelled', 'updateCheck',
     'updateCheckFailed', 'updateChecking', 'updateCurrent', 'updateFailed', 'updateForce', 'updateLatestVersion',
@@ -358,6 +359,42 @@ test('模型开关：只开启同步就能保存，POST 同时传开关和白名
   assert.equal(syncCheckbox(tree).props.checked, true);
   assert.ok(collectText(tree).includes('已保存，并已重新生成模型清单：1 个模型。'));
   assert.equal(button(collectByType(tree, 'button'), '保存并同步').props.disabled, false, '成功后仍允许重新同步');
+});
+
+test('装好后端：自动打开同步（不带 only，沿用白名单）并刷新模型区', async () => {
+  const requests = [];
+  const notInstalled = { exeExists: false, version: {}, history: [] };
+  const { renderCard } = boot(
+    ['error', [], {}, 'backend-not-installed', new Set(), new Set(), false, undefined, notInstalled],
+    {
+      fetchImpl: async (path, options) => {
+        const body = options.body ? JSON.parse(options.body) : undefined;
+        requests.push({ path, method: options.method, body });
+        let payload;
+        if (path.endsWith('/backend')) {
+          payload = { ok: true, state: 'installed', latest: { tag: 'v9.9.9' }, backend: { exeExists: true, version: { tag: 'v9.9.9' }, history: [] } };
+        } else if (options.method === 'POST') {
+          payload = { ok: true, enabled: true, sync: { state: 'updated', count: 2 } };
+        } else {
+          payload = { ok: true, enabled: true, models: ROWS };
+        }
+        return { ok: true, json: async () => payload };
+      },
+    },
+  );
+
+  // 没装后端时模型区给"去点安装"的提示，而不是状态码或裸的 fetch failed。
+  const before = collectText(renderCard());
+  assert.ok(before.some((text) => text.includes('后端还没有安装') && text.includes('「安装」')));
+  assert.equal(before.includes('backend-not-installed'), false);
+
+  await button(collectByType(renderCard(), 'button'), '安装').props.onClick();
+
+  assert.deepEqual(requests.map((item) => `${item.method} ${item.path.split('/').pop()}`), ['POST backend', 'POST models', 'GET models']);
+  assert.deepEqual(requests[1].body, { enabled: true }, '只开同步，不带 only，避免清空已有勾选');
+  const tree = renderCard();
+  assert.equal(syncCheckbox(tree).props.checked, true, '同步开关应已勾上');
+  assert.ok(collectText(tree).includes('已保存，并已重新生成模型清单：2 个模型。'));
 });
 
 test('模型开关：关闭后只保存选择，失败时保留草稿并允许重试', async () => {
@@ -577,6 +614,35 @@ test('卸载二次确认：拿不到宿主 Modal 时退回行内确认（仍是�
     '没有宿主组件时不该假装有弹窗',
   );
   assert.ok(collectByType(tree, 'div').some((node) => node.props.className === 'dsm-wb-confirm'), '应走行内确认');
+});
+
+test('清除后端数据：目录存在时单独一行显示危险色按钮，不打乱 更新/回滚/卸载 的顺序', () => {
+  const { cards, t } = boot(
+    backendStates({ exeExists: true, rootExists: true, root: 'C:/Users/me/.dsh/autostart-workbuddy', version: {}, history: [] }),
+  );
+  const tree = cards[0].component({ t, view: 'page' });
+  const labels = buttonLabels(backendSection(tree));
+  assert.deepEqual(labels.slice(-5), ['检查更新', '更新', '回滚', '卸载', '清除后端数据']);
+
+  const purge = collectByType(tree, 'button').find((node) => collectText(node).join('') === '清除后端数据');
+  assert.match(purge.props.className, /dsm-wb-btn-danger/);
+  assert.ok(collectText(tree).some((text) => text.includes('C:/Users/me/.dsh/autostart-workbuddy')), '提示里应写明会删哪个目录');
+
+  const gone = boot(backendStates({ exeExists: false, rootExists: false, version: {}, history: [] }));
+  assert.equal(buttonLabels(backendSection(gone.cards[0].component({ t: gone.t, view: 'page' }))).includes('清除后端数据'), false, '目录不在时不显示');
+});
+
+test('清除后端数据二次确认：弹窗说明会删整个目录且不可撤销', () => {
+  const { cards, t } = boot(
+    backendStates({ exeExists: true, rootExists: true, root: 'D:/dsh/autostart-workbuddy', version: {}, history: [] }, { confirming: 'purge' }),
+  );
+  const tree = render(cards[0].component({ t, view: 'page' }));
+  const texts = collectText(tree);
+  assert.ok(texts.includes('清除后端数据？'));
+  assert.ok(texts.some((text) => text.includes('D:/dsh/autostart-workbuddy') && text.includes('账号凭证')));
+  assert.ok(texts.some((text) => text.includes('无法撤销')));
+  assert.equal(texts.includes('卸载后端？'), false, '不能弹成卸载的确认');
+  assert.ok(buttonLabels(tree).includes('确认清除'));
 });
 
 test('卸载二次确认：未点开时不出现确认界面', () => {

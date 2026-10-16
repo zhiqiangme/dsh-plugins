@@ -66,7 +66,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 - 改 desktop profile 前要**完全退出桌面版**（DSH 自己的要求）；脚本检测到对应 profile 的 DSH 进程在跑会停下等你关掉，
   也可以跳过这个 profile。desktop profile 需要先打开过一次桌面版才存在；web / CLI 的 profile 第一次安装时自动创建。
 - 卸载不删 `cordis.patch.yml` 里的配置，也不删各插件自管的后端数据（如 `~/.dsh/autostart-workbuddy`、`~/.dsh/autostart-opencode2api`）。
-  opencode2api 的卡片有「清除后端数据」按钮，卸载前点一下即可删掉它的数据目录。
+  workbuddy 与 opencode2api 的卡片有「清除后端数据」按钮，卸载前点一下即可删掉各自的数据目录。
 
 ## 版本号
 

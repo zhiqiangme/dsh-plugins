@@ -94,7 +94,11 @@ window.__ModuleLoader__.load({
       update: 'backendUpdated',
       rollback: 'backendRolledBack',
       uninstall: 'backendUninstalled',
+      purge: 'backendPurged',
     };
+
+    /** 模型区失败状态（lib/web.js 的 BACKEND_NOT_INSTALLED）：后端没装，提示去点「安装」。 */
+    const BACKEND_NOT_INSTALLED = 'backend-not-installed';
 
     const CSS = `
 .dsm-wb-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;padding:14px 16px}
@@ -164,6 +168,7 @@ window.__ModuleLoader__.load({
       description: '勾选要出现在 DSH 模型列表里的模型；倍率取自后端 /v1/models。',
       summary: '由插件接管 WorkBuddy 的模型列表（勾选 + 倍率）。',
       loading: '正在读取后端模型…',
+      modelsNotInstalled: '后端还没有安装。请点下方「后端版本」里的「安装」，装好后模型列表会自动刷新。',
       retry: '重试',
       selectAll: '全部勾选',
       clearAll: '全部取消',
@@ -214,6 +219,13 @@ window.__ModuleLoader__.load({
       uninstallDesc: '会停止后端，并删除程序文件：wb2api.exe、历史版本、下载缓存。',
       uninstallKept: '账号凭证与状态（data/）以及 config.json 会保留。',
       uninstallConfirm: '确认卸载',
+      backendPurge: '清除后端数据',
+      backendPurgeHint: 'DSH 卸载本插件时不会删除 {root}；卸载前点一下即可清干净。',
+      backendPurged: '已清除 {root}，现在可以去「插件」页卸载本插件。',
+      purgeTitle: '清除后端数据？',
+      purgeDesc: '会停止后端，并删除 {root} 整个目录：程序、历史版本、config.json、账号凭证与状态（data/）、缓存和日志。',
+      purgeKept: '无法撤销。之后想继续用，需要重新安装后端并重新登录账号。',
+      purgeConfirm: '确认清除',
       updateTitle: '插件更新',
       updateChecking: '正在检查更新…',
       updateCheck: '检查更新',
@@ -251,6 +263,7 @@ window.__ModuleLoader__.load({
       description: 'Tick the models that should appear in the DSH model list; the multiplier comes from the backend /v1/models.',
       summary: 'This plugin manages the WorkBuddy model list (selection + multiplier).',
       loading: 'Reading models from the backend…',
+      modelsNotInstalled: 'The backend is not installed yet. Click "Install" under "Backend version" below; the model list refreshes once it is installed.',
       retry: 'Retry',
       selectAll: 'Select all',
       clearAll: 'Clear all',
@@ -301,6 +314,13 @@ window.__ModuleLoader__.load({
       uninstallDesc: 'Stops the backend and deletes its program files: wb2api.exe, archived versions, download cache.',
       uninstallKept: 'Credentials and state (data/) plus config.json are kept.',
       uninstallConfirm: 'Uninstall',
+      backendPurge: 'Clear backend data',
+      backendPurgeHint: 'Uninstalling this plugin in DSH does not delete {root}; click this first to remove it.',
+      backendPurged: 'Cleared {root}. You can now uninstall this plugin on the Plugins page.',
+      purgeTitle: 'Clear backend data?',
+      purgeDesc: 'Stops the backend and deletes the whole {root} directory: program, archived versions, config.json, credentials and state (data/), cache and logs.',
+      purgeKept: 'This cannot be undone. To use it again you will need to reinstall the backend and sign in to your accounts again.',
+      purgeConfirm: 'Clear',
       updateTitle: 'Plugin update',
       updateChecking: 'Checking for updates…',
       updateCheck: 'Check for updates',
@@ -402,10 +422,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 卸载的二次确认。优先用宿主的 Modal（真弹窗，走 portal）；拿不到宿主组件就退回
+     * 卸载 / 清除数据的二次确认。优先用宿主的 Modal（真弹窗，走 portal）；拿不到宿主组件就退回
      * 卡片内的行内确认——两种形态都保证"再点一次才真的删"。
+     *
+     * kind 决定文案前缀（uninstall* / purge*），params 给文案插值（如 {root}）。
      */
-    function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm }) {
+    function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm, kind = 'uninstall', params }) {
       const cancel = h(
         'button',
         { key: 'cancel', type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', onClick: onCancel },
@@ -414,13 +436,13 @@ window.__ModuleLoader__.load({
       const confirm = h(
         'button',
         { key: 'confirm', type: 'button', className: 'dsm-wb-btn dsm-wb-btn-danger', onClick: onConfirm },
-        t('uninstallConfirm'),
+        t(`${kind}Confirm`, params),
       );
       const detail = h(
         'div',
         { className: 'dsm-wb-confirm-body' },
-        h('p', { className: 'dsm-wb-hint' }, t('uninstallDesc')),
-        h('p', { className: 'dsm-wb-hint' }, t('uninstallKept')),
+        h('p', { className: 'dsm-wb-hint' }, t(`${kind}Desc`, params)),
+        h('p', { className: 'dsm-wb-hint' }, t(`${kind}Kept`, params)),
       );
 
       if (typeof Modal === 'function') {
@@ -430,8 +452,8 @@ window.__ModuleLoader__.load({
             key: 'confirm',
             open: true,
             onClose: onCancel,
-            title: t('uninstallTitle'),
-            description: t('uninstallDesc'),
+            title: t(`${kind}Title`, params),
+            description: t(`${kind}Desc`, params),
             footer: [cancel, confirm],
           },
           detail,
@@ -440,7 +462,7 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { key: 'confirm', className: 'dsm-wb-confirm' },
-        h('div', { className: 'dsm-wb-confirm-title' }, t('uninstallTitle')),
+        h('div', { className: 'dsm-wb-confirm-title' }, t(`${kind}Title`, params)),
         detail,
         h('div', { className: 'dsm-wb-toolbar' }, cancel, confirm),
       );
@@ -832,7 +854,8 @@ window.__ModuleLoader__.load({
             setPicked(new Set());
             setSavedPicked(new Set());
             setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, patchPath: payload.patchPath });
-            setReason(payload.reason ?? '');
+            // 没装后端时只记状态码，渲染时再翻成"去点安装"（load 不依赖 t，避免 t 变化时反复重载）。
+            setReason(payload.state === BACKEND_NOT_INSTALLED ? BACKEND_NOT_INSTALLED : (payload.reason ?? ''));
             setPhase('error');
             return;
           }
@@ -902,7 +925,7 @@ window.__ModuleLoader__.load({
       const [check, setCheck] = useState(undefined);
       const [backendBusy, setBackendBusy] = useState(undefined);
       const [backendNotice, setBackendNotice] = useState(undefined);
-      /** 卸载的二次确认弹窗是否打开。 */
+      /** 正在二次确认的动作：'uninstall' / 'purge'；false 表示没有弹窗。 */
       const [confirming, setConfirming] = useState(false);
 
       const loadBackend = useCallback(async () => {
@@ -918,6 +941,22 @@ window.__ModuleLoader__.load({
         loadBackend();
       }, [loadBackend]);
 
+      /** 装好后端后打开同步并同步一次；先 load 再出提示（load 开头会清空 notice）。 */
+      const enableSyncAfterInstall = useCallback(async () => {
+        let notice;
+        try {
+          const payload = await request(MODELS_PATH, 'POST', { enabled: true });
+          const sync = payload.sync ?? {};
+          notice = sync.state === 'updated' || sync.state === 'unchanged'
+            ? { kind: 'ok', text: t('savedSync', { count: sync.count ?? 0 }) }
+            : { kind: 'error', text: t('savedNoSync', { state: sync.reason ?? sync.state ?? '' }) };
+        } catch (error) {
+          notice = { kind: 'error', text: errorText(error) };
+        }
+        await load();
+        setNotice(notice);
+      }, [t, load]);
+
       const runBackend = useCallback(
         async (action, extra) => {
           setBackendBusy(action);
@@ -931,12 +970,19 @@ window.__ModuleLoader__.load({
               setCheck(undefined);
               const done = t(BACKEND_NOTICE[action] ?? 'backendUpdated', {
                 tag: payload.latest?.tag ?? payload.local?.tag ?? '',
+                root: payload.root ?? '',
               });
               // 刚装好的后端还没登录账号：/healthz 是 503，但进程是好的，提示去面板登录。
               const noAccounts = payload.health?.servable === false ? ` ${t('backendNoAccounts')}` : '';
               setBackendNotice({ kind: 'ok', text: done + noAccounts });
-              // 后端换过/新起来了，模型区可能还停在"fetch failed"，重读一次。
-              if (action !== 'uninstall') load();
+              if (action === 'install') {
+                // 刚装好后端：打开「同步到 DSH 模型列表」并立即同步一次，再刷新模型区。
+                // 不带 only，沿用已有白名单（重装时不能把用户之前的勾选清空）。
+                await enableSyncAfterInstall();
+              } else if (action !== 'uninstall' && action !== 'purge') {
+                // 后端换过/新起来了，模型区可能还停在"fetch failed"，重读一次。
+                load();
+              }
             } else {
               setBackendNotice({ kind: 'error', text: payload.reason ?? payload.state ?? '' });
             }
@@ -946,7 +992,7 @@ window.__ModuleLoader__.load({
             setBackendBusy(undefined);
           }
         },
-        [t, load],
+        [t, load, enableSyncAfterInstall],
       );
 
       // 放在所有既有 useState 之后：hooks 按调用顺序配对，插到前面会打乱上面那些状态
@@ -991,7 +1037,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { key: 'error', className: 'dsm-wb-empty' },
-            h('div', { className: 'dsm-wb-notice dsm-wb-notice-error' }, reason),
+            h('div', { className: 'dsm-wb-notice dsm-wb-notice-error' }, reason === BACKEND_NOT_INSTALLED ? t('modelsNotInstalled') : reason),
             h('button', { type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', onClick: load }, t('retry')),
           ),
         );
@@ -1193,7 +1239,7 @@ window.__ModuleLoader__.load({
                     type: 'button',
                     className: 'dsm-wb-btn dsm-wb-btn-danger',
                     disabled: Boolean(backendBusy),
-                    onClick: () => setConfirming(true),
+                    onClick: () => setConfirming('uninstall'),
                   },
                   t('backendUninstall'),
                 )
@@ -1208,7 +1254,13 @@ window.__ModuleLoader__.load({
         ];
 
         if (confirming) {
-          section.push(renderUninstallConfirm({ t, Modal, h, onCancel: () => setConfirming(false), onConfirm: () => { setConfirming(false); runBackend('uninstall', { confirm: true }); } }));
+          // 老状态里可能是 true（改成动作名之前的写法），按卸载处理。
+          const kind = confirming === 'purge' ? 'purge' : 'uninstall';
+          section.push(renderUninstallConfirm({
+            t, Modal, h, kind, params: { root: backend.root ?? '' },
+            onCancel: () => setConfirming(false),
+            onConfirm: () => { setConfirming(false); runBackend(kind, { confirm: true }); },
+          }));
         }
 
         if (check?.error) {
@@ -1230,6 +1282,28 @@ window.__ModuleLoader__.load({
             history.length ? t('backendHistory', { list: history.map((item) => item.name).join(', ') }) : t('backendNoHistory'),
           ),
         );
+
+        // 「清除后端数据」：DSH 卸载插件时不通知插件，数据目录只能靠用户在卸载前显式清掉。
+        // 单独成行、放在历史版本之后，与 更新/回滚/卸载 分开，减少误点；目录不在时不显示。
+        if (backend.rootExists === true) {
+          section.push(
+            h(
+              'div',
+              { key: 'purge', className: 'dsm-wb-toolbar' },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsm-wb-btn dsm-wb-btn-danger',
+                  disabled: Boolean(backendBusy),
+                  onClick: () => setConfirming('purge'),
+                },
+                backendBusy === 'purge' ? t('backendWorking') : t('backendPurge'),
+              ),
+              h('span', { className: 'dsm-wb-hint' }, t('backendPurgeHint', { root: backend.root ?? '' })),
+            ),
+          );
+        }
 
         if (backendNotice) {
           section.push(

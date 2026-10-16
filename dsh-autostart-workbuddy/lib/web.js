@@ -28,6 +28,7 @@ import {
   checkForUpdate,
   describeBackend,
   installBackend,
+  purgeBackendData,
   rollbackBackend,
   uninstallBackend,
 } from './backend.js';
@@ -37,6 +38,9 @@ import { createVersionChecker } from './update.js';
 
 /** 插件名：与 package.json / cordis.patch.yml 里的 name 保持一致。 */
 const PLUGIN_ID = 'dsh-autostart-workbuddy';
+
+/** 模型区的失败状态：插件自管的后端还没装。浏览器半侧据此显示"去点安装"，而不是裸的 fetch failed。 */
+export const BACKEND_NOT_INSTALLED = 'backend-not-installed';
 
 /** 面板路由前缀：DSH 给每个插件留的命名空间，浏览器半侧用同一份常量。 */
 export const PANEL_BASE = `/plugins/${PLUGIN_ID}`;
@@ -165,7 +169,7 @@ function positiveIntOrNull(value) {
  * `models` 是插件手里的当前配置（随配置变更就地刷新，见 index.js），`patchPath` 只用来
  * 告诉用户写到了哪个文件。
  */
-export async function describeModels({ spec, models, editor, env = process.env }) {
+export async function describeModels({ spec, models, editor, env = process.env, managedExe }) {
   const patchPath = editor?.documentPath;
   const only = models.only ?? [];
   const enabled = models.enabled;
@@ -176,6 +180,15 @@ export async function describeModels({ spec, models, editor, env = process.env }
     timeoutMs: models.timeoutMs,
   });
   if (!fetched.ok) {
+    // 只在拉取失败后才看 exe 在不在：端口上若是用户另起的后端、拉取成功，就照常显示，不误报未安装。
+    if (managedExe === true && !isFile(spec.exe)) {
+      return {
+        ok: false,
+        state: BACKEND_NOT_INSTALLED,
+        reason: '后端还没有安装，请点下方「后端版本」里的「安装」，装好后模型列表会自动刷新。',
+        patchPath, enabled, only,
+      };
+    }
     return { ok: false, reason: fetched.reason, patchPath, enabled, only };
   }
 
@@ -210,12 +223,14 @@ export async function describeModels({ spec, models, editor, env = process.env }
  * 白名单写的是本插件自己那一行：configEditor 改完会触发本插件的 internal/update，
  * index.js 的钩子只就地刷新 models，不重启插件（重启会把托管的 wb2api 一起停掉）。
  *
- * @param {{ resolved: object, editor?: object, credentials?: object, env?: object, only: unknown, enabled?: boolean }} options
+ * @param {{ resolved: object, editor?: object, credentials?: object, env?: object, only?: unknown, enabled?: boolean }} options
+ *   省略 `only` 表示沿用现有白名单（装好后端后只打开同步开关时用，不能把用户勾选清空）。
  *   `resolved` 是插件手里那份配置对象；钩子会就地换掉它的 models，这里也同步刷新一次，
  *   宿主没有转发 internal/update 时（测试、旧版本）保存结果照样立即可见。
  */
 export async function applySelection({ resolved, editor, credentials, env = process.env, only, enabled }) {
-  if (!Array.isArray(only) || only.some((id) => typeof id !== 'string')) {
+  const keepOnly = only === undefined && enabled !== undefined;
+  if (!keepOnly && (!Array.isArray(only) || only.some((id) => typeof id !== 'string'))) {
     return { ok: false, reason: 'only 必须是字符串数组' };
   }
   if (enabled !== undefined && typeof enabled !== 'boolean') {
@@ -227,9 +242,10 @@ export async function applySelection({ resolved, editor, credentials, env = proc
   const entry = findConfigEntry(editor, { id: PLUGIN_ID });
   if (!entry) return { ok: false, reason: `DSH 里没有可编辑的 ${PLUGIN_ID} 条目` };
 
-  const ids = only.map((id) => id.trim()).filter(Boolean);
   const patchPath = editor.documentPath;
   const currentModels = entry.options?.config?.models;
+  const keptOnly = Array.isArray(currentModels?.only) ? currentModels.only : (resolved.models?.only ?? []);
+  const ids = (only ?? keptOnly).map((id) => String(id).trim()).filter(Boolean);
   // 旧客户端只发送 only；省略 enabled 时保留原开关，不能把旧请求当作开启或关闭同步。
   const enabledPatch = enabled === undefined ? {} : { enabled };
   const changed = !isDeepStrictEqual(currentModels?.only, ids) ||
@@ -337,16 +353,22 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
     return;
   }
 
-  // 会改动磁盘的动作：都要串行执行（见 backendBusy），其中卸载还要求显式二次确认。
-  const MUTATING_ACTIONS = new Set(['install', 'update', 'rollback', 'uninstall']);
+  // 会改动磁盘的动作：都要串行执行（见 backendBusy），其中卸载与清除数据还要求显式二次确认。
+  const MUTATING_ACTIONS = new Set(['install', 'update', 'rollback', 'uninstall', 'purge']);
 
   if (!MUTATING_ACTIONS.has(action)) {
     json(res, 400, { ok: false, reason: `不认识的动作：${action || '(空)'}` });
     return;
   }
 
-  if (action === 'uninstall' && body.value.confirm !== true) {
-    json(res, 400, { ok: false, reason: '卸载需要二次确认（confirm: true）' });
+  if ((action === 'uninstall' || action === 'purge') && body.value.confirm !== true) {
+    json(res, 400, { ok: false, reason: `${action === 'purge' ? '清除后端数据' : '卸载'}需要二次确认（confirm: true）` });
+    return;
+  }
+
+  // 自配 exe 的外部后端不归插件管，整目录清除也不该替用户做。
+  if (action === 'purge' && resolved.managedExe === false) {
+    json(res, 400, { ok: false, reason: '自定义 exe 不由插件管理，请在外部维护该后端的数据。' });
     return;
   }
 
@@ -368,6 +390,8 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
       });
     } else if (action === 'uninstall') {
       result = await uninstallBackend({ paths, service, logger });
+    } else if (action === 'purge') {
+      result = await purgeBackendData({ paths, service, logger, env });
     } else if (action === 'update') {
       result = await applyUpdate({
         paths,
@@ -483,7 +507,10 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
             json(
               res,
               200,
-              await describeModels({ spec: resolved.spec, models: resolved.models, editor: configEditorOf(ctx), env }),
+              await describeModels({
+                spec: resolved.spec, models: resolved.models, managedExe: resolved.managedExe,
+                editor: configEditorOf(ctx), env,
+              }),
             );
             return;
           }

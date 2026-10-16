@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 import { resolvePluginConfig } from '../lib/config.js';
 import {
+  BACKEND_NOT_INSTALLED,
   BACKEND_PATH,
   MODELS_PATH,
   PANEL_KEY_PATH,
@@ -188,6 +189,44 @@ test('GET：后端不可达时返回 ok:false 与原因，而不是抛异常', a
   assert.equal(payload.ok, false);
   assert.match(payload.reason, /请求失败/);
   assert.equal(payload.patchPath, editor.documentPath);
+});
+
+test('GET：后端没装且拉不到模型时给出"去点安装"状态；端口上有别的后端能答时照常显示', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wb-web-'));
+  const env = { PATH: '', DSH_WORKBUDDY_BACKEND_ROOT: root };
+  const missing = resolvePluginConfig({ port: await freePort(), models: { enabled: true, apiKey: 'k', timeoutMs: 5_000 } }, env);
+  assert.equal(missing.managedExe, true);
+  const payload = await describeModels({ ...missing, editor: editorFor(), env });
+  assert.equal(payload.ok, false);
+  assert.equal(payload.state, BACKEND_NOT_INSTALLED);
+  assert.match(payload.reason, /安装/);
+
+  // 自配 exe（外部后端）时不知道装没装，保留原始错误。
+  const external = resolvePluginConfig({ exe: join(root, 'nope.exe'), port: await freePort(), models: { apiKey: 'k' } }, env);
+  assert.equal((await describeModels({ ...external, env })).state, undefined);
+
+  const fixture = startFixture({ TEST_MODE: 'http-models' });
+  try {
+    const answering = resolvePluginConfig({ port: await fixture.ready, models: { enabled: true, apiKey: 'test-key' } }, env);
+    assert.equal((await describeModels({ ...answering, env })).ok, true, 'exe 不在但端口能答时不误报未安装');
+  } finally {
+    fixture.stop();
+  }
+});
+
+test('POST：只打开同步开关（省略 only）时沿用已有白名单并立即同步', async () => {
+  const fixture = startFixture({ TEST_MODE: 'http-models' });
+  const resolved = configFor(await fixture.ready, { enabled: false });
+  const editor = editorFor({ enabled: false, only: ['cn:alpha'] });
+  try {
+    const result = await applySelection({ resolved, editor, env: process.env, enabled: true });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(result.only, ['cn:alpha'], '不能把用户之前的勾选清空');
+    assert.equal(result.sync.state, 'updated');
+    assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models, { enabled: true, only: ['cn:alpha'] });
+  } finally {
+    fixture.stop();
+  }
 });
 
 test('POST：经 configEditor 写白名单，并立即重新生成 provider 的模型清单', async () => {
@@ -466,6 +505,13 @@ test('后端路由：GET 给版本快照且默认不联网，POST 校验动作�
   await handler(fakeReq('POST', { body: JSON.stringify({ action: 'nope' }) }), unknownAction);
   assert.equal(unknownAction.status, 400);
   assert.match(unknownAction.body.reason, /不认识的动作/);
+
+  // 清除后端数据必须带 confirm，否则一个误发的请求就能删掉凭证。
+  const purge = fakeRes();
+  await handler(fakeReq('POST', { body: JSON.stringify({ action: 'purge' }) }), purge);
+  assert.equal(purge.status, 400);
+  assert.match(purge.body.reason, /二次确认/);
+  assert.equal(typeof status.body.backend.rootExists, 'boolean');
 });
 
 test('插件版本路由：GET 交给版本检查器，只有 ?force=1 绕过缓存；其它方法 405、外部来源 403', async () => {
