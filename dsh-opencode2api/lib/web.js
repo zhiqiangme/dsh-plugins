@@ -201,7 +201,8 @@ export async function describeModels({ spec, models, editor, credentials, env = 
  *   宿主没有转发 internal/update 时（测试、旧版本）保存结果照样立即可见。
  */
 export async function applySelection({ resolved, editor, credentials, env = process.env, only, enabled }) {
-  if (only !== undefined && (!Array.isArray(only) || only.some((id) => typeof id !== 'string'))) {
+  const keepOnly = only === undefined && enabled !== undefined;
+  if (!keepOnly && (!Array.isArray(only) || only.some((id) => typeof id !== 'string'))) {
     return { ok: false, reason: 'only 必须是字符串数组' };
   }
   if (enabled !== undefined && typeof enabled !== 'boolean') {

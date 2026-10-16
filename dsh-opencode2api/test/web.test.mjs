@@ -101,4 +101,6 @@ test('模型卡片显示真实能力和价格，保存勾选立即同步',async(
   assert.equal(result.sync.state,'updated');assert.equal(result.sync.count,1);
   assert.deepEqual(editor.entry('dsh-opencode2api').options.config.models.only,['vision-free']);
   assert.equal((await applySelection({resolved,editor,only:'bad'})).ok,false);
+  // 既不带 only 也不带 enabled 的空请求没有意义，仍按参数缺失拒绝。
+  assert.equal((await applySelection({resolved,editor})).ok,false);
 });
