@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { ensureBackendConfig } from '../lib/backend-config.js';
 import { resolvePluginConfig } from '../lib/config.js';
-import { applySelection, describeModels, registerPanelRoutes, MODELS_PATH, PANEL_KEY_PATH, BACKEND_PATH } from '../lib/web.js';
+import { applySelection, describeModels, registerPanelRoutes, BACKEND_NOT_INSTALLED, MODELS_PATH, PANEL_KEY_PATH, BACKEND_PATH } from '../lib/web.js';
 import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
 import { catalog, memoryCredentials, serve } from '../fixtures/http-fixture.mjs';
 
@@ -62,6 +62,21 @@ test('有 connection 服务时按宿主浏览器会话鉴权，未登录返回 4
   // 宿主放行即可，不再叠加本地的回环地址规则（桌面端请求经 Electron 转发，宿主已校验）。
   assert.equal((await request(routes.get(PANEL_KEY_PATH),{method:'POST',remoteAddress:'10.0.0.2',body:{}})).status,200);
   assert.equal(seen.length,2);
+});
+test('后端没装且拉不到模型时给出"去点安装"状态；端口上有别的后端能答时照常显示',async(t)=>{
+  const root=mkdtempSync(join(tmpdir(),'opencode-web-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const env={DSH_OPENCODE2API_BACKEND_ROOT:root};
+  // 端口 1 上不会有服务：拉取必然失败。
+  const missing=resolvePluginConfig({models:{apiKey:'key',baseURL:'http://127.0.0.1:1'}},env);
+  assert.equal(missing.managedExe,true);
+  const snapshot=await describeModels({...missing,env:{}});
+  assert.equal(snapshot.ok,false);assert.equal(snapshot.state,BACKEND_NOT_INSTALLED);assert.match(snapshot.reason,/安装/);
+  // 自配 exe（外部后端）时不知道装没装，保留原始错误。
+  const external=resolvePluginConfig({exe:join(root,'nope.exe'),models:{apiKey:'key',baseURL:'http://127.0.0.1:1'}},env);
+  assert.equal((await describeModels({...external,env:{}})).state,undefined);
+  const url=await serve(t,(_req,res)=>res.end(JSON.stringify({data:catalog})));
+  const answering=resolvePluginConfig({models:{apiKey:'key',baseURL:url}},env);
+  assert.equal((await describeModels({...answering,env:{}})).ok,true,'exe 不在但端口能答时不误报未安装');
 });
 test('模型卡片显示真实能力和价格，保存勾选立即同步',async(t)=>{
   const url=await serve(t,(_req,res)=>res.end(JSON.stringify({data:catalog})));

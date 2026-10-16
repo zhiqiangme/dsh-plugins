@@ -88,6 +88,9 @@ window.__ModuleLoader__.load({
     /** dshmarket 认为"可以带 force 重试"的两种失败：发布冷却期未过 / 装完版本没变。 */
     const FORCEABLE_FAILURES = new Set(['RELEASE_TOO_FRESH', 'VERSION_UNCHANGED']);
 
+    /** 模型区失败状态（lib/web.js 的 BACKEND_NOT_INSTALLED）：后端没装，提示去点「安装」。 */
+    const BACKEND_NOT_INSTALLED = 'backend-not-installed';
+
     /** 后端动作 → 成功后的提示文案 key。 */
     const BACKEND_NOTICE = {
       install: 'backendInstalled',
@@ -165,6 +168,7 @@ window.__ModuleLoader__.load({
       description: '勾选要同步到 DSH 的模型。价格为每百万 token 的输入 / 输出美元单价；目录可见不代表推理可用。',
       summary: '由插件接管 OpenCode 的模型列表（勾选与能力同步）。',
       loading: '正在读取后端模型…',
+      modelsNotInstalled: '后端还没有安装。请点下方「后端版本」里的「安装」，装好后模型列表会自动刷新。',
       retry: '重试',
       selectAll: '全部勾选',
       clearAll: '全部取消',
@@ -260,6 +264,7 @@ window.__ModuleLoader__.load({
       description: 'Select models for DSH. Prices are input / output USD per million tokens. A catalog entry does not prove inference availability.',
       summary: 'This plugin manages the OpenCode model list (selection and capabilities).',
       loading: 'Reading models from the backend…',
+      modelsNotInstalled: 'The backend is not installed yet. Click "Install" under "Backend version" below; the model list refreshes once it is installed.',
       retry: 'Retry',
       selectAll: 'Select all',
       clearAll: 'Clear all',
@@ -855,7 +860,8 @@ window.__ModuleLoader__.load({
             setPicked(new Set());
             setSavedPicked(new Set());
             setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, patchPath: payload.patchPath });
-            setReason(payload.reason ?? '');
+            // 没装后端时只记状态码，渲染时再翻成"去点安装"（load 不依赖 t，避免 t 变化时反复重载）。
+            setReason(payload.state === BACKEND_NOT_INSTALLED ? BACKEND_NOT_INSTALLED : (payload.reason ?? ''));
             setPhase('error');
             return;
           }
@@ -1015,7 +1021,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { key: 'error', className: 'dsm-oc-empty' },
-            h('div', { className: 'dsm-oc-notice dsm-oc-notice-error' }, reason),
+            h('div', { className: 'dsm-oc-notice dsm-oc-notice-error' }, reason === BACKEND_NOT_INSTALLED ? t('modelsNotInstalled') : reason),
             h('button', { type: 'button', className: 'dsm-oc-btn dsm-oc-btn-outline', onClick: load }, t('retry')),
           ),
         );

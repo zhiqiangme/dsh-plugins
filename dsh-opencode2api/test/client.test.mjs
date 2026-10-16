@@ -210,7 +210,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   const expected = [
     'backendAvailable', 'backendBuilt', 'backendCheck', 'backendCurrent', 'backendHistory',
     'backendInstall', 'backendInstalled', 'backendLatest', 'backendNoAccounts', 'backendNoHistory', 'backendRollback',
-    'backendPurge', 'backendPurgeHint', 'backendPurged', 'purgeConfirm', 'purgeDesc', 'purgeKept', 'purgeTitle',
+    'modelsNotInstalled', 'backendPurge', 'backendPurgeHint', 'backendPurged', 'purgeConfirm', 'purgeDesc', 'purgeKept', 'purgeTitle',
     'backendTitle', 'backendUninstall', 'backendUninstalled', 'backendUnmanaged', 'backendUpdate',
     'backendUpdated', 'backendUpToDate', 'backendWorking', 'backendRolledBack', 'cancel',
     'clearAll', 'count', 'description', 'disabledHint', 'emptyBackend', 'emptyHint', 'loading',
@@ -533,6 +533,17 @@ test('后端区（已安装）：显示 更新/卸载/回滚，不显示 安装�
 
   const uninstall = collectByType(tree, 'button').find((node) => collectText(node).join('') === '卸载');
   assert.match(uninstall.props.className, /dsm-oc-btn-danger/, '卸载按钮用危险色');
+});
+
+test('模型区：后端没装时提示去点安装，而不是裸的 fetch failed', () => {
+  const { cards, t } = boot(['error', [], {}, 'backend-not-installed', new Set(), new Set(), false, undefined,
+    { exeExists: false, version: {}, history: [] }]);
+  const texts = collectText(cards[0].component({ t, view: 'page' }));
+  assert.ok(texts.some((text) => text.includes('后端还没有安装') && text.includes('「安装」')));
+  assert.equal(texts.includes('backend-not-installed'), false, '状态码不能原样露给用户');
+
+  const other = boot(['error', [], {}, 'fetch failed', new Set(), new Set()]);
+  assert.ok(collectText(other.cards[0].component({ t: other.t, view: 'page' })).includes('fetch failed'), '其它错误照原文显示');
 });
 
 test('后端区（未安装）：显示 安装，不显示 更新/卸载/回滚', () => {

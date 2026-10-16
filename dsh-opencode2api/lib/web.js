@@ -37,6 +37,9 @@ export const VERSION_PATH = `${PANEL_BASE}/version`;
 /** 初始管理密码只由显式 POST 返回，不放进普通状态应答。 */
 export const PANEL_KEY_PATH = `${PANEL_BASE}/panel-key`;
 
+/** 模型区的失败状态：插件自管的后端还没装。浏览器半侧据此显示"去点安装"，而不是裸的 fetch failed。 */
+export const BACKEND_NOT_INSTALLED = 'backend-not-installed';
+
 /** 请求体上限：白名单最多几十个 id，64KB 足够，防止有人往 loopback 路由灌大包。 */
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -138,7 +141,7 @@ function positiveIntOrNull(value) {
  * `models` 是插件手里的当前配置（随配置变更就地刷新，见 index.js），`patchPath` 只用来
  * 告诉用户写到了哪个文件。
  */
-export async function describeModels({ spec, models, editor, credentials, env = process.env }) {
+export async function describeModels({ spec, models, editor, credentials, env = process.env, managedExe }) {
   const patchPath = editor?.documentPath;
   const only = models.only ?? [];
   const enabled = models.enabled;
@@ -149,6 +152,15 @@ export async function describeModels({ spec, models, editor, credentials, env = 
     timeoutMs: models.timeoutMs,
   });
   if (!fetched.ok) {
+    // 只在拉取失败后才看 exe 在不在：端口上若是用户另起的后端、拉取成功，就照常显示，不误报未安装。
+    if (managedExe === true && !isFile(spec.exe)) {
+      return {
+        ok: false,
+        state: BACKEND_NOT_INSTALLED,
+        reason: '后端还没有安装，请点下方「后端版本」里的「安装」，装好后模型列表会自动刷新。',
+        patchPath, enabled, only,
+      };
+    }
     return { ok: false, reason: fetched.reason, patchPath, enabled, only };
   }
 
@@ -457,7 +469,10 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
             json(
               res,
               200,
-              await describeModels({ spec: resolved.spec, models: resolved.models, editor: configEditorOf(ctx), credentials: credentialsOf(ctx), env }),
+              await describeModels({
+                spec: resolved.spec, models: resolved.models, managedExe: resolved.managedExe,
+                editor: configEditorOf(ctx), credentials: credentialsOf(ctx), env,
+              }),
             );
             return;
           }
