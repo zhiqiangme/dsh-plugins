@@ -195,12 +195,13 @@ export async function describeModels({ spec, models, editor, credentials, env = 
  * 白名单写的是本插件自己那一行：configEditor 改完会触发本插件的 internal/update，
  * index.js 的钩子只就地刷新 models，不重启插件（重启会把托管的 opencode2api 一起停掉）。
  *
- * @param {{ resolved: object, editor?: object, env?: object, only: unknown, enabled?: boolean }} options
+ * @param {{ resolved: object, editor?: object, env?: object, only?: unknown, enabled?: boolean }} options
+ *   省略 `only` 表示沿用现有白名单（装好后端后只打开同步开关时用，不能把用户勾选清空）。
  *   `resolved` 是插件手里那份配置对象；钩子会就地换掉它的 models，这里也同步刷新一次，
  *   宿主没有转发 internal/update 时（测试、旧版本）保存结果照样立即可见。
  */
 export async function applySelection({ resolved, editor, credentials, env = process.env, only, enabled }) {
-  if (!Array.isArray(only) || only.some((id) => typeof id !== 'string')) {
+  if (only !== undefined && (!Array.isArray(only) || only.some((id) => typeof id !== 'string'))) {
     return { ok: false, reason: 'only 必须是字符串数组' };
   }
   if (enabled !== undefined && typeof enabled !== 'boolean') {
@@ -212,9 +213,10 @@ export async function applySelection({ resolved, editor, credentials, env = proc
   const entry = findConfigEntry(editor, { id: PLUGIN_ID });
   if (!entry) return { ok: false, reason: `DSH 里没有可编辑的 ${PLUGIN_ID} 条目` };
 
-  const ids = only.map((id) => id.trim()).filter(Boolean);
   const patchPath = editor.documentPath;
   const currentModels = entry.options?.config?.models;
+  const keptOnly = Array.isArray(currentModels?.only) ? currentModels.only : (resolved.models?.only ?? []);
+  const ids = (only ?? keptOnly).map((id) => String(id).trim()).filter(Boolean);
   // 旧客户端只发送 only；省略 enabled 时保留原开关，不能把旧请求当作开启或关闭同步。
   const enabledPatch = enabled === undefined ? {} : { enabled };
   const changed = !isDeepStrictEqual(currentModels?.only, ids) ||

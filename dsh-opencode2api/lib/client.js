@@ -947,6 +947,22 @@ window.__ModuleLoader__.load({
         loadBackend();
       }, [loadBackend]);
 
+      /** 装好后端后打开同步并同步一次；先 load 再出提示（load 开头会清空 notice）。 */
+      const enableSyncAfterInstall = useCallback(async () => {
+        let notice;
+        try {
+          const payload = await request(MODELS_PATH, 'POST', { enabled: true });
+          const sync = payload.sync ?? {};
+          notice = sync.state === 'updated' || sync.state === 'unchanged'
+            ? { kind: 'ok', text: t('savedSync', { count: sync.count ?? 0 }) }
+            : { kind: 'error', text: t('savedNoSync', { state: sync.reason ?? sync.state ?? '' }) };
+        } catch (error) {
+          notice = { kind: 'error', text: errorText(error) };
+        }
+        await load();
+        setNotice(notice);
+      }, [t, load]);
+
       const runBackend = useCallback(
         async (action, extra) => {
           setBackendBusy(action);
@@ -965,8 +981,14 @@ window.__ModuleLoader__.load({
               // 刚装好的后端还没登录账号：/healthz 是 503，但进程是好的，提示去面板登录。
               const noAccounts = payload.health?.servable === false ? ` ${t('backendNoAccounts')}` : '';
               setBackendNotice({ kind: 'ok', text: done + noAccounts });
-              // 后端换过/新起来了，模型区可能还停在"fetch failed"，重读一次。
-              if (action !== 'uninstall' && action !== 'purge') load();
+              if (action === 'install') {
+                // 刚装好后端：打开「同步到 DSH 模型列表」并立即同步一次，再刷新模型区。
+                // 不带 only，沿用已有白名单（重装时不能把用户之前的勾选清空）。
+                await enableSyncAfterInstall();
+              } else if (action !== 'uninstall' && action !== 'purge') {
+                // 后端换过/新起来了，模型区可能还停在"fetch failed"，重读一次。
+                load();
+              }
             } else {
               setBackendNotice({ kind: 'error', text: payload.reason ?? payload.state ?? '' });
             }
@@ -976,7 +998,7 @@ window.__ModuleLoader__.load({
             setBackendBusy(undefined);
           }
         },
-        [t, load],
+        [t, load, enableSyncAfterInstall],
       );
 
       // 放在所有既有 useState 之后：hooks 按调用顺序配对，插到前面会打乱上面那些状态

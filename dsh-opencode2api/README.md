@@ -19,10 +19,10 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-opencode2api@26.10.15
 
 重新打开 DSH，在「插件 → OpenCode API」中：
 
-1. 点击后端「安装」，从 `jasonxu114514/opencode2api` 最新 GitHub Release 下载对应 Windows x64 / ARM64 产物，核对同一发布中的 `.sha256` 与 Go 构建 revision。
+1. 点击后端「安装」，从 `jasonxu114514/opencode2api` 最新 GitHub Release 下载对应 Windows x64 / ARM64 产物，核对同一发布中的 `.sha256` 与 Go 构建 revision。装好后卡片自动勾选「同步到 DSH 模型列表」并同步一次（沿用已有的模型勾选）。
 2. 点击后端管理页链接。首次登录用户名为 `admin`，点击「复制初始管理密码」获取随机密码；管理页改过密码后使用新密码。
 3. 需要时在后端管理页配置 Zen / Go Key。初始配置启用匿名通道；它是否可用取决于上游，并不承诺解决免费层 403。
-4. 勾选「同步到 DSH 模型列表」，选择模型并「保存并同步」。模型分组为 `OpenCode`，provider id 为 `opencode2api`。
+4. 按需调整模型勾选并「保存并同步」。模型分组为 `OpenCode`，provider id 为 `opencode2api`。
 
 后续更新到 npm 最新版：
 
@@ -39,7 +39,7 @@ Web / CLI 使用 `web` / `headless` profile。后端安装器支持 Windows x64�
 - 先探测端口，再验证 `/healthz` 的 opencode2api 响应。占端口的其他服务不会被误当成后端，也不会被结束。
 - DSH 退出或停用插件时，只停止该实例自己拉起的进程；外部手动启动的进程保留。
 - 后端更新由用户点击；支持保留历史版本、失败回滚、卸载程序。更新不覆盖配置和密钥。
-- 模型同步默认关闭，通过 DSH `configEditor` 写配置；只修改自己的 provider 模型列表，保留其他 provider。勾选与同步开关变化不重启后端。
+- 模型同步默认关闭，在卡片上装好后端时自动打开；通过 DSH `configEditor` 写配置；只修改自己的 provider 模型列表，保留其他 provider。勾选与同步开关变化不重启后端。
 - 开启同步后，除启动时和卡片保存时，运行中每 10 分钟（`models.resyncIntervalMs`，`0` 关闭，最小 1 分钟）再同步一次，跟上后端下架或新增的模型。后端 `/healthz` 未就绪时跳过；后端返回空列表时不清空；某个模型要连续两轮缺席才会移除，避免目录刷新抖动误删。
 - 本地 API Key 保存到 DSH 凭据库的 `OPENCODE2API_PROXY_KEY` 引用，profile 中不写密钥明文。它与 Zen / Go 的上游 Key 是不同的凭据。
 - 从 `/v1/models` 同步上下文、最大输出、视觉模态和上游声明的思考档位。`System One` 专用模型不导入普通对话选择器；未知价格显示 `—`，价格单位为 USD / 百万 token。

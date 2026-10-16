@@ -363,6 +363,38 @@ test('模型开关：只开启同步就能保存，POST 同时传开关和白名
   assert.equal(button(collectByType(tree, 'button'), '保存并同步').props.disabled, false, '成功后仍允许重新同步');
 });
 
+test('装好后端：自动打开同步（不带 only，沿用白名单）并刷新模型区', async () => {
+  const requests = [];
+  const notInstalled = { exeExists: false, version: {}, history: [] };
+  const { renderCard } = boot(
+    ['error', [], {}, 'backend-not-installed', new Set(), new Set(), false, undefined, notInstalled],
+    {
+      fetchImpl: async (path, options) => {
+        const body = options.body ? JSON.parse(options.body) : undefined;
+        requests.push({ path, method: options.method, body });
+        let payload;
+        if (path.endsWith('/backend')) {
+          payload = { ok: true, state: 'installed', latest: { tag: 'v9.9.9' }, backend: { exeExists: true, version: { tag: 'v9.9.9' }, history: [] } };
+        } else if (options.method === 'POST') {
+          payload = { ok: true, enabled: true, sync: { state: 'updated', count: 2 } };
+        } else {
+          payload = { ok: true, enabled: true, models: ROWS };
+        }
+        return { ok: true, json: async () => payload };
+      },
+    },
+  );
+
+  await button(collectByType(renderCard(), 'button'), '安装').props.onClick();
+
+  assert.deepEqual(requests.map((item) => `${item.method} ${item.path.split('/').pop()}`), ['POST backend', 'POST models', 'GET models']);
+  assert.deepEqual(requests[1].body, { enabled: true }, '只开同步，不带 only，避免清空已有勾选');
+  const tree = renderCard();
+  assert.equal(syncCheckbox(tree).props.checked, true, '同步开关应已勾上');
+  assert.ok(collectText(tree).includes('已保存，并已重新生成模型清单：2 个模型。'));
+  assert.ok(collectText(tree).some((text) => text.includes('后端已安装 v9.9.9')));
+});
+
 test('模型开关：关闭后只保存选择，失败时保留草稿并允许重试', async () => {
   let reject = true;
   const requests = [];

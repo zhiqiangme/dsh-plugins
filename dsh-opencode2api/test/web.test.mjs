@@ -78,6 +78,17 @@ test('后端没装且拉不到模型时给出"去点安装"状态；端口上有
   const answering=resolvePluginConfig({models:{apiKey:'key',baseURL:url}},env);
   assert.equal((await describeModels({...answering,env:{}})).ok,true,'exe 不在但端口能答时不误报未安装');
 });
+test('只打开同步开关（省略 only）时沿用已有白名单并立即同步',async(t)=>{
+  const url=await serve(t,(_req,res)=>res.end(JSON.stringify({data:catalog})));
+  const resolved=resolvePluginConfig({models:{enabled:false,apiKey:'key',baseURL:url,only:['vision-free']}},{});
+  const editor=createFakeConfigEditor(profileRows({withProvider:false,models:{enabled:false,only:['vision-free']}}));
+  const result=await applySelection({resolved,editor,credentials:memoryCredentials(),env:{},enabled:true});
+  assert.equal(result.ok,true,JSON.stringify(result));
+  assert.deepEqual(result.only,['vision-free'],'不能把用户之前的勾选清空');
+  assert.equal(result.sync.state,'updated');assert.equal(result.sync.count,1);
+  const saved=editor.entry('dsh-opencode2api').options.config.models;
+  assert.equal(saved.enabled,true);assert.deepEqual(saved.only,['vision-free']);
+});
 test('模型卡片显示真实能力和价格，保存勾选立即同步',async(t)=>{
   const url=await serve(t,(_req,res)=>res.end(JSON.stringify({data:catalog})));
   const resolved=resolvePluginConfig({models:{enabled:false,apiKey:'key',baseURL:url}},{});
