@@ -220,6 +220,9 @@ function readReleaseCache(paths, ttlMs, force, now) {
 }
 
 function writeReleaseCache(paths, latest, now) {
+  // 数据根目录不在（从没装过，或刚被「清除后端数据」删掉）就不写：查更新是联网的慢操作，
+  // 启动时那次检查晚于清除才返回的话，会凭空把 cache/ 建回来。首次安装由 ensureLayout 建目录。
+  if (!existsSync(paths.root)) return;
   try {
     mkdirSync(paths.cache, { recursive: true });
     writeFileSync(paths.releaseCache, `${JSON.stringify({ fetchedAt: new Date(now).toISOString(), latest }, null, 2)}\n`);

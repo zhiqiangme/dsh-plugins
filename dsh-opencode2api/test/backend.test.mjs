@@ -559,6 +559,22 @@ test('purgeBackendData：停掉后端后整个删掉数据根目录（含 config
   assert.equal(describeBackend(paths).rootExists, false);
 });
 
+test('purgeBackendData：清除后才返回的查更新不会把 cache/ 建回来', async () => {
+  const release = startFixture({ TEST_MODE: 'http-release' });
+  const apiBase = `http://127.0.0.1:${await release.ready}`;
+  const { paths } = tempBackendRoot();
+  try {
+    // 模拟启动时那次查更新还在路上：先清除，再让它落地写缓存。
+    const result = await purgeBackendData({ paths, service: fakeService(await freePort()), env: {} });
+    assert.equal(result.state, 'purged');
+    const check = await checkForUpdate({ paths, env: {}, apiBase });
+    assert.equal(check.latest.tag, 'v9.9.9', '查更新本身照常返回');
+    assert.equal(existsSync(paths.root), false, '不能把已清除的数据目录建回来');
+  } finally {
+    release.stop();
+  }
+});
+
 test('purgeBackendData：目录不存在时直接成功，不去碰后端', async () => {
   const { paths } = tempBackendRoot();
   rmSync(paths.root, { recursive: true, force: true });
