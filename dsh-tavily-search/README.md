@@ -50,6 +50,10 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 - 一键更新不自己跑 pnpm：DSH 自带的插件管理器不支持升级已安装的插件，本插件把更新交给 dshmarket，
   由它处理 profile 锁、文件占用、回滚与版本核对。桌面版更新完成后要**重启 DSH** 才会换上新代码
   （桌面版的重启归桌面壳管，卡片不提供重启按钮）。新版本刚发布时可能被 pnpm 的发布冷却期挡下，卡片会给出「强制更新」。
+- 有新版本时还可展开「按指定版本安装」，复制当前查到的 `@zhiqiangme/dsh-tavily-search@版本号`。
+  冷却期 / 版本未变导致更新失败，或实际安装版本仍低于最新版时，这块说明自动展开。**先复制**，再去 DSH「插件」页卸载，
+  在「添加插件」里粘贴完整规格安装；不必清除插件数据，API Key 与搜索配置继续保留。指定版本避免 `latest` 在发布观察期内选到旧版。
+  该入口也可用于未安装 dshmarket 的情况；本地源码与桌面托管安装仍沿用各自的更新方式。
 - 一键更新只对从 npm 安装的情况有效。从本地目录（`file:`）装时 dshmarket 拒绝更新（`locally linked plugins update from their checkout`），
   卡片会先向 dshmarket 查询安装来源，这种情况下不显示更新按钮，改为提示：拉取新代码后重新安装，或改为从 npm 安装。
 
@@ -75,10 +79,15 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 ```powershell
 dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search
 # 更新：dsh plugin --profile desktop update --latest @zhiqiangme/dsh-tavily-search
+# 刚发布的版本：用查到的明确版本重新 add，例如
+dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search@26.10.17
 ```
 
 装到 Web / CLI 就把 `desktop` 换成 `web` / `headless`。更新要带 `--latest`：版本号按日期编排（`26.10.11`），
 跨年时主版本号会变。更多说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从-npm-安装推荐)。
+上面的 `26.10.17` 是示例；实际使用卡片查到的 npm 最新版，或运行 `npm view @zhiqiangme/dsh-tavily-search version` 查询。
+命令行 `add 包名@版本` 可更新已有依赖；DSH 图形界面则按其安装流程先卸载再添加。
+卡片的一键更新保持 dshmarket 的公开 API 契约：传纯包名，由市场解析并固定版本，不能给 `packageName` 拼接 `@版本`。
 
 从源码安装：克隆[仓库](https://github.com/zhiqiangme/dsh-plugins)后双击根目录的 `install-plugins.cmd`，
 按提示选择插件和 profile（说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从源码安装)），完成后重启 DSH 生效。

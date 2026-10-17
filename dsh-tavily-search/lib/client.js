@@ -174,6 +174,7 @@ window.__ModuleLoader__.load({
 .dsm-tv-field-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .dsm-tv-field-label{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600}
 .dsm-tv-input{font:inherit;font-size:13px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-2,#25262b);color:var(--dsw-alias-label-primary,#e6e6e6);padding:8px 12px}
+.dsm-tv-install-spec{box-sizing:border-box;width:100%;margin-top:8px;font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace)}
 .dsm-tv-list{margin:4px 0 0;padding-left:18px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
 `;
 
@@ -283,6 +284,11 @@ window.__ModuleLoader__.load({
       updateFailed: '更新失败：{reason}',
       updateTooFresh: '新版本刚发布，还没过 pnpm 的发布冷却期。可以稍后再试，或强制更新。',
       updateForce: '强制更新',
+      updatePinnedInstall: '按指定版本安装',
+      updatePinnedHint: '先复制下面的包名和版本，再到 DSH「插件」页卸载本插件，并在「添加插件」中粘贴安装。指定版本可避免 latest 因发布观察期选到旧版。卸载前无需清除插件数据，安装后重启 DSH。',
+      updateCopySpec: '复制包名和版本',
+      updateSpecCopied: '已复制 {spec}。到「插件」页卸载后，添加这个指定版本。',
+      updateSpecCopyFailed: '复制失败，请选中包名和版本手动复制。',
       updateCancelled: '更新已取消。',
       updateRolledBack: '更新已回滚，插件保持在 v{version}。',
       updateLost: '上次的更新任务已经结束或 DSH 已重启，以当前显示的版本为准。',
@@ -394,6 +400,11 @@ window.__ModuleLoader__.load({
       updateFailed: 'Update failed: {reason}',
       updateTooFresh: 'The new version is still inside pnpm\'s release cool-down. Try again later, or force the update.',
       updateForce: 'Force update',
+      updatePinnedInstall: 'Install a specific version',
+      updatePinnedHint: 'Copy the package and version below first, then uninstall this plugin on DSH\'s Plugins page and paste it into Add plugin. An exact version prevents latest from selecting an older release during the release-age wait. Keep the plugin data, then restart DSH after installation.',
+      updateCopySpec: 'Copy package and version',
+      updateSpecCopied: 'Copied {spec}. Uninstall on the Plugins page, then add this exact version.',
+      updateSpecCopyFailed: 'Could not copy. Select the package and version and copy it manually.',
       updateCancelled: 'Update cancelled.',
       updateRolledBack: 'Update rolled back; the plugin stays at v{version}.',
       updateLost: 'The previous update task has finished or DSH restarted; the version shown here is current.',
@@ -531,6 +542,13 @@ window.__ModuleLoader__.load({
       return operation?.state === 'queued' || operation?.state === 'running';
     }
 
+    /** npm 的安装规格用不带 v 的明确版本；拒绝标签、范围和其它安装来源。 */
+    function pinnedInstallSpec(version) {
+      if (typeof version !== 'string') return undefined;
+      const match = /^v?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/.exec(version.trim());
+      return match ? `${PACKAGE_NAME}@${match[1]}` : undefined;
+    }
+
     /**
      * 「插件更新」区块的纯渲染。
      *
@@ -628,6 +646,28 @@ window.__ModuleLoader__.load({
         section.push(notice('cancelled', { kind: 'error', text: t('updateCancelled') }));
       } else if (operation?.state === 'rolled-back') {
         section.push(notice('rolledBack', { kind: 'error', text: t('updateRolledBack', { version: operation.installedVersion }) }));
+      }
+      const spec = ready && version.updateAvailable && !latestInstalled ? pinnedInstallSpec(version.latestVersion) : undefined;
+      if (spec && !running && !MARKET_UNMANAGED_SOURCES.has(market.source)) {
+        // 市场的公开 v1 API 只接受纯包名，不能往 packageName 后拼 @version。
+        // 保留市场的锁、回滚与版本核对；指定版本重装交给 DSH 自己的「添加插件」。
+        section.push(
+          h(
+            'details',
+            { key: 'pinnedInstall', open: FORCEABLE_FAILURES.has(operation?.failure?.code) || (operation?.state === 'succeeded' && !latestInstalled) },
+            h('summary', { className: 'dsm-tv-line' }, t('updatePinnedInstall')),
+            h('p', { className: 'dsm-tv-hint' }, t('updatePinnedHint')),
+            h('input', {
+              className: 'dsm-tv-input dsm-tv-install-spec',
+              type: 'text',
+              readOnly: true,
+              value: spec,
+              'aria-label': t('updatePinnedInstall'),
+              onFocus: (event) => event.currentTarget.select(),
+            }),
+            h('div', { className: 'dsm-tv-toolbar' }, button('copySpec', 'outline', t('updateCopySpec'), actions.copyInstallSpec, false)),
+          ),
+        );
       }
       if (update.restart?.phase === 'error') {
         section.push(notice('restartError', { kind: 'error', text: t('restartFailed', { reason: update.restart.reason }) }));
@@ -1291,6 +1331,17 @@ window.__ModuleLoader__.load({
         }
       }, [market.endpoints]);
 
+      const copyInstallSpec = useCallback(async () => {
+        const spec = pinnedInstallSpec(version.latestVersion);
+        if (!spec) return;
+        try {
+          await window.navigator.clipboard.writeText(spec);
+          setNotice({ kind: 'ok', text: t('updateSpecCopied', { spec }) });
+        } catch {
+          setNotice({ kind: 'error', text: t('updateSpecCopyFailed') });
+        }
+      }, [version.latestVersion, t]);
+
       return {
         model: { version, market, operation, target, busy, notice, restart },
         actions: {
@@ -1300,6 +1351,7 @@ window.__ModuleLoader__.load({
             if (market.phase !== 'ready') probeMarket();
           },
           startUpdate,
+          copyInstallSpec,
           restart: restartHost,
         },
       };
@@ -1606,6 +1658,7 @@ window.__ModuleLoader__.load({
     exports.restoreWebSearch = restoreWebSearch;
     exports.selectionModel = selectionModel;
     exports.selectionResetOps = selectionResetOps;
+    exports.pinnedInstallSpec = pinnedInstallSpec;
     return module.exports;
   },
 });

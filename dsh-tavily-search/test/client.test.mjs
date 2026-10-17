@@ -25,9 +25,9 @@ const React = {
   useEffect: () => {},
 };
 
-function loadModule({ withPrimitives = true, react = React, fetchImpl = globalThis.fetch } = {}) {
+function loadModule({ withPrimitives = true, react = React, fetchImpl = globalThis.fetch, clipboard } = {}) {
   let registration;
-  const window = { __ModuleLoader__: { load: (value) => { registration = value; } } };
+  const window = { __ModuleLoader__: { load: (value) => { registration = value; } }, navigator: { clipboard } };
   const document = {
     querySelector: () => null,
     createElement: () => ({ dataset: {}, textContent: '' }),
@@ -537,6 +537,88 @@ function updateModel(overrides = {}) {
     },
   });
 }
+
+/** 保留 hooks 状态，验证实际卡片按钮的异步动作，而不是只检查渲染文案。 */
+function updateCard(overrides, options = {}) {
+  const update = updateModel(overrides).update;
+  const states = new Array(11);
+  states.push(update.version, update.market, update.operation, update.target, update.busy, update.notice, update.restart);
+  let index = 0;
+  const react = {
+    ...React,
+    useState: (initial) => {
+      const slot = index++;
+      if (!(slot in states)) states[slot] = typeof initial === 'function' ? initial() : initial;
+      return [states[slot], (value) => { states[slot] = typeof value === 'function' ? value(states[slot]) : value; }];
+    },
+  };
+  const { cards } = boot({ ...options, react });
+  return () => {
+    index = 0;
+    const card = cards[0];
+    const tree = render(card.component({ ...card.spec.inject(), view: 'page' }));
+    return collect(tree, (node) => node.props.key === 'update')[0];
+  };
+}
+
+test('指定版本安装：规范化 v 前缀，拒绝标签、范围和非版本输入', () => {
+  const { module } = boot();
+  assert.equal(module.pinnedInstallSpec('v26.10.17'), `${PACKAGE_NAME}@26.10.17`);
+  assert.equal(module.pinnedInstallSpec('27.1.1-rc.1+build.2'), `${PACKAGE_NAME}@27.1.1-rc.1+build.2`);
+  for (const value of [undefined, 'latest', '^26.10.17', '26.10.17.1', 'https://example.com/pkg.tgz', '26.10.17 --force']) {
+    assert.equal(module.pinnedInstallSpec(value), undefined);
+  }
+});
+
+test('指定版本安装：无需市场；冷却期或安装版本不足时展开，已装最新 / 本地 / 托管来源隐藏', () => {
+  const { module, t } = boot();
+  const section = (overrides) => collect(render(module.renderCard(updateModel(overrides), actions, t)), (node) => node.props.key === 'update')[0];
+  const details = (tree) => collect(tree, (node) => node.type === 'details' && node.props.key === 'pinnedInstall')[0];
+  const absent = section({ market: { phase: 'absent' } });
+  const input = collect(absent, (node) => node.type === 'input')[0];
+  assert.equal(input.props.value, `${PACKAGE_NAME}@26.10.12`);
+  assert.equal(input.props.readOnly, true);
+  let selected = false;
+  input.props.onFocus({ currentTarget: { select: () => { selected = true; } } });
+  assert.equal(selected, true);
+  for (const code of ['RELEASE_TOO_FRESH', 'VERSION_UNCHANGED']) {
+    assert.equal(details(section({ operation: { state: 'failed', failure: { code } } })).props.open, true);
+  }
+  assert.equal(details(section({ operation: { state: 'succeeded', installedVersion: '26.10.11' } })).props.open, true);
+  for (const source of ['linked', 'generation']) {
+    assert.equal(details(section({ market: { phase: 'ready', source, updatable: false } })), undefined);
+  }
+  assert.equal(details(section({ operation: { state: 'succeeded', installedVersion: '26.10.12' } })), undefined);
+  assert.equal(details(section({ operation: { state: 'running' } })), undefined);
+  assert.equal(details(section({ version: { phase: 'error', reason: 'offline' } })), undefined);
+});
+
+test('指定版本安装：复制最新规格；剪贴板不可用时仍保留可手动复制的完整规格', async () => {
+  const copied = [];
+  const section = updateCard({}, { clipboard: { writeText: async (value) => { copied.push(value); } } });
+  await buttonByLabel(section(), '复制包名和版本').props.onClick();
+  assert.deepEqual(copied, [`${PACKAGE_NAME}@26.10.12`]);
+  assert.match(collectText(section()).join('|'), /已复制 @zhiqiangme\/dsh-tavily-search@26\.10\.12/);
+
+  for (const clipboard of [undefined, { writeText: async () => { throw new Error('denied'); } }]) {
+    const fallback = updateCard({}, { clipboard });
+    await buttonByLabel(fallback(), '复制包名和版本').props.onClick();
+    assert.match(collectText(fallback()).join('|'), /手动复制/);
+    assert.equal(collect(fallback(), (node) => node.type === 'input')[0].props.value, `${PACKAGE_NAME}@26.10.12`);
+  }
+});
+
+test('指定版本安装不改变市场公开 API：普通一键更新仍发送纯包名', async () => {
+  const requests = [];
+  const section = updateCard({ market: { phase: 'ready', endpoints: { updates: '/market/updates' } } }, {
+    fetchImpl: async (path, options) => {
+      requests.push({ path, body: JSON.parse(options.body) });
+      return { status: 202, json: async () => ({ operation: { operationId: 'b-1', state: 'running' } }) };
+    },
+  });
+  await buttonByLabel(section(), '更新到 v26.10.12').props.onClick();
+  assert.deepEqual(requests, [{ path: '/market/updates', body: { packageName: PACKAGE_NAME } }]);
+});
 
 test('插件更新：有新版本且装了市场 → 显示两个版本号与"更新到"按钮', () => {
   const { module, t } = boot();
