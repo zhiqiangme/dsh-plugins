@@ -75,6 +75,21 @@ test('上游抖动：缺席一轮又回来的模型不会被删，确认状态�
   assert.equal(editor.edits.length, edits);
 });
 
+test('CN 模型因网络故障移除后，恢复的下一轮自动补回且不改变白名单', async (t) => {
+  const { backend, resolved, editor, resync, ids } = await setup(t);
+  resolved.models.only = [ALPHA.id, BETA.id];
+  backend.models = [BETA];
+  assert.equal((await resync.tick()).state, 'deferred');
+  assert.equal((await resync.tick()).state, 'updated');
+  assert.deepEqual(ids(), [BETA.id]);
+
+  backend.models = [ALPHA, BETA];
+  assert.equal((await resync.tick()).state, 'updated');
+  assert.deepEqual(ids(), [ALPHA.id, BETA.id]);
+  assert.deepEqual(resolved.models.only, [ALPHA.id, BETA.id]);
+  assert.ok(editor.edits.every((edit) => edit.id === 'llm-pi-ai'));
+});
+
 test('只新增模型时当轮写入；白名单里已不存在的 id 被滤掉', async (t) => {
   const { backend, resolved, resync, ids } = await setup(t);
   backend.models = [ALPHA, BETA, { id: 'cn:gamma', name: 'Gamma' }];
@@ -203,12 +218,45 @@ test('间隔为 0 时 start 不排定时器', async (t) => {
   assert.equal(calls, 0);
 });
 
-test('resyncIntervalMs：默认 10 分钟，0 关闭，过小抬到 1 分钟，非法值退回默认', () => {
+test('启动时面板正在同步，也会排上后续自动同步，失败后仍继续重试', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0;
+  let release;
+  const resolved = resolvePluginConfig({ models: { enabled: true } }, { PATH: '' });
+  const resync = createModelResync({
+    resolved, logger: memoryLogger(), probe: READY, editor: () => undefined, credentials: () => undefined,
+    sync: () => {
+      calls += 1;
+      if (calls === 1) return new Promise((resolve) => { release = () => resolve({ state: 'unchanged' }); });
+      if (calls === 2) throw new Error('temporary failure');
+      return { state: 'unchanged' };
+    },
+  });
+  t.after(() => resync.stop());
+  const flush = async () => { for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
+  const refresh = resync.tick();
+  await flush();
+  resync.start();
+  t.mock.timers.tick(60_000);
+  await flush();
+  assert.equal(calls, 1, '到期时与正在进行的面板同步共用同一轮');
+  release();
+  await refresh;
+  await flush();
+  t.mock.timers.tick(60_000);
+  await flush();
+  assert.equal(calls, 2);
+  t.mock.timers.tick(60_000);
+  await flush();
+  assert.equal(calls, 3, '失败不会中断定时链');
+});
+
+test('resyncIntervalMs：默认 1 分钟，0 关闭，过小抬到 1 分钟，非法值退回默认', () => {
   const interval = (value) => resolvePluginConfig({ models: { resyncIntervalMs: value } }, { PATH: '' }).models.resyncIntervalMs;
-  assert.equal(interval(undefined), 600_000);
+  assert.equal(interval(undefined), 60_000);
   assert.equal(interval(0), 0);
   assert.equal(interval(5_000), 60_000);
-  assert.equal(interval('bad'), 600_000);
+  assert.equal(interval('bad'), 60_000);
   assert.equal(interval(1_800_000), 1_800_000);
 });
 

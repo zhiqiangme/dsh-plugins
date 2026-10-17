@@ -11,11 +11,13 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolvePluginConfig } from '../lib/config.js';
+import { createModelResync } from '../lib/resync.js';
 import {
   BACKEND_NOT_INSTALLED,
   BACKEND_PATH,
@@ -134,6 +136,60 @@ function fakeCtx(services = {}) {
       return factory();
     },
   };
+}
+
+for (const enabled of [true, false]) {
+  test(`POST refresh：上游恢复后立即对齐 DSH，保留白名单；同步开关=${enabled}`, async (t) => {
+    const alpha = { id: 'cn:alpha', name: 'Alpha' };
+    const beta = { id: 'global:beta', name: 'Beta' };
+    let upstream = [alpha, beta];
+    const server = createHttpServer((_req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ data: upstream }));
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+    const only = [alpha.id, beta.id];
+    const resolved = configFor(server.address().port, { only });
+    const editor = editorFor({ enabled: true, only });
+    const credentials = createFakeCredentials();
+    const ctx = fakeCtx({ configEditor: editor, credentials });
+    const resync = createModelResync({
+      resolved, logger: ctx.logger, env: {}, probe: async () => ({ ok: true, servable: true }),
+      editor: () => editor, credentials: () => credentials,
+    });
+    registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: {}, resync });
+    const handler = ctx.routes.find((route) => route.path === MODELS_PATH).handler;
+    const ids = () => editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((model) => model.id);
+
+    await resync.tick();
+    await resync.tick();
+    upstream = [beta];
+    await resync.tick();
+    await resync.tick();
+    assert.deepEqual(ids(), [beta.id]);
+    const edits = editor.edits.length;
+    const keyWrites = credentials.sets.length;
+
+    resolved.models.enabled = enabled;
+    upstream = [alpha, beta];
+    const response = fakeRes();
+    await handler(fakeReq('POST', { body: JSON.stringify({ action: 'refresh' }) }), response);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, true);
+    assert.deepEqual(response.body.models.map((model) => model.id), only, '插件页看见恢复的 CN');
+    assert.equal(response.body.sync.state, enabled ? 'updated' : 'disabled');
+    assert.deepEqual(ids(), enabled ? only : [beta.id]);
+    assert.equal(editor.edits.length, edits + Number(enabled));
+    assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models.only, only);
+    assert.equal(credentials.sets.length, keyWrites, '刷新不重复写网关密钥');
+    assert.ok(editor.edits.every((edit) => edit.id === 'llm-pi-ai'), '刷新不写插件选择');
+
+    const unchanged = fakeRes();
+    await handler(fakeReq('POST', { body: JSON.stringify({ action: 'refresh' }) }), unchanged);
+    assert.equal(unchanged.body.sync.state, enabled ? 'unchanged' : 'disabled');
+    assert.equal(editor.edits.length, edits + Number(enabled), '清单未变不重复写入');
+  });
 }
 
 test('GET：返回后端全量模型，并按当前白名单标记勾选状态', async () => {

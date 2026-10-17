@@ -193,6 +193,7 @@ test('保存的白名单按面板展示顺序排（cn → global，组内后端�
   assert.deepEqual(module.orderedSelection(rows, picked), ['cn:x', 'cn:y', 'global:b', 'global:a', 'other']);
   assert.deepEqual(module.orderedSelection(rows, new Set(['global:a'])), ['global:a']);
   assert.deepEqual(module.orderedSelection(rows, new Set()), []);
+  assert.deepEqual(module.orderedSelection([{ id: 'global:b' }], new Set(['cn:x', 'global:b'])), ['global:b', 'cn:x'], '保留网络故障时不可见的已选模型');
 });
 
 test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 的键集合一致', () => {
@@ -328,6 +329,44 @@ function syncCheckbox(tree) {
   const label = collectByType(tree, 'label').find((node) => node.props.className === 'dsm-wb-sync');
   return collectByType(label, 'input')[0];
 }
+
+test('刷新会立即同步 DSH，沿用保存的选择；暂时消失的白名单模型不会在保存时丢失', async () => {
+  const requests = [];
+  const only = ['cn:alpha', 'global:beta'];
+  const { renderCard } = boot(modelStates(true), {
+    fetchImpl: async (path, options) => {
+      requests.push({ path, method: options.method, body: options.body && JSON.parse(options.body) });
+      return { ok: true, json: async () => ({ ok: true, enabled: true, only, models: [ROWS[1]], sync: { state: 'updated', count: 1 } }) };
+    },
+  });
+  await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
+  assert.deepEqual(requests[0], { path: '/plugins/dsh-autostart-workbuddy/models', method: 'POST', body: { action: 'refresh' } });
+  assert.ok(collectText(renderCard()).includes('后端共 1 个模型，已勾选 1 个'));
+  await button(collectByType(renderCard(), 'button'), '保存并同步').props.onClick();
+  assert.deepEqual(requests[1].body, { enabled: true, only: ['global:beta', 'cn:alpha'] });
+  assert.equal(requests[2].method, 'GET', '保存已同步，之后只回读');
+});
+
+test('同步全部模型时重复保存仍保留空白名单，网络恢复后自动包含 CN', async () => {
+  const requests = [];
+  const { renderCard } = boot(modelStates(true), {
+    fetchImpl: async (_path, options) => {
+      requests.push(options.body && JSON.parse(options.body));
+      return { ok: true, json: async () => ({ ok: true, enabled: true, only: [], models: [{ ...ROWS[1], selected: true }], sync: { state: 'updated', count: 1 } }) };
+    },
+  });
+  await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
+  await button(collectByType(renderCard(), 'button'), '保存并同步').props.onClick();
+  assert.deepEqual(requests[1], { enabled: true, only: [] });
+});
+
+test('刷新能读取上游但同步失败时，面板显示同步错误', async () => {
+  const { renderCard } = boot(modelStates(true), {
+    fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true, enabled: true, only: [], models: ROWS, sync: { state: 'failed', reason: 'write rejected' } }) }),
+  });
+  await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
+  assert.ok(collectText(renderCard()).includes('write rejected'));
+});
 
 test('模型开关：只开启同步就能保存，POST 同时传开关和白名单，成功后回显', async () => {
   const requests = [];

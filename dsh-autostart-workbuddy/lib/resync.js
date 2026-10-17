@@ -1,5 +1,5 @@
 /**
- * 运行中的模型列表定时重同步。
+ * 运行中的模型列表重同步，由定时器与面板刷新共用。
  *
  * 启动时和卡片「保存并同步」各同步一次还不够：上游下架模型后，wb2api 的 `/v1/models` 不再列出它，
  * 但 DSH 不重启时 profile 里仍留着旧条目，用户选中它的请求都会失败。这里按低频间隔复用 syncModels，
@@ -42,7 +42,7 @@ export function createModelResync(options) {
   let timer;
   let running;
   let stopped = false;
-  // 同一原因只记一次：后端长时间没起来时不能每 10 分钟刷一条 warn。
+  // 同一原因只记一次：后端长时间没起来时不能每轮刷一条 warn。
   let lastNote;
 
   const note = (level, text) => {
@@ -93,8 +93,9 @@ export function createModelResync(options) {
     if (running) return running;
     running = runOnce()
       .catch((error) => {
-        note('warn', `定时同步出错：${error instanceof Error ? error.message : String(error)}`);
-        return { state: 'failed' };
+        const reason = error instanceof Error ? error.message : String(error);
+        note('warn', `定时同步出错：${reason}`);
+        return { state: 'failed', reason };
       })
       .finally(() => {
         running = undefined;
@@ -119,9 +120,8 @@ export function createModelResync(options) {
 
   return {
     tick,
-    /** 排上定时链；已在跑时什么也不做（正在进行的一轮结束后会自己续上）。 */
+    /** 面板同步进行中也要排上定时链；timer 到期时 tick 会复用正在进行的一轮。 */
     start() {
-      if (running) return;
       schedule();
     },
     stop() {

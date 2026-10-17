@@ -17,8 +17,8 @@ const MODELS_DEFAULTS = Object.freeze({
   provider: 'workbuddy',
   // 面板的模型列表是缓存 1h 的；冷缓存时要等上游，给它 60s（面板自己那侧上限是 120s）。
   timeoutMs: 60_000,
-  // 运行中定时重同步：面板模型列表缓存 1h，10 分钟一轮足以跟上下架，又不频繁写配置。
-  resyncIntervalMs: 10 * 60_000,
+  // 本地目录已有缓存，每分钟检查恢复；只有清单变化时才写配置。
+  resyncIntervalMs: 60_000,
 });
 
 /** 定时重同步的下限：再短只会反复打 /v1/models，面板的目录本身也没刷新那么快。 */

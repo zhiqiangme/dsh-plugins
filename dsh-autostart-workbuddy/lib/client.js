@@ -176,7 +176,7 @@ window.__ModuleLoader__.load({
       save: '保存',
       saveSync: '保存并同步',
       syncEnabled: '同步到 DSH 模型列表',
-      syncHint: '开启后，保存会立即更新 WorkBuddy 模型列表，以后启动 DSH 时也会自动同步。',
+      syncHint: '开启后，打开或刷新此列表会同步到 DSH；后台默认每分钟自动同步。',
       saving: '保存中…',
       count: '后端共 {total} 个模型，已勾选 {picked} 个',
       vision: '视觉',
@@ -271,7 +271,7 @@ window.__ModuleLoader__.load({
       save: 'Save',
       saveSync: 'Save and sync',
       syncEnabled: 'Sync to the DSH model list',
-      syncHint: 'When enabled, saving updates the WorkBuddy model list immediately and DSH syncs it again on startup.',
+      syncHint: 'When enabled, opening or refreshing this list syncs it to DSH; background sync runs every minute by default.',
       saving: 'Saving…',
       count: '{total} models on the backend, {picked} selected',
       vision: 'vision',
@@ -403,9 +403,12 @@ window.__ModuleLoader__.load({
      * 用 Set 的插入顺序会让"取消再勾上"的模型跑到最后，每改一次顺序就漂一次。
      */
     function orderedSelection(rows, picked) {
+      const visible = new Set(rows.map((row) => row.id));
       return sortRows(rows)
         .filter((row) => picked.has(row.id))
-        .map((row) => row.id);
+        .map((row) => row.id)
+        // 网络故障时不可见的已选模型仍属于用户白名单，恢复后要能自动回到 DSH。
+        .concat([...picked].filter((id) => !visible.has(id)));
     }
 
     function formatTokens(value) {
@@ -844,11 +847,14 @@ window.__ModuleLoader__.load({
       const [saving, setSaving] = useState(false);
       const [notice, setNotice] = useState(undefined);
 
-      const load = useCallback(async () => {
+      const load = useCallback(async (refresh = true) => {
         setPhase('loading');
         setNotice(undefined);
         try {
-          const payload = await request(MODELS_PATH, 'GET');
+          // 保存后只回读；首次打开、刷新及重试则立即对齐 DSH，无需再点保存。
+          const payload = refresh === false
+            ? await request(MODELS_PATH, 'GET')
+            : await request(MODELS_PATH, 'POST', { action: 'refresh' });
           if (!payload.ok) {
             setRows([]);
             setPicked(new Set());
@@ -860,12 +866,15 @@ window.__ModuleLoader__.load({
             return;
           }
           const list = payload.models ?? [];
-          const selected = new Set(list.filter((row) => row.selected).map((row) => row.id));
+          const selected = new Set([...(payload.only ?? []), ...list.filter((row) => row.selected).map((row) => row.id)]);
           setRows(list);
-          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, patchPath: payload.patchPath, url: payload.url });
+          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, only: payload.only, patchPath: payload.patchPath, url: payload.url });
           setPicked(selected);
           setSavedPicked(new Set(selected));
           setPhase('ready');
+          if (['failed', 'skipped', 'not-ready'].includes(payload.sync?.state)) {
+            setNotice({ kind: 'error', text: payload.sync.reason ?? payload.sync.state });
+          }
         } catch (error) {
           setMeta({});
           setReason(error instanceof Error ? error.message : String(error));
@@ -895,7 +904,8 @@ window.__ModuleLoader__.load({
         try {
           const payload = await request(MODELS_PATH, 'POST', {
             enabled: meta.enabled === true,
-            only: orderedSelection(rows, picked),
+            // 空白名单代表跟随全部上游模型，重复保存不能将它固化为当前可见的子集。
+            only: meta.only?.length === 0 && sameSet(picked, savedPicked) ? [] : orderedSelection(rows, picked),
           });
           if (!payload.ok) {
             setNotice({ kind: 'error', text: payload.reason ?? t('saveFailed') });
@@ -903,7 +913,7 @@ window.__ModuleLoader__.load({
           }
           const sync = payload.sync ?? {};
           // 先重载再出提示：load() 开头会清空 notice，反过来写会把结果（尤其是同步失败的原因）立刻抹掉。
-          await load();
+          await load(false);
           if (sync.state === 'updated' || sync.state === 'unchanged') {
             setNotice({ kind: 'ok', text: t('savedSync', { count: sync.count ?? 0 }) });
           } else if (sync.state === 'disabled') {
@@ -918,7 +928,7 @@ window.__ModuleLoader__.load({
         } finally {
           setSaving(false);
         }
-      }, [rows, picked, meta.enabled, load, t]);
+      }, [rows, picked, savedPicked, meta.enabled, meta.only, load, t]);
 
       // ---- 后端版本（更新检查 / 安装 / 更新 / 卸载 / 回滚）----
       const [backend, setBackend] = useState(undefined);
@@ -953,7 +963,7 @@ window.__ModuleLoader__.load({
         } catch (error) {
           notice = { kind: 'error', text: errorText(error) };
         }
-        await load();
+        await load(false);
         setNotice(notice);
       }, [t, load]);
 
@@ -1064,7 +1074,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { key: 'toolbar', className: 'dsm-wb-toolbar' },
-            h('span', { className: 'dsm-wb-count' }, t('count', { total: sorted.length, picked: picked.size })),
+            h('span', { className: 'dsm-wb-count' }, t('count', { total: sorted.length, picked: sorted.filter((row) => picked.has(row.id)).length })),
             h(
               'button',
               {
@@ -1072,7 +1082,7 @@ window.__ModuleLoader__.load({
                 className: 'dsm-wb-btn dsm-wb-btn-outline',
                 disabled: saving,
                 onClick: () => {
-                  setPicked(new Set(sorted.map((row) => row.id)));
+                  setPicked((previous) => new Set([...previous, ...sorted.map((row) => row.id)]));
                   setNotice(undefined);
                 },
               },

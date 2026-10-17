@@ -5,7 +5,7 @@
  * 为什么必须有宿主半侧：
  *   页面跑在 DSH Web 客户端里，拿不到 wb2api 的响应——面板只监听 127.0.0.1:7863
  *   且不发 CORS 头，跨源 fetch 会被浏览器拦掉。所以由插件自己开一条 loopback 路由：
- *   GET 读（后端模型 + 当前白名单），POST 写（白名单 + 立即重新同步 provider 清单）。
+ *   GET 读（后端模型 + 当前白名单），POST 保存选择或刷新并同步 provider 清单。
  *
  * 写入一律走宿主的 configEditor（与 DSH 设置页同一个入口，持 profile 锁、校验、原子写、热重载）：
  * 白名单写本插件自己那一行的 `models.only`，模型清单写 llm-pi-ai 那一行（见 models.js）。
@@ -45,7 +45,7 @@ export const BACKEND_NOT_INSTALLED = 'backend-not-installed';
 /** 面板路由前缀：DSH 给每个插件留的命名空间，浏览器半侧用同一份常量。 */
 export const PANEL_BASE = `/plugins/${PLUGIN_ID}`;
 
-/** 模型清单与勾选结果的读写端点（GET 读 / POST 写）。 */
+/** 模型清单与勾选结果的端点（GET 只读 / POST 保存选择或刷新并同步）。 */
 export const MODELS_PATH = `${PANEL_BASE}/models`;
 
 /** 后端版本与更新端点（GET 读状态 / POST 执行 check|update|rollback）。 */
@@ -467,8 +467,9 @@ function forceFrom(req) {
  * 注册面板路由；宿主没有 webServer 时只记一条 warn。
  *
  * checkVersion 只给测试注入，缺省用 lib/update.js 的带缓存检查器。
+ * resync 与入口处的定时器共用，面板刷新通过 tick() 立即对齐模型清单。
  */
-export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, checkVersion = createVersionChecker() }) {
+export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, resync, checkVersion = createVersionChecker() }) {
   const mount = (scoped) => {
     const holder = scoped ?? ctx;
     const webServer =
@@ -518,6 +519,17 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
             const body = await readJsonBody(req);
             if (!body.ok) {
               json(res, 400, { ok: false, reason: body.reason });
+              return;
+            }
+            if (body.value.action === 'refresh') {
+              // 刷新只沿用已保存的选择：不能把当前可见的 GL 子集写成永久白名单。
+              // 与定时同步共用健康检查、移除确认和并发保护；恢复的模型当轮即可补回。
+              const synced = await resync.tick();
+              const payload = await describeModels({
+                spec: resolved.spec, models: resolved.models, managedExe: resolved.managedExe,
+                editor: configEditorOf(ctx), env,
+              });
+              json(res, 200, { ...payload, sync: { state: synced.state, reason: synced.reason } });
               return;
             }
             const result = await applySelection({

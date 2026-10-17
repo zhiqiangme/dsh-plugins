@@ -75,15 +75,14 @@ export function apply(ctx, config) {
       : `[${name}] 准备托管 ${service.title} (${service.port})；日志目录 ${resolved.logDir}`,
   );
 
-  // Web 面板路由（浏览器半侧 lib/client.js 的取数口）。与后端启动无关，先挂上：
-  // 这样后端还没起来（或没装）时打开面板也能看到状态、并就地安装。
-  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service });
-
-  // 运行中定时重同步模型列表（见 lib/resync.js）：上游下架模型后，DSH 不重启也能跟上。
+  // 定时器与面板刷新共用同步器，避免并发写入，并共用模型移除的确认状态。
   const resync = createModelResync({
     resolved, logger, env: hostEnv, name,
     editor: () => configEditorOf(ctx), credentials: () => credentialsOf(ctx),
   });
+
+  // 后端还没起来（或没装）时打开面板也能看到状态、并就地安装。
+  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service, resync });
 
   // 白名单等 models.* 的改动就地生效，不重启插件（见 watchConfigUpdates）。
   watchConfigUpdates(ctx, resolved, hostEnv, logger, config, resync);
