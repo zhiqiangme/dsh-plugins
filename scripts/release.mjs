@@ -245,7 +245,9 @@ export async function publishRelease({ cwd, plugin: id, sha }, {
     }
     const release = await api(`releases/tags/${tag}`, { allowMissing: true });
     if (!release) {
-      await api('releases', { method: 'POST', body: { tag_name: tag, target_commitish: sha, name: tag, body, make_latest: 'false' } });
+      // 三个插件共用一个仓库的 Release 列表，「最新发行版」跟随最近一次创建的 Release；
+      // tag 形如 workbuddy-v26.10.17，不是 semver，不能交给 GitHub 的 legacy 规则判断。
+      await api('releases', { method: 'POST', body: { tag_name: tag, target_commitish: sha, name: tag, body, make_latest: 'true' } });
     } else if (release.draft || release.prerelease) {
       throw new Error(`${tag} 已有 draft/prerelease，请先核对 GitHub Release 状态`);
     }
