@@ -74,6 +74,58 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 各插件独立发版，版本号用发布日期 `年.月.日`（年取后两位，不补零）：2026-10-11 发布即 `26.10.11`。
 git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.11`、`opencode2api-v26.10.15`。
 
+同一插件每天最多发布一个正式版；npm 已发布的版本不能覆盖。版本必须严格递增，不能用
+`26.10.16.1`（不是合法 SemVer）或 `26.10.16-1`（低于同号正式版）补发当天的正式版。
+
+## CI 与自动发布
+
+发布时修改对应插件目录下 `package.json` 的 `version`，连同代码提交到 `main`（或通过 PR 合入）。
+[release.yml](.github/workflows/release.yml) 比较整个 push 前后的版本号，测试通过后仅发布版本增加的插件：
+
+1. 在原始提交上打包，核对包名、版本、入口、图标、补丁、LICENSE 与文件清单。
+2. 创建 `<插件前缀>-v<版本>` tag，固定源码提交。
+3. 用 npm Trusted Publishing（OIDC）发布该 `.tgz` 为公开包，更新 npm 的 `latest`。
+4. 核对 npm 包完整性后创建对应 GitHub Release，记录提交、变更及安装 / 更新命令。
+
+普通代码或文档提交不发布；添加本工作流也不会自动补发现有的 `26.10.16`。
+PR 和 `main` 都会执行 [ci.yml](.github/workflows/ci.yml)：Node 22 / 24，Windows 测三个插件，
+Linux 测 Tavily Search，两种系统均测试仓库脚本。测试使用内置 runner 和宿主替身，不需要安装依赖、
+DSH 桌面版或真实后端。opencode2api 的真实 exe 测试仍需 `OPENCODE2API_TEST_EXE`，默认跳过。
+
+### 首次启用
+
+先把工作流推送到 GitHub，再到以下三个 npm 包的 **Settings → Trusted publishing** 分别添加 GitHub Actions：
+
+- `@zhiqiangme/dsh-autostart-workbuddy`
+- `@zhiqiangme/dsh-opencode2api`
+- `@zhiqiangme/dsh-tavily-search`
+
+三个包填写相同信息：用户 `zhiqiangme`，仓库 `dsh-plugins`，工作流文件名 **`release.yml`**
+（只填文件名），允许直接执行 **`npm publish`**。本工作流未使用 GitHub Environment，环境名称留空。
+只授权 `npm stage publish` 会要求人工批准，不能完成这里的全自动发布。
+
+CI 使用 GitHub 托管 runner、Node 24、npm ≥11.5.1，以及 `id-token: write` 和 `contents: write`。
+**无需配置 `NPM_TOKEN` 或关闭 npm 二次验证**；包启用 “Require two-factor authentication and disallow tokens”
+也支持 OIDC。新建的 Trusted Publisher 当前需在两天内完成首次发布，建议准备好新版本后再配置。
+详见 [npm Trusted Publishing 官方文档](https://docs.npmjs.com/trusted-publishers/)。
+
+### 失败重跑与补发
+
+优先在原 Actions 运行里选择 **Re-run failed jobs**。也可在 Actions → **CI and release** → **Run workflow**，
+选择 `main`，填写插件和原始发布提交的完整 40 位 SHA；该提交必须属于 `main` 历史。
+测试、打包和 tag 均使用原始 SHA，后续 main 上的改动不会混入旧版本。
+
+- 已有 tag 必须指向同一个提交，不会自动移动或覆盖。
+- npm 已有同版本时，只有 `.tgz` 完整性相同才跳过；内容冲突则停止。
+- npm 成功但 GitHub Release 失败，重跑会只补齐 Release，不重复发布或调整 npm `latest`。
+- npm 查询、鉴权、限流或网络失败都会报错，只有 404 视为包尚不存在。
+- 同一插件的发布串行执行，不取消已经开始的任务；若多次发版排队，GitHub 可能以新任务替换旧的待运行任务。
+  需要每个中间版本都发布时，等上一版完成再提交下一版；补发尚未发布的旧版本会拒绝降低 npm 版本。
+
+发布脚本位于 [scripts/release.mjs](scripts/release.mjs)，只依赖 Node、Git、npm；使用仓库自带测试验证发布决策与失败恢复，
+测试过程不调用真实 npm / GitHub 发布接口。自动 tag 和 npm 发布在同一次工作流内完成，避免 `GITHUB_TOKEN`
+创建 tag 后不会再触发 tag push 工作流的问题。每个包独立生成 Release，不设置整个仓库的 “Latest release”。
+
 ## 参与开发
 
 各插件目录下 `node --test test/*.test.mjs` 跑测试（别写 `node --test test/`）。

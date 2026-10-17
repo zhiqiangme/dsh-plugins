@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact source commit to test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      # 测试使用 Node 内置 runner 和宿主替身，没有安装或构建依赖。
+      - name: Test repository scripts
+        run: node --test scripts/test/*.test.mjs
+      - name: Test Tavily Search
+        working-directory: dsh-tavily-search
+        run: node --test test/*.test.mjs
+      # 两个后端插件的路径和进程测试遵循 Windows 契约。
+      - name: Test WorkBuddy
+        if: runner.os == 'Windows'
+        working-directory: dsh-autostart-workbuddy
+        run: node --test test/*.test.mjs
+      - name: Test opencode2api
+        if: runner.os == 'Windows'
+        working-directory: dsh-opencode2api
+        run: node --test test/*.test.mjs

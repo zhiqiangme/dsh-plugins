@@ -1,0 +1,87 @@
+name: CI and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: Plugin to retry publishing
+        required: true
+        type: choice
+        options: [workbuddy, opencode2api, tavily-search]
+      sha:
+        description: Original release commit (full 40-character SHA on main)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      has_releases: ${{ steps.plan.outputs.has_releases }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Detect plugin version changes
+        id: plan
+        env:
+          RELEASE_PLUGIN: ${{ inputs.plugin }}
+          RELEASE_SHA: ${{ inputs.sha }}
+        run: node scripts/release.mjs plan
+
+  test:
+    needs: plan
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.plan.outputs.sha }}
+
+  publish:
+    if: needs.plan.outputs.has_releases == 'true' && github.repository == 'zhiqiangme/dsh-plugins'
+    needs: [plan, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    concurrency:
+      group: npm-release-${{ matrix.plugin }}
+      cancel-in-progress: false
+    steps:
+      # 编排脚本来自工作流提交，源码来自原始发布提交；旧提交也能用当前逻辑补发。
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Publish npm package, tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PLUGIN: ${{ matrix.plugin }}
+          RELEASE_SHA: ${{ needs.plan.outputs.sha }}
+        run: node automation/scripts/release.mjs publish --source source
