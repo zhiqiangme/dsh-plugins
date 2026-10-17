@@ -21,7 +21,7 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 | 区块 | 做什么 | 走哪条通道 |
 | --- | --- | --- |
 | **API Key** | 可添加多个 Tavily API Key（最多 10 个），逐个列出、各自单独删除（删除前二次确认）；列表只显示末 4 位用于辨认，从不回显完整值 | 写入 / 删除走 DSH 凭据库（`remote.credentials`），与内置「网页搜索」页同一条路；列表走宿主半侧路由 `/plugins/dsh-tavily-search/keys` |
-| **网页搜索接入** | 显示「网页搜索」当前的接口地址；未接入时一键把接口地址改成本插件的端点、凭据引用改成本插件的占位凭据，已接入时可恢复默认；只改了接口地址的旧版接入显示「待修复」 | `configForms.get('web-search-deepseek')`，即内置网页搜索页编辑的同一个设置命名空间；占位凭据走 `remote.credentials` |
+| **网页搜索接入** | 显示「网页搜索」当前的接口地址；未接入时一键把接口地址改成本插件的端点、凭据引用改成本插件的占位凭据，已接入时可恢复默认；只改了接口地址的旧版接入显示「待修复」；网页搜索页打开了「启用新版 Web 搜索 API」时显示「已被绕过」（见下文） | `configForms.get('web-search-deepseek')`，即内置网页搜索页编辑的同一个设置命名空间；提供方选择读 `configForms.get('web')`；占位凭据走 `remote.credentials` |
 | **插件更新** | 显示当前运行版本与 npm 最新版本；装了 [dshmarket](https://www.npmjs.com/package/dshmarket) 时一键更新并显示进度，没装时只提示有新版本 | 版本检查走宿主半侧路由 `/plugins/dsh-tavily-search/version`（同时问 npm 官方源与 npmmirror，取较高者，缓存 10 分钟）；更新走 dshmarket 的公开更新 API v1 |
 | **搜索接口** | 显示 `127.0.0.1:8787/v1` 的状态（运行中 / 外部实例 / 端口被占用 / 启动失败）；「测试搜索」按 DSH 的请求形状真打一次 | 宿主半侧路由 `/plugins/dsh-tavily-search/status`、`/test` |
 | **清除插件数据** | 卸载本插件前点一下：二次确认后删除卡片里保存的全部 Tavily API Key，并把网页搜索里本插件写的接口地址与凭据引用恢复为 DSH 默认（卸载后 `127.0.0.1:8787` 没人监听，不恢复的话网页搜索会失败）。环境变量等只读来源的 key 只提示、不删。没有可清的内容时整块不显示 | 删 key 走 `remote.credentials.unset`，恢复走 `configForms.get('web-search-deepseek')`，与上面两块同一条路 |
@@ -35,6 +35,16 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
   再把 `apiKeyEnv` 与接口地址一次改指向本插件。之后内置网页搜索页那栏显示的就是这个占位凭据，不用再填。
 - 恢复默认时只撤销本插件写的覆盖（接口地址、凭据引用），并删掉占位凭据，网页搜索回到 DeepSeek 官方接口与 `DEEPSEEK_API_KEY`。
   不会让网页搜索指向 Tavily 的 key。
+- **新版 Web 搜索 API 开关（DSH 0.2.1-rc.2 起）**：内置网页搜索页多了「启用新版 Web 搜索 API」。打开后它把
+  `web.searchProvider` / `web.fetchProvider` 设为 `deepseek-search-api` / `deepseek-fetch-api`，搜索改走
+  `web-deepseek-api`（`https://api.deepseek.com/v1/tools/search`），不再读上面那个接口地址，本插件被整个绕过。
+  卡片会读同一个 `web` 设置命名空间，此时标「已被绕过」并显示当前的搜索提供方；点「修复接入」会先补齐接口地址与占位凭据，
+  再照网页搜索页关开关的方式把选择改回 Messages 搜索（`deepseek-official`），网页抓取随之从 `deepseek-fetch-api` 改回本地 HTTP 抓取
+  （`http`；你单独选的其它抓取方式不动）。搜索提供方被别的插件占用时同样标「已被绕过」，修复只改回搜索提供方。
+  「恢复默认」与「清除插件数据」不碰这项选择：本插件写过的只有 Messages 一侧的接口地址与凭据引用。
+  0.2.1-rc.1 及更早没有这个开关（`web` 命名空间不下发），卡片照旧只看接口地址。
+- 本插件没有模拟新版 Search / Fetch API（`/v1/tools/search`、`/fetch`）：那样网页抓取也会改走 Tavily Extract、消耗 Tavily 额度，
+  抓取行为也跟着变；只给搜索供数的话，Messages 这条路已经够用。
 - 配了 `shimApiKey` 时，接入后在内置网页搜索页的 API Key 栏填同一个值（写进占位凭据）；卡片再次接入不会覆盖它。
 - 密钥输入框用宿主的 `SettingsSecretField`（与内置网页搜索页同款）；宿主组件拿不到时退回自带的同款输入框。
 - 一键更新不自己跑 pnpm：DSH 自带的插件管理器不支持升级已安装的插件，本插件把更新交给 dshmarket，

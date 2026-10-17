@@ -47,18 +47,25 @@ function loadModule({ withPrimitives = true, react = React, fetchImpl = globalTh
   });
 }
 
-/** 跑一遍 apply，收集字典、卡片注册、凭据调用。 */
-function boot(options) {
+/**
+ * 跑一遍 apply，收集字典、卡片注册、凭据调用。
+ * options.webSnapshot / options.selectionSnapshot 给两个设置命名空间的快照；
+ * selectionSnapshot 为 undefined 时 `web` 命名空间不存在（模拟 0.2.1-rc.1 及更早）。
+ */
+function boot(options = {}) {
   const module = loadModule(options);
   const dicts = new Map();
   const cards = [];
   const calls = [];
-  const form = {
-    getSnapshot: () => ({ status: 'loading' }),
+  const formOf = (snapshot) => ({
+    getSnapshot: () => snapshot,
     subscribe: () => () => {},
     set: async () => true,
     unset: async () => true,
-  };
+  });
+  const form = formOf(options.webSnapshot ?? { status: 'loading' });
+  const forms = { 'web-search-deepseek': form };
+  if (options.selectionSnapshot) forms.web = formOf(options.selectionSnapshot);
   const ctx = {
     effect: (factory) => factory(),
     locale: {
@@ -92,7 +99,7 @@ function boot(options) {
         },
       },
     },
-    configForms: { get: (ns) => (ns === 'web-search-deepseek' ? form : undefined) },
+    configForms: { get: (ns) => forms[ns] },
   };
   module.apply(ctx);
   const t = (key, params) => interpolate(dicts.get(NAMESPACE)?.zh?.[key], params);
@@ -226,7 +233,7 @@ test('卡片注册到两个 slot，key 逐字等于包名与行 id', () => {
 test('注入给卡片的 api 只有写凭据与描述的能力，没有读值路径', async () => {
   const { cards, calls } = boot();
   const { api } = cards[0].spec.inject();
-  assert.deepEqual(Object.keys(api).sort(), ['describe', 'onCredentialUpdated', 'setKey', 'unsetKey', 'webForm']);
+  assert.deepEqual(Object.keys(api).sort(), ['describe', 'onCredentialUpdated', 'selectionForm', 'setKey', 'unsetKey', 'webForm']);
   await api.setKey('TAVILY_API_KEY', 'tvly-x');
   await api.unsetKey('TAVILY_API_KEY');
   assert.deepEqual(calls, [
@@ -853,4 +860,188 @@ test('清除插件数据：清完后仍显示结果提示（引导去卸载）�
   assert.ok(section, '清完之后仍要显示结果');
   assert.equal(buttonByLabel(section, '清除插件数据'), undefined, '没东西可清时不再给按钮');
   assert.match(collectText(section).join('|'), /去「插件」页卸载/);
+});
+
+// ---- DSH 0.2.1-rc.2：网页搜索页的「启用新版 Web 搜索 API」开关（`web` 命名空间的提供方选择）----
+
+/** 部署默认（base 层）的提供方选择，与 DSH 自带 bundle 一致。 */
+const SELECTION_BASE = { searchProvider: 'deepseek-official', fetchProvider: 'http' };
+/** 开关打开后的选择：用户层写了 Search / Fetch API。 */
+const API_SELECTION = {
+  phase: 'ready',
+  searchProvider: 'deepseek-search-api',
+  fetchProvider: 'deepseek-fetch-api',
+  base: SELECTION_BASE,
+  writable: true,
+};
+
+test('selectionModel：没下发 / 加载中 / 就绪，空串当没配', () => {
+  const { module } = boot();
+  assert.deepEqual(module.selectionModel(undefined), { phase: 'loading' });
+  assert.deepEqual(module.selectionModel({ status: 'unavailable' }), { phase: 'unavailable' });
+  assert.deepEqual(
+    module.selectionModel({
+      status: 'ready',
+      value: { searchProvider: 'deepseek-search-api', fetchProvider: '' },
+      base: SELECTION_BASE,
+      user: { searchProvider: 'deepseek-search-api' },
+      writable: false,
+    }),
+    { phase: 'ready', searchProvider: 'deepseek-search-api', fetchProvider: undefined, base: SELECTION_BASE, writable: false },
+  );
+});
+
+test('新版 Search API 开关打开：接入齐全也标"已被绕过"，给"修复接入"并说明会关掉开关；"恢复默认"仍在', () => {
+  const { module, t } = boot();
+  const calls = [];
+  const spy = new Proxy({}, { get: (_target, name) => (...args) => calls.push([name, ...args]) });
+  const tree = render(module.renderCard(readyModel({ selection: API_SELECTION }), spy, t));
+  const text = collectText(tree).join('|');
+  assert.match(text, /已被绕过/);
+  assert.doesNotMatch(text, /已接入/);
+  assert.match(text, /搜索提供方：\|deepseek-search-api/);
+  assert.match(text, /打开了「启用新版 Web 搜索 API」/);
+  assert.match(text, /点「修复接入」会关掉这个开关/);
+  buttonByLabel(tree, '修复接入').props.onClick();
+  assert.deepEqual(calls, [['wire']]);
+  assert.ok(buttonByLabel(tree, '恢复默认'), '接口地址与凭据引用仍是本插件写的，可以撤销');
+});
+
+test('新版开关打开且还没接入：按钮是"接入网页搜索"，绕过提示与接入提示都给', () => {
+  const { module, t } = boot();
+  const model = readyModel({ web: { phase: 'ready', baseURL: '', overridden: false, writable: true }, selection: API_SELECTION });
+  const tree = render(module.renderCard(model, actions, t));
+  const text = collectText(tree).join('|');
+  assert.match(text, /已被绕过/);
+  assert.match(text, /点「接入网页搜索」会关掉这个开关/);
+  assert.match(text, /接口地址改为 http:\/\/127\.0\.0\.1:8787\/v1/);
+  assert.ok(buttonByLabel(tree, '接入网页搜索'));
+});
+
+test('搜索提供方是别的插件：同样算绕过，提示里点名提供方', () => {
+  const { module, t } = boot();
+  const selection = { ...API_SELECTION, searchProvider: 'brave', fetchProvider: 'http' };
+  const text = collectText(render(module.renderCard(readyModel({ selection }), actions, t))).join('|');
+  assert.match(text, /已被绕过/);
+  assert.match(text, /搜索提供方被设为 brave/);
+});
+
+test('旧版 DSH（没有 web 命名空间）/ 选择仍在加载 / 选的就是 Messages：照常显示"已接入"', () => {
+  const { module, t } = boot();
+  for (const selection of [
+    undefined,
+    { phase: 'unavailable' },
+    { phase: 'loading' },
+    { ...API_SELECTION, searchProvider: 'deepseek-official', fetchProvider: 'http' },
+    // 没配提供方时交给宿主自动挑，无从判断，不误报
+    { ...API_SELECTION, searchProvider: undefined },
+  ]) {
+    const text = collectText(render(module.renderCard(readyModel({ selection }), actions, t))).join('|');
+    assert.match(text, /已接入/, JSON.stringify(selection));
+    assert.doesNotMatch(text, /已被绕过/);
+  }
+});
+
+test('提供方选择只读：修复按钮禁用并提示只读', () => {
+  const { module, t } = boot();
+  const tree = render(module.renderCard(readyModel({ selection: { ...API_SELECTION, writable: false } }), actions, t));
+  assert.equal(buttonByLabel(tree, '修复接入').props.disabled, true);
+  assert.match(collectText(tree).join('|'), /设置为只读/);
+});
+
+test('卡片组件从 web 命名空间读选择：rc.2 开关打开时显示"已被绕过"，rc.1 没有该命名空间时不受影响', () => {
+  const webSnapshot = {
+    status: 'ready',
+    value: { baseURL: 'http://127.0.0.1:8787/v1', apiKeyEnv: SHIM_REF },
+    user: { baseURL: 'http://127.0.0.1:8787/v1', apiKeyEnv: SHIM_REF },
+    writable: true,
+  };
+  const selectionSnapshot = {
+    status: 'ready',
+    value: { searchProvider: 'deepseek-search-api', fetchProvider: 'deepseek-fetch-api' },
+    base: SELECTION_BASE,
+    user: { searchProvider: 'deepseek-search-api', fetchProvider: 'deepseek-fetch-api' },
+    writable: true,
+  };
+  const textOf = ({ cards }) => collectText(render(cards[0].component({ ...cards[0].spec.inject(), view: 'page' }))).join('|');
+  assert.match(textOf(boot({ webSnapshot, selectionSnapshot })), /已被绕过/);
+  const legacy = textOf(boot({ webSnapshot }));
+  assert.doesNotMatch(legacy, /已被绕过/);
+  assert.match(legacy, /网页搜索接入\|已接入/);
+});
+
+test('selectionResetOps：照宿主页关开关的写法，等于部署默认时清覆盖，否则显式写；单独选的抓取方式不碰', () => {
+  const { module } = boot();
+  assert.deepEqual(module.selectionResetOps(API_SELECTION), [
+    { op: 'unset', path: ['searchProvider'] },
+    { op: 'unset', path: ['fetchProvider'] },
+  ]);
+  assert.deepEqual(module.selectionResetOps({ ...API_SELECTION, base: {} }), [
+    { op: 'set', path: ['searchProvider'], value: 'deepseek-official' },
+    { op: 'set', path: ['fetchProvider'], value: 'http' },
+  ]);
+  assert.deepEqual(
+    module.selectionResetOps({ ...API_SELECTION, fetchProvider: 'my-fetch' }),
+    [{ op: 'unset', path: ['searchProvider'] }],
+    '抓取不是开关配对写的 deepseek-fetch-api 时保持原样',
+  );
+  assert.deepEqual(module.selectionResetOps({ ...API_SELECTION, searchProvider: 'deepseek-official' }), []);
+  assert.deepEqual(module.selectionResetOps({ phase: 'unavailable' }), []);
+});
+
+test('wireWebSearch：被新版开关绕过时，先改 Messages 的接口地址与凭据，再把提供方改回 Messages', async () => {
+  const { module } = boot();
+  const calls = [];
+  const selectionSnapshot = {
+    status: 'ready',
+    value: { searchProvider: 'deepseek-search-api', fetchProvider: 'deepseek-fetch-api' },
+    base: SELECTION_BASE,
+    user: { searchProvider: 'deepseek-search-api', fetchProvider: 'deepseek-fetch-api' },
+    writable: true,
+  };
+  const api = {
+    describe: async () => ({ ok: true, value: { [SHIM_REF]: { configured: true } } }),
+    setKey: async () => ({ ok: true }),
+    webForm: { mutate: async (ops) => (calls.push(['web-search-deepseek', ops]), true) },
+    selectionForm: { getSnapshot: () => selectionSnapshot, mutate: async (ops) => (calls.push(['web', ops]), true) },
+  };
+  assert.equal(await module.wireWebSearch(api, 'http://127.0.0.1:8787/v1'), true);
+  assert.deepEqual(calls, [
+    [
+      'web-search-deepseek',
+      [
+        { op: 'set', path: ['apiKeyEnv'], value: SHIM_REF },
+        { op: 'set', path: ['baseURL'], value: 'http://127.0.0.1:8787/v1' },
+      ],
+    ],
+    ['web', [{ op: 'unset', path: ['searchProvider'] }, { op: 'unset', path: ['fetchProvider'] }]],
+  ]);
+
+  // Messages 那一侧被拒：不切提供方，免得切到一个没接好的接口
+  calls.length = 0;
+  api.webForm.mutate = async (ops) => (calls.push(['web-search-deepseek', ops]), false);
+  assert.equal(await module.wireWebSearch(api, 'http://127.0.0.1:8787/v1'), false);
+  assert.equal(calls.length, 1);
+
+  // 没有 web 命名空间（旧版 DSH）或没下发：只写 Messages 一侧
+  for (const selectionForm of [undefined, { getSnapshot: () => ({ status: 'unavailable' }) }]) {
+    calls.length = 0;
+    api.webForm.mutate = async (ops) => (calls.push(['web-search-deepseek', ops]), true);
+    assert.equal(await module.wireWebSearch({ ...api, selectionForm }, 'http://e/v1'), true);
+    assert.deepEqual(calls.map(([ns]) => ns), ['web-search-deepseek']);
+  }
+});
+
+test('恢复默认 / 清除插件数据不碰提供方选择：本插件只写过 Messages 一侧的覆盖', async () => {
+  const { module } = boot();
+  const selectionCalls = [];
+  const selectionForm = new Proxy({}, { get: (_target, name) => (...args) => selectionCalls.push([name, ...args]) });
+  const api = {
+    unsetKey: async () => ({ ok: true }),
+    webForm: { mutate: async () => true },
+    selectionForm,
+  };
+  await module.restoreWebSearch(api, { web: true, webKeyRef: true });
+  await module.purgePluginData({ api, targets: { refs: ['TAVILY_API_KEY'], readOnly: 0, web: true, webKeyRef: true } });
+  assert.deepEqual(selectionCalls, []);
 });

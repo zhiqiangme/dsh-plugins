@@ -18,6 +18,9 @@
  *   2. 搜索接口状态与测试 —— 宿主半侧（lib/web.js）的 loopback 路由；
  *   3. 网页搜索接入 —— `configForms.get('web-search-deepseek')`，即内置网页搜索页编辑的同一个
  *      设置命名空间：一键把它的接口地址改成本插件的端点、凭据引用改成本插件的占位凭据，或恢复默认。
+ *      DSH 0.2.1-rc.2 起还要看 `configForms.get('web')` 的提供方选择：网页搜索页的新版 Search API
+ *      开关打开时搜索根本不走 web-search-deepseek，卡片标"已被绕过"，修复时顺带把选择改回 Messages；
+ *      旧版没有这个命名空间，按未绕过处理。
  *   4. 插件更新 —— 版本检查走宿主半侧的 version 路由（问 npm）；一键更新交给 dshmarket 的
  *      公开更新 API v1（装了市场才有按钮，没装只提示有新版本），本插件不自己跑 pnpm。
  *
@@ -72,6 +75,18 @@ window.__ModuleLoader__.load({
      */
     const WEB_SEARCH_SHIM_REF = 'DSH_TAVILY_SEARCH_PLACEHOLDER';
     const WEB_SEARCH_SHIM_VALUE = 'dsh-tavily-search';
+    /**
+     * Web 服务的提供方选择（DSH 0.2.1-rc.2 起，内置网页搜索页的「启用新版 Web 搜索 API」开关写这里）。
+     * 搜索只有在 searchProvider 是 web-search-deepseek 的提供方 id 时才走它的 baseURL，即本插件；
+     * 开关打开后两项分别变成 deepseek-search-api / deepseek-fetch-api，本插件的接入被整个绕过。
+     * 0.2.1-rc.1 及更早没有这个开关；命名空间不存在或没下发时按"未绕过"处理。
+     */
+    const WEB_NS = 'web';
+    const MESSAGES_SEARCH_PROVIDER = 'deepseek-official';
+    const API_SEARCH_PROVIDER = 'deepseek-search-api';
+    const API_FETCH_PROVIDER = 'deepseek-fetch-api';
+    /** 开关关上时宿主页写回的抓取提供方（web-fetch-http 的 id）；本插件改回 Messages 时与它保持一致。 */
+    const HTTP_FETCH_PROVIDER = 'http';
     /** Tavily 控制台：申请 / 查看 key。外链交给宿主用默认浏览器打开。 */
     const TAVILY_CONSOLE_URL = 'https://app.tavily.com/home';
 
@@ -214,6 +229,10 @@ window.__ModuleLoader__.load({
       webWired: '已接入',
       webNotWired: '未接入',
       webNeedsRepair: '待修复',
+      webBypassed: '已被绕过',
+      webProvider: '搜索提供方：',
+      bypassApiHint: '「网页搜索」页打开了「启用新版 Web 搜索 API」，搜索改走 DeepSeek Search API，不再经过本插件。点「{action}」会关掉这个开关、改回 Messages 搜索（网页抓取随之改回本地 HTTP 抓取）。',
+      bypassOtherHint: '网页搜索的搜索提供方被设为 {provider}，不再经过本插件。点「{action}」改回 Messages 搜索（deepseek-official）。',
       wire: '接入网页搜索',
       repair: '修复接入',
       wiring: '处理中…',
@@ -321,6 +340,10 @@ window.__ModuleLoader__.load({
       webWired: 'wired',
       webNotWired: 'not wired',
       webNeedsRepair: 'needs repair',
+      webBypassed: 'bypassed',
+      webProvider: 'Search provider: ',
+      bypassApiHint: 'The "new Web Search API" switch on the Web search page is on, so searches go to the DeepSeek Search API and skip this plugin. Click {action} to turn the switch off and go back to Messages search (web fetch goes back to local HTTP fetch as well).',
+      bypassOtherHint: 'The web-search provider is set to {provider}, so searches skip this plugin. Click {action} to go back to Messages search (deepseek-official).',
       wire: 'Wire web search',
       repair: 'Repair wiring',
       wiring: 'Working…',
@@ -797,10 +820,57 @@ window.__ModuleLoader__.load({
       if (views?.[WEB_SEARCH_SHIM_REF]?.configured !== true) {
         unwrap(await api.setKey(WEB_SEARCH_SHIM_REF, WEB_SEARCH_SHIM_VALUE));
       }
-      return writeWebFields(api.webForm, [
+      const accepted = await writeWebFields(api.webForm, [
         { op: 'set', path: ['apiKeyEnv'], value: WEB_SEARCH_SHIM_REF },
         { op: 'set', path: ['baseURL'], value: endpoint },
       ]);
+      // 先落 Messages 的接口地址再切提供方（与宿主网页搜索页的保存顺序一致）：
+      // 切过去的那一刻搜索就已经指向本插件，不会有一段时间打到 DeepSeek 官方接口
+      if (accepted === false) return false;
+      const ops = selectionResetOps(selectionModel(api.selectionForm?.getSnapshot?.()));
+      if (ops.length === 0) return accepted;
+      return writeWebFields(api.selectionForm, ops);
+    }
+
+    /** 把 `web` 命名空间的快照翻成卡片关心的几项；没下发（旧版 DSH）时 phase 为 unavailable。 */
+    function selectionModel(snapshot) {
+      if (!snapshot || snapshot.status === 'loading') return { phase: 'loading' };
+      if (snapshot.status !== 'ready') return { phase: 'unavailable' };
+      const text = (source, field) => (typeof source?.[field] === 'string' && source[field] ? source[field] : undefined);
+      return {
+        phase: 'ready',
+        searchProvider: text(snapshot.value, 'searchProvider'),
+        fetchProvider: text(snapshot.value, 'fetchProvider'),
+        base: { searchProvider: text(snapshot.base, 'searchProvider'), fetchProvider: text(snapshot.base, 'fetchProvider') },
+        writable: snapshot.writable !== false,
+      };
+    }
+
+    /**
+     * 搜索是否绕过了 web-search-deepseek（也就绕过了本插件）：选中的搜索提供方明确是别的 id 时才算。
+     * 没配（交给宿主自动挑）或命名空间没下发时无从判断，按未绕过处理，不误报。
+     * @returns 当前选中的提供方 id；未绕过时 undefined
+     */
+    function selectionBypass(selection) {
+      if (selection?.phase !== 'ready') return undefined;
+      const provider = selection.searchProvider;
+      return provider !== undefined && provider !== MESSAGES_SEARCH_PROVIDER ? provider : undefined;
+    }
+
+    /**
+     * 改回 Messages 搜索要写的字段。照搬宿主网页搜索页关开关的写法：目标值等于部署默认（base）时清掉覆盖，
+     * 否则显式写入。抓取提供方只在它正是开关配对写入的 deepseek-fetch-api、且搜索也是开关写的
+     * deepseek-search-api 时才一起改回——用户单独选的抓取方式不归本插件管。
+     */
+    function selectionResetOps(selection) {
+      if (!selectionBypass(selection)) return [];
+      const opFor = (field, target) =>
+        selection.base?.[field] === target ? { op: 'unset', path: [field] } : { op: 'set', path: [field], value: target };
+      const ops = [opFor('searchProvider', MESSAGES_SEARCH_PROVIDER)];
+      if (selection.searchProvider === API_SEARCH_PROVIDER && selection.fetchProvider === API_FETCH_PROVIDER) {
+        ops.push(opFor('fetchProvider', HTTP_FETCH_PROVIDER));
+      }
+      return ops;
     }
 
     /**
@@ -984,16 +1054,25 @@ window.__ModuleLoader__.load({
         const wired = sameEndpoint(web.baseURL, endpoint);
         // 接口指向本插件还不够：凭据引用也得是本插件的占位引用且有值，网页搜索才会真的发请求
         const keyIsolated = web.apiKeyEnv === WEB_SEARCH_SHIM_REF;
-        const complete = wired && keyIsolated && web.keyConfigured !== false;
+        // 0.2.1-rc.2 起：搜索提供方被切到别处（新版 Search API 开关）时，上面这些都对，但搜索根本不走这里
+        const bypass = selectionBypass(model.selection);
+        const complete = wired && keyIsolated && web.keyConfigured !== false && !bypass;
         const owned = webOwnership(web, endpoint);
         const webBusy = Boolean(model.webBusy);
         const label = (text) => (webBusy ? t('wiring') : text);
+        // 被绕过时一键修复还要写 `web` 命名空间，它只读同样不能点
+        const writable = web.writable && (!bypass || model.selection.writable !== false);
+        const wireLabel = wired ? t('repair') : t('wire');
         webSection[0] = h(
           'div',
           { key: 'head', className: 'dsm-tv-section-head' },
           h('span', { className: 'dsm-tv-section-title' }, t('webTitle')),
-          badge('badge', complete ? 'ok' : 'warn', complete ? t('webWired') : wired ? t('webNeedsRepair') : t('webNotWired')),
-          complete ? null : button('wire', 'primary', label(wired ? t('repair') : t('wire')), actions.wire, webBusy || !web.writable),
+          badge(
+            'badge',
+            complete ? 'ok' : 'warn',
+            complete ? t('webWired') : bypass ? t('webBypassed') : wired ? t('webNeedsRepair') : t('webNotWired'),
+          ),
+          complete ? null : button('wire', 'primary', label(wireLabel), actions.wire, webBusy || !writable),
           wired && (owned.web || owned.webKeyRef) ? button('unwire', 'outline', label(t('unwire')), actions.unwire, webBusy || !web.writable) : null,
         );
         webSection.push(
@@ -1004,16 +1083,28 @@ window.__ModuleLoader__.load({
             web.baseURL ? h('span', { className: 'dsm-tv-code' }, web.baseURL) : t('webDefault'),
           ),
         );
-        if (!web.writable) {
+        if (bypass) {
+          webSection.push(
+            h('p', { key: 'provider', className: 'dsm-tv-line' }, t('webProvider'), h('span', { className: 'dsm-tv-code' }, bypass)),
+          );
+        }
+        if (!writable) {
           webSection.push(h('p', { key: 'readOnly', className: 'dsm-tv-hint' }, t('webReadOnly')));
-        } else if (!wired) {
-          webSection.push(h('p', { key: 'wireHint', className: 'dsm-tv-hint' }, t('wireHint', { endpoint, ref: WEB_SEARCH_SHIM_REF })));
-        } else if (!keyIsolated) {
-          webSection.push(h('p', { key: 'repairHint', className: 'dsm-tv-hint' }, t('repairRefHint', { ref: web.apiKeyEnv })));
-        } else if (!complete) {
-          webSection.push(h('p', { key: 'repairHint', className: 'dsm-tv-hint' }, t('repairKeyHint', { ref: WEB_SEARCH_SHIM_REF })));
-        } else if (owned.web || owned.webKeyRef) {
-          webSection.push(h('p', { key: 'unwireHint', className: 'dsm-tv-hint' }, t('unwireHint')));
+        } else {
+          // 绕过提示与接入提示各说各的：同一个按钮既改回提供方，也补齐接口地址与凭据
+          if (bypass) {
+            const hint = bypass === API_SEARCH_PROVIDER ? 'bypassApiHint' : 'bypassOtherHint';
+            webSection.push(h('p', { key: 'bypassHint', className: 'dsm-tv-hint' }, t(hint, { provider: bypass, action: wireLabel })));
+          }
+          if (!wired) {
+            webSection.push(h('p', { key: 'wireHint', className: 'dsm-tv-hint' }, t('wireHint', { endpoint, ref: WEB_SEARCH_SHIM_REF })));
+          } else if (!keyIsolated) {
+            webSection.push(h('p', { key: 'repairHint', className: 'dsm-tv-hint' }, t('repairRefHint', { ref: web.apiKeyEnv })));
+          } else if (web.keyConfigured === false) {
+            webSection.push(h('p', { key: 'repairHint', className: 'dsm-tv-hint' }, t('repairKeyHint', { ref: WEB_SEARCH_SHIM_REF })));
+          } else if (complete && (owned.web || owned.webKeyRef)) {
+            webSection.push(h('p', { key: 'unwireHint', className: 'dsm-tv-hint' }, t('unwireHint')));
+          }
         }
       }
       webSection.push(notice('webNotice', model.webNotice));
@@ -1236,6 +1327,8 @@ window.__ModuleLoader__.load({
       const [confirmPurge, setConfirmPurge] = useState(false);
       const [purgeBusy, setPurgeBusy] = useState(false);
       const [purgeNotice, setPurgeNotice] = useState(undefined);
+      // `web` 命名空间（提供方选择）同理排在最后；旧版 DSH 没有它，selectionForm 可能是 undefined
+      const [selectionSnapshot, setSelectionSnapshot] = useState(() => api.selectionForm?.getSnapshot?.());
 
       const web = webModel(webSnapshot);
 
@@ -1288,6 +1381,14 @@ window.__ModuleLoader__.load({
         if (typeof form?.subscribe !== 'function') return undefined;
         setWebSnapshot(form.getSnapshot());
         return form.subscribe(() => setWebSnapshot(form.getSnapshot()));
+      }, [api]);
+
+      // 新版 Search API 开关在内置网页搜索页里切换，同样订阅
+      useEffect(() => {
+        const form = api.selectionForm;
+        if (typeof form?.subscribe !== 'function') return undefined;
+        setSelectionSnapshot(form.getSnapshot());
+        return form.subscribe(() => setSelectionSnapshot(form.getSnapshot()));
       }, [api]);
 
       // 凭据在别处被改（内置网页搜索页 / 模型页写同一个引用）时刷新 key 列表与徽标。
@@ -1401,6 +1502,7 @@ window.__ModuleLoader__.load({
           confirmRemove,
           keyNotice,
           web: { ...web, keyConfigured: webKeyConfigured },
+          selection: selectionModel(selectionSnapshot),
           webBusy,
           webNotice,
           test,
@@ -1458,6 +1560,7 @@ window.__ModuleLoader__.load({
         setKey: (ref, value) => ctx.remote.credentials.set(ref, value),
         unsetKey: (ref) => ctx.remote.credentials.unset(ref),
         webForm: ctx.configForms.get(WEB_SEARCH_NS),
+        selectionForm: ctx.configForms.get(WEB_NS),
         onCredentialUpdated: (listener) => {
           listeners.add(listener);
           return () => listeners.delete(listener);
@@ -1501,6 +1604,8 @@ window.__ModuleLoader__.load({
     exports.purgePluginData = purgePluginData;
     exports.wireWebSearch = wireWebSearch;
     exports.restoreWebSearch = restoreWebSearch;
+    exports.selectionModel = selectionModel;
+    exports.selectionResetOps = selectionResetOps;
     return module.exports;
   },
 });
