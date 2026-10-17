@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   PLUGINS, REPOSITORY, compareVersions, githubClient, planReleases,
-  publishRelease, registryMetadata, registryVersion, validatePack, verifyPublished, waitForPublishedVersion,
+  PUBLISH_VISIBILITY_DELAYS, publishRelease, registryMetadata, registryVersion, validatePack, verifyPublished, waitForPublishedVersion,
 } from '../release.mjs';
 
 function git(cwd, ...args) {
@@ -154,6 +154,24 @@ test('发布后核对：允许精确版本延迟可见，等待期间只读，�
   });
   assert.equal(reads, 3);
   assert.deepEqual(waits, [1, 2]);
+});
+
+test('发布后核对：默认等待窗口约 5 分钟，覆盖 npm 1-3 分钟的可见延迟', async () => {
+  const waits = [];
+  let reads = 0;
+  await assert.rejects(waitForPublishedVersion('pkg', '26.10.17', 'sha512-same', {
+    readVersion: async () => { reads += 1; return undefined; }, wait: async (ms) => waits.push(ms),
+  }), /发布命令已成功.*原始 SHA/);
+  const total = waits.reduce((sum, ms) => sum + ms, 0);
+  assert.ok(total >= 290_000 && total <= 320_000, `总等待 ${total}ms`);
+  assert.equal(reads, PUBLISH_VISIBILITY_DELAYS.length);
+  // 第 3 分钟时仍在轮询：模拟 180 秒后才可见的版本也能确认。
+  let elapsed = 0;
+  await waitForPublishedVersion('pkg', '26.10.17', 'sha512-same', {
+    readVersion: async () => (elapsed >= 180_000 ? { dist: { integrity: 'sha512-same' } } : undefined),
+    wait: async (ms) => { elapsed += ms; },
+  });
+  assert.ok(elapsed >= 180_000);
 });
 
 test('发布后核对：不可见时有等待上限，完整性冲突和认证失败不误报成功', async () => {

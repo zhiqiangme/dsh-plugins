@@ -150,11 +150,15 @@ export async function registryVersion(name, version, fetchImpl = fetch) {
   return manifest;
 }
 
+// npm 发布命令成功后，精确版本接口实测可能 1-3 分钟才可见（2026-10-17 tavily-search 26.10.17
+// 首次只等了约 62 秒而失败）。前段快速爬升，之后每 30 秒轮询，总计约 5 分钟。
+export const PUBLISH_VISIBILITY_DELAYS = [0, 2_000, 5_000, 10_000, 15_000, ...Array(9).fill(30_000)];
+
 export async function waitForPublishedVersion(name, version, integrity, {
   readVersion = registryVersion,
   wait = (ms) => new Promise((done) => setTimeout(done, ms)),
-  // 累计等待约一分钟，期间只读核对；发布命令成功后绝不自动重发。
-  delays = [0, 2_000, 5_000, 10_000, 15_000, 30_000],
+  // 等待期间只读核对；发布命令成功后绝不自动重发。
+  delays = PUBLISH_VISIBILITY_DELAYS,
 } = {}) {
   for (const delay of delays) {
     if (delay) await wait(delay);
