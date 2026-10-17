@@ -127,13 +127,43 @@ function packPackage(plugin, manifest, cwd) {
 
 export async function registryMetadata(name, fetchImpl = fetch) {
   const response = await fetchImpl(`https://registry.npmjs.org/${encodeURIComponent(name)}`, {
-    headers: { accept: 'application/json' }, signal: AbortSignal.timeout(30_000),
+    headers: { accept: 'application/json', 'cache-control': 'no-cache' }, signal: AbortSignal.timeout(30_000),
   });
   if (response.status === 404) return { versions: {} };
   if (!response.ok) throw new Error(`npm 查询失败：HTTP ${response.status}`);
   const metadata = await response.json();
   if (!metadata.versions || typeof metadata.versions !== 'object') throw new Error('npm 返回了无效的版本元数据');
   return metadata;
+}
+
+export async function registryVersion(name, version, fetchImpl = fetch) {
+  // 包列表可能在发布后仍返回旧缓存，精确版本端点用于发布确认和重跑防重发。
+  const response = await fetchImpl(`https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
+    headers: { accept: 'application/json', 'cache-control': 'no-cache' }, signal: AbortSignal.timeout(30_000),
+  });
+  if (response.status === 404) return undefined;
+  if (!response.ok) throw new Error(`npm 精确版本查询失败：HTTP ${response.status}`);
+  const manifest = await response.json();
+  if (manifest.name !== name || manifest.version !== version || typeof manifest.dist?.integrity !== 'string') {
+    throw new Error('npm 返回了无效的精确版本元数据');
+  }
+  return manifest;
+}
+
+export async function waitForPublishedVersion(name, version, integrity, {
+  readVersion = registryVersion,
+  wait = (ms) => new Promise((done) => setTimeout(done, ms)),
+  // 累计等待约一分钟，期间只读核对；发布命令成功后绝不自动重发。
+  delays = [0, 2_000, 5_000, 10_000, 15_000, 30_000],
+} = {}) {
+  for (const delay of delays) {
+    if (delay) await wait(delay);
+    const published = await readVersion(name, version);
+    if (!published) continue;
+    verifyPublished({ versions: { [version]: published } }, version, integrity);
+    return;
+  }
+  throw new Error('npm 发布命令已成功，但精确版本暂未可见；请使用原始 SHA 重跑补齐 GitHub Release');
 }
 
 export function verifyPublished(metadata, version, integrity) {
@@ -186,7 +216,7 @@ function releaseNotes(cwd, plugin, version, sha, tag) {
 }
 
 export async function publishRelease({ cwd, plugin: id, sha }, {
-  api = githubClient(process.env.GH_TOKEN), metadata = registryMetadata, pack = packPackage,
+  api = githubClient(process.env.GH_TOKEN), metadata = registryMetadata, versionMetadata = registryVersion, pack = packPackage,
   publish = (file) => command('npm', ['publish', file, '--access', 'public', '--tag', 'latest', '--ignore-scripts', '--registry', 'https://registry.npmjs.org'], cwd),
 } = {}) {
   const plugin = pluginById(id);
@@ -199,23 +229,15 @@ export async function publishRelease({ cwd, plugin: id, sha }, {
   if (existingTag && existingTag !== sha) throw new Error(`${tag} 已指向其他提交，不能移动 tag`);
   const packed = pack(plugin, manifest, cwd);
   try {
-    const alreadyPublished = verifyPublished(await metadata(plugin.name), version, packed.integrity);
+    const state = await metadata(plugin.name);
+    const exactVersion = await versionMetadata(plugin.name, version);
+    const versions = exactVersion ? { ...state.versions, [version]: exactVersion } : state.versions;
+    const alreadyPublished = verifyPublished({ versions }, version, packed.integrity);
     const body = releaseNotes(cwd, plugin, version, sha, tag);
     if (!existingTag) await api('git/refs', { method: 'POST', body: { ref: `refs/tags/${tag}`, sha } });
     if (!alreadyPublished) {
       await publish(packed.file);
-      // npm 写入后可能短暂读不到版本；留出传播时间，只重试只读核对，不重发包。
-      let verified = false;
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const state = await metadata(plugin.name);
-        if (state.versions[version]) {
-          verifyPublished(state, version, packed.integrity);
-          verified = true;
-          break;
-        }
-        if (attempt < 4) await new Promise((done) => setTimeout(done, 2_000));
-      }
-      if (!verified) throw new Error('npm 发布命令已成功，但暂未读到版本；请重跑补齐 GitHub Release');
+      await waitForPublishedVersion(plugin.name, version, packed.integrity, { readVersion: versionMetadata });
     }
     const release = await api(`releases/tags/${tag}`, { allowMissing: true });
     if (!release) {

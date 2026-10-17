@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   PLUGINS, REPOSITORY, compareVersions, githubClient, planReleases,
-  publishRelease, registryMetadata, validatePack, verifyPublished,
+  publishRelease, registryMetadata, registryVersion, validatePack, verifyPublished, waitForPublishedVersion,
 } from '../release.mjs';
 
 function git(cwd, ...args) {
@@ -123,6 +123,53 @@ test('npm 查询：只有 404 代表包不存在，权限、限流和服务器�
   await assert.rejects(registryMetadata('test', async () => ({ ok: true, json: async () => ({}) })), /无效/);
 });
 
+test('npm 精确版本查询：使用独立端点和 no-cache，拒绝错误或不匹配的元数据', async () => {
+  const published = { name: '@scope/pkg', version: '26.10.17', dist: { integrity: 'sha512-same' } };
+  const result = await registryVersion(published.name, published.version, async (url, options) => {
+    assert.equal(url, 'https://registry.npmjs.org/%40scope%2Fpkg/26.10.17');
+    assert.equal(options.headers['cache-control'], 'no-cache');
+    return { ok: true, json: async () => published };
+  });
+  assert.deepEqual(result, published);
+  assert.equal(await registryVersion(published.name, published.version, async () => ({ status: 404 })), undefined);
+  for (const status of [401, 403, 429, 503]) {
+    await assert.rejects(registryVersion(published.name, published.version, async () => ({ ok: false, status })), new RegExp(`HTTP ${status}`));
+  }
+  for (const invalid of [{}, { ...published, name: 'other' }, { ...published, version: '26.10.16' }, { ...published, dist: {} }]) {
+    await assert.rejects(registryVersion(published.name, published.version, async () => ({ ok: true, json: async () => invalid })), /无效/);
+  }
+});
+
+test('发布后核对：允许精确版本延迟可见，等待期间只读，不重复发布', async () => {
+  let reads = 0;
+  const waits = [];
+  await waitForPublishedVersion('@scope/pkg', '26.10.17', 'sha512-same', {
+    readVersion: async (name, version) => {
+      assert.equal(name, '@scope/pkg');
+      assert.equal(version, '26.10.17');
+      reads += 1;
+      return reads < 3 ? undefined : { dist: { integrity: 'sha512-same' } };
+    },
+    wait: async (ms) => waits.push(ms), delays: [0, 1, 2],
+  });
+  assert.equal(reads, 3);
+  assert.deepEqual(waits, [1, 2]);
+});
+
+test('发布后核对：不可见时有等待上限，完整性冲突和认证失败不误报成功', async () => {
+  let reads = 0;
+  await assert.rejects(waitForPublishedVersion('pkg', '26.10.17', 'sha512-same', {
+    readVersion: async () => { reads += 1; return undefined; }, wait: async () => {}, delays: [0, 1],
+  }), /发布命令已成功.*原始 SHA/);
+  assert.equal(reads, 2);
+  await assert.rejects(waitForPublishedVersion('pkg', '26.10.17', 'sha512-same', {
+    readVersion: async () => ({ dist: { integrity: 'sha512-different' } }),
+  }), /内容不同/);
+  await assert.rejects(waitForPublishedVersion('pkg', '26.10.17', 'sha512-same', {
+    readVersion: async () => { throw new Error('HTTP 403'); },
+  }), /HTTP 403/);
+});
+
 test('GitHub 查询：只把显式允许的 404 当作不存在', async () => {
   const api = githubClient('test', async () => ({ status: 404, ok: false }));
   assert.equal(await api('git/ref/tags/test', { allowMissing: true }), undefined);
@@ -161,6 +208,7 @@ function publishing(t, { existing = false, later = false } = {}) {
     },
     pack: () => { calls.push('pack'); return { file: '/tmp/package.tgz', integrity: 'sha512-same', cleanup: () => calls.push('cleanup') }; },
     metadata: async () => state.metadata,
+    versionMetadata: async (_name, version) => state.metadata.versions[version],
     publish: async () => { calls.push('npm'); state.metadata.versions['26.10.15'] = { dist: { integrity: 'sha512-same' } }; },
   };
   return { repo, state, calls, adapters, options: { cwd: repo.cwd, plugin: 'workbuddy', sha } };
@@ -174,6 +222,22 @@ test('发布顺序：先锁定 tag，再发 npm，核对成功后创建 Release'
   assert.deepEqual(context.calls, ['pack', 'tag', 'npm', 'release', 'cleanup']);
   assert.match(context.state.release.body, /dsh plugin --profile desktop add @zhiqiangme\/dsh-autostart-workbuddy@26\.10\.15/);
   assert.equal(context.state.release.make_latest, 'false');
+});
+
+test('包列表缓存过期但精确版本已存在时，只补 Release，不再发 npm', async (t) => {
+  const context = publishing(t, { existing: true });
+  context.adapters.metadata = async () => ({ versions: {} });
+  const result = await publishRelease(context.options, context.adapters);
+  assert.equal(result.alreadyPublished, true);
+  assert.deepEqual(context.calls, ['pack', 'release', 'cleanup']);
+});
+
+test('npm 发布后包列表始终滞后，精确版本可见即可完成 Release', async (t) => {
+  const context = publishing(t);
+  context.adapters.metadata = async () => ({ versions: {} });
+  const result = await publishRelease(context.options, context.adapters);
+  assert.equal(result.alreadyPublished, false);
+  assert.deepEqual(context.calls, ['pack', 'tag', 'npm', 'release', 'cleanup']);
 });
 
 test('失败恢复：npm 成功而 Release 失败，重跑只补 Release', async (t) => {
