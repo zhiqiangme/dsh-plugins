@@ -69,8 +69,15 @@ test('checkLatestVersion：全部失败时 ok=false，原因逐个列出注册�
 });
 
 test('checkLatestVersion：超时的注册表按失败处理', async () => {
-  const hang = (_url, { signal }) =>
-    new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('timed out'))));
+  const hang = (_url, { signal }) => new Promise((_resolve, reject) => {
+    // AbortSignal.timeout 不保持事件循环存活；mock 要模拟真实请求的存活句柄。
+    // 1 秒是未收到 abort 时的失败兜底，实际取消仍由下面的 20ms 超时触发。
+    const pendingRequest = setTimeout(() => reject(new Error('mock fetch did not abort')), 1_000);
+    signal.addEventListener('abort', () => {
+      clearTimeout(pendingRequest);
+      reject(new Error('timed out'));
+    }, { once: true });
+  });
   const result = await checkLatestVersion({ name: 'pkg', current: '1.0.0', registries: ['http://x'], fetchImpl: hang, timeoutMs: 20 });
   assert.equal(result.ok, false);
   assert.match(result.reason, /timed out/);
