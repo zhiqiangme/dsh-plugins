@@ -44,6 +44,7 @@ test('describeStatus：端点、凭据引用名与运行状态；禁用时 state
   const fakeRuntime = { status: () => ({ state: 'listening', reason: '' }) };
   const status = describeStatus({ resolved, runtime: fakeRuntime });
   assert.equal(status.endpoint, 'http://127.0.0.1:9999/v1');
+  assert.equal(status.apiEndpoint, 'http://127.0.0.1:9999/v1/tools');
   assert.equal(status.apiKeyRef, 'TAVILY_API_KEY');
   assert.equal(status.apiKeyRefs[1], 'TAVILY_API_KEY_2');
   assert.equal(status.server.state, 'listening');
@@ -63,12 +64,41 @@ test('runTestSearch：按 DSH 的请求形状走通，返回条数与标题', as
   });
   const result = await runTestSearch({ resolved, query: '  hello  ' });
   assert.equal(result.ok, true);
+  assert.equal(result.mode, 'messages');
   assert.equal(result.query, 'hello');
   assert.equal(result.count, 4);
   // 标题为空时用 URL 顶上，最多回显 3 条
   assert.deepEqual(result.titles, ['一', 'https://example.com/2', '三']);
   assert.equal(scenario.requests[0].body.query, 'hello');
   assert.ok(result.elapsedMs >= 0);
+});
+
+test('runTestSearch（新版）：按 Search API 形状打 /v1/tools/search，返回条数与标题', async (t) => {
+  const { scenario, resolved } = await startRuntime(t, {
+    handler: okTavily([
+      { title: '一', url: 'https://example.com/1', content: 'a' },
+      { title: '', url: 'https://example.com/2', content: 'b' },
+      { title: '三', url: 'https://example.com/3', content: 'c' },
+      { title: '四', url: 'https://example.com/4', content: 'd' },
+    ]),
+  });
+  const result = await runTestSearch({ resolved, query: ' hello ', mode: 'api' });
+  assert.equal(result.ok, true);
+  assert.equal(result.mode, 'api');
+  assert.equal(result.count, 4);
+  assert.deepEqual(result.titles, ['一', 'https://example.com/2', '三']);
+  assert.equal(scenario.requests[0].body.query, 'hello');
+  // 新版请求也把插件 maxResults 作为 count 发给 Tavily
+  assert.equal(scenario.requests[0].body.max_results, resolved.shim.maxResults);
+});
+
+test('runTestSearch（新版）：缺 key 时返回 ok:false 与补救提示', async (t) => {
+  const missing = await startRuntime(t, { apiKey: '' });
+  const noKey = await runTestSearch({ resolved: missing.resolved, mode: 'api' });
+  assert.equal(noKey.ok, false);
+  assert.equal(noKey.mode, 'api');
+  assert.match(noKey.reason, /未配置 Tavily API Key。去插件页填写。/);
+  assert.equal(missing.scenario.requests.length, 0);
 });
 
 test('runTestSearch：缺 key / Tavily 故障 / 连不上接口都返回 ok:false 与原因', async (t) => {
@@ -163,6 +193,7 @@ test('registerPanelRoutes：注册四条路由，校验来源与方法，卸载�
   await routes.get(STATUS_PATH).handler(fakeRequest('GET'), ok);
   assert.equal(ok.status, 200);
   assert.equal(ok.body.server.state, 'listening');
+  assert.equal(ok.body.apiEndpoint, resolved.apiEndpoint);
 
   const foreign = fakeResponse();
   await routes.get(STATUS_PATH).handler(fakeRequest('GET', { origin: 'https://evil.example' }), foreign);

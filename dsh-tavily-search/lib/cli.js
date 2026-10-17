@@ -1,6 +1,9 @@
 /**
  * 独立运行入口：不开 DSH 也能起一个同样的搜索接口（排障、给别的客户端用）。
  *
+ * 同一个端口回答两套协议：旧版客户端打 `{endpoint}/messages`，新版客户端把 Search API
+ * 基础地址设为 `{endpoint}/tools`（即 `{apiEndpoint}`）。
+ *
  *   node lib/cli.js                 前台监听，Ctrl+C 退出
  *   node lib/cli.js --print-config  只打印解析出的配置，不监听
  *
@@ -42,6 +45,7 @@ async function main() {
       JSON.stringify(
         {
           endpoint: resolved.endpoint,
+          apiEndpoint: resolved.apiEndpoint,
           apiKeyRef: ref,
           apiKeyConfigured: configuredRefs.length > 0,
           apiKeyRefsConfigured: configuredRefs,
@@ -68,6 +72,8 @@ async function main() {
   });
   server.listen(resolved.port, resolved.host, () => {
     console.log(`[dsh-tavily-search] listening on ${resolved.endpoint}`);
+    console.log(`[dsh-tavily-search] 旧版 Messages: ${resolved.endpoint}/messages`);
+    console.log(`[dsh-tavily-search] 新版 Search API 基础地址: ${resolved.apiEndpoint}`);
     console.log(`[dsh-tavily-search] Tavily endpoint: ${resolved.shim.tavilyBaseUrl}/search`);
   });
 }

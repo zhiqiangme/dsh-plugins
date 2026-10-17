@@ -105,10 +105,34 @@ export function describeStatus({ resolved, runtime }) {
   return {
     ok: true,
     endpoint: resolved.endpoint,
+    /** 新版 Search API 的基础地址（网页搜索页打开新版开关后，卡片把它写进 web-deepseek-api）。 */
+    apiEndpoint: resolved.apiEndpoint,
     apiKeyRef: resolved.apiKeyRef,
     apiKeyRefs: resolved.apiKeyRefs,
     server: runtime ? runtime.status() : { state: 'disabled', reason: '' },
     tavily: { maxResults: resolved.shim.maxResults, searchDepth: resolved.shim.searchDepth },
+  };
+}
+
+/** 按当前接的是哪套协议生成"测试搜索"要发的请求。 */
+function testRequestFor({ resolved, mode, text, secret }) {
+  if (mode === 'api') {
+    return {
+      url: `${resolved.apiEndpoint}/search`,
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+      // DSH 的 web-deepseek-api 会带 count；测试按同一个形状发，才验证得到真正会走的那条路
+      body: { query: text, count: resolved.shim.maxResults, need_content: false },
+    };
+  }
+  return {
+    url: `${resolved.endpoint}/messages`,
+    headers: { 'content-type': 'application/json', 'x-api-key': secret, authorization: `Bearer ${secret}` },
+    body: {
+      model: 'tavily-search-shim',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: [{ type: 'text', text: `Perform a web search for the query: ${text}` }] }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }],
+    },
   };
 }
 
@@ -117,42 +141,61 @@ export function describeStatus({ resolved, runtime }) {
  *
  * 刻意走 HTTP 打本插件的接口，而不是直接调 tavilySearch：这样验证的是 DSH 网页搜索
  * 真正会走的那条路（端口、请求形状、key 现取、Tavily 连通性），端口上是外部实例时也测得到。
+ * mode 由卡片按当前接入的那套协议给出：messages = 旧版 Messages 搜索，api = 新版 Search API。
  */
-export async function runTestSearch({ resolved, query }) {
+export async function runTestSearch({ resolved, query, mode = 'messages' }) {
   const text = typeof query === 'string' && query.trim() ? query.trim().slice(0, 200) : DEFAULT_TEST_QUERY;
   const started = Date.now();
   const secret = resolved.shim.shimApiKey || 'dsh-tavily-search-test';
+  const request = testRequestFor({ resolved, mode, text, secret });
   let response;
   try {
-    response = await fetch(`${resolved.endpoint}/messages`, {
+    response = await fetch(request.url, {
       method: 'POST',
       signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
-      headers: { 'content-type': 'application/json', 'x-api-key': secret, authorization: `Bearer ${secret}` },
-      body: JSON.stringify({
-        model: 'tavily-search-shim',
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: [{ type: 'text', text: `Perform a web search for the query: ${text}` }] }],
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }],
-      }),
+      headers: request.headers,
+      body: JSON.stringify(request.body),
     });
   } catch (error) {
-    return { ok: false, query: text, reason: `连不上搜索接口 ${resolved.endpoint}：${error instanceof Error ? error.message : String(error)}` };
+    return {
+      ok: false,
+      mode,
+      query: text,
+      reason: `连不上搜索接口 ${request.url}：${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 
   let body;
   try {
     body = await response.json();
   } catch {
-    return { ok: false, query: text, reason: `搜索接口返回了非 JSON 响应（HTTP ${response.status}）` };
+    return { ok: false, mode, query: text, reason: `搜索接口返回了非 JSON 响应（HTTP ${response.status}）` };
   }
+
+  if (mode === 'api') {
+    if (!response.ok || body?.error) {
+      return { ok: false, mode, query: text, reason: body?.error?.message ?? `HTTP ${response.status}` };
+    }
+    const results = Array.isArray(body?.results) ? body.results : [];
+    return {
+      ok: true,
+      mode,
+      query: text,
+      count: results.length,
+      titles: results.slice(0, TEST_PREVIEW_TITLES).map((item) => item?.title || item?.url),
+      elapsedMs: Date.now() - started,
+    };
+  }
+
   if (!response.ok || body?.type === 'error') {
-    return { ok: false, query: text, reason: body?.error?.message ?? `HTTP ${response.status}` };
+    return { ok: false, mode, query: text, reason: body?.error?.message ?? `HTTP ${response.status}` };
   }
 
   const block = Array.isArray(body?.content) ? body.content.find((item) => item?.type === 'web_search_tool_result') : undefined;
   const results = Array.isArray(block?.content) ? block.content : [];
   return {
     ok: true,
+    mode,
     query: text,
     count: results.length,
     titles: results.slice(0, TEST_PREVIEW_TITLES).map((item) => item.title || item.url),
@@ -265,7 +308,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, runtime, inspectKey
             return;
           }
           // 测试失败也是 200：失败原因是要展示给用户的结果，不是路由本身出错
-          json(res, 200, await runTestSearch({ resolved, query: body.value.query }));
+          json(res, 200, await runTestSearch({ resolved, query: body.value.query, mode: body.value.mode }));
         }),
       });
 

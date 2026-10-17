@@ -6,7 +6,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createShimServer, extractQuery, parseSearchRequest, SHIM_DEFAULTS } from '../lib/shim.js';
+import {
+  buildSearchApiResponse,
+  createShimServer,
+  extractQuery,
+  parseSearchApiRequest,
+  parseSearchRequest,
+  SHIM_DEFAULTS,
+} from '../lib/shim.js';
 import { dshBody, okTavily, post, startMockTavily } from './helpers.mjs';
 
 async function startShim(mockPort, overrides = {}) {
@@ -253,6 +260,90 @@ test('健康检查带服务标识（端口冲突时据此识别同类服务）�
 
   assert.equal(extractQuery(dshBody), 'DeepSeek V4 发布时间');
   assert.ok(parseSearchRequest(dshBody, SHIM_DEFAULTS).query);
+});
+
+// ---- 新版 Search API（DSH 0.2.1-rc.2 的 web-deepseek-api：POST {baseURL}/search）----
+
+test('新版 Search API：/v1/tools/search 按 DSH 的请求形状返回 results（四个字段齐全）', async (t) => {
+  const { scenario, shim } = await setup(
+    t,
+    okTavily([
+      { title: 'A', url: 'https://example.com/a', content: '摘要 A', published_date: '2026-09-01' },
+      { title: 'B', url: 'https://example.com/b', content: '摘要 B' },
+    ]),
+  );
+  const { status, json } = await post(shim.base, '/v1/tools/search', {
+    query: 'DeepSeek V4',
+    count: 5,
+    need_content: false,
+    ori_question: '原始问题',
+  });
+  assert.equal(status, 200);
+  assert.equal(scenario.requests[0].body.query, 'DeepSeek V4');
+  assert.equal(scenario.requests[0].body.max_results, 5);
+  // DSH 的 mapSearchResponse 要求 title/snippet/date 字段都存在；date 缺省必须是 null 而不是省略
+  assert.deepEqual(json.results, [
+    { url: 'https://example.com/a', title: 'A', snippet: '摘要 A', date: '2026-09-01' },
+    { url: 'https://example.com/b', title: 'B', snippet: '摘要 B', date: null },
+  ]);
+});
+
+test('新版 Search API：count 受插件 maxResults 上限约束；非法请求 400 且不查询 Tavily', async (t) => {
+  const { scenario, shim } = await setup(t, okTavily([{ title: 'A', url: 'https://example.com/a', content: 'x' }]));
+  const asked50 = await post(shim.base, '/v1/tools/search', { query: 'q', count: 50 });
+  assert.equal(asked50.status, 200);
+  assert.equal(scenario.requests[0].body.max_results, 8, '插件 maxResults 是上限，页面调大 count 不会突破它');
+
+  const withoutCount = await post(shim.base, '/v1/tools/search', { query: 'q' });
+  assert.equal(withoutCount.status, 200);
+  assert.equal(scenario.requests[1].body.max_results, 8);
+
+  for (const body of [{}, { query: '   ' }, { query: 'q', count: 0 }, { query: 'q', count: 1.5 }, { query: 'x'.repeat(700) }]) {
+    const before = scenario.requests.length;
+    const response = await post(shim.base, '/v1/tools/search', body);
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal(typeof response.json.error.message, 'string');
+    assert.equal(scenario.requests.length, before, '请求被拒绝时不应查询 Tavily');
+  }
+});
+
+test('新版 Search API：缺 key / 上游故障都用 {error:{message}} 信封', async (t) => {
+  const missing = await setup(t, okTavily([]), { resolveApiKey: async () => undefined, missingKeyHint: '去插件页填写。' });
+  const noKey = await post(missing.shim.base, '/tools/search', { query: 'q' });
+  assert.equal(noKey.status, 401);
+  assert.match(noKey.json.error.message, /未配置 Tavily API Key。去插件页填写。/);
+  assert.equal(missing.scenario.requests.length, 0);
+
+  const broken = await setup(t, (_req, res) => {
+    res.writeHead(500);
+    res.end('boom');
+  });
+  for (const path of ['/search', '/tools/search']) {
+    const failed = await post(broken.shim.base, path, { query: 'q' });
+    assert.equal(failed.status, 502);
+    assert.match(failed.json.error.message, /HTTP 500/);
+  }
+});
+
+test('新版 Fetch API：明确拒绝（不把网页抓取改成 Tavily Extract），不查询 Tavily', async (t) => {
+  const { scenario, shim } = await setup(t, okTavily([]));
+  for (const path of ['/v1/tools/fetch', '/tools/fetch', '/fetch']) {
+    const { status, json } = await post(shim.base, path, { url: 'https://example.com' });
+    assert.equal(status, 501);
+    assert.match(json.error.message, /只提供新版 Search API 的搜索/);
+  }
+  assert.equal(scenario.requests.length, 0);
+});
+
+test('新版 Search API：请求解析与响应结构的纯函数口径', () => {
+  assert.deepEqual(parseSearchApiRequest({ query: ' a ', count: 3 }, SHIM_DEFAULTS), { query: 'a', maxResults: 3 });
+  assert.equal(parseSearchApiRequest({ query: 'a', count: 100 }, SHIM_DEFAULTS).maxResults, SHIM_DEFAULTS.maxResults);
+  assert.equal(parseSearchApiRequest({ query: 'a' }, SHIM_DEFAULTS).maxResults, SHIM_DEFAULTS.maxResults);
+  assert.equal(parseSearchApiRequest({}, SHIM_DEFAULTS).status, 400);
+  assert.equal(parseSearchApiRequest({ query: 'a', count: 0 }, SHIM_DEFAULTS).status, 400);
+  assert.deepEqual(buildSearchApiResponse({ results: [{ url: 'u', title: '', snippet: '', publishedDate: '' }] }), {
+    results: [{ url: 'u', title: '', snippet: '', date: null }],
+  });
 });
 
 test('createShimServer 缺 resolveApiKey 时直接报错', () => {

@@ -1,10 +1,14 @@
 /**
  * dsh-tavily-search —— 用 Tavily 给 DSH 的「网页搜索」供数。
  *
- * DSH 自带的搜索提供方（@deepseek-ai/dsh-web-search-deepseek）向 `{接口地址}/messages`
- * 发 Anthropic Messages 请求；本插件在 DSH 进程内监听 127.0.0.1:8787，把这类请求转成
- * Tavily 检索并合成提供方能解析的响应（细节见 lib/shim.js）。DSH 网页搜索的接口地址
- * 指向 `http://127.0.0.1:8787/v1` 即接入。
+ * DSH 有两代搜索提供方，本插件在同一个端口上把两套请求都翻译成 Tavily 检索
+ * （细节见 lib/shim.js）：
+ *   - 旧版 @deepseek-ai/dsh-web-search-deepseek 向 `{接口地址}/messages` 发 Anthropic
+ *     Messages 请求；网页搜索的接口地址指向 `http://127.0.0.1:8787/v1` 即接入。
+ *   - 新版 @deepseek-ai/dsh-web-deepseek-api 向 `{基础地址}/search` 发 Search API 请求；
+ *     网页搜索页打开「启用新版 Web 搜索 API」后，把 Search API 基础地址指向
+ *     `http://127.0.0.1:8787/v1/tools` 即接入（插件页卡片一键完成）。
+ *   - 新版 Fetch API（`/fetch`）不模拟：网页抓取仍由 DSH 的本地 HTTP 抓取提供方负责。
  *
  * 行为约定：
  *   - 随插件加载监听，随插件卸载关闭；不再有外部进程；

@@ -114,6 +114,11 @@ export function resolvePluginConfig(raw) {
     port: listenPort,
     /** DSH 网页搜索的"接口地址"应当填的值；卡片据此判断是否已接入。 */
     endpoint: `http://${host}:${listenPort}/v1`,
+    /**
+     * 新版 Search API 的基础地址：DSH 的 web-deepseek-api 会在这个地址后追加 /search。
+     * 网页搜索页打开「启用新版 Web 搜索 API」后，卡片把 Search API 基础地址改成它。
+     */
+    apiEndpoint: `http://${host}:${listenPort}/v1/tools`,
     apiKeyRef,
     /** 全部 key 槽位的引用名，按使用顺序排列；第 1 个就是 apiKeyRef。 */
     apiKeyRefs: apiKeyRefsFor(apiKeyRef),

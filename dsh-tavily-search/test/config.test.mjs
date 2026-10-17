@@ -17,6 +17,7 @@ test('默认配置：启用、127.0.0.1:8787、凭据引用 TAVILY_API_KEY、不
   assert.equal(resolved.host, '127.0.0.1');
   assert.equal(resolved.port, 8787);
   assert.equal(resolved.endpoint, 'http://127.0.0.1:8787/v1');
+  assert.equal(resolved.apiEndpoint, 'http://127.0.0.1:8787/v1/tools');
   assert.equal(resolved.apiKeyRef, 'TAVILY_API_KEY');
   // 多 key：第 1 个沿用 apiKeyRef，之后 _2 … _10
   assert.equal(resolved.apiKeyRefs.length, 10);
@@ -35,6 +36,7 @@ test('enabled 只有显式 false 才关闭', () => {
 
 test('端口与数值字段：合法值生效，非法值退回默认', () => {
   assert.equal(resolvePluginConfig({ port: 9999 }).endpoint, 'http://127.0.0.1:9999/v1');
+  assert.equal(resolvePluginConfig({ port: 9999 }).apiEndpoint, 'http://127.0.0.1:9999/v1/tools');
   assert.equal(resolvePluginConfig({ port: 'abc' }).port, 8787);
   assert.equal(resolvePluginConfig({ port: 0 }).port, 8787);
   assert.equal(resolvePluginConfig({ port: 70000 }).port, 8787);

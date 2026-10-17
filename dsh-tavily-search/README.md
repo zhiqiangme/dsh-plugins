@@ -2,17 +2,23 @@
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件：用 **Tavily** 给 DSH 的「网页搜索」供数。
 
-DSH 自带的搜索提供方（`@deepseek-ai/dsh-web-search-deepseek`）向「接口地址」发 Anthropic Messages 请求，
-只解析响应里的 `web_search_tool_result` 结构化块。本插件在 **DSH 进程内**监听 `127.0.0.1:8787`，
-把这类请求转成一次 Tavily 检索，再合成提供方能解析的响应——不调用任何模型。
+DSH 有两代搜索提供方，本插件在 **DSH 进程内**监听 `127.0.0.1:8787`，把两套请求都转成 Tavily 检索
+——不调用任何模型：
+
+- 旧版 `@deepseek-ai/dsh-web-search-deepseek`：向「接口地址」发 Anthropic Messages 请求，
+  只解析响应里的 `web_search_tool_result` 结构化块；
+- 新版 `@deepseek-ai/dsh-web-deepseek-api`（DSH 0.2.1-rc.2 起）：向「基础地址」发 Search API 请求，
+  解析 `{results:[{url,title,snippet,date}]}`。
 
 ```
-DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插件（DSH 进程内） ── POST /search ──▶ Tavily
-            ◀── server_tool_use + web_search_tool_result + 引用摘要 ──
+DSH 网页搜索 ─ 旧版 POST /v1/messages ─────┐
+             ─ 新版 POST /v1/tools/search ┴─▶ 本插件（DSH 进程内） ── POST /search ──▶ Tavily
+             ◀── 对应协议的搜索结果 ──
 ```
 
-在插件页卡片里点「接入网页搜索」即可：它把 DSH「插件 → 网页搜索」的**接口地址**设为 `http://127.0.0.1:8787/v1`，
-并让网页搜索改读本插件的占位凭据（原因见下文）。
+在插件页卡片里点「接入网页搜索」即可：新版开关关着时把网页搜索的**接口地址**设为 `http://127.0.0.1:8787/v1`；
+开关打开时把 **Search API 基础地址**设为 `http://127.0.0.1:8787/v1/tools`。两种情况都会让网页搜索改读
+本插件的占位凭据（原因见下文）。
 
 ## 插件页卡片
 
@@ -21,7 +27,7 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 | 区块 | 做什么 | 走哪条通道 |
 | --- | --- | --- |
 | **API Key** | 可添加多个 Tavily API Key（最多 10 个），逐个列出、各自单独删除（删除前二次确认）；列表只显示末 4 位用于辨认，从不回显完整值 | 写入 / 删除走 DSH 凭据库（`remote.credentials`），与内置「网页搜索」页同一条路；列表走宿主半侧路由 `/plugins/dsh-tavily-search/keys` |
-| **网页搜索接入** | 显示「网页搜索」当前的接口地址；未接入时一键把接口地址改成本插件的端点、凭据引用改成本插件的占位凭据，已接入时可恢复默认；只改了接口地址的旧版接入显示「待修复」；网页搜索页打开了「启用新版 Web 搜索 API」时显示「已被绕过」（见下文） | `configForms.get('web-search-deepseek')`，即内置网页搜索页编辑的同一个设置命名空间；提供方选择读 `configForms.get('web')`；占位凭据走 `remote.credentials` |
+| **网页搜索接入** | 显示当前搜索通道与接口地址；未接入时一键把**当前通道**的接口地址改成本插件的端点、凭据引用改成本插件的占位凭据，已接入时可恢复默认；只改了接口地址的接入显示「待修复」。新版开关打开时接的是 `web-deepseek-api` 的 Search API 基础地址，并把抓取提供方从 `deepseek-fetch-api` 改回本地 HTTP（本插件只做搜索，见下文） | 开关关闭时读 `configForms.get('web-search-deepseek')`（Messages 接口地址）；打开时读 `configForms.get('web-deepseek-api')`（Search API 基础地址）；提供方选择读 `configForms.get('web')`；占位凭据走 `remote.credentials` |
 | **插件更新** | 显示当前运行版本与 npm 最新版本；装了 [dshmarket](https://www.npmjs.com/package/dshmarket) 时一键更新并显示进度，没装时只提示有新版本 | 版本检查走宿主半侧路由 `/plugins/dsh-tavily-search/version`（同时问 npm 官方源与 npmmirror，取较高者，缓存 10 分钟）；更新走 dshmarket 的公开更新 API v1 |
 | **搜索接口** | 显示 `127.0.0.1:8787/v1` 的状态（运行中 / 外部实例 / 端口被占用 / 启动失败）；「测试搜索」按 DSH 的请求形状真打一次 | 宿主半侧路由 `/plugins/dsh-tavily-search/status`、`/test` |
 | **清除插件数据** | 卸载本插件前点一下：二次确认后删除卡片里保存的全部 Tavily API Key，并把网页搜索里本插件写的接口地址与凭据引用恢复为 DSH 默认（卸载后 `127.0.0.1:8787` 没人监听，不恢复的话网页搜索会失败）。环境变量等只读来源的 key 只提示、不删。没有可清的内容时整块不显示 | 删 key 走 `remote.credentials.unset`，恢复走 `configForms.get('web-search-deepseek')`，与上面两块同一条路 |
@@ -37,14 +43,18 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
   不会让网页搜索指向 Tavily 的 key。
 - **新版 Web 搜索 API 开关（DSH 0.2.1-rc.2 起）**：内置网页搜索页多了「启用新版 Web 搜索 API」。打开后它把
   `web.searchProvider` / `web.fetchProvider` 设为 `deepseek-search-api` / `deepseek-fetch-api`，搜索改走
-  `web-deepseek-api`（`https://api.deepseek.com/v1/tools/search`），不再读上面那个接口地址，本插件被整个绕过。
-  卡片会读同一个 `web` 设置命名空间，此时标「已被绕过」并显示当前的搜索提供方；点「修复接入」会先补齐接口地址与占位凭据，
-  再照网页搜索页关开关的方式把选择改回 Messages 搜索（`deepseek-official`），网页抓取随之从 `deepseek-fetch-api` 改回本地 HTTP 抓取
-  （`http`；你单独选的其它抓取方式不动）。搜索提供方被别的插件占用时同样标「已被绕过」，修复只改回搜索提供方。
-  「恢复默认」与「清除插件数据」不碰这项选择：本插件写过的只有 Messages 一侧的接口地址与凭据引用。
-  0.2.1-rc.1 及更早没有这个开关（`web` 命名空间不下发），卡片照旧只看接口地址。
-- 本插件没有模拟新版 Search / Fetch API（`/v1/tools/search`、`/fetch`）：那样网页抓取也会改走 Tavily Extract、消耗 Tavily 额度，
-  抓取行为也跟着变；只给搜索供数的话，Messages 这条路已经够用。
+  `web-deepseek-api`（默认 `https://api.deepseek.com/v1/tools/search`）。卡片读同一个 `web` 设置命名空间：
+  开关打开时，「网页搜索接入」改为操作 `web-deepseek-api` 的**基础地址**——接入后是
+  `http://127.0.0.1:8787/v1/tools`，本插件按新版 Search API 的请求/响应形状返回 Tavily 结果；同时把抓取提供方
+  从开关配对写入的 `deepseek-fetch-api` 改成本地 HTTP（`http`），网页抓取仍由 DSH 自己完成，不消耗 Tavily 额度。
+  开关关闭时沿用原来的 Messages 接入（`web-search-deepseek` 接口地址 + 占位凭据）。
+  两套接入互不影响：开关切到哪一侧，卡片就把那一侧接到本插件；「恢复默认」只撤销本插件写过的覆盖，不碰开关本身。
+  0.2.1-rc.1 及更早没有这个开关（`web` 命名空间不下发），卡片照旧只看 Messages 接口地址。
+  搜索提供方被别的插件占用时标「已被占用」，点「接入网页搜索」会接回本插件（装了新版搜索插件时接新版 API）。
+- 本插件**只模拟新版 Search API**，不模拟 `/fetch`（新版 Fetch API 的抓取）：那样网页抓取也会改走
+  Tavily Extract、消耗 Tavily 额度，抓取行为也跟着变。所以新版接入会把抓取提供方改成本地 HTTP；
+  万一把抓取提供方又切回 `deepseek-fetch-api`，抓取请求会打到本插件的 `/fetch` 并得到明确的拒绝说明，
+  卡片同时显示「待修复」，点「修复接入」即可改回本地 HTTP。
 - 配了 `shimApiKey` 时，接入后在内置网页搜索页的 API Key 栏填同一个值（写进占位凭据）；卡片再次接入不会覆盖它。
 - 密钥输入框用宿主的 `SettingsSecretField`（与内置网页搜索页同款）；宿主组件拿不到时退回自带的同款输入框。
 - 一键更新不自己跑 pnpm：DSH 自带的插件管理器不支持升级已安装的插件，本插件把更新交给 dshmarket，
@@ -60,8 +70,12 @@ DSH 网页搜索 ── POST http://127.0.0.1:8787/v1/messages ──▶ 本插�
 ## 行为
 
 - **进程内监听**：随插件加载监听、随插件卸载关闭，没有外部进程；出站请求走 DSH 的代理策略。
+- **两种协议同一个端口**：`POST /v1/messages`（旧版 Messages，兼容 `/anthropic/v1/messages`）、
+  `POST /v1/tools/search`（新版 Search API，兼容 `/tools/search`、`/search`）。新版 Search API 的 `count`
+  不会突破插件配置的 `maxResults`；每条结果都补齐 `title` / `snippet` / `date` 字段（DSH 的解析器要求字段存在）。
+  `POST .../fetch`（新版 Fetch API）返回 501 并说明「本插件只提供搜索」，不调用 Tavily。
 - **搜索接口只供宿主 / CLI 调用**：带 `Origin` 或跨站 Fetch 标记的浏览器请求返回 403，避免网页借本机接口消耗 Tavily 额度。
-  插件卡片的「测试搜索」通过宿主面板路由转发，照常可用。
+  插件卡片的「测试搜索」通过宿主面板路由转发，照常可用（按当前通道发对应协议的形状）。
 - **不抢端口**：端口上已有同类适配服务（例如用下文"独立运行"起的实例）时只记日志，DSH 的请求由它处理；
   端口被别的程序占着时记错误日志。插件重载时会先等约 2s，让上一个实例释放端口。
 - **失败不阻断**：监听不上只写日志，DSH 本身照常可用。
@@ -118,11 +132,11 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-tavily-search"
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
 | `enabled` | `true` | 只有显式 `false` 才不监听 |
-| `host` / `port` | `127.0.0.1` / `8787` | 监听地址；改了端口要同步改网页搜索的接口地址 |
+| `host` / `port` | `127.0.0.1` / `8787` | 监听地址；改了端口要同步改网页搜索的接口地址（旧版 `/v1`、新版 `/v1/tools`） |
 | `apiKeyRef` | `TAVILY_API_KEY` | 第 1 个 key 的凭据引用名（环境变量名形状）；其余 key 为 `<apiKeyRef>_2` … `_10` |
 | `importEnvFile` | 空 | 一次性导入：凭据库里还没有 key 时，从这个 `.env` 里取同名变量写进凭据库 |
 | `tavilyBaseUrl` | `https://api.tavily.com` | Tavily 端点，测试时可指向 mock |
-| `maxResults` | `8` | 单次检索返回条数 |
+| `maxResults` | `8` | 单次检索返回条数；新版 Search API 的 `count`（网页搜索页「每次搜索结果数」）以它为上限 |
 | `searchDepth` | 空 | `basic` / `advanced`，留空用 Tavily 默认档 |
 | `timeoutMs` | `30000` | 单次 Tavily 调用超时，超时按 502 返回 |
 | `maxQueryChars` | `600` | 检索词长度上限，超出 400 |
@@ -133,7 +147,8 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-tavily-search"
 ## 独立运行
 
 不开 DSH 也能起一个同样的接口（排障、给别的客户端用）。没有凭据库，配置从环境变量读
-（`TAVILY_API_KEY`，多个 key 再加 `TAVILY_API_KEY_2` …；`LISTEN`、`TAVILY_MAX_RESULTS`、`TAVILY_SEARCH_DEPTH`……）：
+（`TAVILY_API_KEY`，多个 key 再加 `TAVILY_API_KEY_2` …；`LISTEN`、`TAVILY_MAX_RESULTS`、`TAVILY_SEARCH_DEPTH`……）。
+旧版客户端打 `/v1/messages`；新版客户端把 Search API 基础地址设为 `http://127.0.0.1:<port>/v1/tools`：
 
 ```powershell
 $env:TAVILY_API_KEY = 'tvly-…'
