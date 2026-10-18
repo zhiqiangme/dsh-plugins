@@ -41,7 +41,7 @@ hub 是 wb2api 停更时的备选。
 - **端口与 provider**：两者都监听 7863，DSH 里 workbuddy provider 的 `baseURL` 不用改。
 - **网关密钥**：hub 的密钥按 插件配置 `models.apiKey` → 环境变量 `WORKBUDDY_PROXY_KEY` → wb2api `config.json` 的 `api_key` 的顺序沿用，所以凭据库里现有的 `WORKBUDDY_PROXY_KEY` 不用改。都没有时插件生成一个，存进 `hub/data/plugin-api-key`。密钥经环境变量 `API_KEY` 传给 hub，不出现在命令行里。
 - **模型白名单**：从 wb2api 切到 hub 后，`models.only` 里的 `cn:` / `global:` id 都对不上，需要在卡片里重新勾选。展示名前缀（CN / GL）按 hub 当前的出口补上。hub 账号池里还没有可用账号时，它的 `/v1/models` 仍会返回内置目录，卡片按 `/health` 的 `accounts_ready` 判断，为 0 就不列模型，提示先去看板登录。
-- **Clash 全局模式**：hub 的国内版上游同样写死成 `copilot.tencent.com`，海外出口下一样看不到 CN 模型。需要怎么改见 [docs/hub-cn-base.md](https://github.com/zhiqiangme/dsh-plugins/blob/main/dsh-autostart-workbuddy/docs/hub-cn-base.md)。
+- **Clash 全局模式**：hub 的国内版上游同样写死成 `copilot.tencent.com`，海外出口下 CN 账号的对话会 TLS 失败。插件启动 hub 时传 `WB_CN_CHAT_UPSTREAM`（取 `cnChatBase`），需要 hub 认这个变量（fork 分支 `fix/cn-chat-upstream`，待合入上游）；不认的版本照旧。背景与改法见 [docs/hub-cn-base.md](https://github.com/zhiqiangme/dsh-plugins/blob/main/dsh-autostart-workbuddy/docs/hub-cn-base.md)。
 - **命令行**：`lib/backend-cli.js` 只管 wb2api；hub 的安装、更新与回滚在卡片里操作。
 
 ## 接管模型列表
@@ -201,7 +201,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | `readinessTimeoutMs` | 等待端口就绪的上限，默认 30000 |
 | `stopTimeoutMs` | 停止时等待退出的上限，默认 5000；超时后强制结束 |
 | `gateway` | 托管哪种网关：`wb2api`（默认）或 `hub`；非法值按 `wb2api` 处理。`hub` 时 `exe` / `cwd` / `args` 不生效 |
-| `cnChatBase` | 拉起后端前写进 wb2api `config.json` 的 `cn.chat_base`，默认 `https://www.workbuddy.cn`；空串 = 不管这一项 |
+| `cnChatBase` | 国内版上游 base，默认 `https://www.workbuddy.cn`；空串 = 不管这一项。wb2api：拉起前写进 `config.json` 的 `cn.chat_base`；hub：经环境变量 `WB_CN_CHAT_UPSTREAM` 传入 |
 
 **为什么要写 `cn.chat_base`**：wb2api 内置的国内版上游 `copilot.tencent.com` 对海外出口（例如 Clash 全局模式 + TUN）
 的 TLS 握手直接复位，CN 模型目录和对话全部 `EOF`，网关里只剩 `global:` 模型。官方 WorkBuddy 桌面端已改用

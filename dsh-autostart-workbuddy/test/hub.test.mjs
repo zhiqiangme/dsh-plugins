@@ -315,6 +315,13 @@ test('resolvePluginConfig(gateway: hub)：python 跑 wb_proxy.py，数据目录�
   assert.equal(resolved.models.panelConfig, '');
   assert.equal(resolved.backend.keepVersions, 2);
 
+  // 国内版上游改址：缺省经 WB_CN_CHAT_UPSTREAM 传 www.workbuddy.cn；显式空串时不传，宿主环境里的同名变量也不漏过去。
+  assert.equal(resolved.spec.env.WB_CN_CHAT_UPSTREAM, 'https://www.workbuddy.cn');
+  const custom = resolvePluginConfig({ gateway: 'hub', cnChatBase: 'https://cn.example' }, hostEnv);
+  assert.equal(custom.spec.env.WB_CN_CHAT_UPSTREAM, 'https://cn.example');
+  const off = resolvePluginConfig({ gateway: 'hub', cnChatBase: '' }, { ...hostEnv, WB_CN_CHAT_UPSTREAM: 'https://leak' });
+  assert.equal(off.spec.env.WB_CN_CHAT_UPSTREAM, undefined);
+
   // 默认仍是 wb2api，切换前后的配置解析互不影响。
   const plain = resolvePluginConfig({}, hostEnv);
   assert.equal(plain.gateway, 'wb2api');

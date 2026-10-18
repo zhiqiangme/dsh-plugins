@@ -105,7 +105,7 @@ function buildSpec(config, common, hostEnv) {
  *
  * 密钥走环境变量 API_KEY（hub 认它，见其 --api-key 默认值），不放命令行，免得出现在进程列表里。
  */
-function buildHubSpec(config, common, hostEnv, apiKey) {
+function buildHubSpec(config, common, hostEnv, apiKey, cnChatBase) {
   const paths = common.paths;
   const host = stringOr(config.host, SERVICE_DEFAULTS.host);
   const port = positiveNumber(config.port, SERVICE_DEFAULTS.port);
@@ -119,6 +119,11 @@ function buildHubSpec(config, common, hostEnv, apiKey) {
     PYTHONNOUSERSITE: '1',
   });
   if (apiKey) env.API_KEY = apiKey;
+  // 国内版上游改址（与 wb2api 的 cn.chat_base 同一用途）。WB_CN_CHAT_UPSTREAM 是 fork 里给 hub 加的开关
+  // （zhiqiangme/workbuddy2api-hub fix/cn-chat-upstream，待合入上游）；不认它的 hub 版本会忽略，行为不变。
+  // cnChatBase 为空 = 用户关掉了这项：连宿主环境里的同名变量也不透传，免得插件说关了却仍生效。
+  delete env.WB_CN_CHAT_UPSTREAM;
+  if (cnChatBase) env.WB_CN_CHAT_UPSTREAM = cnChatBase;
   return {
     key: SERVICE_DEFAULTS.key,
     enabled: bool(config.enabled, SERVICE_DEFAULTS.enabled),
@@ -224,7 +229,12 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
         paths,
       })
     : '';
-  const spec = gateway === 'hub' ? buildHubSpec(config, common, hostEnv, hubKey) : buildSpec(config, common, hostEnv);
+  // 缺省 = www.workbuddy.cn；显式给空串 = 插件不管这一项。wb2api 写进 config.json 的 cn.chat_base，
+  // hub 经环境变量 WB_CN_CHAT_UPSTREAM 生效（见 buildHubSpec）。
+  const cnChatBase = typeof config.cnChatBase === 'string' ? config.cnChatBase.trim() : DEFAULT_CN_CHAT_BASE;
+  const spec = gateway === 'hub'
+    ? buildHubSpec(config, common, hostEnv, hubKey, cnChatBase)
+    : buildSpec(config, common, hostEnv);
   const models = resolveModelsConfig(config.models, spec);
   if (gateway === 'hub') {
     // hub 没有 wb2api 那份 config.json：密钥直接给定，不再回落去读面板配置。
@@ -247,10 +257,10 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
     models,
     backend,
     /**
-     * 启动后端前写进 wb2api config.json 的 `cn.chat_base`（见 lib/backend-config.js）。
-     * 缺省 = www.workbuddy.cn；显式给空串 = 插件不管这一项。
+     * 国内版上游 base：wb2api 启动前写进 config.json 的 `cn.chat_base`（见 lib/backend-config.js）；
+     * hub 经 spec.env 的 WB_CN_CHAT_UPSTREAM 生效。
      */
-    cnChatBase: typeof config.cnChatBase === 'string' ? config.cnChatBase.trim() : DEFAULT_CN_CHAT_BASE,
+    cnChatBase,
     /**
      * exe 是否来自插件自管目录（profile 里没显式配 exe）。
      *

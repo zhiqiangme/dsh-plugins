@@ -93,6 +93,10 @@ CHAT_BASE = (os.environ.get("WB_CN_CHAT_UPSTREAM") or "https://copilot.tencent.c
 
 ## 插件侧
 
-hub 合入类似开关后，本插件会在启动 hub 时把同一个 `cnChatBase` 配置（缺省 `https://www.workbuddy.cn`）
-写进子进程环境（`lib/config.js` 的 `buildHubSpec`），与 wb2api 的 `cn.chat_base` 保持一致。
-在那之前不传：变量名要以 hub 实际采用的为准。
+已在 fork 实现：[zhiqiangme/workbuddy2api-hub](https://github.com/zhiqiangme/workbuddy2api-hub) 分支 `fix/cn-chat-upstream`，
+变量名定为 `WB_CN_CHAT_UPSTREAM`。实际做法比上面的草案更集中：`wb_identity.CN_CHAT_BASE` 作为唯一来源，
+`REALM_CONFIGS["cn"]["chat_upstream"]` 与 `wb_tasks.CHAT_BASE` 都取它；`domain` / X-Domain 不改。
+2026-10-18 海外出口下冒烟：设了变量 CN 对话流式与非流式均 200；不设时同样的账号 TLS EOF、502。
+
+本插件启动 hub 时把 `cnChatBase`（缺省 `https://www.workbuddy.cn`）作为 `WB_CN_CHAT_UPSTREAM` 传给子进程
+（`lib/config.js` 的 `buildHubSpec`），与 wb2api 的 `cn.chat_base` 一致。不认这个变量的 hub 版本会忽略它，行为不变。
