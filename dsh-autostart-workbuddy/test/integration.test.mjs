@@ -33,7 +33,7 @@ function freePort() {
 }
 
 /** 最小 Cordis Context 替身：收集 effect 的 disposer，记录日志；services 供 ctx.get 软取。 */
-function fakeContext(services = {}) {
+function fakeContext(services = {}, { removableHooks = true } = {}) {
   const disposers = [];
   const lines = [];
   const updateHooks = [];
@@ -47,8 +47,15 @@ function fakeContext(services = {}) {
     get(key) {
       return services[key];
     },
+    // 与 cordis 一致：钩子挂在 fiber 上、跨重启保留，只有调返回的撤销函数才摘掉。
     on(event, listener) {
-      if (event === 'internal/update') updateHooks.push(listener);
+      if (event !== 'internal/update') return undefined;
+      updateHooks.push(listener);
+      if (!removableHooks) return undefined;
+      return () => {
+        const index = updateHooks.indexOf(listener);
+        if (index >= 0) updateHooks.splice(index, 1);
+      };
     },
     /** 模拟 fiber.update：依次调钩子，钩子都调了 next 才落到默认的"重启"。 */
     update(config) {
@@ -308,3 +315,30 @@ test('配置变更：apply 之后宿主 process.env 有变动，保存白名单�
   assert.equal(ctx.restarts, 0, ctx.lines.join('\n'));
   assert.ok(ctx.lines.some((line) => line.includes('就地生效')), ctx.lines.join('\n'));
 });
+
+for (const removableHooks of [true, false]) {
+  test(`配置变更：重启过一次后再改回原值仍会重启（上一轮的钩子${removableHooks ? '被摘掉' : '摘不掉、靠失效放行'}）`, async (t) => {
+    const port = await freePort();
+    const occupied = createServer();
+    await new Promise((done) => occupied.listen(port, '127.0.0.1', done));
+    t.after(() => new Promise((done) => occupied.close(done)));
+    const ctx = fakeContext({}, { removableHooks });
+    t.after(() => ctx.disposeAll());
+
+    // 相当于 wb2api → hub → wb2api：第二次改回的值正好是第一轮 apply 时的配置。
+    const first = { ...fakeServiceConfig(port), models: { enabled: false } };
+    const second = { ...first, stopTimeoutMs: 4_000 };
+    apply(ctx, first);
+    assert.ok(await waitForLog(ctx, '已在'), ctx.lines.join('\n'));
+
+    ctx.update(second);
+    assert.equal(ctx.restarts, 1);
+    // 模拟 cordis 的重启：dispose 本轮，再按新配置 apply（同一个 ctx / fiber）。
+    await ctx.disposeAll();
+    ctx.disposers.length = 0;
+    apply(ctx, second);
+
+    ctx.update(first);
+    assert.equal(ctx.restarts, 2, ctx.lines.join('\n'));
+  });
+}

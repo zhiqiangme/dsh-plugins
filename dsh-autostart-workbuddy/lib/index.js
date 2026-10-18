@@ -89,7 +89,7 @@ export function apply(ctx, config) {
   registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service, resync });
 
   // 白名单等 models.* 的改动就地生效，不重启插件（见 watchConfigUpdates）。
-  watchConfigUpdates(ctx, resolved, hostEnv, logger, config, resync);
+  const unwatchConfig = watchConfigUpdates(ctx, resolved, hostEnv, logger, config, resync);
 
   // 启动时查一次后端更新（**只提示**，安装永远由用户在面板里点）。
   checkBackendUpdateOnStart(resolved, hostEnv, logger);
@@ -118,6 +118,7 @@ export function apply(ctx, config) {
       if (disposed) return;
       disposed = true;
       process.removeListener('exit', onExit);
+      unwatchConfig();
       resync.stop();
       // 先等启动流程落地，避免「正在启动」与「正在停止」互相打架。
       await startup.catch(() => undefined);
@@ -145,11 +146,19 @@ export function apply(ctx, config) {
  * resolved.spec.env 是 apply 那一刻 process.env 的快照，DSH 进程运行中只要有任何环境变量变动，
  * 两边就永远不等，每次保存白名单都会落到默认重启——托管的 wb2api 被停掉重拉，紧接着的
  * /v1/models 拉取就是 fetch failed，白名单写进去了、模型清单却没跟上（实际遇到过）。
+ *
+ * 返回撤销函数，生命周期 disposer 里必须调：cordis 把非全局的 internal/update 钩子挂在 fiber 上，
+ * 而重启复用同一个 fiber、也不会替插件摘掉钩子。上一轮 apply 的钩子若留着，会排在新钩子前面、
+ * 拿它那份过期的 currentConfig 比较——切到 hub 后再切回 wb2api 时，它看到的"旧值"本来就是 wb2api，
+ * 判成"只改了 models"把重启否决掉（实际遇到过：配置写进去了、后端却没换，只能重启 DSH）。
+ * 摘不掉（宿主的 on 没返回撤销函数）时靠 active 兜底：过期的钩子一律放行给下一个。
  */
 function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig, resync) {
-  if (typeof ctx?.on !== 'function') return;
+  if (typeof ctx?.on !== 'function') return () => undefined;
   let currentConfig = initialConfig;
-  ctx.on('internal/update', (config, _noSave, next) => {
+  let active = true;
+  const off = ctx.on('internal/update', (config, _noSave, next) => {
+    if (!active) return next();
     const updated = resolvePluginConfig(config, hostEnv);
     const changed = changedFields(resolvePluginConfig(currentConfig, hostEnv), updated);
     if (changed.length > 0) {
@@ -164,6 +173,10 @@ function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig, resyn
     logger.info(`[${name}] models 配置已更新（就地生效，不重启插件）`);
     return undefined;
   });
+  return () => {
+    active = false;
+    if (typeof off === 'function') off();
+  };
 }
 
 /** 两份解析结果里除 models 以外不相等的字段路径（展开到第二层，方便从日志看出是哪一项触发了重启）。 */
