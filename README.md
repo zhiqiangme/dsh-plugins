@@ -33,7 +33,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 - DSH 自带的 pnpm 对刚发布的版本有观察期（`minimumReleaseAge`）：首次 `add` 会自动把该版本列入例外，
   `update --latest` 或 `add 包名@latest` 可能暂时选到旧版。要安装刚发布的最新版，先用
   `npm view @zhiqiangme/dsh-tavily-search version` 查询，再使用明确版本，例如
-  `dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search@26.10.17`（版本号换成查询结果）。
+  `dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search@26.10.18`（版本号换成查询结果）。
   Tavily 卡片的「按指定版本安装」也会生成可复制的完整规格，供 DSH「插件」页卸载后重新添加。
 - 卸载不删 `cordis.patch.yml` 里的插件配置，重新安装后沿用。
 

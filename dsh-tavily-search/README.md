@@ -94,12 +94,12 @@ DSH 网页搜索 ─ 旧版 POST /v1/messages ─────┐
 dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search
 # 更新：dsh plugin --profile desktop update --latest @zhiqiangme/dsh-tavily-search
 # 刚发布的版本：用查到的明确版本重新 add，例如
-dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search@26.10.17
+dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search@26.10.18
 ```
 
 装到 Web / CLI 就把 `desktop` 换成 `web` / `headless`。更新要带 `--latest`：版本号按日期编排（`26.10.11`），
 跨年时主版本号会变。更多说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从-npm-安装推荐)。
-上面的 `26.10.17` 是示例；实际使用卡片查到的 npm 最新版，或运行 `npm view @zhiqiangme/dsh-tavily-search version` 查询。
+上面的 `26.10.18` 是示例；实际使用卡片查到的 npm 最新版，或运行 `npm view @zhiqiangme/dsh-tavily-search version` 查询。
 命令行 `add 包名@版本` 可更新已有依赖；DSH 图形界面则按其安装流程先卸载再添加。
 卡片的一键更新保持 dshmarket 的公开 API 契约：传纯包名，由市场解析并固定版本，不能给 `packageName` 拼接 `@版本`。
 
