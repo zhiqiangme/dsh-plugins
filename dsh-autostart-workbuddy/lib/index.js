@@ -27,9 +27,10 @@
 
 import { isDeepStrictEqual } from 'node:util';
 
-import { checkForUpdate } from './backend.js';
 import { cnChatBaseHooks } from './backend-config.js';
 import { resolvePluginConfig } from './config.js';
+import { gatewayDriver } from './gateway.js';
+import { hubKeyHooks } from './hub.js';
 import { syncModels } from './models.js';
 import { createModelResync } from './resync.js';
 import { ManagedService, isFile } from './services.js';
@@ -64,7 +65,9 @@ export function apply(ctx, config) {
     return;
   }
 
-  const service = new ManagedService(resolved.spec, logger, cnChatBaseHooks(resolved, logger));
+  // 启动钩子按网关分：wb2api 补写 config.json 的 cn.chat_base；hub 没有可沿用的密钥时生成一个。
+  const hooks = resolved.gateway === 'hub' ? hubKeyHooks(resolved, logger, name) : cnChatBaseHooks(resolved, logger, name);
+  const service = new ManagedService(resolved.spec, logger, hooks);
   const installed = isFile(resolved.spec.exe);
   // 只有"用插件自管路径、但文件不存在"才当作未安装（提示去面板装）；
   // 用户在 profile 里显式配了 exe 却指错时，仍按老行为尝试启动，让错误暴露出来。
@@ -257,7 +260,7 @@ function checkBackendUpdateOnStart(resolved, hostEnv, logger) {
   const backend = resolved.backend;
   if (!backend?.enabled || !backend.checkOnStart) return;
 
-  checkForUpdate({
+  gatewayDriver(resolved).check({
     paths: backend.paths,
     env: hostEnv,
     apiBase: backend.apiBase || undefined,

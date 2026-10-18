@@ -1,5 +1,5 @@
 /**
- * 极简 ZIP 读取器：只服务一个场景——从 release 资产里取出 `wb2api.exe`。
+ * 极简 ZIP 读取器：从 release 资产里取出 `wb2api.exe`，或把 hub 的便携包整包解到目录里。
  *
  * 为什么自己写：本插件只依赖 node: 内置模块（见 services.js 顶部注释），而 Node 自带
  * zlib 却没有 zip 容器解析；为了取一个文件去引依赖不值当。真正需要的很少：
@@ -12,6 +12,8 @@
  * 再叠一层 CRC 只是重复劳动。
  */
 
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 
 const SIG_EOCD = 0x06054b50;
@@ -72,6 +74,11 @@ export function listZipEntries(buffer) {
 export function extractZipEntry(buffer, wanted) {
   const entry = listZipEntries(buffer).find((item) => item.name === wanted);
   if (!entry) throw new Error(`ZIP 里没有 ${wanted}`);
+  return readEntry(buffer, entry);
+}
+
+function readEntry(buffer, entry) {
+  const wanted = entry.name;
   if (entry.flags & 0x1) throw new Error(`${wanted} 是加密条目，拒绝解压`);
   if (entry.method !== 0 && entry.method !== 8) {
     throw new Error(`${wanted} 使用了不支持的压缩方式 ${entry.method}`);
@@ -97,4 +104,36 @@ export function extractZipEntry(buffer, wanted) {
     throw new Error(`${wanted} 解压后大小不符（期望 ${entry.uncompressedSize}，实际 ${data.length}）`);
   }
   return data;
+}
+
+/**
+ * 把归档里 `prefix` 目录下的条目解到 `destDir`（去掉 prefix），返回写出的文件数。
+ *
+ * 条目名一律当不可信输入：绝对路径、盘符、`..` 逃出目标目录的条目直接拒绝整包，
+ * 而不是跳过——被篡改过的包不该装一半。目录条目（以 / 结尾）只建目录。
+ */
+export function extractZipTree(buffer, destDir, { prefix = '' } = {}) {
+  const root = resolve(destDir);
+  const normalizedPrefix = prefix && !prefix.endsWith('/') ? `${prefix}/` : prefix;
+  let written = 0;
+  for (const entry of listZipEntries(buffer)) {
+    const name = entry.name.replace(/\\/g, '/');
+    if (normalizedPrefix && !name.startsWith(normalizedPrefix)) continue;
+    const rel = name.slice(normalizedPrefix.length);
+    if (!rel) continue;
+    if (isAbsolute(rel) || /^[A-Za-z]:/.test(rel) || rel.split('/').includes('..')) {
+      throw new Error(`ZIP 条目路径不安全：${entry.name}`);
+    }
+    const target = join(root, rel);
+    const inside = relative(root, target);
+    if (inside.startsWith('..') || isAbsolute(inside)) throw new Error(`ZIP 条目路径不安全：${entry.name}`);
+    if (name.endsWith('/')) {
+      mkdirSync(target, { recursive: true });
+      continue;
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, readEntry(buffer, entry));
+    written += 1;
+  }
+  return written;
 }

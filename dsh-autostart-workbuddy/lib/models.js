@@ -49,12 +49,19 @@ export function creditsLabel(credits) {
   return stripped || 'Free';
 }
 
+/**
+ * hub 的出口名 → 名称前缀。hub 的模型 id 不带 cn:/global:（一次只服务一个出口），
+ * 出口写在 /v1/models 应答顶层的 `realm` 里，由 fetchModels 抄到每个条目上。
+ */
+const REALM_LABELS = Object.freeze({ cn: 'CN', intl: 'GL', global: 'GL' });
+
 /** 展示名：`<CN|GL> <上游名> <倍率>`；上游名已带同款后缀时不重复追加。 */
 export function modelDisplayName(model) {
-  const region = REGION_PREFIXES.find(([prefix]) => model.id.startsWith(prefix));
+  const prefixed = REGION_PREFIXES.find(([prefix]) => model.id.startsWith(prefix))?.[1];
+  const region = prefixed ?? (typeof model.realm === 'string' ? REALM_LABELS[model.realm] : undefined);
   const base = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
   const suffix = creditsLabel(model.credits);
-  const head = region ? `${region[1]} ${base}` : base;
+  const head = region ? `${region} ${base}` : base;
   return head.toLowerCase().endsWith(suffix.toLowerCase()) ? head : `${head} ${suffix}`;
 }
 
@@ -251,7 +258,7 @@ export function panelApiKey(panelConfigPath) {
 export async function fetchModels(options = {}) {
   const { baseURL, apiKey = '', timeoutMs = 30_000, signal } = options;
   const url = modelsEndpoint(baseURL);
-  if (!url) return { ok: false, reason: '没有可用的 wb2api 地址' };
+  if (!url) return { ok: false, reason: '没有可用的网关地址' };
 
   const headers = { accept: 'application/json' };
   if (apiKey) headers.authorization = `Bearer ${apiKey}`;
@@ -274,8 +281,12 @@ export async function fetchModels(options = {}) {
     return { ok: false, reason: `${url} 的响应不是合法 JSON` };
   }
   const list = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
-  const models = list.filter((model) => model && typeof model.id === 'string' && model.id.trim());
-  return { ok: true, url, models };
+  const realm = typeof payload?.realm === 'string' ? payload.realm : undefined;
+  const models = list
+    .filter((model) => model && typeof model.id === 'string' && model.id.trim())
+    // 条目自己带了 realm 就不覆盖；只给 hub 这种"出口写在顶层"的应答补上。
+    .map((model) => (realm && model.realm === undefined ? { ...model, realm } : model));
+  return { ok: true, url, models, realm };
 }
 
 /** profile 的 cordis.patch.yml：优先显式配置，其次 DSH_PROFILE_DIR，最后 DSH_HOME/DSH_PROFILE 拼出来。 */

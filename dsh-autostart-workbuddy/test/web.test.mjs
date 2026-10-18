@@ -568,6 +568,30 @@ test('后端路由：GET 给版本快照且默认不联网，POST 校验动作�
   assert.equal(purge.status, 400);
   assert.match(purge.body.reason, /二次确认/);
   assert.equal(typeof status.body.backend.rootExists, 'boolean');
+  assert.equal(status.body.backend.gateway, 'wb2api');
+  assert.deepEqual(status.body.backend.gateways, ['wb2api', 'hub']);
+  assert.match(status.body.backend.panelUrl, /\/panel$/);
+});
+
+test('后端路由（hub）：快照来自 hub 的目录，面板地址是 hub 看板根路径；gateway 动作写配置', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wb-web-hub-'));
+  const resolved = resolvePluginConfig({ gateway: 'hub', port: await freePort() }, { DSH_WORKBUDDY_BACKEND_ROOT: root, PATH: '' });
+  const editor = editorFor();
+  const ctx = fakeCtx({ configEditor: editor });
+  registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env });
+  const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;
+
+  const status = fakeRes();
+  await handler(fakeReq('GET'), status);
+  assert.equal(status.body.backend.gateway, 'hub');
+  assert.equal(status.body.backend.exeExists, false, '没装 hub 时显示安装');
+  assert.equal(status.body.backend.root, root);
+  assert.match(status.body.backend.panelUrl, /:\d+\/$/);
+
+  const switched = fakeRes();
+  await handler(fakeReq('POST', { body: JSON.stringify({ action: 'gateway', gateway: 'wb2api' }) }), switched);
+  assert.equal(switched.status, 200);
+  assert.equal(switched.body.state, 'switched', JSON.stringify(switched.body));
 });
 
 test('插件版本路由：GET 交给版本检查器，只有 ?force=1 绕过缓存；其它方法 405、外部来源 403', async () => {

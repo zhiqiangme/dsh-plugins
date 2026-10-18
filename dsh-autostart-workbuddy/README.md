@@ -3,10 +3,12 @@
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件：DSH 启动时自动拉起
 **WorkBuddy Panel**（[workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel) 的 `wb2api.exe`），
 不用再手动启动它；还可以接管 DSH 里 workbuddy 的模型列表、在插件页管理后端版本。
+后端网关也可以换成 [workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)（见[后端网关](#后端网关)），二选一。
 
 | 服务 | 端点 | 作用 |
 | --- | --- | --- |
-| WorkBuddy Panel（`wb2api.exe`） | `127.0.0.1:7863` | profile 里 `workbuddy` provider 的上游（`http://127.0.0.1:7863/v1/`） |
+| WorkBuddy Panel（`wb2api.exe`，默认） | `127.0.0.1:7863` | profile 里 `workbuddy` provider 的上游（`http://127.0.0.1:7863/v1/`） |
+| WorkBuddy2API Hub（可选） | `127.0.0.1:7863` | 同上；与 wb2api 用同一个端口，同一时刻只跑其中一个 |
 
 同一仓库里还有 Tavily 联网搜索插件 [@zhiqiangme/dsh-tavily-search](https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-tavily-search)：两个插件各自独立开关，任何一个出问题都不影响另一个。
 
@@ -19,6 +21,28 @@
 - **退出即停，但只停自己拉起的**：DSH 退出时结束本插件 spawn 的进程；DSH 启动前就已在运行的服务（手动起的、另一个 DSH 实例留下的）不受影响。
 - **只依赖 Node 内置模块**：核心工作（拉起进程、改 profile）不注入任何 Host Service，因此不受插件加载顺序影响；
   Web 面板要用宿主 webserver 时是"用得上就用"——拿不到只少一个面板，其余功能照常。
+
+## 后端网关
+
+插件可以托管两种 OpenAI 兼容网关，在插件卡片「后端版本」区最上面的「后端网关」里切换（写本插件的 `config.gateway`）：
+
+| | wb2api（默认） | workbuddy2api-hub |
+| --- | --- | --- |
+| 上游 | [linguo2625469/workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel) | [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) |
+| 程序 | 单个 `wb2api.exe`（Go） | 便携包整目录：脚本 + 自带的 CPython 运行时（约 33MB） |
+| 目录 | `backend/`、`data/` | `hub/backend/`、`hub/data/`（账号与用量） |
+| 版本身份 | exe 里的 Go `vcs.revision` | 包内 `release-manifest.json` 的 tag |
+| 模型 id | `cn:xxx` / `global:xxx`，两个出口同时列出 | 不带前缀，一次只列一个出口；国内/国际跟随 hub 看板顶部的出口开关 |
+| 管理面板 | `http://127.0.0.1:7863/panel`，用 `config.json` 的 `api_key` 进 | `http://127.0.0.1:7863/`，用面板密码进（默认 `admin`，登录后请改） |
+
+hub 是 wb2api 停更时的备选。
+
+- **切换**：宿主按"配置变更"重启本插件，停掉旧网关，再按新网关拉起（没装就提示去点「安装」）。两种网关的程序和账号各存一份，切换不会覆盖对方的数据；但账号要在 hub 看板里另外登录或导入。
+- **端口与 provider**：两者都监听 7863，DSH 里 workbuddy provider 的 `baseURL` 不用改。
+- **网关密钥**：hub 的密钥按 插件配置 `models.apiKey` → 环境变量 `WORKBUDDY_PROXY_KEY` → wb2api `config.json` 的 `api_key` 的顺序沿用，所以凭据库里现有的 `WORKBUDDY_PROXY_KEY` 不用改。都没有时插件生成一个，存进 `hub/data/plugin-api-key`。密钥经环境变量 `API_KEY` 传给 hub，不出现在命令行里。
+- **模型白名单**：从 wb2api 切到 hub 后，`models.only` 里的 `cn:` / `global:` id 都对不上，需要在卡片里重新勾选。展示名前缀（CN / GL）按 hub 当前的出口补上。
+- **Clash 全局模式**：hub 的国内版上游同样写死成 `copilot.tencent.com`，海外出口下一样看不到 CN 模型。需要怎么改见 [docs/hub-cn-base.md](https://github.com/zhiqiangme/dsh-plugins/blob/main/dsh-autostart-workbuddy/docs/hub-cn-base.md)。
+- **命令行**：`lib/backend-cli.js` 只管 wb2api；hub 的安装、更新与回滚在卡片里操作。
 
 ## 接管模型列表
 
@@ -174,6 +198,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | `logName` | 日志文件名前缀，默认 `wb2api` |
 | `readinessTimeoutMs` | 等待端口就绪的上限，默认 30000 |
 | `stopTimeoutMs` | 停止时等待退出的上限，默认 5000；超时后强制结束 |
+| `gateway` | 托管哪种网关：`wb2api`（默认）或 `hub`；非法值按 `wb2api` 处理。`hub` 时 `exe` / `cwd` / `args` 不生效 |
 | `cnChatBase` | 拉起后端前写进 wb2api `config.json` 的 `cn.chat_base`，默认 `https://www.workbuddy.cn`；空串 = 不管这一项 |
 
 **为什么要写 `cn.chat_base`**：wb2api 内置的国内版上游 `copilot.tencent.com` 对海外出口（例如 Clash 全局模式 + TUN）
@@ -205,7 +230,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | `enabled` | 是否允许查更新 / 更新 / 回滚，默认 true |
 | `checkOnStart` | DSH 启动时查一次上游 release 并写日志，默认 true（**只提示**） |
 | `checkTtlMs` | 查询结果缓存时长，默认 6 小时（GitHub 匿名 API 只有 60 次/小时） |
-| `keepVersions` | 保留几个历史版本供回滚，默认 3 |
+| `keepVersions` | 保留几个历史版本供回滚，默认 3（hub 默认 2：每个版本是整目录） |
 | `apiBase` | 覆盖 GitHub API 基址（镜像 / 测试用），默认官方 `api.github.com` |
 
 ## 后端版本管理

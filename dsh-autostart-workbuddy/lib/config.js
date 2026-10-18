@@ -9,7 +9,9 @@
 import { join, resolve } from 'node:path';
 import { backendPaths, DEFAULT_CHECK_TTL_MS, DEFAULT_KEEP_VERSIONS } from './backend.js';
 import { DEFAULT_CN_CHAT_BASE } from './backend-config.js';
-import { DEFAULT_EFFORTS } from './models.js';
+import { normalizeGateway } from './gateway.js';
+import { DEFAULT_HUB_KEEP_VERSIONS, hubPaths, readHubApiKey } from './hub.js';
+import { DEFAULT_EFFORTS, panelApiKey } from './models.js';
 import { SERVICE_DEFAULTS, resolveDshHome } from './services.js';
 
 /** models 段默认值：默认关闭（不擅自改用户的 profile），开启后默认同步后端全部模型。 */
@@ -95,6 +97,52 @@ function buildSpec(config, common, hostEnv) {
 }
 
 /**
+ * hub 网关的服务规格：程序是自带运行时里的 python.exe 跑 wb_proxy.py。
+ *
+ * exe / cwd / args 不吃 profile 的覆盖：那三项是给 wb2api 写的（老配置里可能指着别处的
+ * wb2api.exe），切到 hub 时套用只会起错程序。账号与用量目录放在 hub/data/ 下，
+ * 换版本整目录替换程序时不受影响。
+ *
+ * 密钥走环境变量 API_KEY（hub 认它，见其 --api-key 默认值），不放命令行，免得出现在进程列表里。
+ */
+function buildHubSpec(config, common, hostEnv, apiKey) {
+  const paths = common.paths;
+  const host = stringOr(config.host, SERVICE_DEFAULTS.host);
+  const port = positiveNumber(config.port, SERVICE_DEFAULTS.port);
+  const env = { ...hostEnv, ...stringMap(config.env) };
+  // 宿主环境里的 Python 设置会让自带运行时去加载别处的标准库或 site-packages。
+  for (const key of ['PYTHONHOME', 'PYTHONPATH', 'PYTHONSTARTUP']) delete env[key];
+  Object.assign(env, {
+    // 子进程 stdout 是管道：不关缓冲，日志要等进程退出才写进文件。
+    PYTHONUNBUFFERED: '1',
+    PYTHONIOENCODING: 'utf-8',
+    PYTHONNOUSERSITE: '1',
+  });
+  if (apiKey) env.API_KEY = apiKey;
+  return {
+    key: SERVICE_DEFAULTS.key,
+    enabled: bool(config.enabled, SERVICE_DEFAULTS.enabled),
+    title: stringOr(config.title, 'WorkBuddy2API Hub'),
+    host,
+    port,
+    cwd: paths.current,
+    exe: paths.exe,
+    args: [
+      paths.script,
+      '--host', host,
+      '--port', String(port),
+      '--accounts-dir', paths.accounts,
+      '--usage-dir', paths.usage,
+    ],
+    logName: 'hub',
+    logDir: common.logDir,
+    readinessTimeoutMs: common.readinessTimeoutMs,
+    stopTimeoutMs: common.stopTimeoutMs,
+    env,
+  };
+}
+
+/**
  * 解析 models 段（模型列表同步）。
  *
  * `enabled` 默认 false：插件默认只负责拉起后端，改 profile 是显式选择。
@@ -154,27 +202,50 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
   // 目录名带插件名，与 DSH home 下其它插件的数据目录不混在一起。
   const logDir = resolve(stringOr(config.logDir, resolve(dshHome, 'autostart-workbuddy', 'logs')));
 
+  // 托管哪种网关（见 lib/gateway.js）；两种网关的程序与数据各有一套目录，切换不互相覆盖。
+  const gateway = normalizeGateway(config.gateway);
+  const wb2apiPaths = backendPaths(hostEnv);
   // 后端自管的目录布局（程序 / 数据 / 缓存分离）；默认 exe 与 cwd 都落在这里。
-  const paths = backendPaths(hostEnv);
+  const paths = gateway === 'hub' ? hubPaths(hostEnv) : wb2apiPaths;
+  const common = {
+    logDir,
+    paths,
+    readinessTimeoutMs: positiveNumber(config.readinessTimeoutMs, 30_000),
+    stopTimeoutMs: positiveNumber(config.stopTimeoutMs, 5_000),
+  };
 
-  const spec = buildSpec(
-    config,
-    {
-      logDir,
-      paths,
-      readinessTimeoutMs: positiveNumber(config.readinessTimeoutMs, 30_000),
-      stopTimeoutMs: positiveNumber(config.stopTimeoutMs, 5_000),
-    },
-    hostEnv,
-  );
+  const rawModels = plainObject(config.models);
+  // hub 的密钥沿用已有的（含 wb2api 的 api_key），DSH 凭据库里的 WORKBUDDY_PROXY_KEY 就不用改。
+  const hubKey = gateway === 'hub'
+    ? readHubApiKey({
+        explicit: stringOr(rawModels.apiKey, ''),
+        env: hostEnv,
+        wb2apiKey: panelApiKey(wb2apiPaths.config),
+        paths,
+      })
+    : '';
+  const spec = gateway === 'hub' ? buildHubSpec(config, common, hostEnv, hubKey) : buildSpec(config, common, hostEnv);
+  const models = resolveModelsConfig(config.models, spec);
+  if (gateway === 'hub') {
+    // hub 没有 wb2api 那份 config.json：密钥直接给定，不再回落去读面板配置。
+    models.apiKey = hubKey;
+    models.panelConfig = '';
+  }
+  const backend = resolveBackendConfig(config.backend, paths);
+  backend.kind = gateway;
+  if (gateway === 'hub' && plainObject(config.backend).keepVersions === undefined) {
+    // hub 每个版本是 30MB+ 的整目录（含 Python 运行时），默认少留一个。
+    backend.keepVersions = DEFAULT_HUB_KEEP_VERSIONS;
+  }
 
   return {
     enabled: spec.enabled,
+    gateway,
     logDir,
     paths,
     spec,
-    models: resolveModelsConfig(config.models, spec),
-    backend: resolveBackendConfig(config.backend, paths),
+    models,
+    backend,
     /**
      * 启动后端前写进 wb2api config.json 的 `cn.chat_base`（见 lib/backend-config.js）。
      * 缺省 = www.workbuddy.cn；显式给空串 = 插件不管这一项。
@@ -186,7 +257,7 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
      * 用来区分两种"文件不存在"：自管路径没有 exe = 还没装（面板里点安装）；
      * 用户自己配的 exe 不存在 = 配置错了，仍要按老行为尝试启动，把错误暴露出来。
      */
-    managedExe: !stringOr(config.exe, ''),
+    managedExe: gateway === 'hub' || !stringOr(config.exe, ''),
   };
 }
 
@@ -194,6 +265,7 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
 export function describeConfig(resolved) {
   const spec = resolved.spec;
   return {
+    gateway: resolved.gateway,
     key: spec.key,
     title: spec.title,
     endpoint: `${spec.host}:${spec.port}`,

@@ -219,6 +219,9 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'saving', 'selectAll', 'summary', 'syncEnabled', 'syncHint', 'title', 'uninstallConfirm', 'uninstallDesc', 'uninstallKept',
     'uninstallTitle', 'vision',
     'modelsNotInstalled', 'backendPurge', 'backendPurgeHint', 'backendPurged', 'purgeConfirm', 'purgeDesc', 'purgeKept', 'purgeTitle',
+    // 后端网关切换与 hub 专用文案
+    'backendUninstalledHub', 'gatewayHub', 'gatewayHubHint', 'gatewaySwitched', 'gatewaySwitching', 'gatewayTitle',
+    'gatewayWb2api', 'panelKeyHub', 'uninstallHubConfirm', 'uninstallHubDesc', 'uninstallHubKept', 'uninstallHubTitle',
     // 插件自身更新区（与后端版本区无关）
     'restartFailed', 'restartNow', 'restarting', 'updateAvailable', 'updateCancelled', 'updateCheck',
     'updateCheckFailed', 'updateChecking', 'updateCurrent', 'updateFailed', 'updateForce', 'updateLatestVersion',
@@ -688,6 +691,47 @@ test('卸载二次确认：未点开时不出现确认界面', () => {
   const { cards, t } = boot(backendStates({ exeExists: true, version: {}, history: [] }));
   const texts = collectText(cards[0].component({ t, view: 'page' }));
   assert.equal(texts.includes('卸载后端？'), false);
+});
+
+// ---- 后端网关切换 ----
+
+/** 卡片 13 个 state + useUpdater 7 个 + 复制密钥 1 个之后，才是「切换网关」的 state。 */
+function gatewayStates(backend, gatewaySwitch, { confirming } = {}) {
+  return [...backendStates(backend, { confirming }), ...Array(7).fill(undefined), undefined, gatewaySwitch];
+}
+
+const GATEWAY_BACKEND = { exeExists: true, version: { tag: 'v1.7.14' }, history: [], gateways: ['wb2api', 'hub'] };
+
+test('后端网关：两种网关各一个按钮，当前网关高亮且不可点，另一个可点', () => {
+  const { renderCard } = boot(gatewayStates({ ...GATEWAY_BACKEND, gateway: 'wb2api' }));
+  const buttons = collectByType(backendSection(renderCard()), 'button');
+  const wb2api = button(buttons, 'wb2api（默认）');
+  const hub = button(buttons, 'workbuddy2api-hub');
+  assert.ok(wb2api && hub, '两种网关都应有按钮');
+  assert.equal(wb2api.props.disabled, true);
+  assert.match(wb2api.props.className, /dsm-wb-btn-primary/);
+  assert.equal(hub.props.disabled, false);
+  assert.match(hub.props.className, /dsm-wb-btn-outline/);
+  assert.equal(collectText(renderCard()).some((text) => String(text).startsWith('hub 的模型 id')), false);
+});
+
+test('后端网关：老宿主快照没有 gateways 字段时不显示切换', () => {
+  const { cards, t } = boot(gatewayStates({ exeExists: true, version: {}, history: [] }));
+  const labels = buttonLabels(backendSection(cards[0].component({ t, view: 'page' })));
+  assert.equal(labels.includes('workbuddy2api-hub'), false);
+});
+
+test('后端网关（hub）：给出模型 id 与出口的说明；卸载确认用 hub 的文案；切换结果显示提示', () => {
+  const { renderCard } = boot(
+    gatewayStates({ ...GATEWAY_BACKEND, gateway: 'hub' }, { kind: 'ok', text: '已切换到 workbuddy2api-hub' }, { confirming: 'uninstall' }),
+  );
+  const text = collectText(render(renderCard()));
+  assert.ok(text.some((line) => String(line).startsWith('hub 的模型 id')), '应说明 hub 的模型 id 与出口开关');
+  assert.ok(text.includes('卸载 hub？'), '卸载确认用 hub 的标题');
+  assert.ok(text.includes('hub 的账号凭证、设置与用量（hub/data/）会保留。'));
+  assert.ok(text.includes('已切换到 workbuddy2api-hub'));
+  const labels = buttonLabels(backendSection(renderCard()));
+  assert.ok(labels.includes('wb2api（默认）'), '可以切回 wb2api');
 });
 
 // ---- 插件自身更新区 ----

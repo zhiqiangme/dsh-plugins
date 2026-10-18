@@ -9,6 +9,8 @@
  *               | http-error（返回 500）
  *               | http-health（后端健康探针：GET /healthz）
  *               | http-release（假 GitHub Release：releases/latest、commits/<tag>、资产下载）
+ *               | http-hub-release（假 workbuddy2api-hub Release：便携包 zip + checksums.txt / SHA256SUMS）
+ *               | http-hub-health（hub 的健康探针：GET /health，无 service 字段、带 accounts）
  *   TEST_PORT   监听端口（缺省 0 = 随机端口，用于"永远不会就绪"的失败用例）
  *   TEST_MODELS_JSON  自定义 /v1/models 响应体（原始 JSON 文本）
  *   TEST_TOKEN  需要校验的 Bearer 令牌；给了就校验 Authorization 头
@@ -21,6 +23,16 @@
  *   TEST_RELEASE_BAD_CHECKSUM=1  故意给错的 sha256
  *   TEST_RELEASE_NO_CHECKSUMS=1  不提供 checksums.txt
  *   TEST_RELEASE_FAIL_DOWNLOAD=1 资产下载返回 500
+ *
+ * http-hub-release 专用：
+ *   TEST_RELEASE_TAG             默认 v9.9.9
+ *   TEST_HUB_MANIFEST_TAG        包内 release-manifest.json 自称的 tag（默认 = TAG）
+ *   TEST_HUB_SHA256SUMS_ONLY=1   只发 SHA256SUMS（不发 checksums.txt）
+ *   TEST_HUB_NO_RUNTIME=1        包里不带 python/python.exe
+ *   TEST_HUB_EVIL=1              包里夹一个 ../ 逃逸条目
+ * http-hub-health 专用：
+ *   TEST_HUB_ACCOUNTS            accounts_ready（默认 1）
+ *   TEST_HUB_FOREIGN=1           应答带 service 字段（模拟端口被别的服务占着）
  *
  * 注意：本文件放在 fixtures/ 而不是 test/ 下。Node 的测试运行器会把 test 目录下的
  * 所有 .mjs 全部当成测试文件收集，若放在 test/ 里，它会被当作一个用例执行，
@@ -164,6 +176,98 @@ async function startFakeRelease() {
   });
 }
 
+/** 假 hub Release：资产名、包内布局与真实 workbuddy2api-hub 便携包一致（wb-proxy/ + 顶层 manifest）。 */
+async function startFakeHubRelease() {
+  const { createServer } = await import('node:http');
+  const { createHash } = await import('node:crypto');
+  const { buildZip } = await import('./zip-builder.mjs');
+
+  const tag = process.env.TEST_RELEASE_TAG || 'v9.9.9';
+  const manifestTag = process.env.TEST_HUB_MANIFEST_TAG || tag;
+  const assetName = `workbuddy2api-hub-${tag}.zip`;
+  const entries = [
+    { name: 'wb-proxy/', data: Buffer.alloc(0), method: 0 },
+    { name: 'wb-proxy/wb_proxy.py', data: Buffer.from(`# fake hub ${tag}
+`), method: 8 },
+    { name: 'wb-proxy/dashboard.html', data: Buffer.from('<html></html>'), method: 8 },
+    { name: 'release-manifest.json', data: Buffer.from(JSON.stringify({ name: 'workbuddy2api-hub', root: 'wb-proxy', tag: manifestTag, version: manifestTag.replace(/^v/, '') })), method: 8 },
+  ];
+  if (process.env.TEST_HUB_NO_RUNTIME !== '1') {
+    entries.push({ name: 'wb-proxy/python/python.exe', data: Buffer.from('MZ fake python'), method: 8 });
+  }
+  if (process.env.TEST_HUB_EVIL === '1') {
+    entries.push({ name: 'wb-proxy/../escaped.txt', data: Buffer.from('nope'), method: 0 });
+  }
+  const zip = buildZip(entries);
+  const sha = createHash('sha256').update(zip).digest('hex');
+  const sums = `${sha}  ${assetName}
+`;
+  const sumsName = process.env.TEST_HUB_SHA256SUMS_ONLY === '1' ? 'SHA256SUMS' : 'checksums.txt';
+
+  const server = createServer((req, res) => {
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const url = req.url ?? '/';
+    const send = (status, type, body) => {
+      res.writeHead(status, { 'content-type': type, 'content-length': Buffer.byteLength(body) });
+      res.end(body);
+    };
+    if (url.endsWith('/releases/latest')) {
+      send(200, 'application/json', JSON.stringify({
+        tag_name: tag,
+        published_at: '2026-10-18T00:00:00Z',
+        body: '假 hub release',
+        assets: [
+          { name: assetName, size: zip.length, browser_download_url: `${origin}/assets/${assetName}` },
+          { name: `workbuddy2api-${tag.replace(/^v/, '')}-r1.apk`, size: 3, browser_download_url: `${origin}/assets/apk` },
+          { name: sumsName, size: sums.length, browser_download_url: `${origin}/assets/${sumsName}` },
+        ],
+      }));
+      return;
+    }
+    if (url.includes('/commits/')) {
+      // hub 不该查 commit：查了就让测试看得出来。
+      send(500, 'application/json', '{"error":"hub release 不该查 commit"}');
+      return;
+    }
+    if (url === `/assets/${assetName}`) {
+      res.writeHead(200, { 'content-type': 'application/zip', 'content-length': zip.length });
+      res.end(zip);
+      return;
+    }
+    if (url === `/assets/${sumsName}`) {
+      send(200, 'text/plain; charset=utf-8', sums);
+      return;
+    }
+    send(404, 'application/json', '{"error":"not found"}');
+  });
+  server.listen(port, '127.0.0.1', () => {
+    process.stdout.write(`dummy http listening ${server.address().port}
+`);
+  });
+}
+
+/** hub 的健康探针：/health 恒 200，形状与真实 hub 一致。 */
+async function startFakeHubHealth() {
+  const { createServer } = await import('node:http');
+  const ready = Number(process.env.TEST_HUB_ACCOUNTS ?? 1);
+  const server = createServer((req, res) => {
+    if (!req.url?.startsWith('/health')) {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{"error":"not found"}');
+      return;
+    }
+    const payload = { ok: true, realm: 'intl', accounts: ready, accounts_ready: ready, api_key_required: true };
+    if (process.env.TEST_HUB_FOREIGN === '1') payload.service = 'something-else';
+    const body = JSON.stringify(payload);
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
+    res.end(body);
+  });
+  server.listen(port, '127.0.0.1', () => {
+    process.stdout.write(`dummy http listening ${server.address().port}
+`);
+  });
+}
+
 /** 后端健康探针：/healthz 返回 workbuddy2api 的固定形状。 */
 async function startFakeHealth() {
   const { createServer } = await import('node:http');
@@ -188,6 +292,10 @@ async function startFakeHealth() {
 
 if (mode === 'http-release') {
   await startFakeRelease();
+} else if (mode === 'http-hub-release') {
+  await startFakeHubRelease();
+} else if (mode === 'http-hub-health') {
+  await startFakeHubHealth();
 } else if (mode === 'http-health') {
   await startFakeHealth();
 } else if (mode.startsWith('http-')) {

@@ -12,7 +12,7 @@
 
 import { createHash } from 'node:crypto';
 
-/** 上游仓库。 */
+/** 上游仓库（wb2api）。hub 网关用自己的仓库，经 `repo` 参数传进来（见 lib/hub.js）。 */
 export const REPO = Object.freeze({ owner: 'linguo2625469', name: 'workbuddy2api-panel' });
 
 export const DEFAULT_API_BASE = 'https://api.github.com';
@@ -63,16 +63,20 @@ async function getJson(url, { env, timeoutMs = 20_000 } = {}) {
  * 而本地 exe 里能读到的只有 commit（`vcs.revision`）。要判定"是否最新"，
  * 必须把 tag 换算成 commit 才能比较。
  */
-export async function fetchLatestRelease({ env, apiBase = DEFAULT_API_BASE, timeoutMs } = {}) {
-  const release = await getJson(`${apiBase}/repos/${REPO.owner}/${REPO.name}/releases/latest`, { env, timeoutMs });
+export async function fetchLatestRelease({ env, apiBase = DEFAULT_API_BASE, timeoutMs, repo = REPO, resolveCommit = true } = {}) {
+  const release = await getJson(`${apiBase}/repos/${repo.owner}/${repo.name}/releases/latest`, { env, timeoutMs });
   const tag = typeof release?.tag_name === 'string' ? release.tag_name.trim() : '';
   if (!tag) throw new Error('release 数据里没有 tag_name');
 
-  const commitInfo = await getJson(`${apiBase}/repos/${REPO.owner}/${REPO.name}/commits/${encodeURIComponent(tag)}`, {
-    env,
-    timeoutMs,
-  });
-  const commit = typeof commitInfo?.sha === 'string' ? commitInfo.sha : '';
+  // hub 的版本身份是包内 release-manifest.json 的 tag，不需要 commit：省一次 API 调用（匿名额度只有 60 次/小时）。
+  let commit = '';
+  if (resolveCommit) {
+    const commitInfo = await getJson(`${apiBase}/repos/${repo.owner}/${repo.name}/commits/${encodeURIComponent(tag)}`, {
+      env,
+      timeoutMs,
+    });
+    commit = typeof commitInfo?.sha === 'string' ? commitInfo.sha : '';
+  }
 
   const assets = Array.isArray(release.assets)
     ? release.assets
@@ -90,11 +94,11 @@ export async function fetchLatestRelease({ env, apiBase = DEFAULT_API_BASE, time
 }
 
 /** 从资产列表里挑出 Windows 产物；挑不到就明确报错（而不是拿错平台的包去替换）。 */
-export function pickWindowsAsset(assets) {
-  const asset = (assets ?? []).find((item) => WINDOWS_ASSET_PATTERN.test(item.name));
+export function pickWindowsAsset(assets, pattern = WINDOWS_ASSET_PATTERN, label = 'windows-amd64') {
+  const asset = (assets ?? []).find((item) => pattern.test(item.name));
   if (!asset) {
     const names = (assets ?? []).map((item) => item.name).join(', ') || '(无资产)';
-    throw new Error(`release 里没有 windows-amd64 产物，现有资产：${names}`);
+    throw new Error(`release 里没有 ${label} 产物，现有资产：${names}`);
   }
   return asset;
 }
@@ -143,12 +147,15 @@ export async function downloadAsset(asset, { env, timeoutMs = 120_000, onProgres
   return Buffer.concat(chunks);
 }
 
-/** 取同一 release 里的 checksums.txt；没有就返回空表（调用方据此决定是否强制校验）。 */
-export async function fetchChecksums(release, { env, apiBase = DEFAULT_API_BASE, timeoutMs } = {}) {
-  const asset = (release.assets ?? []).find((item) => item.name === CHECKSUMS_NAME);
+/**
+ * 取同一 release 里的校验和文件；没有就返回空表（调用方据此决定是否强制校验）。
+ * `names` 按先后找第一个存在的（hub 同时发 checksums.txt 与 SHA256SUMS，内容一致）。
+ */
+export async function fetchChecksums(release, { env, apiBase = DEFAULT_API_BASE, timeoutMs, names = [CHECKSUMS_NAME] } = {}) {
+  const asset = names.map((name) => (release.assets ?? []).find((item) => item.name === name)).find(Boolean);
   if (!asset) return new Map();
   const response = await fetch(asset.url, { headers: requestHeaders(env), signal: AbortSignal.timeout(timeoutMs ?? 30_000) });
-  if (!response.ok) throw new Error(`下载 ${CHECKSUMS_NAME} 返回 ${response.status}`);
+  if (!response.ok) throw new Error(`下载 ${asset.name} 返回 ${response.status}`);
   return parseChecksums(await response.text());
 }
 

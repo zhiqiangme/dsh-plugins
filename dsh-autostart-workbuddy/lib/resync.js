@@ -4,17 +4,17 @@
  * 启动时和卡片「保存并同步」各同步一次还不够：上游下架模型后，wb2api 的 `/v1/models` 不再列出它，
  * 但 DSH 不重启时 profile 里仍留着旧条目，用户选中它的请求都会失败。这里按低频间隔复用 syncModels，
  * 沿用它的保护：空列表不清空、白名单里已不存在的 id 直接滤掉、只在有变化时写；另外：
- *   - 后端 `/healthz` 不通，或账号池暂无可用账号（503，此时面板目录不可信）时整轮跳过；
+ *   - 后端健康探针（wb2api 的 `/healthz` / hub 的 `/health`）不通，或账号池暂无可用账号（此时目录不可信）时整轮跳过；
  *   - 移除模型要连续两轮确认（removalGuard），避免一次上游抖动把模型删掉又加回来。
  *
  * 网关密钥：syncModels 每轮会调 ensureProxyCredential，它只读凭据库，值已在（且不是占位值）就不写，
  * 所以定时同步不会每轮重写 WORKBUDDY_PROXY_KEY；推迟写入的那一轮连读都不读。
  */
 
-import { probeHealthz } from './backend.js';
+import { gatewayDriver } from './gateway.js';
 import { syncModels } from './models.js';
 
-/** 探测 /healthz 的地址：跟随 models.baseURL（可能指向外部实例），解析不了再退回托管端口。 */
+/** 健康探针的地址：跟随 models.baseURL（可能指向外部实例），解析不了再退回托管端口。 */
 export function healthTarget(baseURL, spec) {
   try {
     const url = new URL(baseURL);
@@ -32,12 +32,12 @@ export function healthTarget(baseURL, spec) {
  * @param {() => object | undefined} options.editor       现取宿主 configEditor
  * @param {() => object | undefined} options.credentials  现取宿主凭据服务
  * @param {NodeJS.ProcessEnv} [options.env]
- * @param {Function} [options.probe] 测试替身：默认 probeHealthz
+ * @param {Function} [options.probe] 测试替身：默认按网关取（wb2api 探 /healthz，hub 探 /health）
  * @param {Function} [options.sync]  测试替身：默认 syncModels
  * @param {string} [options.name]    日志前缀
  */
 export function createModelResync(options) {
-  const { resolved, logger, editor, credentials, env = process.env, probe = probeHealthz, sync = syncModels, name = 'dsh-autostart-workbuddy' } = options;
+  const { resolved, logger, editor, credentials, env = process.env, probe = gatewayDriver(options.resolved).probe, sync = syncModels, name = 'dsh-autostart-workbuddy' } = options;
   const removalGuard = { missing: new Set() };
   let timer;
   let running;

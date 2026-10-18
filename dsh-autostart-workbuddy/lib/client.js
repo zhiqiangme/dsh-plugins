@@ -16,7 +16,9 @@
  * configForms 通道要求宿主半侧声明带 .volatile() 的 schemastery Config，
  * 本插件刻意不引这个依赖，所以走自建路由。
  *
- * 插件更新（卡片最底部，与上面"后端版本"那块无关——那块管 wb2api，这块管本插件自己）：
+ * 后端网关（"后端版本"区最上面）：wb2api / workbuddy2api-hub 二选一，切换写本插件的 config.gateway。
+ *
+ * 插件更新（卡片最底部，与上面"后端版本"那块无关——那块管后端网关，这块管本插件自己）：
  * 版本检查走宿主半侧的 version 路由（问 npm）；一键更新交给 dshmarket 的公开更新 API v1，
  * 装了市场才有按钮，没装只提示有新版本，本插件不自己跑 pnpm。
  *
@@ -214,6 +216,18 @@ window.__ModuleLoader__.load({
       backendInstalled: '后端已安装 {tag}。',
       backendNoAccounts: '后端已启动，但还没有可用的 WorkBuddy 账号，请打开上面的后端面板登录。',
       backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
+      backendUninstalledHub: 'hub 已卸载（hub/data/ 已保留）。',
+      gatewayTitle: '后端网关',
+      gatewayWb2api: 'wb2api（默认）',
+      gatewayHub: 'workbuddy2api-hub',
+      gatewaySwitching: '切换中…',
+      gatewaySwitched: '已切换到 {name}，插件正在重启后端。{name} 还没安装的话，请在下方点「安装」。',
+      gatewayHubHint: 'hub 的模型 id 不带 cn:/global: 前缀，国内/国际跟随 hub 看板顶部的出口开关；从 wb2api 切过来后需要重新勾选模型。',
+      panelKeyHub: 'hub 看板用面板密码登录（默认 admin，登录后请在看板里修改），不需要访问密钥。',
+      uninstallHubTitle: '卸载 hub？',
+      uninstallHubDesc: '会停止 hub，并删除程序目录（含自带的 Python 运行时）、历史版本与下载缓存。',
+      uninstallHubKept: 'hub 的账号凭证、设置与用量（hub/data/）会保留。',
+      uninstallHubConfirm: '确认卸载',
       cancel: '取消',
       uninstallTitle: '卸载后端？',
       uninstallDesc: '会停止后端，并删除程序文件：wb2api.exe、历史版本、下载缓存。',
@@ -309,6 +323,18 @@ window.__ModuleLoader__.load({
       backendInstalled: 'Backend installed: {tag}.',
       backendNoAccounts: 'The backend is running but has no usable WorkBuddy account yet; sign in from the backend panel above.',
       backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
+      backendUninstalledHub: 'Hub uninstalled (hub/data/ kept).',
+      gatewayTitle: 'Gateway',
+      gatewayWb2api: 'wb2api (default)',
+      gatewayHub: 'workbuddy2api-hub',
+      gatewaySwitching: 'Switching…',
+      gatewaySwitched: 'Switched to {name}; the plugin is restarting the backend. If {name} is not installed yet, click "Install" below.',
+      gatewayHubHint: 'Hub model ids have no cn:/global: prefix; China vs. international follows the exit switch at the top of the hub dashboard. Re-select your models after switching from wb2api.',
+      panelKeyHub: 'The hub dashboard signs in with its panel password (default admin; change it in the dashboard after signing in), not an access key.',
+      uninstallHubTitle: 'Uninstall the hub?',
+      uninstallHubDesc: 'Stops the hub and deletes its program directory (including the bundled Python runtime), archived versions and download cache.',
+      uninstallHubKept: "The hub's credentials, settings and usage (hub/data/) are kept.",
+      uninstallHubConfirm: 'Uninstall',
       cancel: 'Cancel',
       uninstallTitle: 'Uninstall the backend?',
       uninstallDesc: 'Stops the backend and deletes its program files: wb2api.exe, archived versions, download cache.',
@@ -430,7 +456,8 @@ window.__ModuleLoader__.load({
      *
      * kind 决定文案前缀（uninstall* / purge*），params 给文案插值（如 {root}）。
      */
-    function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm, kind = 'uninstall', params }) {
+    function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm, kind: action = 'uninstall', textKind, params }) {
+      const kind = textKind ?? action;
       const cancel = h(
         'button',
         { key: 'cancel', type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', onClick: onCancel },
@@ -978,7 +1005,8 @@ window.__ModuleLoader__.load({
               setCheck(payload.check?.error ? { error: payload.check.error } : payload.check);
             } else if (payload.ok) {
               setCheck(undefined);
-              const done = t(BACKEND_NOTICE[action] ?? 'backendUpdated', {
+              const noticeKey = action === 'uninstall' && payload.backend?.gateway === 'hub' ? 'backendUninstalledHub' : BACKEND_NOTICE[action];
+              const done = t(noticeKey ?? 'backendUpdated', {
                 tag: payload.latest?.tag ?? payload.local?.tag ?? '',
                 root: payload.root ?? '',
               });
@@ -1015,6 +1043,10 @@ window.__ModuleLoader__.load({
         setPanelKey({ busy: true });
         try {
           const payload = await request(PANEL_KEY_PATH, 'POST', {});
+          if (payload.gateway === 'hub') {
+            setPanelKey({ kind: 'ok', text: t('panelKeyHub') });
+            return;
+          }
           if (!payload.key) {
             setPanelKey({ kind: 'ok', text: t('panelKeyNone') });
             return;
@@ -1030,6 +1062,26 @@ window.__ModuleLoader__.load({
           setPanelKey({ kind: 'error', text: errorText(error) });
         }
       }, [t]);
+
+      // 切换后端网关。宿主写完 config.gateway 会重启本插件（停旧网关、按新网关拉起），
+      // 路由在重启期间短暂不可用，所以隔一会儿再读后端与模型区，而不是立即读。
+      const [gatewaySwitch, setGatewaySwitch] = useState(undefined);
+      const switchGateway = useCallback(async (gateway, label) => {
+        setGatewaySwitch({ busy: gateway });
+        try {
+          const payload = await request(BACKEND_PATH, 'POST', { action: 'gateway', gateway });
+          if (!payload.ok) {
+            setGatewaySwitch({ kind: 'error', text: payload.reason ?? '' });
+            return;
+          }
+          setGatewaySwitch({ kind: 'ok', text: t('gatewaySwitched', { name: label }) });
+          if (payload.state === 'switched') {
+            setTimeout(() => { loadBackend(); load(false); }, 2500);
+          }
+        } catch (error) {
+          setGatewaySwitch({ kind: 'error', text: errorText(error) });
+        }
+      }, [t, loadBackend, load]);
 
       // 行详情页在缺少包描述时才用 summary 视图；本包有 description，正常走 page。
       if (view === 'summary') {
@@ -1185,7 +1237,35 @@ window.__ModuleLoader__.load({
         // 老快照没有 exeExists 字段时按"已安装"处理，避免误显示成未安装。
         const installed = backend.exeExists !== false;
 
-        const section = [
+        // 老宿主的快照没有 gateways 字段：不显示切换（它也不认 gateway 动作）。
+        const gateways = Array.isArray(backend.gateways) ? backend.gateways : [];
+        const currentGateway = backend.gateway ?? 'wb2api';
+        const gatewayLabel = (id) => t(id === 'hub' ? 'gatewayHub' : 'gatewayWb2api');
+        const section = [];
+        if (gateways.length > 1) {
+          section.push(
+            h(
+              'div',
+              { key: 'gateway', className: 'dsm-wb-backend-head' },
+              h('span', { className: 'dsm-wb-backend-title' }, t('gatewayTitle')),
+              gateways.map((id) =>
+                wbButton(
+                  `gateway-${id}`,
+                  id === currentGateway ? 'primary' : 'outline',
+                  gatewaySwitch?.busy === id ? t('gatewaySwitching') : gatewayLabel(id),
+                  () => switchGateway(id, gatewayLabel(id)),
+                  id === currentGateway || Boolean(gatewaySwitch?.busy) || Boolean(backendBusy),
+                ),
+              ),
+            ),
+          );
+          if (currentGateway === 'hub') {
+            section.push(h('p', { key: 'gatewayHint', className: 'dsm-wb-backend-line' }, t('gatewayHubHint')));
+          }
+          const switched = wbNotice('gatewayNotice', gatewaySwitch?.busy ? undefined : gatewaySwitch);
+          if (switched) section.push(switched);
+        }
+        section.push(
           h(
             'div',
             { key: 'head', className: 'dsm-wb-backend-head' },
@@ -1275,13 +1355,14 @@ window.__ModuleLoader__.load({
             h('strong', null, t('backendCurrent', { version: currentTag })),
             version.builtAt ? ` · ${t('backendBuilt', { time: version.builtAt })}` : '',
           ),
-        ];
+        );
 
         if (confirming) {
           // 老状态里可能是 true（改成动作名之前的写法），按卸载处理。
           const kind = confirming === 'purge' ? 'purge' : 'uninstall';
           section.push(renderUninstallConfirm({
             t, Modal, h, kind, params: { root: backend.root ?? '' },
+            textKind: kind === 'uninstall' && currentGateway === 'hub' ? 'uninstallHub' : undefined,
             onCancel: () => setConfirming(false),
             onConfirm: () => { setConfirming(false); runBackend(kind, { confirm: true }); },
           }));

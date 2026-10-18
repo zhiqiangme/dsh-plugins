@@ -23,15 +23,7 @@
 
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  applyUpdate,
-  checkForUpdate,
-  describeBackend,
-  installBackend,
-  purgeBackendData,
-  rollbackBackend,
-  uninstallBackend,
-} from './backend.js';
+import { GATEWAY_IDS, gatewayDriver } from './gateway.js';
 import { creditsLabel, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, syncModels } from './models.js';
 import { isFile } from './services.js';
 import { createVersionChecker } from './update.js';
@@ -51,7 +43,7 @@ export const MODELS_PATH = `${PANEL_BASE}/models`;
 /** 后端版本与更新端点（GET 读状态 / POST 执行 check|update|rollback）。 */
 export const BACKEND_PATH = `${PANEL_BASE}/backend`;
 
-/** 本插件自身的版本检查端点：当前运行版本 vs npm latest（?force=1 绕过缓存）。与后端 wb2api 的版本无关。 */
+/** 本插件自身的版本检查端点：当前运行版本 vs npm latest（?force=1 绕过缓存）。与后端网关的版本无关。 */
 export const VERSION_PATH = `${PANEL_BASE}/version`;
 
 /**
@@ -146,6 +138,8 @@ function resolveApiKey(models, env) {
  * key 为空字符串 = config.json 没设 api_key，控制台不鉴权、不会弹密钥框。
  */
 export function readPanelKey(resolved) {
+  // hub 的看板用面板密码登录（默认 admin），不认 api_key；浏览器半侧据 gateway 给出对应提示。
+  if (resolved?.gateway === 'hub') return { ok: true, key: '', gateway: 'hub' };
   const path = resolved?.models?.panelConfig || resolved?.backend?.paths?.config || resolved?.paths?.config || '';
   if (!path || !isFile(path)) {
     return { ok: false, reason: `找不到后端配置文件 ${path || 'config.json'}（后端可能还没安装或从未启动过）` };
@@ -296,12 +290,13 @@ let backendBusy = false;
  * GET 默认**不联网**（首屏要快，GitHub 也可能慢甚至不通），带 `?check=1` 才真去查 release。
  * POST 只接受 check / update / rollback 三个动作；update 与 rollback 互斥。
  */
-async function handleBackend(req, res, { logger, resolved, env, service }) {
+async function handleBackend(req, res, { logger, resolved, env, service, editor }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
+  const driver = gatewayDriver(resolved);
   // 面板地址由服务规格推出来（端口可被 profile 覆盖），浏览器半侧拿它渲染可点击链接。
-  const panelUrl = `http://${resolved.spec?.host ?? '127.0.0.1'}:${resolved.spec?.port ?? 7863}/panel`;
-  const snapshot = () => ({ ...describeBackend(paths), panelUrl });
+  const panelUrl = `http://${resolved.spec?.host ?? '127.0.0.1'}:${resolved.spec?.port ?? 7863}${driver.panelPath}`;
+  const snapshot = () => ({ ...driver.describe(paths), gateway: driver.id, gateways: [...GATEWAY_IDS], panelUrl });
 
   if (req.method === 'GET') {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -310,7 +305,7 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
       return;
     }
     try {
-      const check = await checkForUpdate({
+      const check = await driver.check({
         paths,
         env,
         apiBase,
@@ -341,8 +336,13 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
   }
   const action = typeof body.value.action === 'string' ? body.value.action : '';
 
+  if (action === 'gateway') {
+    json(res, 200, await selectGateway({ resolved, editor, gateway: body.value.gateway, busy: backendBusy }));
+    return;
+  }
+
   if (action === 'check') {
-    const check = await checkForUpdate({
+    const check = await driver.check({
       paths,
       env,
       apiBase,
@@ -379,8 +379,8 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
   backendBusy = true;
   try {
     let result;
-    if (action === 'install') {
-      result = await installBackend({
+    if (action === 'install' || action === 'update') {
+      result = await driver[action]({
         paths,
         env,
         apiBase,
@@ -388,26 +388,40 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
         logger,
         keepVersions: resolved.backend?.keepVersions,
       });
-    } else if (action === 'uninstall') {
-      result = await uninstallBackend({ paths, service, logger });
     } else if (action === 'purge') {
-      result = await purgeBackendData({ paths, service, logger, env });
-    } else if (action === 'update') {
-      result = await applyUpdate({
-        paths,
-        env,
-        apiBase,
-        service,
-        logger,
-        keepVersions: resolved.backend?.keepVersions,
-      });
+      result = await driver.purge({ paths, service, logger, env });
     } else {
-      result = await rollbackBackend({ paths, service, logger });
+      result = await driver[action]({ paths, service, logger });
     }
     json(res, result.ok ? 200 : 400, { ...result, backend: snapshot() });
   } finally {
     backendBusy = false;
   }
+}
+
+/**
+ * 切换后端网关：把选择写进本插件那一行的 `config.gateway`。
+ *
+ * 写完由宿主按"配置变更"重启本插件（index.js 的 internal/update 钩子只放过 models.* 的就地更新，
+ * gateway 变了照默认流程重启）：dispose 停掉本插件拉起的旧网关，重新 apply 后按新网关拉起
+ * （没装就只挂面板，等用户点安装）。两种网关监听同一端口，所以不能先起新的再停旧的。
+ * 更新 / 安装进行中拒绝切换：重启会在换文件的半路把进程停掉。
+ */
+export async function selectGateway({ resolved, editor, gateway, busy = false }) {
+  if (!GATEWAY_IDS.includes(gateway)) {
+    return { ok: false, reason: `gateway 只能是 ${GATEWAY_IDS.join(' / ')}` };
+  }
+  if (gateway === resolved.gateway) return { ok: true, state: 'unchanged', gateway };
+  if (busy) return { ok: false, reason: '后端正在安装或更新，完成后再切换' };
+  if (typeof editor?.edit !== 'function') return { ok: false, reason: '宿主没有 configEditor 服务，无法保存网关选择' };
+  const entry = findConfigEntry(editor, { id: PLUGIN_ID });
+  if (!entry) return { ok: false, reason: `DSH 里没有可编辑的 ${PLUGIN_ID} 条目` };
+  try {
+    await editor.edit(entry, (current) => ({ ...plainObject(current), gateway }));
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+  return { ok: true, state: 'switched', gateway, previous: resolved.gateway, restarting: true };
 }
 
 /**
@@ -550,7 +564,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       const disposeBackend = webServer.register({
         kind: 'exact',
         path: BACKEND_PATH,
-        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service })),
+        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx) })),
       });
 
       const disposeVersion = webServer.register({
