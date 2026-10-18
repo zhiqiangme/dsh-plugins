@@ -30,7 +30,7 @@
 | --- | --- | --- |
 | 上游 | [linguo2625469/workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel) | [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) |
 | 程序 | 单个 `wb2api.exe`（Go） | 便携包整目录：脚本 + 自带的 CPython 运行时（约 33MB） |
-| 目录 | `backend/`、`data/` | `hub/backend/`、`hub/data/`（账号与用量） |
+| 目录 | `wb2api/backend/`、`wb2api/data/` | `hub/backend/`、`hub/data/`（账号与用量） |
 | 版本身份 | exe 里的 Go `vcs.revision` | 包内 `release-manifest.json` 的 tag |
 | 模型 id | `cn:xxx` / `global:xxx`，两个出口同时列出 | 不带前缀，一次只列一个出口；国内/国际跟随 hub 看板顶部的出口开关 |
 | 管理面板 | `http://127.0.0.1:7863/panel`，用 `config.json` 的 `api_key` 进 | `http://127.0.0.1:7863/`，用面板密码进（默认 `admin`，登录后请改） |
@@ -175,7 +175,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
     stopTimeoutMs: 5000
     port: 7863
     # exe / cwd 默认指向插件自管的后端目录，通常不用写：
-    #   $DSH_HOME/autostart-workbuddy/backend/current/{wb2api.exe,config.json}
+    #   $DSH_HOME/autostart-workbuddy/wb2api/backend/current/{wb2api.exe,config.json}
     args: ['-config', 'config.json']
     models:
       enabled: true
@@ -192,9 +192,9 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | `enabled` | 总开关；`false` 时完全不拉起（默认 true） |
 | `title` | 日志里显示的服务名，默认 `WorkBuddy Panel` |
 | `host` / `port` | 就绪探测目标，默认 `127.0.0.1:7863` |
-| `exe` | 可执行文件，默认 `$DSH_HOME/autostart-workbuddy/backend/current/wb2api.exe` |
+| `exe` | 可执行文件，默认 `$DSH_HOME/autostart-workbuddy/wb2api/backend/current/wb2api.exe` |
 | `args` | 附加参数，默认 `['-config', 'config.json']` |
-| `cwd` | 子进程工作目录，默认 `$DSH_HOME/autostart-workbuddy/backend/current` |
+| `cwd` | 子进程工作目录，默认 `$DSH_HOME/autostart-workbuddy/wb2api/backend/current` |
 | `env` | 追加到子进程环境的键值对（不会改写 DSH 自己的环境） |
 | `logDir` | 日志目录，默认 `$DSH_HOME/autostart-workbuddy/logs` |
 | `logName` | 日志文件名前缀，默认 `wb2api` |
@@ -240,12 +240,18 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 后端（`wb2api.exe`）由插件自己管理安装位置与更新，目录布局在 `$DSH_HOME/autostart-workbuddy/`：
 
 ```
-backend/current/     正在用的 wb2api.exe + config.json + installed.json（版本清单）
-backend/versions/    历史版本，回滚用（保留最近 keepVersions 个）
-data/                账号凭证与状态：auths/ · state.json · usage.json · request-logs/
-cache/               下载的 release 包与查询缓存
-logs/                后端 stdout/stderr
+wb2api/backend/current/   正在用的 wb2api.exe + config.json + installed.json（版本清单）
+wb2api/backend/versions/  历史版本，回滚用（保留最近 keepVersions 个）
+wb2api/data/              账号凭证与状态：auths/ · state.json · usage.json · request-logs/
+wb2api/cache/             下载的 release 包与查询缓存
+hub/                      hub 网关的同一套目录（见「后端网关」）
+logs/                     两种网关共用的 stdout/stderr 日志
 ```
+
+老版本插件把 `backend/`、`data/`、`cache/` 直接放在 `autostart-workbuddy/` 下。插件启动时（拉起 wb2api 之前）
+会把它们挪进 `wb2api/`，并把 `config.json` 里指向老目录的绝对路径（通常是 `auth_dir`、`state_file`）改成新位置。
+先挪进 `wb2api.migrating/`，全部挪完再改名，中途挪不动（例如旧的 wb2api.exe 还被别的进程占着）就全部放回原处，
+本次照旧用老位置，日志里留一条警告，下次启动再试。
 
 **程序与数据分离**是刻意的：`config.json` 里的 `auth_dir` / `state_file` 指向 `data/` 的绝对路径，
 所以切换版本时凭证与状态原地不动，更新永远不碰账号。
@@ -265,9 +271,9 @@ vcs.time=2026-10-08T00:49:09Z
 ### 更新流程（只在面板里点，不自动装）
 
 1. 取最新 release → 选中 `*-windows-amd64.zip`
-2. 下载到 `cache/`，算 sha256 与 release 的 `checksums.txt` 比对——**没有校验和就拒绝安装**
+2. 下载到 `wb2api/cache/`，算 sha256 与 release 的 `checksums.txt` 比对——**没有校验和就拒绝安装**
 3. 解压出 `wb2api.exe`，校验它自称的 `vcs.revision` 等于目标 tag 的 commit
-4. 停后端（Windows 下运行中的 exe 被锁）→ 旧版本归档到 `backend/versions/<旧版本>/` → 新 exe 落到 `current/`
+4. 停后端（Windows 下运行中的 exe 被锁）→ 旧版本归档到 `wb2api/backend/versions/<旧版本>/` → 新 exe 落到 `current/`
 5. 起后端 → 探 `/healthz`（必须返回 `service: workbuddy2api`）
 6. 失败自动回滚到上一版本并重启
 
@@ -277,7 +283,7 @@ vcs.time=2026-10-08T00:49:09Z
 
 面板那一行按钮按状态切换：**没装**时显示「安装」，**装了**时显示「更新 + 卸载（红色）+ 回滚」。
 
-- **安装**：从最新 release 拉 `windows-amd64` 包装到 `backend/current/`。已经装了会拒绝——
+- **安装**：从最新 release 拉 `windows-amd64` 包装到 `wb2api/backend/current/`。已经装了会拒绝——
   那应该用「更新」（安装只认 release 的产物，不接受任意版本）。
 - **卸载**：**二次确认弹窗**之后才执行——停后端，删掉 `wb2api.exe`、历史版本与下载缓存；
   **保留 `config.json` 与 `data/`（账号凭证与状态）**。要连数据一起清，用右侧的「彻底卸载」。

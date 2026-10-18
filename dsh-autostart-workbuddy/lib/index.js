@@ -27,6 +27,7 @@
 
 import { isDeepStrictEqual } from 'node:util';
 
+import { migrateLegacyLayout } from './backend.js';
 import { cnChatBaseHooks } from './backend-config.js';
 import { resolvePluginConfig } from './config.js';
 import { gatewayDriver } from './gateway.js';
@@ -58,6 +59,9 @@ export const inject = [];
 export function apply(ctx, config) {
   const hostEnv = process.env;
   const logger = normalizeLogger(ctx);
+  // 必须在解析路径之前：迁移成功后 resolvePluginConfig 才会拿到 wb2api/ 下的新位置。
+  // 此时本插件还没拉起 wb2api（重启时旧实例的 disposer 已经停掉它），目录挪得动。
+  migrateLegacyLayout(hostEnv, logger);
   const resolved = resolvePluginConfig(config, hostEnv);
 
   if (!resolved.enabled) {

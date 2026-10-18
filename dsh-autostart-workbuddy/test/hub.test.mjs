@@ -293,8 +293,8 @@ test('hubKeyHooks：没有可沿用的密钥时生成一个，写进子进程环
 test('resolvePluginConfig(gateway: hub)：python 跑 wb_proxy.py，数据目录走参数，密钥走环境变量', () => {
   const { root, env } = tempRoot();
   // 沿用 wb2api 的 api_key：DSH 凭据库里的 WORKBUDDY_PROXY_KEY 通常就是它。
-  mkdirSync(join(root, 'backend', 'current'), { recursive: true });
-  writeFileSync(join(root, 'backend', 'current', 'config.json'), JSON.stringify({ api_key: 'sk-from-wb2api' }));
+  mkdirSync(join(root, 'wb2api', 'backend', 'current'), { recursive: true });
+  writeFileSync(join(root, 'wb2api', 'backend', 'current', 'config.json'), JSON.stringify({ api_key: 'sk-from-wb2api' }));
   const hostEnv = { ...env, PATH: '', PYTHONHOME: 'C:\\elsewhere', PYTHONPATH: 'C:\\lib' };
   const resolved = resolvePluginConfig({ gateway: 'hub', exe: 'C:\\custom\\wb2api.exe', port: 7999 }, hostEnv);
   const paths = hubPaths(env);

@@ -5,12 +5,16 @@
  * （Go buildinfo 的 `vcs.revision`）——它没有 PE 版本号，`/healthz` 也不报版本。
  * 所以"是否最新"要靠 revision 与 release tag 的 commit 比对。
  *
- * 目录布局刻意放在 DSH home 下、且**程序与数据分离**：
+ * 目录布局刻意放在 DSH home 下、且**程序与数据分离**；wb2api 与 hub 各占一个子目录：
  *
- *   <root>/backend/current/   正在用的 wb2api.exe + config.json + installed.json
- *   <root>/backend/versions/  历史版本（回滚用，只放 exe）
- *   <root>/data/              账号凭证与状态（auths/、state.json…）——切版本不碰它
- *   <root>/cache/             下载的 release 包与查询缓存
+ *   <root>/wb2api/backend/current/   正在用的 wb2api.exe + config.json + installed.json
+ *   <root>/wb2api/backend/versions/  历史版本（回滚用，只放 exe）
+ *   <root>/wb2api/data/              账号凭证与状态（auths/、state.json…）——切版本不碰它
+ *   <root>/wb2api/cache/             下载的 release 包与查询缓存
+ *   <root>/hub/                      hub 的同一套布局（见 hub.js）
+ *   <root>/logs/                     两种网关共用的日志
+ *
+ * 老版本插件把 wb2api 的三个目录直接放在 <root> 下，启动时由 migrateLegacyLayout 挪进 wb2api/。
  *
  * 不放进插件安装目录（profile 的 node_modules）是因为那是 pnpm 管的拷贝，重装即丢；
  * 不放进仓库是因为仓库不该塞 8MB 二进制、更新也不该往源码树里写。
@@ -44,25 +48,148 @@ export const DEFAULT_KEEP_VERSIONS = 3;
 /** 更新失败时新包被挪去的目录后缀（见 rollbackSwap）；这些目录只留作排查，不能回滚。 */
 const FAILED_SUFFIX = '-failed';
 
+/** wb2api 在插件数据根下的子目录名（与 hub/ 并列）。 */
+export const WB2API_DIR = 'wb2api';
+
+/** 老布局里直接放在插件数据根下、属于 wb2api 的目录。 */
+const LEGACY_DIRS = ['backend', 'data', 'cache'];
+
+function pluginRoot(env) {
+  const explicit = typeof env?.DSH_WORKBUDDY_BACKEND_ROOT === 'string' ? env.DSH_WORKBUDDY_BACKEND_ROOT.trim() : '';
+  return explicit ? resolve(explicit) : join(resolveDshHome(env), 'autostart-workbuddy');
+}
+
 /**
- * 目录布局。`DSH_WORKBUDDY_BACKEND_ROOT` 可整体改根目录（测试与多环境用）。
+ * 目录布局。`DSH_WORKBUDDY_BACKEND_ROOT` 可整体改插件数据根（测试与多环境用）。
+ *
+ * `root` 是插件整体的数据根（彻底卸载删它、日志放它下面），`home` 是 wb2api 自己的目录。
+ * 还没迁移的老安装（根下有 backend/、没有 wb2api/）仍按老位置用：迁移失败（例如旧 exe
+ * 还被别的进程占着）时不至于看起来像没装、再装一份。
  */
 export function backendPaths(env = process.env) {
-  const explicit = typeof env?.DSH_WORKBUDDY_BACKEND_ROOT === 'string' ? env.DSH_WORKBUDDY_BACKEND_ROOT.trim() : '';
-  const root = explicit ? resolve(explicit) : join(resolveDshHome(env), 'autostart-workbuddy');
+  const root = pluginRoot(env);
+  const legacy = !existsSync(join(root, WB2API_DIR)) && existsSync(join(root, 'backend'));
+  const home = legacy ? root : join(root, WB2API_DIR);
   return {
     root,
-    backend: join(root, 'backend'),
-    current: join(root, 'backend', 'current'),
-    versions: join(root, 'backend', 'versions'),
-    data: join(root, 'data'),
-    cache: join(root, 'cache'),
+    home,
+    legacy,
+    backend: join(home, 'backend'),
+    current: join(home, 'backend', 'current'),
+    versions: join(home, 'backend', 'versions'),
+    data: join(home, 'data'),
+    cache: join(home, 'cache'),
     logs: join(root, 'logs'),
-    exe: join(root, 'backend', 'current', EXE_ENTRY),
-    config: join(root, 'backend', 'current', 'config.json'),
-    manifest: join(root, 'backend', 'current', 'installed.json'),
-    releaseCache: join(root, 'cache', 'release.json'),
+    exe: join(home, 'backend', 'current', EXE_ENTRY),
+    config: join(home, 'backend', 'current', 'config.json'),
+    manifest: join(home, 'backend', 'current', 'installed.json'),
+    releaseCache: join(home, 'cache', 'release.json'),
   };
+}
+
+/**
+ * 把老布局（<root>/backend、data、cache）挪进 <root>/wb2api/，并改写 config.json 里
+ * 指向老目录的绝对路径（auth_dir / state_file 常被写成绝对路径，不改的话 wb2api 会在
+ * 老位置建空目录，账号"消失"）。
+ *
+ * 先挪进 wb2api.migrating/，全部挪完再一次改名成 wb2api/：中途失败就挪回原处，
+ * backendPaths 照旧认老布局，下次启动再试。必须在 wb2api 启动前调用
+ * （运行中的 exe 所在目录在 Windows 上挪不动）。
+ *
+ * @returns {{ state: 'none' | 'migrated' | 'failed', reason?: string, rewritten?: string[] }}
+ */
+export function migrateLegacyLayout(env = process.env, logger) {
+  const root = pluginRoot(env);
+  const target = join(root, WB2API_DIR);
+  const staging = `${target}.migrating`;
+  // 上次迁移被打断（进程被杀）留下的半成品：先把东西放回根下，再按老布局从头来。
+  if (existsSync(staging) && !existsSync(target)) restoreStaging(root, staging);
+  if (!backendPaths(env).legacy) return { state: 'none' };
+
+  const config = rewriteLegacyConfig(join(root, 'backend', 'current', 'config.json'), root, target);
+  try {
+    mkdirSync(staging, { recursive: true });
+    for (const name of LEGACY_DIRS) {
+      if (existsSync(join(root, name))) renameSync(join(root, name), join(staging, name));
+    }
+    renameSync(staging, target);
+  } catch (error) {
+    restoreStaging(root, staging);
+    const reason = error instanceof Error ? error.message : String(error);
+    logger?.warn?.(`[workbuddy] wb2api 目录迁移到 ${target} 失败，本次仍用老位置：${reason}`);
+    return { state: 'failed', reason };
+  }
+
+  if (config) {
+    const path = join(target, 'backend', 'current', 'config.json');
+    try {
+      // 原子替换，权限与 wb2api 自己落盘的一致（里面有 api_key）。
+      writeFileSync(`${path}.tmp`, config.text, { mode: 0o600 });
+      renameSync(`${path}.tmp`, path);
+    } catch (error) {
+      // 目录已挪好、只是路径没改成：wb2api 会去老位置找账号，必须让用户知道去手改。
+      const reason = error instanceof Error ? error.message : String(error);
+      logger?.warn?.(`[workbuddy] 已迁移到 ${target}，但改写 config.json 里的路径（${config.rewritten.join('、')}）失败：${reason}`);
+      return { state: 'migrated', rewritten: [], reason };
+    }
+  }
+  logger?.info?.(`[workbuddy] wb2api 的 backend/、data/、cache/ 已迁移到 ${target}`);
+  return { state: 'migrated', rewritten: config?.rewritten ?? [] };
+}
+
+/** 把 staging 里的目录放回根下（根下已有同名的就不动，留给人工看），再删掉空的 staging。 */
+function restoreStaging(root, staging) {
+  for (const name of LEGACY_DIRS) {
+    const from = join(staging, name);
+    if (!existsSync(from) || existsSync(join(root, name))) continue;
+    try {
+      renameSync(from, join(root, name));
+    } catch {
+      /* 放不回去就留在 staging，下次启动再试 */
+    }
+  }
+  try {
+    // 只删空目录：放不回去的东西不能被顺手删掉。
+    if (readdirSync(staging).length === 0) rmSync(staging, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * 算出迁移后的 config.json 文本：凡是落在老布局目录（<root>/backend|data|cache 下）的绝对路径，
+ * 换成 <target> 下的同一相对位置。相对路径跟着 cwd（backend/current）一起走，不用改。
+ * 读不到或没东西可改时返回 null；只改字符串值，其余内容原样保留。
+ */
+function rewriteLegacyConfig(path, root, target) {
+  let config;
+  try {
+    // 记事本另存可能带 BOM，JSON.parse 不认。
+    config = JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    return null;
+  }
+  // Windows 路径不分大小写，比较时统一折叠。
+  const fold = (value) => (process.platform === 'win32' ? value.toLowerCase() : value);
+  const base = resolve(root);
+  const rewritten = [];
+  const walk = (node, trail) => {
+    if (Array.isArray(node)) return node.map((item, index) => walk(item, `${trail}[${index}]`));
+    if (node && typeof node === 'object') {
+      return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, walk(value, trail ? `${trail}.${key}` : key)]));
+    }
+    if (typeof node !== 'string' || !isAbsolute(node)) return node;
+    const absolute = resolve(node);
+    const inside = relative(fold(base), fold(absolute));
+    if (!inside || inside.startsWith('..') || isAbsolute(inside)) return node;
+    if (!LEGACY_DIRS.includes(inside.split(/[\\/]/)[0])) return node;
+    rewritten.push(trail);
+    // 相对部分从原值截取，保留原来的大小写。
+    return join(target, absolute.slice(base.length + 1));
+  };
+  const next = walk(config, '');
+  if (rewritten.length === 0) return null;
+  return { text: `${JSON.stringify(next, null, 2)}\n`, rewritten };
 }
 
 export function ensureLayout(paths) {
@@ -605,7 +732,7 @@ export async function uninstallBackend({ paths, service, logger, alsoCache = tru
     ok: true,
     state: 'uninstalled',
     removed: removed.map((item) => item.replace(paths.root, '.')),
-    kept: ['backend/current/config.json', 'data/', 'logs/'],
+    kept: [relative(paths.root, paths.config), `${relative(paths.root, paths.data)}/`, 'logs/'].map((item) => item.replace(/\\/g, '/')),
   };
 }
 

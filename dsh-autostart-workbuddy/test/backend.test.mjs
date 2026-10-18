@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,7 @@ import {
   readManifest,
   rollbackBackend,
   listVersions,
+  migrateLegacyLayout,
   uninstallBackend,
   versionDirName,
   writeManifest,
@@ -606,5 +607,129 @@ test('purgeBackendData：根目录配成 DSH home 或其上级时拒绝删除', 
     assert.equal(existsSync(env.DSH_HOME), true, '受保护目录必须原样保留');
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('backendPaths：wb2api 在插件数据根下单独一个 wb2api/，日志留在根下', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wb-layout-'));
+  try {
+    const paths = backendPaths({ DSH_WORKBUDDY_BACKEND_ROOT: root });
+    assert.equal(paths.legacy, false);
+    assert.equal(paths.root, root);
+    assert.equal(paths.exe, join(root, 'wb2api', 'backend', 'current', 'wb2api.exe'));
+    assert.equal(paths.data, join(root, 'wb2api', 'data'));
+    assert.equal(paths.cache, join(root, 'wb2api', 'cache'));
+    assert.equal(paths.logs, join(root, 'logs'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** 造一个老布局：backend/、data/、cache/ 直接在根下，config.json 用绝对路径指向 data/。 */
+function legacyRoot() {
+  const root = mkdtempSync(join(tmpdir(), 'wb-legacy-'));
+  mkdirSync(join(root, 'backend', 'current'), { recursive: true });
+  mkdirSync(join(root, 'data', 'auths'), { recursive: true });
+  mkdirSync(join(root, 'cache'), { recursive: true });
+  mkdirSync(join(root, 'hub', 'data'), { recursive: true });
+  mkdirSync(join(root, 'logs'), { recursive: true });
+  writeFileSync(join(root, 'backend', 'current', 'wb2api.exe'), fakeExe(OLD_REVISION));
+  writeFileSync(join(root, 'backend', 'current', 'config.json'), JSON.stringify({
+    api_key: 'k',
+    auth_dir: join(root, 'data', 'auths'),
+    state_file: join(root, 'data', 'state.json'),
+    prompt: { file: './prompt.txt' },
+    elsewhere: join(tmpdir(), 'not-ours', 'x.json'),
+  }, null, 2));
+  writeFileSync(join(root, 'data', 'auths', 'workbuddy-1.json'), '{}');
+  writeFileSync(join(root, 'cache', 'release.json'), '{}');
+  writeFileSync(join(root, 'hub', 'data', 'keep.txt'), 'hub');
+  return root;
+}
+
+test('migrateLegacyLayout：老布局整体挪进 wb2api/，config.json 里指向老目录的绝对路径跟着改', () => {
+  const root = legacyRoot();
+  const env = { DSH_WORKBUDDY_BACKEND_ROOT: root };
+  try {
+    assert.equal(backendPaths(env).legacy, true, '迁移前按老位置用');
+    assert.equal(backendPaths(env).exe, join(root, 'backend', 'current', 'wb2api.exe'));
+
+    const result = migrateLegacyLayout(env);
+    assert.equal(result.state, 'migrated', JSON.stringify(result));
+    assert.deepEqual(result.rewritten, ['auth_dir', 'state_file']);
+
+    const paths = backendPaths(env);
+    assert.equal(paths.legacy, false);
+    assert.equal(isFile(paths.exe), true);
+    assert.equal(isFile(join(paths.data, 'auths', 'workbuddy-1.json')), true);
+    assert.equal(isFile(paths.releaseCache), true);
+    for (const name of ['backend', 'data', 'cache', 'wb2api.migrating']) {
+      assert.equal(existsSync(join(root, name)), false, `${name} 不应留在根下`);
+    }
+    assert.equal(readFileSync(join(root, 'hub', 'data', 'keep.txt'), 'utf8'), 'hub', 'hub/ 不动');
+    assert.equal(existsSync(join(root, 'logs')), true, 'logs/ 不动');
+
+    const config = JSON.parse(readFileSync(paths.config, 'utf8'));
+    assert.equal(config.auth_dir, join(root, 'wb2api', 'data', 'auths'));
+    assert.equal(config.state_file, join(root, 'wb2api', 'data', 'state.json'));
+    assert.equal(config.prompt.file, './prompt.txt', '相对路径不改');
+    assert.equal(config.elsewhere, join(tmpdir(), 'not-ours', 'x.json'), '根目录以外的路径不改');
+    assert.equal(config.api_key, 'k');
+
+    assert.equal(migrateLegacyLayout(env).state, 'none', '迁移过就不再动');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('migrateLegacyLayout：没有老布局时什么都不做', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wb-fresh-'));
+  try {
+    assert.equal(migrateLegacyLayout({ DSH_WORKBUDDY_BACKEND_ROOT: root }).state, 'none');
+    assert.deepEqual(readdirSync(root), [], '不能凭空建目录');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('migrateLegacyLayout：中途挪不动时全部放回原处，仍按老布局用', () => {
+  const root = legacyRoot();
+  const env = { DSH_WORKBUDDY_BACKEND_ROOT: root };
+  try {
+    // staging 里先占一个非空的 data/：根下的 data/ 改名过去必然失败（目标非空）。
+    mkdirSync(join(root, 'wb2api.migrating', 'data'), { recursive: true });
+    writeFileSync(join(root, 'wb2api.migrating', 'data', 'blocker'), 'x');
+
+    const warnings = [];
+    const result = migrateLegacyLayout(env, { warn: (line) => warnings.push(line) });
+    assert.equal(result.state, 'failed', JSON.stringify(result));
+    assert.equal(warnings.length, 1);
+
+    const paths = backendPaths(env);
+    assert.equal(paths.legacy, true, '失败后仍认老布局');
+    assert.equal(isFile(paths.exe), true, 'backend/ 已放回根下');
+    assert.equal(isFile(join(paths.data, 'auths', 'workbuddy-1.json')), true, 'data/ 原地没动');
+    assert.equal(existsSync(join(root, 'wb2api')), false);
+    assert.equal(JSON.parse(readFileSync(paths.config, 'utf8')).auth_dir, join(root, 'data', 'auths'), '失败时不改 config.json');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('migrateLegacyLayout：上次被打断留下的 wb2api.migrating/ 先放回再重来', () => {
+  const root = legacyRoot();
+  const env = { DSH_WORKBUDDY_BACKEND_ROOT: root };
+  try {
+    // 模拟只挪完 backend/ 就被杀掉：根下没有 backend/，此时 backendPaths 本会认成新布局（像没装）。
+    mkdirSync(join(root, 'wb2api.migrating'));
+    renameSync(join(root, 'backend'), join(root, 'wb2api.migrating', 'backend'));
+
+    assert.equal(migrateLegacyLayout(env).state, 'migrated');
+    const paths = backendPaths(env);
+    assert.equal(isFile(paths.exe), true);
+    assert.equal(isFile(join(paths.data, 'auths', 'workbuddy-1.json')), true);
+    assert.equal(existsSync(join(root, 'wb2api.migrating')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

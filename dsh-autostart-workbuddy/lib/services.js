@@ -24,7 +24,7 @@ import { delimiter, join, resolve } from 'node:path';
  * 被托管服务的默认规格；任何字段都可以被 profile 的 config 覆盖。
  *
  * 这里**没有** exe / cwd：后端的安装位置由插件自己管理，默认值是
- * `<DSH home>/autostart-workbuddy/backend/current/...`，要 hostEnv 才推导得出来，
+ * `<DSH home>/autostart-workbuddy/wb2api/backend/current/...`，要 hostEnv 才推导得出来，
  * 所以由 config.js 用 backend.js 的 backendPaths() 填（services.js 不能反向依赖它们，
  * 否则 backend.js → services.js → backend.js 成环）。
  */
