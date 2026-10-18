@@ -8,6 +8,7 @@
 
 import { join, resolve } from 'node:path';
 import { backendPaths, DEFAULT_CHECK_TTL_MS, DEFAULT_KEEP_VERSIONS } from './backend.js';
+import { DEFAULT_CN_CHAT_BASE } from './backend-config.js';
 import { DEFAULT_EFFORTS } from './models.js';
 import { SERVICE_DEFAULTS, resolveDshHome } from './services.js';
 
@@ -174,6 +175,11 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
     spec,
     models: resolveModelsConfig(config.models, spec),
     backend: resolveBackendConfig(config.backend, paths),
+    /**
+     * 启动后端前写进 wb2api config.json 的 `cn.chat_base`（见 lib/backend-config.js）。
+     * 缺省 = www.workbuddy.cn；显式给空串 = 插件不管这一项。
+     */
+    cnChatBase: typeof config.cnChatBase === 'string' ? config.cnChatBase.trim() : DEFAULT_CN_CHAT_BASE,
     /**
      * exe 是否来自插件自管目录（profile 里没显式配 exe）。
      *

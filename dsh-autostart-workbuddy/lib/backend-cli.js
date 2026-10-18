@@ -27,6 +27,7 @@ import {
   describeBackend,
   rollbackBackend,
 } from './backend.js';
+import { cnChatBaseHooks } from './backend-config.js';
 import { resolvePluginConfig } from './config.js';
 import { ManagedService } from './services.js';
 
@@ -80,7 +81,8 @@ async function main() {
   }
 
   if (has('--update') || has('--rollback')) {
-    const service = new ManagedService(resolved.spec, logger);
+    // 与 DSH 内同一套启动钩子：CLI 拉起后端做健康检查时也补写 cn.chat_base。
+    const service = new ManagedService(resolved.spec, logger, cnChatBaseHooks(resolved, logger));
     try {
       if (has('--update')) {
         const result = await applyUpdate({

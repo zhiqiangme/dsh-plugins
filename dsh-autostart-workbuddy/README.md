@@ -174,6 +174,15 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | `logName` | 日志文件名前缀，默认 `wb2api` |
 | `readinessTimeoutMs` | 等待端口就绪的上限，默认 30000 |
 | `stopTimeoutMs` | 停止时等待退出的上限，默认 5000；超时后强制结束 |
+| `cnChatBase` | 拉起后端前写进 wb2api `config.json` 的 `cn.chat_base`，默认 `https://www.workbuddy.cn`；空串 = 不管这一项 |
+
+**为什么要写 `cn.chat_base`**：wb2api 内置的国内版上游 `copilot.tencent.com` 对海外出口（例如 Clash 全局模式 + TUN）
+的 TLS 握手直接复位，CN 模型目录和对话全部 `EOF`，网关里只剩 `global:` 模型。官方 WorkBuddy 桌面端已改用
+`www.workbuddy.cn`，该域海外出口可达、接口同构，所以插件默认把它写进去。
+
+- 只在 `cn.chat_base` 缺失或为空串（wb2api 生成默认配置时就是空串）时写入；手动填过的非空值不覆盖，其余配置原样保留。
+- wb2api 只在启动时读这一项：后端首次启动时 `config.json` 还不存在，插件会在它拉起后补写，**下次启动后端时**生效。
+- 只有支持 `cn.chat_base` 的 wb2api 才会使用这一项；不认识它的版本直接忽略，写进去不影响启动。
 
 `models` 段的字段：
 

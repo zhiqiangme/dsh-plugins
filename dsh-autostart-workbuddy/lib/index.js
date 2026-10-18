@@ -28,6 +28,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { checkForUpdate } from './backend.js';
+import { cnChatBaseHooks } from './backend-config.js';
 import { resolvePluginConfig } from './config.js';
 import { syncModels } from './models.js';
 import { createModelResync } from './resync.js';
@@ -63,7 +64,7 @@ export function apply(ctx, config) {
     return;
   }
 
-  const service = new ManagedService(resolved.spec, logger);
+  const service = new ManagedService(resolved.spec, logger, cnChatBaseHooks(resolved, logger));
   const installed = isFile(resolved.spec.exe);
   // 只有"用插件自管路径、但文件不存在"才当作未安装（提示去面板装）；
   // 用户在 profile 里显式配了 exe 却指错时，仍按老行为尝试启动，让错误暴露出来。

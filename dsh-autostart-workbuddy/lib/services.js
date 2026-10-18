@@ -139,10 +139,14 @@ export class ManagedService {
   /**
    * @param {object} spec 解析合并后的服务规格（见 resolvePluginConfig）。
    * @param {{ info: Function, warn: Function, error: Function }} logger
+   * @param {{ beforeSpawn?: Function, afterStart?: Function }} [hooks]
+   *   真正 spawn 前 / 本实例拉起成功后的同步回调（例如补写后端 config.json）。
+   *   抛错只记 warn，不影响启动；端口已被别人占着时两者都不调。
    */
-  constructor(spec, logger) {
+  constructor(spec, logger, hooks = {}) {
     this.spec = spec;
     this.logger = logger;
+    this.hooks = hooks;
     this.child = undefined;
     /** 只有本实例真正 spawn 出来的进程才会在停止阶段被结束，避免误杀用户手动起的服务。 */
     this.startedByUs = false;
@@ -187,6 +191,7 @@ export class ManagedService {
 
     if (signal?.aborted) return { state: 'failed', reason: '宿主已开始关闭' };
 
+    this.#runHook('beforeSpawn');
     const spawnFailure = this.#spawn();
     if (spawnFailure) {
       return { state: 'failed', reason: spawnFailure };
@@ -202,6 +207,7 @@ export class ManagedService {
 
     if (ready) {
       this.logger.info(`[workbuddy] ${this.title} 已启动 (PID ${this.pid}) → ${host}:${port}`);
+      this.#runHook('afterStart');
       return { state: 'started' };
     }
 
@@ -210,6 +216,16 @@ export class ManagedService {
     // 又持有日志文件句柄的僵尸进程，并且它会一直挂在宿主进程树里。
     await this.stop('启动失败，回收进程');
     return { state: 'failed', reason };
+  }
+
+  #runHook(name) {
+    const hook = this.hooks?.[name];
+    if (typeof hook !== 'function') return;
+    try {
+      hook();
+    } catch (error) {
+      this.logger.warn(`[workbuddy] ${this.title} ${name} 出错：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   #spawn() {
