@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { resolvePluginConfig } from '../lib/config.js';
 import { createModelResync } from '../lib/resync.js';
 import {
+  BACKEND_NO_ACCOUNTS,
   BACKEND_NOT_INSTALLED,
   BACKEND_PATH,
   MODELS_PATH,
@@ -697,4 +698,26 @@ test('面板路由：宿主未登录返回 401，text/plain 的 POST 返回 415'
   const plainText = fakeRes();
   await handler(fakeReq('POST', { body: '{}', contentType: 'text/plain' }), plainText);
   assert.equal(plainText.status, 415);
+});
+
+test('GET（hub）：账号池为空时不列模型（hub 的 /v1/models 照样返回内置目录，选了也调不通）', async () => {
+  const fixture = startFixture({ TEST_MODE: 'http-models' });
+  try {
+    const resolved = resolvePluginConfig({ port: await fixture.ready, models: { enabled: true, apiKey: 'test-key' } }, process.env);
+    const empty = async () => ({ ok: true, servable: false, healthy: 0, total: 2 });
+    const payload = await describeModels({ ...resolved, env: process.env, gateway: 'hub', probe: empty });
+    assert.equal(payload.ok, false);
+    assert.equal(payload.state, BACKEND_NO_ACCOUNTS);
+    assert.equal(payload.accounts, 2);
+    assert.equal(payload.models, undefined, '账号池为空时不能带出模型');
+
+    // 有可用账号、探针不通（交给拉取报真实错误）、以及 wb2api（目录本来就靠账号拉）都照常列出。
+    const ready = async () => ({ ok: true, servable: true, healthy: 1, total: 1 });
+    const down = async () => ({ ok: false, reason: 'down' });
+    assert.equal((await describeModels({ ...resolved, env: process.env, gateway: 'hub', probe: ready })).ok, true);
+    assert.equal((await describeModels({ ...resolved, env: process.env, gateway: 'hub', probe: down })).ok, true);
+    assert.equal((await describeModels({ ...resolved, env: process.env, gateway: 'wb2api', probe: empty })).ok, true);
+  } finally {
+    fixture.stop();
+  }
 });

@@ -218,10 +218,11 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'saveSync', 'savedDisabled', 'savedNoSync', 'savedSync',
     'saving', 'selectAll', 'summary', 'syncEnabled', 'syncHint', 'title', 'uninstallConfirm', 'uninstallDesc', 'uninstallKept',
     'uninstallTitle', 'vision',
-    'modelsNotInstalled', 'backendPurge', 'backendPurgeHint', 'backendPurged', 'purgeConfirm', 'purgeDesc', 'purgeKept', 'purgeTitle',
+    'modelsNotInstalled', 'modelsNoAccounts', 'backendPurge', 'backendPurgeHint', 'backendPurged', 'purgeConfirm', 'purgeDesc', 'purgeKept', 'purgeTitle',
     // 后端网关切换与 hub 专用文案
-    'backendUninstalledHub', 'gatewayHub', 'gatewayHubHint', 'gatewaySwitched', 'gatewaySwitching', 'gatewayTitle',
-    'gatewayWb2api', 'panelKeyHub', 'uninstallHubConfirm', 'uninstallHubDesc', 'uninstallHubKept', 'uninstallHubTitle',
+    'backendUninstalledHub', 'gatewayHub', 'gatewayHubHint', 'gatewayNotInstalled', 'gatewaySwitched', 'gatewaySwitching',
+    'gatewayTimeout', 'gatewayTitle', 'gatewayWaiting', 'gatewayWb2api', 'panelPasswordChanged', 'panelPasswordCopied',
+    'panelPasswordCopy', 'uninstallHubConfirm', 'uninstallHubDesc', 'uninstallHubKept', 'uninstallHubTitle',
     // 插件自身更新区（与后端版本区无关）
     'restartFailed', 'restartNow', 'restarting', 'updateAvailable', 'updateCancelled', 'updateCheck',
     'updateCheckFailed', 'updateChecking', 'updateCurrent', 'updateFailed', 'updateForce', 'updateLatestVersion',
@@ -921,4 +922,63 @@ test('插件更新区：本地目录安装（file:）→ 不给更新按钮，�
 
   assert.match(renderUpdate(updateModel({ market: { ...market, source: 'generation' } })).text, /DSH 桌面端统一管理/);
   assert.ok(button(renderUpdate(updateModel({ market: { ...market, source: 'npm', updatable: true } })).buttons, '更新到 v26.10.12'));
+});
+
+test('后端网关：选择区自成一块（有自己的容器），与「后端版本」标题行分开', () => {
+  const { renderCard } = boot(gatewayStates({ ...GATEWAY_BACKEND, gateway: 'hub' }));
+  const section = backendSection(renderCard());
+  const block = collectByType(section, 'div').find((node) => node.props.className === 'dsm-wb-gateway');
+  assert.ok(block, '网关选择应包在 dsm-wb-gateway 里');
+  assert.ok(buttonLabels(block).includes('wb2api（默认）'));
+  assert.equal(buttonLabels(block).includes('检查更新'), false, '后端版本的按钮不能挤进网关块');
+});
+
+test('后端网关（hub）：复制按钮改叫「复制面板密码」', () => {
+  const { renderCard } = boot(gatewayStates({ ...GATEWAY_BACKEND, gateway: 'hub' }));
+  assert.ok(buttonLabels(renderCard()).includes('复制面板密码'));
+  const wb2api = boot(gatewayStates({ ...GATEWAY_BACKEND, gateway: 'wb2api' }));
+  assert.ok(buttonLabels(wb2api.renderCard()).includes('复制访问密钥'));
+});
+
+/** 按调用顺序回放 BACKEND / MODELS 的应答；数组用完后重复最后一个。 */
+function scriptedFetch(script) {
+  const calls = [];
+  const next = (path) => {
+    const queue = script[path.endsWith('/backend') ? 'backend' : 'models'];
+    const item = queue.length > 1 ? queue.shift() : queue[0];
+    if (item instanceof Error) throw item;
+    return { ok: true, json: async () => item };
+  };
+  return { calls, fetchImpl: async (path) => { calls.push(path); return next(path); } };
+}
+
+test('waitForGateway：等到快照换成新网关且模型区能答才算好；重启中的报错与旧快照都继续等', async () => {
+  const { fetchImpl } = scriptedFetch({
+    backend: [new Error('fetch failed'), { ok: true, backend: { gateway: 'hub' } }, { ok: true, backend: { gateway: 'wb2api', exeExists: true } }],
+    models: [{ ok: false, reason: 'fetch failed' }, { ok: true, models: [] }],
+  });
+  const { module } = boot([], { fetchImpl });
+  let sleeps = 0;
+  const outcome = await module.waitForGateway('wb2api', { waitMs: 60_000, sleep: async () => { sleeps += 1; } });
+  assert.equal(outcome, 'ready');
+  assert.equal(sleeps, 3, '报错一轮、旧快照一轮、模型区未就绪一轮');
+});
+
+test('waitForGateway：新网关没装就不等；账号池为空也算网关已就绪；超时报 timeout', async () => {
+  const notInstalled = boot([], { fetchImpl: scriptedFetch({ backend: [{ ok: true, backend: { gateway: 'hub', exeExists: false } }], models: [{}] }).fetchImpl });
+  assert.equal(await notInstalled.module.waitForGateway('hub', { sleep: async () => {} }), 'not-installed');
+
+  const empty = boot([], { fetchImpl: scriptedFetch({ backend: [{ ok: true, backend: { gateway: 'hub' } }], models: [{ ok: false, state: 'backend-no-accounts' }] }).fetchImpl });
+  assert.equal(await empty.module.waitForGateway('hub', { sleep: async () => {} }), 'ready');
+
+  const stuck = boot([], { fetchImpl: scriptedFetch({ backend: [{ ok: true, backend: { gateway: 'hub' } }], models: [{}] }).fetchImpl });
+  assert.equal(await stuck.module.waitForGateway('wb2api', { waitMs: 30, sleep: (ms) => new Promise((r) => setTimeout(r, 5)) }), 'timeout');
+});
+
+test('模型区（hub）：账号池为空时显示本地化提示与重试，不列模型', () => {
+  // 卡片的 state 顺序：phase、rows、meta、reason……（见 backendStates 之前的 13 个）
+  const { renderCard } = boot(['error', [], { accounts: 0 }, 'backend-no-accounts', new Set(), new Set()]);
+  const text = collectText(renderCard()).join('|');
+  assert.match(text, /hub 里还没有可用账号（共 0 个，可用 0）/);
+  assert.ok(buttonLabels(renderCard()).includes('重试'));
 });

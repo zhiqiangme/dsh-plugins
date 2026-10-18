@@ -458,6 +458,24 @@ export function purgeHubData({ paths, service, logger, env = process.env } = {})
   return purgeBackendData({ paths: paths.plugin, service, logger, env });
 }
 
+/** hub 出厂的看板密码（wb_settings.DEFAULT_PANEL_PASSWORD）。 */
+export const HUB_DEFAULT_PANEL_PASSWORD = 'admin';
+
+/**
+ * hub 看板密码是否还是出厂的 admin。
+ *
+ * 判断与 hub 的 wb_settings.panel_password_is_default 一致：settings.json 不在、没有 panel_password_hash，
+ * 或 panel_password_default 为 true 都算默认。改过之后 hub 只存 PBKDF2 哈希，插件读不回明文。
+ * settings.json 存在却读不了（写到一半、格式坏了）时返回 undefined，不冒充"默认"。
+ */
+export function hubPanelPasswordIsDefault(paths) {
+  const file = join(paths.accounts, 'settings.json');
+  if (!existsSync(file)) return true;
+  const data = readJson(file);
+  if (!data) return undefined;
+  return !data.panel_password_hash || data.panel_password_default === true;
+}
+
 /**
  * hub 的网关密钥（传给 hub 的 API_KEY，也是插件拉 /v1/models 用的那个）。
  *

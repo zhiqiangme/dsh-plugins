@@ -24,7 +24,9 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { GATEWAY_IDS, gatewayDriver } from './gateway.js';
+import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
 import { creditsLabel, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, syncModels } from './models.js';
+import { healthTarget } from './resync.js';
 import { isFile } from './services.js';
 import { createVersionChecker } from './update.js';
 
@@ -33,6 +35,9 @@ const PLUGIN_ID = 'dsh-autostart-workbuddy';
 
 /** 模型区的失败状态：插件自管的后端还没装。浏览器半侧据此显示"去点安装"，而不是裸的 fetch failed。 */
 export const BACKEND_NOT_INSTALLED = 'backend-not-installed';
+
+/** 模型区的失败状态：网关在跑，但账号池里没有可用账号（目前只有 hub 会这样报，见 describeModels）。 */
+export const BACKEND_NO_ACCOUNTS = 'backend-no-accounts';
 
 /** 面板路由前缀：DSH 给每个插件留的命名空间，浏览器半侧用同一份常量。 */
 export const PANEL_BASE = `/plugins/${PLUGIN_ID}`;
@@ -138,8 +143,13 @@ function resolveApiKey(models, env) {
  * key 为空字符串 = config.json 没设 api_key，控制台不鉴权、不会弹密钥框。
  */
 export function readPanelKey(resolved) {
-  // hub 的看板用面板密码登录（默认 admin），不认 api_key；浏览器半侧据 gateway 给出对应提示。
-  if (resolved?.gateway === 'hub') return { ok: true, key: '', gateway: 'hub' };
+  // hub 的看板用面板密码登录，不认 api_key。还是出厂密码时直接给出 admin 供复制；
+  // 用户改过之后 hub 只存哈希，插件拿不到明文，只能提示用自己设的密码。
+  if (resolved?.gateway === 'hub') {
+    const paths = resolved.backend?.paths ?? resolved.paths;
+    const isDefault = paths?.accounts ? hubPanelPasswordIsDefault(paths) : true;
+    return { ok: true, gateway: 'hub', key: isDefault === true ? HUB_DEFAULT_PANEL_PASSWORD : '', passwordDefault: isDefault === true };
+  }
   const path = resolved?.models?.panelConfig || resolved?.backend?.paths?.config || resolved?.paths?.config || '';
   if (!path || !isFile(path)) {
     return { ok: false, reason: `找不到后端配置文件 ${path || 'config.json'}（后端可能还没安装或从未启动过）` };
@@ -163,10 +173,26 @@ function positiveIntOrNull(value) {
  * `models` 是插件手里的当前配置（随配置变更就地刷新，见 index.js），`patchPath` 只用来
  * 告诉用户写到了哪个文件。
  */
-export async function describeModels({ spec, models, editor, env = process.env, managedExe }) {
+export async function describeModels({ spec, models, editor, env = process.env, managedExe, gateway, probe }) {
   const patchPath = editor?.documentPath;
   const only = models.only ?? [];
   const enabled = models.enabled;
+
+  // hub 的 /v1/models 不看账号池：一个账号都没有也照样返回内置目录（实测 17 个），
+  // 勾上同步进 DSH 后对话只会 503 "no usable account"。所以先问 /health，账号池空着就不列模型。
+  // wb2api 的目录本来就是用账号拉的，不需要这一步。探针不通时不拦，交给下面的拉取报真实错误。
+  if (gateway === 'hub' && typeof probe === 'function') {
+    const health = await probe(healthTarget(models.baseURL, spec)).catch(() => undefined);
+    if (health?.ok && health.servable === false) {
+      return {
+        ok: false,
+        state: BACKEND_NO_ACCOUNTS,
+        accounts: health.total ?? 0,
+        reason: `hub 里还没有可用账号（共 ${health.total ?? 0} 个，可用 0），模型目录不可用。请打开上方后端面板登录或导入 WorkBuddy 账号，再点「重试」。`,
+        patchPath, enabled, only,
+      };
+    }
+  }
 
   const fetched = await fetchModels({
     baseURL: models.baseURL || `http://${spec.host}:${spec.port}`,
@@ -524,7 +550,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               200,
               await describeModels({
                 spec: resolved.spec, models: resolved.models, managedExe: resolved.managedExe,
-                editor: configEditorOf(ctx), env,
+                editor: configEditorOf(ctx), env, gateway: resolved.gateway, probe: gatewayDriver(resolved).probe,
               }),
             );
             return;
@@ -541,7 +567,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               const synced = await resync.tick();
               const payload = await describeModels({
                 spec: resolved.spec, models: resolved.models, managedExe: resolved.managedExe,
-                editor: configEditorOf(ctx), env,
+                editor: configEditorOf(ctx), env, gateway: resolved.gateway, probe: gatewayDriver(resolved).probe,
               });
               json(res, 200, { ...payload, sync: { state: synced.state, reason: synced.reason } });
               return;

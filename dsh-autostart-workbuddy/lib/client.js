@@ -101,6 +101,11 @@ window.__ModuleLoader__.load({
 
     /** 模型区失败状态（lib/web.js 的 BACKEND_NOT_INSTALLED）：后端没装，提示去点「安装」。 */
     const BACKEND_NOT_INSTALLED = 'backend-not-installed';
+    /** 模型区失败状态（lib/web.js 的 BACKEND_NO_ACCOUNTS）：hub 在跑但账号池是空的。 */
+    const BACKEND_NO_ACCOUNTS = 'backend-no-accounts';
+    /** 切换网关后等新网关就绪的上限与间隔：hub 冷启动（自带 Python）实测 2~5 秒，留足余量。 */
+    const GATEWAY_WAIT_MS = 60_000;
+    const GATEWAY_POLL_MS = 1_000;
 
     const CSS = `
 .dsm-wb-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;padding:14px 16px}
@@ -148,6 +153,7 @@ window.__ModuleLoader__.load({
 .dsm-wb-path{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;word-break:break-all}
 .dsm-wb-backend{margin-top:14px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px}
 .dsm-wb-backend-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dsm-wb-gateway{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--dsw-alias-border-l2,#36373b)}
 .dsm-wb-backend-title{flex:1;min-width:100px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
 .dsm-wb-backend-line{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6;word-break:break-all}
 .dsm-wb-backend-line strong{color:var(--dsw-alias-label-secondary,#c6c9d0);font-weight:500}
@@ -171,6 +177,7 @@ window.__ModuleLoader__.load({
       summary: '由插件接管 WorkBuddy 的模型列表（勾选 + 倍率）。',
       loading: '正在读取后端模型…',
       modelsNotInstalled: '后端还没有安装。请点下方「后端版本」里的「安装」，装好后模型列表会自动刷新。',
+      modelsNoAccounts: 'hub 里还没有可用账号（共 {total} 个，可用 0），模型暂时用不了，所以这里不列出来。请打开上方后端面板登录或导入 WorkBuddy 账号，再点「重试」。',
       retry: '重试',
       selectAll: '全部勾选',
       clearAll: '全部取消',
@@ -221,9 +228,14 @@ window.__ModuleLoader__.load({
       gatewayWb2api: 'wb2api（默认）',
       gatewayHub: 'workbuddy2api-hub',
       gatewaySwitching: '切换中…',
-      gatewaySwitched: '已切换到 {name}，插件正在重启后端。{name} 还没安装的话，请在下方点「安装」。',
+      gatewaySwitched: '已切换到 {name}。',
+      gatewayWaiting: '正在切换到 {name}，等它启动…',
+      gatewayNotInstalled: '已切换到 {name}，但它还没安装：请在下方点「安装」。',
+      gatewayTimeout: '已切换到 {name}，但 {seconds} 秒内没等到它就绪；稍后可点模型区的「重试」或「刷新」。',
       gatewayHubHint: 'hub 的模型 id 不带 cn:/global: 前缀，国内/国际跟随 hub 看板顶部的出口开关；从 wb2api 切过来后需要重新勾选模型。',
-      panelKeyHub: 'hub 看板用面板密码登录（默认 admin，登录后请在看板里修改），不需要访问密钥。',
+      panelPasswordCopy: '复制面板密码',
+      panelPasswordCopied: '已复制 hub 的默认面板密码 admin：打开后端面板粘贴即可；登录后建议在看板「设置」里改掉。',
+      panelPasswordChanged: 'hub 的面板密码已经改过：hub 只存它的哈希，插件读不到明文，请用你自己设的密码登录。',
       uninstallHubTitle: '卸载 hub？',
       uninstallHubDesc: '会停止 hub，并删除程序目录（含自带的 Python 运行时）、历史版本与下载缓存。',
       uninstallHubKept: 'hub 的账号凭证、设置与用量（hub/data/）会保留。',
@@ -278,6 +290,7 @@ window.__ModuleLoader__.load({
       summary: 'This plugin manages the WorkBuddy model list (selection + multiplier).',
       loading: 'Reading models from the backend…',
       modelsNotInstalled: 'The backend is not installed yet. Click "Install" under "Backend version" below; the model list refreshes once it is installed.',
+      modelsNoAccounts: 'The hub has no usable account yet ({total} total, 0 usable), so its models cannot be used and are not listed. Sign in or import a WorkBuddy account in the backend panel above, then click "Retry".',
       retry: 'Retry',
       selectAll: 'Select all',
       clearAll: 'Clear all',
@@ -328,9 +341,14 @@ window.__ModuleLoader__.load({
       gatewayWb2api: 'wb2api (default)',
       gatewayHub: 'workbuddy2api-hub',
       gatewaySwitching: 'Switching…',
-      gatewaySwitched: 'Switched to {name}; the plugin is restarting the backend. If {name} is not installed yet, click "Install" below.',
+      gatewaySwitched: 'Switched to {name}.',
+      gatewayWaiting: 'Switching to {name}, waiting for it to start…',
+      gatewayNotInstalled: 'Switched to {name}, but it is not installed yet: click "Install" below.',
+      gatewayTimeout: 'Switched to {name}, but it was not ready within {seconds} s; try "Retry" or "Refresh" in the model list later.',
       gatewayHubHint: 'Hub model ids have no cn:/global: prefix; China vs. international follows the exit switch at the top of the hub dashboard. Re-select your models after switching from wb2api.',
-      panelKeyHub: 'The hub dashboard signs in with its panel password (default admin; change it in the dashboard after signing in), not an access key.',
+      panelPasswordCopy: 'Copy panel password',
+      panelPasswordCopied: "Copied the hub's default panel password admin: paste it in the backend panel; consider changing it under Settings after signing in.",
+      panelPasswordChanged: "The hub's panel password has been changed: the hub stores only its hash, so the plugin cannot read it. Sign in with the password you set.",
       uninstallHubTitle: 'Uninstall the hub?',
       uninstallHubDesc: 'Stops the hub and deletes its program directory (including the bundled Python runtime), archived versions and download cache.',
       uninstallHubKept: "The hub's credentials, settings and usage (hub/data/) are kept.",
@@ -456,6 +474,38 @@ window.__ModuleLoader__.load({
      *
      * kind 决定文案前缀（uninstall* / purge*），params 给文案插值（如 {root}）。
      */
+    /** 模型区失败原因的显示文本：已知状态码翻成本地化提示，其余原样显示宿主给的原因。 */
+    function errorReasonText(reason, meta, t) {
+      if (reason === BACKEND_NOT_INSTALLED) return t('modelsNotInstalled');
+      if (reason === BACKEND_NO_ACCOUNTS) return t('modelsNoAccounts', { total: meta?.accounts ?? 0 });
+      return reason;
+    }
+
+    /**
+     * 切换网关后等新网关接管：后端快照的 gateway 变成目标（插件已按新配置重启、路由换成新一轮的），
+     * 并且模型区能答（拉到目录，或明确报"账号池为空"——网关本身已经在跑）。
+     * 新网关没装就不必等了。重启期间路由会短暂 404 / 连不上，都按"还没好"继续等。
+     * @returns {Promise<'ready' | 'not-installed' | 'timeout'>}
+     */
+    async function waitForGateway(gateway, { waitMs = GATEWAY_WAIT_MS, pollMs = GATEWAY_POLL_MS, sleep } = {}) {
+      const pause = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+      const deadline = Date.now() + waitMs;
+      while (Date.now() < deadline) {
+        try {
+          const snapshot = (await request(BACKEND_PATH, 'GET')).backend ?? {};
+          if (snapshot.gateway === gateway) {
+            if (snapshot.exeExists === false) return 'not-installed';
+            const models = await request(MODELS_PATH, 'GET');
+            if (models.ok || models.state === BACKEND_NO_ACCOUNTS) return 'ready';
+          }
+        } catch {
+          /* 重启中：下一轮再看 */
+        }
+        await pause(pollMs);
+      }
+      return 'timeout';
+    }
+
     function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm, kind: action = 'uninstall', textKind, params }) {
       const kind = textKind ?? action;
       const cancel = h(
@@ -886,9 +936,9 @@ window.__ModuleLoader__.load({
             setRows([]);
             setPicked(new Set());
             setSavedPicked(new Set());
-            setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, patchPath: payload.patchPath });
-            // 没装后端时只记状态码，渲染时再翻成"去点安装"（load 不依赖 t，避免 t 变化时反复重载）。
-            setReason(payload.state === BACKEND_NOT_INSTALLED ? BACKEND_NOT_INSTALLED : (payload.reason ?? ''));
+            setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, patchPath: payload.patchPath, accounts: payload.accounts });
+            // 已知状态只记状态码，渲染时再翻成本地化提示（load 不依赖 t，避免 t 变化时反复重载）。
+            setReason([BACKEND_NOT_INSTALLED, BACKEND_NO_ACCOUNTS].includes(payload.state) ? payload.state : (payload.reason ?? ''));
             setPhase('error');
             return;
           }
@@ -1043,17 +1093,14 @@ window.__ModuleLoader__.load({
         setPanelKey({ busy: true });
         try {
           const payload = await request(PANEL_KEY_PATH, 'POST', {});
-          if (payload.gateway === 'hub') {
-            setPanelKey({ kind: 'ok', text: t('panelKeyHub') });
-            return;
-          }
+          const hub = payload.gateway === 'hub';
           if (!payload.key) {
-            setPanelKey({ kind: 'ok', text: t('panelKeyNone') });
+            setPanelKey({ kind: 'ok', text: t(hub ? 'panelPasswordChanged' : 'panelKeyNone') });
             return;
           }
           try {
             await navigator.clipboard.writeText(payload.key);
-            setPanelKey({ kind: 'ok', text: t('panelKeyCopied') });
+            setPanelKey({ kind: 'ok', text: t(hub ? 'panelPasswordCopied' : 'panelKeyCopied') });
           } catch {
             // 剪贴板 API 可能被宿主/非安全上下文拒绝：退回显示原文，让用户自己选中复制。
             setPanelKey({ kind: 'manual', key: payload.key });
@@ -1063,21 +1110,26 @@ window.__ModuleLoader__.load({
         }
       }, [t]);
 
-      // 切换后端网关。宿主写完 config.gateway 会重启本插件（停旧网关、按新网关拉起），
-      // 路由在重启期间短暂不可用，所以隔一会儿再读后端与模型区，而不是立即读。
+      // 切换后端网关。宿主写完 config.gateway 会重启本插件（停旧网关、按新网关拉起）；
+      // 新网关要几秒才监听（hub 带 Python 冷启动），固定延时去读会读到 fetch failed，
+      // 所以轮询到"后端快照已是新网关、模型区能答"为止，再刷新两块（见 waitForGateway）。
       const [gatewaySwitch, setGatewaySwitch] = useState(undefined);
       const switchGateway = useCallback(async (gateway, label) => {
-        setGatewaySwitch({ busy: gateway });
+        setGatewaySwitch({ busy: gateway, kind: 'ok', text: t('gatewayWaiting', { name: label }) });
         try {
           const payload = await request(BACKEND_PATH, 'POST', { action: 'gateway', gateway });
           if (!payload.ok) {
             setGatewaySwitch({ kind: 'error', text: payload.reason ?? '' });
             return;
           }
-          setGatewaySwitch({ kind: 'ok', text: t('gatewaySwitched', { name: label }) });
-          if (payload.state === 'switched') {
-            setTimeout(() => { loadBackend(); load(false); }, 2500);
-          }
+          const outcome = payload.state === 'switched' ? await waitForGateway(gateway) : 'ready';
+          await loadBackend();
+          await load(false);
+          const key = { ready: 'gatewaySwitched', 'not-installed': 'gatewayNotInstalled' }[outcome] ?? 'gatewayTimeout';
+          setGatewaySwitch({
+            kind: outcome === 'timeout' ? 'error' : 'ok',
+            text: t(key, { name: label, seconds: GATEWAY_WAIT_MS / 1000 }),
+          });
         } catch (error) {
           setGatewaySwitch({ kind: 'error', text: errorText(error) });
         }
@@ -1099,7 +1151,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { key: 'error', className: 'dsm-wb-empty' },
-            h('div', { className: 'dsm-wb-notice dsm-wb-notice-error' }, reason === BACKEND_NOT_INSTALLED ? t('modelsNotInstalled') : reason),
+            h('div', { className: 'dsm-wb-notice dsm-wb-notice-error' }, errorReasonText(reason, meta, t)),
             h('button', { type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', onClick: load }, t('retry')),
           ),
         );
@@ -1243,7 +1295,7 @@ window.__ModuleLoader__.load({
         const gatewayLabel = (id) => t(id === 'hub' ? 'gatewayHub' : 'gatewayWb2api');
         const section = [];
         if (gateways.length > 1) {
-          section.push(
+          const gatewayBlock = [
             h(
               'div',
               { key: 'gateway', className: 'dsm-wb-backend-head' },
@@ -1258,12 +1310,13 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
-          );
+          ];
           if (currentGateway === 'hub') {
-            section.push(h('p', { key: 'gatewayHint', className: 'dsm-wb-backend-line' }, t('gatewayHubHint')));
+            gatewayBlock.push(h('p', { key: 'gatewayHint', className: 'dsm-wb-backend-line' }, t('gatewayHubHint')));
           }
-          const switched = wbNotice('gatewayNotice', gatewaySwitch?.busy ? undefined : gatewaySwitch);
-          if (switched) section.push(switched);
+          const switched = wbNotice('gatewayNotice', gatewaySwitch);
+          if (switched) gatewayBlock.push(switched);
+          section.push(h('div', { key: 'gatewayBlock', className: 'dsm-wb-gateway' }, gatewayBlock));
         }
         section.push(
           h(
@@ -1445,7 +1498,7 @@ window.__ModuleLoader__.load({
           wbButton(
             'panelKey',
             'outline dsm-wb-panel-key',
-            panelKey?.busy ? t('panelKeyWorking') : t('panelKeyCopy'),
+            panelKey?.busy ? t('panelKeyWorking') : t(backend?.gateway === 'hub' ? 'panelPasswordCopy' : 'panelKeyCopy'),
             copyPanelKey,
             Boolean(panelKey?.busy),
           ),
@@ -1499,6 +1552,7 @@ window.__ModuleLoader__.load({
     // 纯函数，导出给测试；宿主只认 name / inject / apply。
     exports.orderedSelection = orderedSelection;
     exports.renderUpdateSection = renderUpdateSection;
+    exports.waitForGateway = waitForGateway;
     exports.apply = apply;
     exports.inject = inject;
     exports.name = name;

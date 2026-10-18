@@ -370,6 +370,19 @@ test('selectGateway：写 config.gateway（保留其它字段）；同值、非�
   assert.equal(editor.writes.length, 1);
 });
 
-test('readPanelKey：hub 不给密钥（看板用面板密码），浏览器半侧据 gateway 提示', () => {
-  assert.deepEqual(readPanelKey({ gateway: 'hub' }), { ok: true, key: '', gateway: 'hub' });
+test('readPanelKey：hub 还是出厂密码时给 admin；改过之后只有哈希，不给明文', () => {
+  const accounts = mkdtempSync(join(tmpdir(), 'wb-hub-pw-'));
+  const resolved = { gateway: 'hub', paths: { accounts } };
+  // 从没打开过设置页：settings.json 不在，hub 认出厂密码。
+  assert.deepEqual(readPanelKey(resolved), { ok: true, gateway: 'hub', key: 'admin', passwordDefault: true });
+
+  writeFileSync(join(accounts, 'settings.json'), JSON.stringify({ panel_password_hash: '', panel_password_default: true }));
+  assert.equal(readPanelKey(resolved).key, 'admin');
+
+  writeFileSync(join(accounts, 'settings.json'), JSON.stringify({ panel_password_hash: 'ab12', panel_password_salt: 'cd', panel_password_default: false }));
+  assert.deepEqual(readPanelKey(resolved), { ok: true, gateway: 'hub', key: '', passwordDefault: false });
+
+  // 读不了（写到一半）时不冒充出厂密码。
+  writeFileSync(join(accounts, 'settings.json'), '{"panel_password_hash": "ab');
+  assert.equal(readPanelKey(resolved).key, '');
 });

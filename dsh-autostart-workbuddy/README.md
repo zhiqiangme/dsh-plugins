@@ -37,10 +37,10 @@
 
 hub 是 wb2api 停更时的备选。
 
-- **切换**：宿主按"配置变更"重启本插件，停掉旧网关，再按新网关拉起（没装就提示去点「安装」）。两种网关的程序和账号各存一份，切换不会覆盖对方的数据；但账号要在 hub 看板里另外登录或导入。
+- **切换**：宿主按"配置变更"重启本插件，停掉旧网关，再按新网关拉起（没装就提示去点「安装」）。卡片会等到新网关接管、模型区能答才刷新（最多 60 秒）。两种网关的程序和账号各存一份，切换不会覆盖对方的数据；但账号要在 hub 看板里另外登录或导入。
 - **端口与 provider**：两者都监听 7863，DSH 里 workbuddy provider 的 `baseURL` 不用改。
 - **网关密钥**：hub 的密钥按 插件配置 `models.apiKey` → 环境变量 `WORKBUDDY_PROXY_KEY` → wb2api `config.json` 的 `api_key` 的顺序沿用，所以凭据库里现有的 `WORKBUDDY_PROXY_KEY` 不用改。都没有时插件生成一个，存进 `hub/data/plugin-api-key`。密钥经环境变量 `API_KEY` 传给 hub，不出现在命令行里。
-- **模型白名单**：从 wb2api 切到 hub 后，`models.only` 里的 `cn:` / `global:` id 都对不上，需要在卡片里重新勾选。展示名前缀（CN / GL）按 hub 当前的出口补上。
+- **模型白名单**：从 wb2api 切到 hub 后，`models.only` 里的 `cn:` / `global:` id 都对不上，需要在卡片里重新勾选。展示名前缀（CN / GL）按 hub 当前的出口补上。hub 账号池里还没有可用账号时，它的 `/v1/models` 仍会返回内置目录，卡片按 `/health` 的 `accounts_ready` 判断，为 0 就不列模型，提示先去看板登录。
 - **Clash 全局模式**：hub 的国内版上游同样写死成 `copilot.tencent.com`，海外出口下一样看不到 CN 模型。需要怎么改见 [docs/hub-cn-base.md](https://github.com/zhiqiangme/dsh-plugins/blob/main/dsh-autostart-workbuddy/docs/hub-cn-base.md)。
 - **命令行**：`lib/backend-cli.js` 只管 wb2api；hub 的安装、更新与回滚在卡片里操作。
 
@@ -110,6 +110,8 @@ node lib/sync-cli.js
   用户粘贴一次（之后浏览器会记住）。剪贴板不可用时退回显示原文供手动复制。
   密钥经 `POST /plugins/dsh-autostart-workbuddy/panel-key` 取（只接受 loopback 来源，GET 一律 405），
   不放进其它接口的应答里。
+  切到 hub 后按钮改为「复制面板密码」：hub 的看板密码还是出厂的 `admin` 时直接复制它；改过之后 hub 只存哈希，
+  插件读不到明文，只提示用自己设的密码登录。
 
 数据通路：卡片向 `/plugins/dsh-autostart-workbuddy/models` 发 POST `{action: 'refresh'}` 刷新并同步，GET 只读取清单，普通 POST 保存选择；宿主半侧
 （[lib/web.js](lib/web.js)）负责拉后端与读写 profile。必须过宿主是因为：页面够不到
