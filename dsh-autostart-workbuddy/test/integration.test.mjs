@@ -21,6 +21,10 @@ import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-edi
 
 const DUMMY = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
 
+// apply 读的是宿主 process.env：不隔离的话会在真实的 ~/.dsh/autostart-workbuddy 上跑目录迁移、
+// 写更新缓存。node --test 每个文件一个进程，在任何用例开始前设一次，不会串到别的文件。
+process.env.DSH_WORKBUDDY_BACKEND_ROOT = mkdtempSync(join(tmpdir(), 'wb-integration-root-'));
+
 function freePort() {
   return new Promise((done, fail) => {
     const server = createServer();
