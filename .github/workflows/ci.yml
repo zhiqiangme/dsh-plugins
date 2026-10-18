@@ -37,6 +37,9 @@ jobs:
       - name: Test Tavily Search
         working-directory: dsh-tavily-search
         run: node --test test/*.test.mjs
+      - name: Test Bilibili settings compatibility
+        working-directory: dsh-bili-scroll-settings-fix
+        run: node --test test/*.test.mjs
       # 两个后端插件的路径和进程测试遵循 Windows 契约。
       - name: Test WorkBuddy
         if: runner.os == 'Windows'
