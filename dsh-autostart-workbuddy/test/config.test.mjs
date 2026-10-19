@@ -108,6 +108,22 @@ test('backend 段：默认开启启动检查、保留 3 个版本，各字段可
   assert.equal(custom.backend.apiBase, 'http://127.0.0.1:1');
 });
 
+test('backend 段：自动更新默认开启、冷却期 24 小时；冷却期可设 0，负数与非法值退回默认', () => {
+  const resolved = resolvePluginConfig({}, ENV);
+  assert.equal(resolved.backend.autoUpdate, true);
+  assert.equal(resolved.backend.autoUpdateDelayHours, 24);
+
+  const off = resolvePluginConfig({ backend: { autoUpdate: false, autoUpdateDelayHours: 0 } }, ENV);
+  assert.equal(off.backend.autoUpdate, false);
+  assert.equal(off.backend.autoUpdateDelayHours, 0);
+
+  for (const value of [-1, 'abc', '', null]) {
+    assert.equal(resolvePluginConfig({ backend: { autoUpdateDelayHours: value } }, ENV).backend.autoUpdateDelayHours, 24, String(value));
+  }
+  // 只有显式 false 才关：写错类型不该把自动更新悄悄关掉。
+  assert.equal(resolvePluginConfig({ backend: { autoUpdate: 'no' } }, ENV).backend.autoUpdate, true);
+});
+
 test('managedExe：没配 exe 时为 true（用自管目录），显式配了为 false', () => {
   assert.equal(resolvePluginConfig({}, ENV).managedExe, true);
   assert.equal(resolvePluginConfig({ exe: 'C:\\tmp\\x.exe' }, ENV).managedExe, false);

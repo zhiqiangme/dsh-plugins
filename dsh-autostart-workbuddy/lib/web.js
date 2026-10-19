@@ -23,7 +23,8 @@
 
 import { isDeepStrictEqual } from 'node:util';
 
-import { GATEWAY_IDS, gatewayDriver } from './gateway.js';
+import { autoUpdateStatus } from './auto-update.js';
+import { GATEWAY_IDS, backendLockHolder, gatewayDriver, withBackendLock } from './gateway.js';
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
 import { creditsLabel, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, syncModels } from './models.js';
 import { healthTarget } from './resync.js';
@@ -45,7 +46,7 @@ export const PANEL_BASE = `/plugins/${PLUGIN_ID}`;
 /** 模型清单与勾选结果的端点（GET 只读 / POST 保存选择或刷新并同步）。 */
 export const MODELS_PATH = `${PANEL_BASE}/models`;
 
-/** 后端版本与更新端点（GET 读状态 / POST 执行 check|update|rollback）。 */
+/** 后端版本与更新端点（GET 读状态 / POST 执行 check|update|rollback|autoUpdate…）。 */
 export const BACKEND_PATH = `${PANEL_BASE}/backend`;
 
 /** 本插件自身的版本检查端点：当前运行版本 vs npm latest（?force=1 绕过缓存）。与后端网关的版本无关。 */
@@ -304,25 +305,33 @@ function plainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {};
 }
 
-/**
- * 同一时刻只允许一个更新/回滚：下载 + 换文件 + 重启后端不是幂等操作，
- * 两个请求并发进来会把 current 目录搅乱。
- */
-let backendBusy = false;
+/** 锁被占着时给面板的说明：后台自动下载与手点的操作分开说，用户才知道该等什么。 */
+function busyReason(holder) {
+  if (holder === 'auto-prepare') return '后台正在自动下载后端新版本，请稍候再试';
+  if (holder === 'auto-apply') return '正在换装自动下载的后端新版本，请稍候再试';
+  return '已有更新操作在进行中，请稍候再试';
+}
 
 /**
  * 后端版本端点。
  *
  * GET 默认**不联网**（首屏要快，GitHub 也可能慢甚至不通），带 `?check=1` 才真去查 release。
- * POST 只接受 check / update / rollback 三个动作；update 与 rollback 互斥。
+ * POST 的动作：check、gateway、autoUpdate，以及会动目录的 install / update / rollback / uninstall / purge
+ * （后五个与自动更新共用一把锁，同一时刻只跑一个）。
  */
-async function handleBackend(req, res, { logger, resolved, env, service, editor }) {
+async function handleBackend(req, res, { logger, resolved, env, service, editor, autoUpdater }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
   const driver = gatewayDriver(resolved);
   // 面板地址由服务规格推出来（端口可被 profile 覆盖），浏览器半侧拿它渲染可点击链接。
   const panelUrl = `http://${resolved.spec?.host ?? '127.0.0.1'}:${resolved.spec?.port ?? 7863}${driver.panelPath}`;
-  const snapshot = () => ({ ...driver.describe(paths), gateway: driver.id, gateways: [...GATEWAY_IDS], panelUrl });
+  const snapshot = () => ({
+    ...driver.describe(paths),
+    gateway: driver.id,
+    gateways: [...GATEWAY_IDS],
+    panelUrl,
+    autoUpdate: autoUpdateStatus(resolved),
+  });
 
   if (req.method === 'GET') {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -363,7 +372,17 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor 
   const action = typeof body.value.action === 'string' ? body.value.action : '';
 
   if (action === 'gateway') {
-    json(res, 200, await selectGateway({ resolved, editor, gateway: body.value.gateway, busy: backendBusy }));
+    // 后台自动下载只写 cache/ 里的暂存文件，不碰正在跑的程序：切网关重启插件不受它影响，不必等它下完。
+    const holder = backendLockHolder();
+    json(res, 200, await selectGateway({ resolved, editor, gateway: body.value.gateway, busy: Boolean(holder) && holder !== 'auto-prepare' }));
+    return;
+  }
+
+  if (action === 'autoUpdate') {
+    const result = await setAutoUpdate({ resolved, editor, enabled: body.value.enabled });
+    // 刚打开就查一轮，不用等下一次定时；下载可能要几十秒，不等它，结果从后续快照里看。
+    if (result.ok && result.enabled) autoUpdater?.tick();
+    json(res, result.ok ? 200 : 400, { ...result, backend: snapshot() });
     return;
   }
 
@@ -379,7 +398,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor 
     return;
   }
 
-  // 会改动磁盘的动作：都要串行执行（见 backendBusy），其中卸载与清除数据还要求显式二次确认。
+  // 会改动磁盘的动作：都要串行执行（见下面的 withBackendLock），其中卸载与清除数据还要求显式二次确认。
   const MUTATING_ACTIONS = new Set(['install', 'update', 'rollback', 'uninstall', 'purge']);
 
   if (!MUTATING_ACTIONS.has(action)) {
@@ -398,15 +417,10 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor 
     return;
   }
 
-  if (backendBusy) {
-    json(res, 409, { ok: false, reason: '已有更新操作在进行中，请稍候再试' });
-    return;
-  }
-  backendBusy = true;
-  try {
-    let result;
+  // 会动目录的动作与自动更新共用一把锁（见 gateway.js 的 withBackendLock）。
+  const locked = await withBackendLock(action, () => {
     if (action === 'install' || action === 'update') {
-      result = await driver[action]({
+      return driver[action]({
         paths,
         env,
         apiBase,
@@ -414,15 +428,39 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor 
         logger,
         keepVersions: resolved.backend?.keepVersions,
       });
-    } else if (action === 'purge') {
-      result = await driver.purge({ paths, service, logger, env });
-    } else {
-      result = await driver[action]({ paths, service, logger });
     }
-    json(res, result.ok ? 200 : 400, { ...result, backend: snapshot() });
-  } finally {
-    backendBusy = false;
+    if (action === 'purge') return driver.purge({ paths, service, logger, env });
+    return driver[action]({ paths, service, logger });
+  });
+  if (!locked.acquired) {
+    json(res, 409, { ok: false, reason: busyReason(locked.holder) });
+    return;
   }
+  const result = locked.value;
+  json(res, result.ok ? 200 : 400, { ...result, backend: snapshot() });
+}
+
+/**
+ * 面板的「自动更新」开关：写本插件那一行的 `config.backend.autoUpdate`（保留 backend 的其它字段）。
+ *
+ * 写完宿主会触发 internal/update，index.js 的钩子把它当就地生效的字段处理，不重启插件；
+ * 这里也同步改一次手里的 resolved，宿主没转发 internal/update 时（测试、旧版本）同样立即生效。
+ */
+export async function setAutoUpdate({ resolved, editor, enabled }) {
+  if (typeof enabled !== 'boolean') return { ok: false, reason: 'enabled 必须是布尔值' };
+  if (typeof editor?.edit !== 'function') return { ok: false, reason: '宿主没有 configEditor 服务，无法保存自动更新设置' };
+  const entry = findConfigEntry(editor, { id: PLUGIN_ID });
+  if (!entry) return { ok: false, reason: `DSH 里没有可编辑的 ${PLUGIN_ID} 条目` };
+  try {
+    await editor.edit(entry, (current) => {
+      const config = plainObject(current);
+      return { ...config, backend: { ...plainObject(config.backend), autoUpdate: enabled } };
+    });
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+  if (resolved.backend) resolved.backend.autoUpdate = enabled;
+  return { ok: true, enabled };
 }
 
 /**
@@ -507,9 +545,10 @@ function forceFrom(req) {
  * 注册面板路由；宿主没有 webServer 时只记一条 warn。
  *
  * checkVersion 只给测试注入，缺省用 lib/update.js 的带缓存检查器。
- * resync 与入口处的定时器共用，面板刷新通过 tick() 立即对齐模型清单。
+ * resync 与入口处的定时器共用，面板刷新通过 tick() 立即对齐模型清单；
+ * autoUpdater 同理，面板打开「自动更新」时立即查一轮。
  */
-export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, resync, checkVersion = createVersionChecker() }) {
+export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, resync, autoUpdater, checkVersion = createVersionChecker() }) {
   const mount = (scoped) => {
     const holder = scoped ?? ctx;
     const webServer =
@@ -590,7 +629,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       const disposeBackend = webServer.register({
         kind: 'exact',
         path: BACKEND_PATH,
-        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx) })),
+        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), autoUpdater })),
       });
 
       const disposeVersion = webServer.register({

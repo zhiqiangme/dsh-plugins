@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolvePluginConfig } from '../lib/config.js';
+import { withBackendLock } from '../lib/gateway.js';
 import { createModelResync } from '../lib/resync.js';
 import {
   BACKEND_NO_ACCOUNTS,
@@ -593,6 +594,64 @@ test('后端路由（hub）：快照来自 hub 的目录，面板地址是 hub �
   await handler(fakeReq('POST', { body: JSON.stringify({ action: 'gateway', gateway: 'wb2api' }) }), switched);
   assert.equal(switched.status, 200);
   assert.equal(switched.body.state, 'switched', JSON.stringify(switched.body));
+});
+
+test('后端路由：自动更新开关写 backend.autoUpdate（保留 backend 其它字段），打开时立即查一轮；快照带自动更新状态', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wb-web-auto-'));
+  const resolved = resolvePluginConfig({ port: await freePort() }, { DSH_WORKBUDDY_BACKEND_ROOT: root, PATH: '' });
+  const editor = createFakeConfigEditor([{ id: PLUGIN_ID, config: { backend: { keepVersions: 5 } } }]);
+  const ctx = fakeCtx({ configEditor: editor });
+  let ticks = 0;
+  const autoUpdater = { tick: async () => { ticks += 1; return { state: 'skipped' }; } };
+  registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env, autoUpdater });
+  const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;
+
+  const status = fakeRes();
+  await handler(fakeReq('GET'), status);
+  assert.deepEqual(status.body.backend.autoUpdate, {
+    enabled: true, available: true, delayHours: 24, pending: null, failed: null, last: null, lastCheck: null,
+  });
+
+  const off = fakeRes();
+  await handler(fakeReq('POST', { body: JSON.stringify({ action: 'autoUpdate', enabled: false }) }), off);
+  assert.equal(off.status, 200, JSON.stringify(off.body));
+  assert.deepEqual(editor.entry(PLUGIN_ID).options.config.backend, { keepVersions: 5, autoUpdate: false });
+  assert.equal(resolved.backend.autoUpdate, false, '手里的配置同步改掉，不等宿主转发');
+  assert.equal(off.body.backend.autoUpdate.enabled, false);
+  assert.equal(ticks, 0, '关掉时不查');
+
+  const on = fakeRes();
+  await handler(fakeReq('POST', { body: JSON.stringify({ action: 'autoUpdate', enabled: true }) }), on);
+  assert.equal(on.body.backend.autoUpdate.enabled, true);
+  assert.equal(ticks, 1, '打开时立即查一轮');
+
+  const bad = fakeRes();
+  await handler(fakeReq('POST', { body: JSON.stringify({ action: 'autoUpdate', enabled: 'yes' }) }), bad);
+  assert.equal(bad.status, 400);
+  assert.equal(editor.edits.length, 2, '非法值不写配置');
+});
+
+test('后端路由：后台自动下载占着锁时，手动更新 409 并说明原因；切换网关不用等它', async () => {
+  const resolved = configFor(await freePort());
+  const ctx = fakeCtx({ configEditor: editorFor() });
+  registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env });
+  const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;
+
+  let releaseLock;
+  const held = withBackendLock('auto-prepare', () => new Promise((done) => { releaseLock = done; }));
+  try {
+    const update = fakeRes();
+    await handler(fakeReq('POST', { body: JSON.stringify({ action: 'update' }) }), update);
+    assert.equal(update.status, 409);
+    assert.match(update.body.reason, /后台正在自动下载/);
+
+    const switched = fakeRes();
+    await handler(fakeReq('POST', { body: JSON.stringify({ action: 'gateway', gateway: 'hub' }) }), switched);
+    assert.equal(switched.body.state, 'switched', JSON.stringify(switched.body));
+  } finally {
+    releaseLock();
+    await held;
+  }
 });
 
 test('插件版本路由：GET 交给版本检查器，只有 ?force=1 绕过缓存；其它方法 405、外部来源 403', async () => {

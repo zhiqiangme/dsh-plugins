@@ -292,6 +292,24 @@ test('配置变更：只改 models.* 时就地生效、不重启插件；改了�
   assert.ok(ctx.lines.some((line) => line.includes('spec.port')), '重启时应记下是哪个字段变了');
 });
 
+test('配置变更：面板切自动更新开关就地生效、不重启插件；同时改了别的字段才重启', async (t) => {
+  const port = await freePort();
+  const ctx = fakeContext();
+  t.after(() => ctx.disposeAll());
+
+  const config = fakeServiceConfig(port, { env: dummyEnv(port) });
+  apply(ctx, config);
+  assert.ok(await waitForLog(ctx, '已启动'), ctx.lines.join('\n'));
+
+  ctx.update({ ...config, backend: { autoUpdate: false, autoUpdateDelayHours: 48 } });
+  assert.equal(ctx.restarts, 0, '为一个开关重启会把托管的后端停掉再拉起');
+  assert.ok(ctx.lines.some((line) => line.includes('自动更新设置已更新')), ctx.lines.join('\n'));
+
+  ctx.update({ ...config, backend: { autoUpdate: true, keepVersions: 9 } });
+  assert.equal(ctx.restarts, 1);
+  assert.ok(ctx.lines.some((line) => line.includes('backend.keepVersions') && !line.includes('backend.autoUpdate')), '重启日志只列需要重启的字段');
+});
+
 test('配置变更：apply 之后宿主 process.env 有变动，保存白名单仍然不重启插件', async (t) => {
   const port = await freePort();
   const ctx = fakeContext();

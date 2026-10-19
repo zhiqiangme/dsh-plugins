@@ -121,6 +121,8 @@ export function localHubVersion(paths) {
     installedAt: typeof state?.installedAt === 'string' ? state.installedAt : null,
     managed: Boolean(state),
     drifted: Boolean(state?.tag && tag && state.tag !== tag),
+    /** 安装来源（同 backend.js 的 localVersion）：自动更新据此识别"用户回滚过"。 */
+    source: typeof state?.source === 'string' ? state.source : null,
     previous: state?.previous ?? null,
   };
 }
@@ -305,11 +307,23 @@ async function startAndProbe(service) {
   return probeHubHealth({ host: service.spec?.host ?? '127.0.0.1', port: service.port });
 }
 
+/** 暂存目录是不是目标版本的完整 hub：脚本与运行时都在，且放进去的 manifest 自称是这个 tag。 */
+function checkStagedHub(stagedDir, latest) {
+  if (!isHubDir(stagedDir)) {
+    return { ok: false, state: 'binary-unknown', reason: '包里缺少 wb_proxy.py 或自带的 python/python.exe，拒绝安装', latest };
+  }
+  const tag = readJson(join(stagedDir, HUB_MANIFEST))?.tag;
+  if (tag !== latest.tag) {
+    return { ok: false, state: 'binary-mismatch', reason: `暂存目录的 ${HUB_MANIFEST}（${tag ?? '无'}）与目标版本（${latest.tag}）不一致`, latest };
+  }
+  return undefined;
+}
+
 /**
- * 更新 / 首次安装：下载 → 校验 → 读包内 manifest → 整包解到暂存目录 → 停服 → 换目录 → 起服 →
- * 健康检查（失败回滚）。与 backend.js 的 applyUpdate 同一套语义与返回形状。
+ * 更新的前半段：下载 → 校验 → 读包内 manifest → 整包解到 cache/ 暂存目录。不停服务、不碰 current/。
+ * 与 backend.js 的 prepareUpdate 同一套语义与返回形状（staged.path 是目录）。
  */
-export async function applyHubUpdate({ paths, env = process.env, apiBase, service, logger, keepVersions = DEFAULT_HUB_KEEP_VERSIONS, target } = {}) {
+export async function prepareHubUpdate({ paths, env = process.env, apiBase, logger, target } = {}) {
   const latest = target ?? (await fetchLatestHubRelease({ env, apiBase }));
   const local = localHubVersion(paths);
   if (local.tag && local.tag === latest.tag && isHubDir(paths.current)) {
@@ -349,12 +363,42 @@ export async function applyHubUpdate({ paths, env = process.env, apiBase, servic
   } catch (error) {
     return discardStaged({ ok: false, state: 'extract-failed', reason: error instanceof Error ? error.message : String(error), latest });
   }
-  if (!isHubDir(stagedDir)) {
-    return discardStaged({ ok: false, state: 'binary-unknown', reason: '包里缺少 wb_proxy.py 或自带的 python/python.exe，拒绝安装', latest });
-  }
+  const rejected = checkStagedHub(stagedDir, latest);
+  if (rejected) return discardStaged(rejected);
+  return { ok: true, state: 'prepared', local, latest, staged: { path: stagedDir, asset: asset.name, sha256: verified.actual } };
+}
 
+/**
+ * 更新的后半段：停服 → 换目录 → 起服 → 健康检查（失败回滚）→ 记安装来源。
+ * 参数与 backend.js 的 commitUpdate 一致；暂存目录换上之前再核对一次（可能是上次运行时下载的）。
+ */
+export async function commitHubUpdate({
+  paths,
+  service,
+  logger,
+  keepVersions = DEFAULT_HUB_KEEP_VERSIONS,
+  latest,
+  staged,
+  keepStaged = false,
+  source = 'github-release',
+} = {}) {
+  const stagedDir = staged?.path;
+  const discardStaged = (result) => {
+    if (stagedDir) rmSync(stagedDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    return result;
+  };
+  if (!stagedDir || !existsSync(stagedDir)) {
+    return { ok: false, state: 'staged-missing', reason: `找不到暂存的新版本：${stagedDir ?? '(空)'}`, latest };
+  }
+  const rejected = checkStagedHub(stagedDir, latest);
+  if (rejected) return discardStaged(rejected);
+
+  const local = localHubVersion(paths);
   const stop = await stopForUpdate(service, logger);
-  if (!stop.ok) return discardStaged({ ok: false, state: 'not-owned', reason: stop.reason, latest });
+  if (!stop.ok) {
+    const refused = { ok: false, state: 'not-owned', reason: stop.reason, latest };
+    return keepStaged ? refused : discardStaged(refused);
+  }
 
   let swap;
   try {
@@ -375,16 +419,26 @@ export async function applyHubUpdate({ paths, env = process.env, apiBase, servic
 
   writeJson(paths.state, {
     tag: latest.tag,
-    asset: asset.name,
-    sha256: verified.actual,
+    asset: staged.asset ?? null,
+    sha256: staged.sha256 ?? null,
     installedAt: new Date().toISOString(),
-    source: 'github-release',
+    source,
     previous: local.tag ? { tag: local.tag } : undefined,
   });
   const pruned = pruneHubVersions(paths, keepVersions);
   logger?.info?.(`[workbuddy] hub 已更新到 ${latest.tag}`);
   if (health.servable === false) logger?.info?.('[workbuddy] hub 暂无可用账号，请在 hub 看板登录 WorkBuddy 账号');
   return { ok: true, state: 'updated', latest, health, pruned, local: localHubVersion(paths) };
+}
+
+/**
+ * 更新 / 首次安装（面板「更新」/「安装」）：prepareHubUpdate 紧接 commitHubUpdate。
+ * 与 backend.js 的 applyUpdate 同一套语义与返回形状。
+ */
+export async function applyHubUpdate({ paths, env = process.env, apiBase, service, logger, keepVersions = DEFAULT_HUB_KEEP_VERSIONS, target } = {}) {
+  const prepared = await prepareHubUpdate({ paths, env, apiBase, logger, target });
+  if (prepared.state !== 'prepared') return prepared;
+  return commitHubUpdate({ paths, service, logger, keepVersions, latest: prepared.latest, staged: prepared.staged });
 }
 
 export async function installHub(options = {}) {

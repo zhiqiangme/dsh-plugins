@@ -12,8 +12,10 @@
 import {
   applyUpdate,
   checkForUpdate,
+  commitUpdate,
   describeBackend,
   installBackend,
+  prepareUpdate,
   probeHealthz,
   purgeBackendData,
   rollbackBackend,
@@ -22,8 +24,10 @@ import {
 import {
   applyHubUpdate,
   checkHubUpdate,
+  commitHubUpdate,
   describeHub,
   installHub,
+  prepareHubUpdate,
   probeHubHealth,
   purgeHubData,
   rollbackHub,
@@ -47,6 +51,9 @@ const WB2API = Object.freeze({
   check: checkForUpdate,
   install: installBackend,
   update: applyUpdate,
+  /** 自动更新的两半：后台下载暂存 / 下次启动时换上（见 auto-update.js）。 */
+  prepare: prepareUpdate,
+  commit: commitUpdate,
   rollback: rollbackBackend,
   uninstall: uninstallBackend,
   purge: purgeBackendData,
@@ -61,6 +68,8 @@ const HUB = Object.freeze({
   check: checkHubUpdate,
   install: installHub,
   update: applyHubUpdate,
+  prepare: prepareHubUpdate,
+  commit: commitHubUpdate,
   rollback: rollbackHub,
   uninstall: uninstallHub,
   purge: purgeHubData,
@@ -71,4 +80,37 @@ const HUB = Object.freeze({
 export function gatewayDriver(gateway) {
   const id = typeof gateway === 'string' ? gateway : gateway?.gateway;
   return normalizeGateway(id) === 'hub' ? HUB : WB2API;
+}
+
+/**
+ * 后端目录的独占锁。面板的安装 / 更新 / 回滚 / 卸载 / 清除，以及自动更新的后台下载与启动时换装，
+ * 都会动 current/、versions/ 或 cache/ 里的暂存文件；下载 + 换文件 + 重启后端不是幂等操作，
+ * 两个并发进来会把目录搅乱，所以同一时刻只放一个。
+ *
+ * 放在模块级：插件因配置变更重启（dispose 再 apply）时模块不会重新加载，锁跨重启有效——
+ * 上一轮还在跑的后台下载照样挡住新一轮的换装。
+ */
+let lockHolder;
+
+/** 正在持锁的动作名（如 'update'、'auto-prepare'）；没人持锁时为 undefined。 */
+export function backendLockHolder() {
+  return lockHolder;
+}
+
+/**
+ * 持锁执行 task；锁被占着时不等待，直接返回 { acquired: false, holder }。
+ *
+ * @template T
+ * @param {string} holder 动作名，给"被谁占着"的提示用
+ * @param {() => Promise<T>} task
+ * @returns {Promise<{ acquired: true, value: T } | { acquired: false, holder: string }>}
+ */
+export async function withBackendLock(holder, task) {
+  if (lockHolder) return { acquired: false, holder: lockHolder };
+  lockHolder = holder;
+  try {
+    return { acquired: true, value: await task() };
+  } finally {
+    lockHolder = undefined;
+  }
 }

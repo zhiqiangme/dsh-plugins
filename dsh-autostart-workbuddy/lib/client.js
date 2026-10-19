@@ -224,6 +224,17 @@ window.__ModuleLoader__.load({
       backendNoAccounts: '后端已启动，但还没有可用的 WorkBuddy 账号，请打开上面的后端面板登录。',
       backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
       backendUninstalledHub: 'hub 已卸载（hub/data/ 已保留）。',
+      autoUpdateLabel: '自动更新后端',
+      autoUpdateHint: '后台下载发布满 {hours} 小时的正式版，下次启动 DSH 时安装；新版本起不来会自动退回原版本。',
+      autoUpdateUnavailable: '后端程序是在配置里自己指定的（或关了版本管理），插件不管它的版本，自动更新不生效。',
+      autoUpdatePending: '已下载 {tag}，下次启动 DSH 时自动安装。',
+      autoUpdateLast: '{time} 已自动从 {from} 更新到 {to}；有问题可点「回滚」。',
+      autoUpdateFailed: '自动更新到 {tag} 没成功（{reason}），原版本照常在用；这个版本不再自动安装，需要的话手动点「更新」。',
+      autoUpdateRolledBack: '你从 {tag} 回滚过，自动更新会跳过它，等下一个新版本。',
+      autoUpdateWaiting: '上游 {tag} 发布未满 {hours} 小时，{time} 之后自动下载。',
+      autoUpdateDrifted: '当前后端程序被手动换过，自动更新不会覆盖它。',
+      autoUpdateUnknown: '认不出当前后端的版本号，自动更新不生效；可以手动点「更新」。',
+      autoUpdateError: '上次自动检查更新失败：{reason}',
       gatewayTitle: '后端网关',
       gatewayWb2api: 'wb2api（默认）',
       gatewayHub: 'workbuddy2api-hub',
@@ -337,6 +348,17 @@ window.__ModuleLoader__.load({
       backendNoAccounts: 'The backend is running but has no usable WorkBuddy account yet; sign in from the backend panel above.',
       backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
       backendUninstalledHub: 'Hub uninstalled (hub/data/ kept).',
+      autoUpdateLabel: 'Update the backend automatically',
+      autoUpdateHint: 'Stable releases older than {hours} hours are downloaded in the background and installed the next time DSH starts; if the new version fails to start, the previous one is restored.',
+      autoUpdateUnavailable: 'The backend executable is set in your config (or version management is off), so the plugin does not manage its version and automatic updates do not apply.',
+      autoUpdatePending: '{tag} is downloaded and will be installed the next time DSH starts.',
+      autoUpdateLast: 'Automatically updated from {from} to {to} at {time}; click "Roll back" if something is wrong.',
+      autoUpdateFailed: 'The automatic update to {tag} did not succeed ({reason}); the previous version is still in use. This version will not be installed automatically again; click "Update" to install it by hand.',
+      autoUpdateRolledBack: 'You rolled back from {tag}; automatic updates skip it and wait for the next release.',
+      autoUpdateWaiting: 'Upstream {tag} is less than {hours} hours old; it will be downloaded after {time}.',
+      autoUpdateDrifted: 'The backend executable was replaced by hand; automatic updates will not overwrite it.',
+      autoUpdateUnknown: 'The current backend version cannot be identified, so automatic updates do not apply; you can still click "Update".',
+      autoUpdateError: 'The last automatic update check failed: {reason}',
       gatewayTitle: 'Gateway',
       gatewayWb2api: 'wb2api (default)',
       gatewayHub: 'workbuddy2api-hub',
@@ -641,6 +663,64 @@ window.__ModuleLoader__.load({
 
     function isActiveOperation(operation) {
       return operation?.state === 'queued' || operation?.state === 'running';
+    }
+
+    /** ISO 时间 → 本地时间文本；解析不了就原样给出。 */
+    function localTime(iso) {
+      const time = Date.parse(iso ?? '');
+      return Number.isFinite(time) ? new Date(time).toLocaleString() : String(iso ?? '');
+    }
+
+    /**
+     * 「后端版本」区里的自动更新开关与状态（纯渲染）。老宿主的快照没有 autoUpdate 字段，返回空数组。
+     *
+     * @param {object | undefined} auto 宿主 /backend 快照里的 autoUpdate（见 lib/auto-update.js 的 autoUpdateStatus）
+     * @param {string | null} currentTag 当前后端版本
+     * @param {{ busy?: boolean, onToggle: (enabled: boolean) => void }} options
+     */
+    function renderAutoUpdate(auto, currentTag, { busy, onToggle }, t) {
+      if (!auto) return [];
+      const out = [
+        h(
+          'label',
+          { key: 'autoUpdate', className: 'dsm-wb-sync' },
+          h('input', {
+            type: 'checkbox',
+            checked: auto.enabled === true,
+            disabled: Boolean(busy) || auto.available === false,
+            onChange: (event) => onToggle(event.target.checked),
+          }),
+          t('autoUpdateLabel'),
+        ),
+        h('p', { key: 'autoUpdateHint', className: 'dsm-wb-hint' }, t(auto.available === false ? 'autoUpdateUnavailable' : 'autoUpdateHint', { hours: auto.delayHours ?? 24 })),
+      ];
+      if (auto.enabled !== true || auto.available === false) return out;
+
+      const line = (key, text) => h('p', { key, className: 'dsm-wb-backend-line' }, text);
+      if (auto.last?.to && auto.last.to === currentTag) {
+        out.push(line('autoUpdateLast', t('autoUpdateLast', { time: localTime(auto.last.at), from: auto.last.from ?? '?', to: auto.last.to })));
+      }
+      if (auto.pending?.tag) {
+        out.push(line('autoUpdatePending', t('autoUpdatePending', { tag: auto.pending.tag })));
+        return out;
+      }
+      // 手动装上了失败过的那个版本，就不再提它。
+      if (auto.failed?.tag && auto.failed.tag !== currentTag) {
+        out.push(wbNotice('autoUpdateFailed', { kind: 'error', text: t('autoUpdateFailed', { tag: auto.failed.tag, reason: auto.failed.reason || auto.failed.state || '' }) }));
+      }
+      const check = auto.lastCheck;
+      if (check?.state === 'error') {
+        out.push(line('autoUpdateCheck', t('autoUpdateError', { reason: check.reason ?? '' })));
+      } else if (check?.state === 'skipped') {
+        const key = {
+          'rolled-back': 'autoUpdateRolledBack',
+          'too-fresh': 'autoUpdateWaiting',
+          drifted: 'autoUpdateDrifted',
+          'unknown-local': 'autoUpdateUnknown',
+        }[check.reason];
+        if (key) out.push(line('autoUpdateCheck', t(key, { tag: check.tag ?? '', hours: auto.delayHours ?? 24, time: localTime(check.readyAt) })));
+      }
+      return out;
     }
 
     /**
@@ -1083,6 +1163,20 @@ window.__ModuleLoader__.load({
         [t, load, enableSyncAfterInstall],
       );
 
+      /** 自动更新开关：宿主写 backend.autoUpdate 并就地生效（不重启插件），回来的快照直接换上。 */
+      const toggleAutoUpdate = useCallback(async (enabled) => {
+        setBackendBusy('autoUpdate');
+        setBackendNotice(undefined);
+        try {
+          const payload = await request(BACKEND_PATH, 'POST', { action: 'autoUpdate', enabled });
+          if (payload.backend) setBackend(payload.backend);
+        } catch (error) {
+          setBackendNotice({ kind: 'error', text: errorText(error) });
+        } finally {
+          setBackendBusy(undefined);
+        }
+      }, []);
+
       // 放在所有既有 useState 之后：hooks 按调用顺序配对，插到前面会打乱上面那些状态
       const updater = useUpdater(t);
 
@@ -1441,6 +1535,11 @@ window.__ModuleLoader__.load({
           ),
         );
 
+        // 没装就没有可更新的东西：首次安装永远由用户点。
+        if (installed) {
+          section.push(...renderAutoUpdate(backend.autoUpdate, version.tag ?? null, { busy: backendBusy, onToggle: toggleAutoUpdate }, t));
+        }
+
         // DSH 卸载插件时不通知插件，数据目录只能靠用户在卸载前点「彻底卸载」清掉，这里写明会删哪个目录。
         if (backend.rootExists === true) {
           section.push(
@@ -1552,6 +1651,7 @@ window.__ModuleLoader__.load({
     // 纯函数，导出给测试；宿主只认 name / inject / apply。
     exports.orderedSelection = orderedSelection;
     exports.renderUpdateSection = renderUpdateSection;
+    exports.renderAutoUpdate = renderAutoUpdate;
     exports.waitForGateway = waitForGateway;
     exports.apply = apply;
     exports.inject = inject;
