@@ -8,7 +8,7 @@
 完全退出 DSH（包括托盘），从 npm 安装：
 
 ```powershell
-dsh plugin --profile desktop add @zhiqiangme/dsh-opencode2api@26.10.15
+dsh plugin --profile desktop add @zhiqiangme/dsh-opencode2api@26.10.19
 ```
 
 也可以在本仓库从本地源码安装：
