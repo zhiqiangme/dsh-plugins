@@ -196,6 +196,14 @@ test('保存的白名单按面板展示顺序排（cn → global，组内后端�
   assert.deepEqual(module.orderedSelection([{ id: 'global:b' }], new Set(['cn:x', 'global:b'])), ['global:b', 'cn:x'], '保留网络故障时不可见的已选模型');
 });
 
+test('模型筛选按搜索、区域、免费、视觉与倍率组合，保留未知价格语义', () => {
+  const { module } = boot();
+  const rows = [...ROWS, { id: 'cn:unknown', label: 'Unknown', credits: 'Free', price: null }];
+  assert.deepEqual(module.filterRows(rows, { freeOnly: true }).map((x) => x.id), ['global:beta']);
+  assert.deepEqual(module.filterRows(rows, { query: 'alpha', region: 'cn', visionOnly: true, maxCredits: 0.2 }).map((x) => x.id), ['cn:alpha']);
+  assert.deepEqual(module.filterRows(rows, { sort: 'credits' }).map((x) => x.id), ['global:beta', 'cn:alpha', 'cn:unknown']);
+});
+
 test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 的键集合一致', () => {
   const { dicts } = boot();
   const entry = dicts.get(NAMESPACE);
@@ -209,6 +217,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
+    'modelSearch', 'regionAll', 'ruleFree', 'ruleVision', 'ruleMax', 'sortUpstream', 'sortName', 'sortCredits', 'ruleHint',
     'diagnose', 'diagnoseCopy', 'diagnoseCopied', 'diagnoseWorking',
     'backendStarted', 'recoveryStatus', 'recoveryIdle', 'recoveryWaiting', 'recoveryRestarting', 'recoveryRecovered', 'recoveryExhausted', 'recoveryRetry',
     'backendAvailable', 'backendBuilt', 'backendCheck', 'backendCurrent', 'backendHistory',

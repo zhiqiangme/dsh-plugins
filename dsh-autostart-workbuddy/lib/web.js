@@ -25,6 +25,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { autoUpdateStatus } from './auto-update.js';
 import { diagnose } from './diagnostics.js';
+import { creditValue, normalizeModelRules } from './model-rules.js';
 import { GATEWAY_IDS, backendLockHolder, gatewayDriver, withBackendLock } from './gateway.js';
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
 import {
@@ -233,6 +234,7 @@ export async function describeModels({ spec, models, editor, env = process.env, 
     id: selectionKey(model),
     label: modelDisplayName(model),
     credits: creditsLabel(model.credits),
+    price: creditValue(model.credits),
     contextWindow: positiveIntOrNull(model.context_length),
     maxTokens: positiveIntOrNull(model.max_output_tokens),
     vision: model.supports_images === true,
@@ -247,6 +249,7 @@ export async function describeModels({ spec, models, editor, env = process.env, 
     patchPath,
     enabled,
     provider: models.provider,
+    rules: models.rules,
     only,
     models: rows,
   };
@@ -266,8 +269,12 @@ export async function describeModels({ spec, models, editor, env = process.env, 
  *   `resolved` 是插件手里那份配置对象；钩子会就地换掉它的 models，这里也同步刷新一次，
  *   宿主没有转发 internal/update 时（测试、旧版本）保存结果照样立即可见。
  */
-export async function applySelection({ resolved, editor, credentials, env = process.env, only, enabled }) {
-  const keepOnly = only === undefined && enabled !== undefined;
+export async function applySelection({ resolved, editor, credentials, env = process.env, only, enabled, rules }) {
+  const keepOnly = only === undefined && (enabled !== undefined || rules !== undefined);
+  if (rules !== undefined && (!rules || typeof rules !== 'object' || Array.isArray(rules) ||
+    ['freeOnly', 'visionOnly'].some((key) => rules[key] !== undefined && typeof rules[key] !== 'boolean') ||
+    (rules.maxCredits != null && creditValue(rules.maxCredits) === null) ||
+    (rules.sort !== undefined && !['upstream', 'name', 'credits'].includes(rules.sort)))) return { ok: false, reason: '模型规则格式不正确' };
   if (!keepOnly && (!Array.isArray(only) || only.some((id) => typeof id !== 'string'))) {
     return { ok: false, reason: 'only 必须是字符串数组' };
   }
@@ -286,20 +293,22 @@ export async function applySelection({ resolved, editor, credentials, env = proc
   const ids = (only ?? keptOnly).map((id) => String(id).trim()).filter(Boolean);
   // 旧客户端只发送 only；省略 enabled 时保留原开关，不能把旧请求当作开启或关闭同步。
   const enabledPatch = enabled === undefined ? {} : { enabled };
+  const rulesPatch = rules === undefined ? {} : { rules: normalizeModelRules(rules) };
   const changed = !isDeepStrictEqual(currentModels?.only, ids) ||
-    (enabled !== undefined && currentModels?.enabled !== enabled);
+    (enabled !== undefined && currentModels?.enabled !== enabled) ||
+    (rules !== undefined && !isDeepStrictEqual(normalizeModelRules(currentModels?.rules), rulesPatch.rules));
 
   if (changed) {
     try {
       await editor.edit(entry, (current) => {
         const config = plainObject(current);
-        return { ...config, models: { ...plainObject(config.models), ...enabledPatch, only: ids } };
+        return { ...config, models: { ...plainObject(config.models), ...enabledPatch, ...rulesPatch, only: ids } };
       });
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : String(error), patchPath };
     }
   }
-  resolved.models = { ...resolved.models, ...enabledPatch, only: ids };
+  resolved.models = { ...resolved.models, ...enabledPatch, ...rulesPatch, only: ids };
 
   const synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env });
   return {
@@ -641,6 +650,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               env,
               only: body.value.only,
               enabled: body.value.enabled,
+              rules: body.value.rules,
             });
             json(res, result.ok ? 200 : 400, result);
             return;

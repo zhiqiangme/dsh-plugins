@@ -23,6 +23,7 @@ import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { isFile, resolveDshHome } from './services.js';
+import { applyModelRules, hasModelRules } from './model-rules.js';
 
 /** llm-pi-ai 的包名：按包名找 Loader 条目，profile 里的行 id 可能被用户改过。 */
 export const LLM_PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
@@ -173,7 +174,7 @@ export function planModelEntries(models, options = {}) {
   const efforts = options.efforts === 'auto' ? 'auto' : Array.isArray(options.efforts) ? options.efforts : DEFAULT_EFFORTS;
 
   const entries = [];
-  for (const model of selectModels(models, options.only)) {
+  for (const model of applyModelRules(selectModels(models, options.only), options.rules)) {
     if (exclude.has(model.id) || exclude.has(selectionKey(model))) continue;
     const entry = { id: model.id, name: modelDisplayName(model) };
     const contextWindow = positiveInt(model.context_length);
@@ -533,7 +534,7 @@ export async function syncModels(options) {
   // hub 的当前出口（应答顶层的 realm）；wb2api 没有这一项。定时同步靠它认出"出口切换了"。
   const realm = fetched.realm;
   const entries = planModelEntries(fetched.models, models);
-  if (entries.length === 0) {
+  if (entries.length === 0 && !hasModelRules(models.rules)) {
     return { state: 'skipped', reason: '按 only/exclude 过滤后没有可写的模型', realm, documentPath };
   }
 

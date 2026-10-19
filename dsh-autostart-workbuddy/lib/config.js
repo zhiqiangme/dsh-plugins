@@ -13,6 +13,7 @@ import { DEFAULT_CN_CHAT_BASE } from './backend-config.js';
 import { normalizeGateway } from './gateway.js';
 import { DEFAULT_HUB_KEEP_VERSIONS, hubPaths, readHubApiKey } from './hub.js';
 import { DEFAULT_EFFORTS, panelApiKey } from './models.js';
+import { normalizeModelRules } from './model-rules.js';
 import { SERVICE_DEFAULTS, resolveDshHome } from './services.js';
 
 /** models 段默认值：默认关闭（不擅自改用户的 profile），开启后默认同步后端全部模型。 */
@@ -169,6 +170,7 @@ function resolveModelsConfig(raw, spec) {
   return {
     enabled: bool(models.enabled, MODELS_DEFAULTS.enabled),
     only: stringArray(models.only, []),
+    rules: normalizeModelRules(models.rules),
     exclude: stringArray(models.exclude, []),
     // `auto` = 按上游声明的档位生成；否则用给定档位（默认低/高/最大三档）。
     efforts: models.efforts === 'auto' ? 'auto' : stringArray(models.efforts, DEFAULT_EFFORTS),

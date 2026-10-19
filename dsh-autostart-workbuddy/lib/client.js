@@ -228,6 +228,8 @@ window.__ModuleLoader__.load({
       recoveryIdle: '待命', recoveryWaiting: '等待重试', recoveryRestarting: '正在重启', recoveryRecovered: '已恢复', recoveryExhausted: '连续失败，已暂停',
       recoveryRetry: '重试启动',
       diagnose: '一键诊断', diagnoseCopy: '复制脱敏报告', diagnoseCopied: '诊断报告已复制', diagnoseWorking: '正在诊断…',
+      modelSearch: '搜索模型', regionAll: '全部区域', ruleFree: '只同步免费模型', ruleVision: '只同步视觉模型', ruleMax: '最高倍率（留空不限）',
+      sortUpstream: '上游顺序', sortName: '按名称排序', sortCredits: '按倍率排序', ruleHint: '规则与勾选共同生效，新增模型也按规则筛选；未定价的模型不会视为免费。批量操作只影响当前筛选结果。',
       backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
       backendUninstalledHub: 'hub 已卸载（hub/data/ 已保留）。',
       autoUpdateLabel: '自动更新后端',
@@ -358,6 +360,8 @@ window.__ModuleLoader__.load({
       recoveryIdle: 'Ready', recoveryWaiting: 'Waiting', recoveryRestarting: 'Restarting', recoveryRecovered: 'Recovered', recoveryExhausted: 'Paused after repeated failures',
       recoveryRetry: 'Retry start',
       diagnose: 'Diagnose', diagnoseCopy: 'Copy redacted report', diagnoseCopied: 'Report copied', diagnoseWorking: 'Diagnosing…',
+      modelSearch: 'Search models', regionAll: 'All regions', ruleFree: 'Sync free models only', ruleVision: 'Sync vision models only', ruleMax: 'Maximum multiplier (blank: unlimited)',
+      sortUpstream: 'Upstream order', sortName: 'Sort by name', sortCredits: 'Sort by multiplier', ruleHint: 'Rules and selections both apply, including to new models. Unknown prices are not treated as free. Bulk actions affect only filtered rows.',
       backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
       backendUninstalledHub: 'Hub uninstalled (hub/data/ kept).',
       autoUpdateLabel: 'Update the backend automatically',
@@ -473,6 +477,19 @@ window.__ModuleLoader__.load({
         .map((row, index) => ({ row, index }))
         .sort((a, b) => regionRank(a.row.id) - regionRank(b.row.id) || a.index - b.index)
         .map((entry) => entry.row);
+    }
+
+    function filterRows(rows, options = {}) {
+      const price = (row) => Object.hasOwn(row, 'price') ? row.price : row.credits === 'Free' ? 0 : Number(row.credits);
+      const query = String(options.query ?? '').trim().toLowerCase();
+      const max = options.maxCredits === '' || options.maxCredits == null ? null : Number(options.maxCredits);
+      const list = sortRows(rows).filter((row) => (!query || `${row.label} ${row.id}`.toLowerCase().includes(query)) &&
+        (!options.region || options.region === 'all' || row.id.startsWith(`${options.region}:`)) &&
+        (!options.freeOnly || price(row) === 0) && (!options.visionOnly || row.vision) &&
+        (max === null || (price(row) !== null && Number.isFinite(price(row)) && price(row) <= max)));
+      if (options.sort === 'name') list.sort((a, b) => a.label.localeCompare(b.label));
+      if (options.sort === 'credits') list.sort((a, b) => (price(a) ?? Infinity) - (price(b) ?? Infinity));
+      return list;
     }
 
     /**
@@ -1038,7 +1055,7 @@ window.__ModuleLoader__.load({
           const list = payload.models ?? [];
           const selected = new Set([...(payload.only ?? []), ...list.filter((row) => row.selected).map((row) => row.id)]);
           setRows(list);
-          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, only: payload.only, patchPath: payload.patchPath, url: payload.url, realm: payload.realm });
+          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, only: payload.only, patchPath: payload.patchPath, url: payload.url, realm: payload.realm, rules: payload.rules, savedRules: payload.rules });
           setPicked(selected);
           setSavedPicked(new Set(selected));
           setPhase('ready');
@@ -1056,7 +1073,6 @@ window.__ModuleLoader__.load({
         load();
       }, [load]);
 
-      const sorted = useMemo(() => sortRows(rows), [rows]);
 
       const toggle = useCallback((id) => {
         setPicked((previous) => {
@@ -1076,6 +1092,7 @@ window.__ModuleLoader__.load({
             enabled: meta.enabled === true,
             // 空白名单代表跟随全部上游模型，重复保存不能将它固化为当前可见的子集。
             only: meta.only?.length === 0 && sameSet(picked, savedPicked) ? [] : orderedSelection(rows, picked),
+            ...(JSON.stringify(meta.rules) !== JSON.stringify(meta.savedRules) ? { rules: meta.rules } : {}),
           });
           if (!payload.ok) {
             setNotice({ kind: 'error', text: payload.reason ?? t('saveFailed') });
@@ -1098,7 +1115,7 @@ window.__ModuleLoader__.load({
         } finally {
           setSaving(false);
         }
-      }, [rows, picked, savedPicked, meta.enabled, meta.only, load, t]);
+      }, [rows, picked, savedPicked, meta.enabled, meta.only, meta.rules, meta.savedRules, load, t]);
 
       // ---- 后端版本（更新检查 / 安装 / 更新 / 卸载 / 回滚）----
       const [backend, setBackend] = useState(undefined);
@@ -1243,6 +1260,8 @@ window.__ModuleLoader__.load({
       }, [t, loadBackend, load]);
 
       const [diagnostic, setDiagnostic] = useState(undefined);
+      const [filters, setFilters] = useState(undefined);
+      const sorted = useMemo(() => filterRows(rows, { ...meta.rules, ...filters }), [rows, meta.rules, filters]);
       const runDiagnostic = async () => {
         setDiagnostic({ busy: true });
         try { setDiagnostic({ report: (await request(BACKEND_PATH, 'POST', { action: 'diagnose' })).report }); }
@@ -1259,7 +1278,7 @@ window.__ModuleLoader__.load({
       }
 
       // enabled 是开关草稿，savedEnabled 是上次读取的配置；只切换开关也必须允许保存。
-      const dirty = !sameSet(picked, savedPicked) || meta.enabled !== meta.savedEnabled;
+      const dirty = !sameSet(picked, savedPicked) || meta.enabled !== meta.savedEnabled || JSON.stringify(meta.rules) !== JSON.stringify(meta.savedRules);
       const body = [];
       body.push(h('div', { key: 'diagnose', className: 'dsm-wb-toolbar dsm-wb-diagnostics' },
         wbButton('diagnose', 'outline', t(diagnostic?.busy ? 'diagnoseWorking' : 'diagnose'), runDiagnostic, diagnostic?.busy),
@@ -1298,6 +1317,16 @@ window.__ModuleLoader__.load({
           // hub 才有出口（应答顶层的 realm）：说明这一页勾的是哪一组。
           meta.realm ? h('p', { key: 'hubRealm', className: 'dsm-wb-hint' }, t('hubRealm', { realm: meta.realm === 'cn' ? 'CN' : 'GL' })) : null,
         );
+        const setRule = (key, value) => setMeta((last) => ({ ...last, rules: { ...last.rules, [key]: value } }));
+        body.push(h('div', { key: 'filters', className: 'dsm-wb-toolbar dsm-wb-filters' },
+          h('input', { type: 'search', placeholder: t('modelSearch'), 'aria-label': t('modelSearch'), value: filters?.query ?? '', disabled: saving, onChange: (e) => setFilters((last) => ({ ...last, query: e.target.value })) }),
+          h('select', { 'aria-label': t('regionAll'), value: filters?.region ?? 'all', disabled: saving, onChange: (e) => setFilters((last) => ({ ...last, region: e.target.value })) },
+            h('option', { value: 'all' }, t('regionAll')), h('option', { value: 'cn' }, 'CN'), h('option', { value: 'global' }, 'GL')),
+          h('select', { 'aria-label': t('sortName'), value: meta.rules?.sort ?? 'upstream', disabled: saving, onChange: (e) => setRule('sort', e.target.value) },
+            ...['upstream', 'name', 'credits'].map((value) => h('option', { key: value, value }, t({ upstream: 'sortUpstream', name: 'sortName', credits: 'sortCredits' }[value])))),
+          ...[['freeOnly', 'ruleFree'], ['visionOnly', 'ruleVision']].map(([key, label]) => h('label', { key }, h('input', { type: 'checkbox', checked: meta.rules?.[key] === true, disabled: saving, onChange: (e) => setRule(key, e.target.checked) }), t(label))),
+          h('input', { type: 'number', min: 0, step: 'any', placeholder: t('ruleMax'), 'aria-label': t('ruleMax'), value: meta.rules?.maxCredits ?? '', disabled: saving, onChange: (e) => setRule('maxCredits', e.target.value === '' ? null : Number(e.target.value)) })));
+        body.push(h('p', { key: 'ruleHint', className: 'dsm-wb-hint' }, t('ruleHint')));
         body.push(
           h(
             'div',
@@ -1323,7 +1352,7 @@ window.__ModuleLoader__.load({
                 className: 'dsm-wb-btn dsm-wb-btn-outline',
                 disabled: saving,
                 onClick: () => {
-                  setPicked(new Set());
+                  setPicked((previous) => new Set([...previous].filter((id) => !sorted.some((row) => row.id === id))));
                   setNotice(undefined);
                 },
               },
@@ -1687,6 +1716,7 @@ window.__ModuleLoader__.load({
 
     // 纯函数，导出给测试；宿主只认 name / inject / apply。
     exports.orderedSelection = orderedSelection;
+    exports.filterRows = filterRows;
     exports.renderUpdateSection = renderUpdateSection;
     exports.renderAutoUpdate = renderAutoUpdate;
     exports.waitForGateway = waitForGateway;

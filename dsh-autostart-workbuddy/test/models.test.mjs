@@ -189,6 +189,18 @@ test('思考档位：默认低/高/最大三档，auto 时按上游声明，不�
   assert.equal(noReasoning[0].reasoningEfforts, undefined);
 });
 
+test('显式规则没有匹配项时清空管理的列表，避免继续展示付费模型', async () => {
+  const backend = startFixture({ TEST_MODE: 'http-models', TEST_MODELS_JSON: JSON.stringify({ data: [{ id: 'cn:paid', credits: 'x1' }] }) });
+  try {
+    const { spec, models } = configFor(await backend.ready, { rules: { freeOnly: true } });
+    const editor = createFakeConfigEditor(profileRows());
+    const result = await syncModels({ spec, models, editor, env: {} });
+    assert.equal(result.state, 'updated');
+    assert.deepEqual(providersOf(editor).workbuddy.models, []);
+    assert.ok(providersOf(editor).openrouter);
+  } finally { backend.stop(); }
+});
+
 test('YAML 标量：只有不安全时才加引号', () => {
   assert.equal(yamlScalar('cn:deepseek-v4.1-flash'), 'cn:deepseek-v4.1-flash');
   assert.equal(yamlScalar('Deepseek-V4.1-Flash CN 0.11'), 'Deepseek-V4.1-Flash CN 0.11');
