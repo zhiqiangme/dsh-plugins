@@ -25,6 +25,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { autoUpdateStatus } from './auto-update.js';
 import { diagnose } from './diagnostics.js';
+import { createAccountOverview } from './overview.js';
 import { creditValue, normalizeModelRules } from './model-rules.js';
 import { GATEWAY_IDS, backendLockHolder, gatewayDriver, withBackendLock } from './gateway.js';
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
@@ -358,7 +359,7 @@ function busyReason(holder) {
  * POST 的动作：check、gateway、autoUpdate，以及会动目录的 install / update / rollback / uninstall / purge
  * （后五个与自动更新共用一把锁，同一时刻只跑一个）。
  */
-async function handleBackend(req, res, { logger, resolved, env, service, editor, credentials, autoUpdater, recovery, resync }) {
+async function handleBackend(req, res, { logger, resolved, env, service, editor, credentials, autoUpdater, recovery, resync, overview }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
   const driver = gatewayDriver(resolved);
@@ -376,6 +377,10 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
 
   if (req.method === 'GET') {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    if (url.searchParams.get('overview') === '1') {
+      json(res, 200, { ok: true, backend: { ...snapshot(), overview: await overview() }, check: null });
+      return;
+    }
     if (url.searchParams.get('check') !== '1' || resolved.backend?.enabled === false) {
       json(res, 200, { ok: true, backend: snapshot(), check: null });
       return;
@@ -643,6 +648,7 @@ function forceFrom(req) {
  * autoUpdater 同理，面板打开「自动更新」时立即查一轮。
  */
 export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, resync, autoUpdater, recovery, checkVersion = createVersionChecker() }) {
+  const overview = createAccountOverview({ resolved, env, credentials: () => credentialsOf(ctx) });
   const mount = (scoped) => {
     const holder = scoped ?? ctx;
     const webServer =
@@ -724,7 +730,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       const disposeBackend = webServer.register({
         kind: 'exact',
         path: BACKEND_PATH,
-        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), credentials: credentialsOf(ctx), autoUpdater, recovery, resync })),
+        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), credentials: credentialsOf(ctx), autoUpdater, recovery, resync, overview })),
       });
 
       const disposeVersion = webServer.register({

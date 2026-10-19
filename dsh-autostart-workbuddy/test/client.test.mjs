@@ -224,7 +224,7 @@ test('实时轮询刷新模型与后端状态，卸载卡片后停止', async (t
   const effects = [], requests = [];
   const app = boot(modelStates(true), { effects, fetchImpl: async (path) => {
     requests.push(path);
-    return { ok: true, json: async () => path.endsWith('/backend') ? { backend: { modelStatus: { realm: 'cn', at: 'new' } } } :
+    return { ok: true, json: async () => path.includes('/backend') ? { backend: { modelStatus: { realm: 'cn', at: 'new' } } } :
       { ok: true, enabled: true, only: [], realm: 'cn', models: [{ id: 'cn:new', label: 'New CN Free', selected: true }] } };
   } });
   app.renderCard();
@@ -250,6 +250,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
+    'accountOverview', 'balanceOverview', 'balanceUnknown', 'balanceUnsupported', 'balanceUnavailable', 'balanceHint', 'balanceUpdated',
     'hubFollowKey',
     'hubDual', 'hubDualHint', 'hubCnKey', 'hubGlKey', 'hubApply', 'hubDualSaved', 'hubBoth',
     'modelSearch', 'regionAll', 'ruleFree', 'ruleVision', 'ruleMax', 'sortUpstream', 'sortName', 'sortCredits', 'ruleHint',
@@ -617,6 +618,18 @@ test('渲染：宿主没给面板地址时回退到默认值', () => {
 function backendStates(backend, { check, confirming } = {}) {
   return ['ready', ROWS, {}, '', new Set(), new Set(), false, undefined, backend, check, undefined, undefined, confirming];
 }
+
+test('账号积分概览区分真实零余额、未知余额与账号统计', () => {
+  const app = boot(backendStates({ gateway: 'hub', version: {}, history: [], overview: { ready: 1, total: 2, balances: [
+    { realm: 'cn', balance: 0, state: 'ready', accountsEnabled: 2, accountsKnown: 2 },
+    { realm: 'intl', balance: null, state: 'unknown', accountsEnabled: 1, accountsKnown: 0 },
+  ] } }));
+  const text = collectText(app.renderCard()).join('\n');
+  assert.match(text, /可用 1 \/ 总计 2/);
+  assert.match(text, /CN 剩余积分：0/);
+  assert.match(text, /GL 剩余积分：尚未获取/);
+  assert.doesNotMatch(text, /GL 剩余积分：0/);
+});
 
 /** 渲染后把按钮的文字标签取出来。 */
 function buttonLabels(tree) {

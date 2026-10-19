@@ -233,6 +233,8 @@ window.__ModuleLoader__.load({
       hubDual: 'CN / GL 同时使用', hubDualHint: '先在 HUB 设置页创建分别绑定国内和国际出口的 API Key；只存入 DSH 凭据库，不写进 profile。留空沿用已保存的 Key。',
       hubCnKey: 'CN 绑定区域的 Key', hubGlKey: 'GL 绑定区域的 Key', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存并同步', hubBoth: 'CN + GL（独立路由）',
       hubFollowKey: '跟随出口的未绑定 Key（可选，供关闭双区域后使用）',
+      accountOverview: '账号概览：可用 {ready} / 总计 {total}', balanceOverview: '{realm} 剩余积分：{balance}；启用账号 {enabled}，有积分数据 {known}',
+      balanceUnknown: '尚未获取', balanceUnsupported: '后端版本不支持', balanceUnavailable: '暂不可用或密钥无效', balanceHint: '积分来自 HUB 缓存，不发起对话、不刷新上游积分。', balanceUpdated: '积分快照：{time}',
       backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
       backendUninstalledHub: 'hub 已卸载（hub/data/ 已保留）。',
       autoUpdateLabel: '自动更新后端',
@@ -368,6 +370,8 @@ window.__ModuleLoader__.load({
       hubDual: 'Use CN and GL together', hubDualHint: 'Create keys bound to China and international in HUB settings. Keys are stored only in DSH credentials. Leave blank to reuse saved keys.',
       hubCnKey: 'CN bound API key', hubGlKey: 'GL bound API key', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved and synced', hubBoth: 'CN + GL (independent routes)',
       hubFollowKey: 'Unbound key for follow mode (optional)',
+      accountOverview: 'Accounts: {ready} ready / {total} total', balanceOverview: '{realm} remaining credits: {balance}; {enabled} enabled accounts, {known} with balance data',
+      balanceUnknown: 'Not available yet', balanceUnsupported: 'Unsupported backend version', balanceUnavailable: 'Unavailable or invalid key', balanceHint: 'Reads cached HUB balances without chat requests or upstream refreshes.', balanceUpdated: 'Balance snapshot: {time}',
       backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
       backendUninstalledHub: 'Hub uninstalled (hub/data/ kept).',
       autoUpdateLabel: 'Update the backend automatically',
@@ -1297,7 +1301,7 @@ window.__ModuleLoader__.load({
         const poll = async () => {
           try {
             if (document.visibilityState === 'hidden' || blocked()) return;
-            const payload = await request(BACKEND_PATH, 'GET');
+            const payload = await request(`${BACKEND_PATH}?overview=1`, 'GET');
             if (!active) return;
             setBackend(payload.backend ?? {});
             const stamp = JSON.stringify([payload.backend?.gateway, payload.backend?.modelStatus, payload.backend?.recovery?.state]);
@@ -1520,6 +1524,17 @@ window.__ModuleLoader__.load({
         const currentGateway = backend.gateway ?? 'wb2api';
         const gatewayLabel = (id) => t(id === 'hub' ? 'gatewayHub' : 'gatewayWb2api');
         const section = [];
+        if (backend.overview) {
+          const overview = backend.overview;
+          section.push(h('p', { key: 'accounts', className: 'dsm-wb-backend-line' }, t('accountOverview', { ready: overview.ready ?? '?', total: overview.total ?? '?' })));
+          for (const balance of overview.balances ?? []) {
+            const value = balance.balance != null ? String(balance.balance) : t(balance.state === 'unsupported' ? 'balanceUnsupported' : balance.state === 'unknown' ? 'balanceUnknown' : 'balanceUnavailable');
+            section.push(h('p', { key: `balance-${balance.realm}`, className: 'dsm-wb-backend-line' },
+              t('balanceOverview', { realm: balance.realm === 'cn' ? 'CN' : 'GL', balance: value, enabled: balance.accountsEnabled ?? '?', known: balance.accountsKnown ?? '?' }),
+              balance.updatedAt ? ` · ${t('balanceUpdated', { time: localTime(balance.updatedAt) })}` : ''));
+          }
+          if (overview.balances?.length) section.push(h('p', { key: 'balanceHint', className: 'dsm-wb-hint' }, t('balanceHint')));
+        }
         if (backend.recovery) {
           const recoveryKey = { idle: 'recoveryIdle', waiting: 'recoveryWaiting', restarting: 'recoveryRestarting', recovered: 'recoveryRecovered', exhausted: 'recoveryExhausted' }[backend.recovery.state] ?? 'recoveryIdle';
           section.push(h('p', { key: 'recovery', className: 'dsm-wb-backend-line' }, t('recoveryStatus', { state: t(recoveryKey), attempts: backend.recovery.attempts ?? 0 }),
