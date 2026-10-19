@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -186,6 +186,28 @@ test('原后端：后台只下载暂存不动 current/，下次启动先换上�
   } finally {
     release.stop();
     health.stop();
+  }
+});
+
+test('exe 手动替换后无法识别：不再自动下载，已有暂存包也不能覆盖它', async (t) => {
+  const release = startFixture({ TEST_MODE: 'http-release' });
+  const apiBase = `http://127.0.0.1:${await release.ready}`;
+  const { paths, resolved } = jasonSetup(t, apiBase);
+  const service = fakeService(1);
+  const { updater } = updaterFor(resolved, service);
+  try {
+    assert.equal((await updater.tick()).state, 'prepared');
+    const staged = readAutoState(paths).pending.staged.path;
+    const replacement = 'MZ manually replaced executable without build information';
+    writeFileSync(paths.exe, replacement);
+    assert.equal((await updater.tick()).reason, 'drifted');
+    assert.deepEqual(await updater.applyPending(), { state: 'discarded', reason: 'drifted' });
+    assert.equal(readFileSync(paths.exe, 'utf8'), replacement);
+    assert.equal(existsSync(staged), false);
+    assert.equal(readAutoState(paths).pending, null);
+    assert.deepEqual(service.calls, []);
+  } finally {
+    release.stop();
   }
 });
 

@@ -146,6 +146,14 @@ test('localVersion：没有清单时 managed=false，纳管后带 tag 且 drifte
   // 手动把 exe 换成别的版本 → 清单与二进制不一致
   writeFileSync(paths.exe, fakeExe('b'.repeat(40)));
   assert.equal(localVersion(paths).drifted, true);
+
+  writeFileSync(paths.exe, 'MZ manually replaced executable without build information');
+  assert.equal(localVersion(paths).revision, null);
+  assert.equal(localVersion(paths).drifted, true, '读不出身份不能沿用旧清单批准自动覆盖');
+
+  writeFileSync(paths.exe, fakeExe(OLD_REVISION));
+  writeManifest(paths, { tag: 'v1.13.0' });
+  assert.equal(localVersion(paths).drifted, true, '安装记录缺少 commit 时也无法核对身份');
 });
 
 test('describeBackend：不联网也能给出布局与版本快照', () => {

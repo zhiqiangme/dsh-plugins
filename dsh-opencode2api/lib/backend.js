@@ -135,8 +135,8 @@ export function localVersion(paths) {
     installedAt: typeof manifest?.installedAt === 'string' ? manifest.installedAt : null,
     /** true = 由本插件安装过（有清单）；false = 现场就有的二进制，未纳管 */
     managed: Boolean(manifest),
-    /** true = 清单记录的 commit 与二进制实际 commit 不同（手动换过 exe） */
-    drifted: Boolean(manifest?.commit && info?.revision && manifest.commit !== info.revision),
+    /** 有清单却无法核对实际身份（含构建信息缺失）时，不能沿用旧 tag 自动覆盖用户的 exe。 */
+    drifted: Boolean(manifest && (!manifest.commit || !info?.revision || manifest.commit !== info.revision)),
     /** 安装来源：github-release / auto-update / rollback / adopted；自动更新据此识别"用户回滚过"。 */
     source: typeof manifest?.source === 'string' ? manifest.source : null,
     previous: manifest?.previous ?? null,
