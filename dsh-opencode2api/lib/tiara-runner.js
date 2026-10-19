@@ -2,8 +2,8 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { loadTiaraProxy } from './tiara-compat.js';
 
 const current = process.env.DSH_TIARA_CURRENT;
 const data = process.env.DSH_TIARA_DATA;
@@ -31,7 +31,7 @@ try {
   const saved = JSON.parse(readFileSync(join(data, 'config.json'), 'utf8'));
   saved.API_KEY = process.env.DSH_TIARA_API_KEY || saved.API_KEY;
   if (!saved.API_KEY || !saved.OPENCODE_SERVER_PASSWORD) throw new Error('Tiara 配置缺少本地密钥或后端密码');
-  const upstream = await import(pathToFileURL(join(current, 'src', 'proxy.js')).href);
+  const upstream = await loadTiaraProxy(current);
   const backendPort = Number(process.env.DSH_TIARA_SERVER_PORT);
   const backendURL = `http://127.0.0.1:${backendPort}`;
   const workspace = join(data, 'workspace');
