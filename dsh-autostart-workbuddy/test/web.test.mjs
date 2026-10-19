@@ -210,14 +210,14 @@ test('GET：返回后端全量模型，并按当前白名单标记勾选状态',
     assert.equal(payload.models.length, 2);
 
     const alpha = payload.models.find((row) => row.id === 'cn:alpha');
-    assert.equal(alpha.label, 'CN Alpha 0.11');
+    assert.equal(alpha.label, 'Alpha CN 0.11');
     assert.equal(alpha.credits, '0.11');
     assert.equal(alpha.contextWindow, 1000000);
     assert.equal(alpha.vision, true);
     assert.equal(alpha.selected, true);
 
     const beta = payload.models.find((row) => row.id === 'global:beta');
-    assert.equal(beta.label, 'GL Beta Free');
+    assert.equal(beta.label, 'Beta GL Free');
     assert.equal(beta.credits, 'Free');
     assert.equal(beta.vision, false);
     assert.equal(beta.selected, false);
@@ -307,7 +307,7 @@ test('POST：经 configEditor 写白名单，并立即重新生成 provider 的�
     // provider 的模型清单被同一动作重写成后端真实模型（含倍率展示名），顺序跟白名单走。
     assert.deepEqual(
       editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((model) => model.name),
-      ['GL Beta Free', 'CN Alpha 0.11'],
+      ['Beta GL Free', 'Alpha CN 0.11'],
     );
     assert.deepEqual(editor.edits.map((edit) => edit.id), [PLUGIN_ID, 'llm-pi-ai']);
   } finally {
@@ -798,8 +798,8 @@ test('GET（hub）：行 id 是带出口前缀的白名单键，老的裸 id 回
   const legacy = await describe(['flash', 'global:gpt-5.5']);
   assert.equal(legacy.realm, 'cn');
   assert.deepEqual(legacy.models.map((row) => [row.id, row.label, row.selected]), [
-    ['cn:flash', 'CN Flash Free', true],
-    ['cn:minimax-m3', 'CN MiniMax Free', false],
+    ['cn:flash', 'Flash CN Free', true],
+    ['cn:minimax-m3', 'MiniMax CN Free', false],
   ]);
   assert.deepEqual(legacy.only, ['cn:flash', 'global:flash', 'global:gpt-5.5'], '裸 id 拆成两个出口，保存后取消一个出口不连带另一个');
 

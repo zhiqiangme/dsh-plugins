@@ -304,13 +304,13 @@ test('hub 切出口：下一轮立即按新出口的那组勾选重写 DSH，不
   const logger = memoryLogger();
   const resync = createModelResync({ resolved, logger, env: {}, probe, editor: () => editor, credentials: () => credentials });
   const listed = () => editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((model) => `${model.id}|${model.name}`);
-  assert.deepEqual(listed(), ['flash|GL Flash Free', 'gpt-5.5|GL GPT-5.5 1']);
+  assert.deepEqual(listed(), ['flash|Flash GL Free', 'gpt-5.5|GPT-5.5 GL 1']);
 
   assert.equal((await resync.tick()).state, 'unchanged', '先认下当前出口');
   hub.realm = 'cn';
   const switched = await resync.tick();
   assert.equal(switched.state, 'updated', '少了 gpt-5.5 也当轮写入');
-  assert.deepEqual(listed(), ['minimax-m3|CN MiniMax 0.2'], 'CN 只勾了 minimax-m3');
+  assert.deepEqual(listed(), ['minimax-m3|MiniMax CN 0.2'], 'CN 只勾了 minimax-m3');
   assert.ok(logger.lines.some(([, line]) => line.includes('出口从 intl 切到 cn')), JSON.stringify(logger.lines));
 
   // 同一出口里的上游抖动照旧要两轮确认。
@@ -318,7 +318,7 @@ test('hub 切出口：下一轮立即按新出口的那组勾选重写 DSH，不
   assert.equal((await resync.tick()).state, 'skipped', 'minimax 暂时不在：白名单里 cn 只有它，过滤后为空则不写');
   hub.realm = 'intl';
   assert.equal((await resync.tick()).state, 'updated');
-  assert.deepEqual(listed(), ['flash|GL Flash Free', 'gpt-5.5|GL GPT-5.5 1'], '切回来恢复 GL 那一组');
+  assert.deepEqual(listed(), ['flash|Flash GL Free', 'gpt-5.5|GPT-5.5 GL 1'], '切回来恢复 GL 那一组');
 });
 
 for (const outcome of ['unchanged', 'failed', 'stopped', 'switched-back']) {

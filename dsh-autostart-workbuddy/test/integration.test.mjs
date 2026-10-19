@@ -195,7 +195,7 @@ test('开启模型同步后：apply 会在后端就绪后经 configEditor 写进
 
   assert.ok(await waitForLog(ctx, '模型列表已同步'), ctx.lines.join('\n'));
   const workbuddy = editor.entry('llm-pi-ai').options.config.providers.workbuddy;
-  assert.deepEqual(workbuddy.models.map((model) => model.name), ['CN Alpha 0.11', 'GL Beta Free']);
+  assert.deepEqual(workbuddy.models.map((model) => model.name), ['Alpha CN 0.11', 'Beta GL Free']);
   assert.deepEqual(Object.keys(workbuddy.models[0].reasoningEfforts), ['low', 'high', 'max'], '默认给低/高/最大三档');
   assert.equal(workbuddy.apiKeyEnv, 'WORKBUDDY_PROXY_KEY', 'provider 的其它字段不能被动');
   assert.deepEqual(editor.edits.map((edit) => edit.id), ['llm-pi-ai'], '只编辑 llm-pi-ai 那一行');

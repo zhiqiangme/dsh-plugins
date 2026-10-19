@@ -15,7 +15,7 @@
  *
  * 除了拉起后端，本插件还接管 WorkBuddy 的**模型列表**（config.models.enabled）：
  * 后端就绪后拉一次 `/v1/models`，经宿主 configEditor 把「后端真实提供的模型」写进
- * `llm-pi-ai.providers.workbuddy.models`，名字统一成 `<CN|GL> <上游名> <倍率>`。
+ * `llm-pi-ai.providers.workbuddy.models`，名字统一成 `<上游名> <CN|GL> <倍率>`。
  * 细节与取舍见 lib/models.js 顶部注释；默认关闭，不会擅自改用户的 profile。
  *
  * 后端版本默认自动更新（lib/auto-update.js）：运行中后台下载并校验新版本，下次 DSH 启动时

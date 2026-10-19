@@ -30,7 +30,7 @@ export const LLM_PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
 /** 默认保留的思考档位：与 DSH 既有的三档 UI 对齐（低/高/最大）。 */
 export const DEFAULT_EFFORTS = Object.freeze(['low', 'high', 'max']);
 
-/** id 前缀 → 名称前缀：国内版 cn: / 国际版 global:。 */
+/** id 前缀 → 展示名里的区域标签：国内版 cn: / 国际版 global:。 */
 const REGION_PREFIXES = Object.freeze([
   ['cn:', 'CN'],
   ['global:', 'GL'],
@@ -50,7 +50,7 @@ export function creditsLabel(credits) {
 }
 
 /**
- * hub 的出口名 → 名称前缀。hub 的模型 id 不带 cn:/global:（一次只服务一个出口），
+ * hub 的出口名 → 展示名里的区域标签。hub 的模型 id 不带 cn:/global:（一次只服务一个出口），
  * 出口写在 /v1/models 应答顶层的 `realm` 里，由 fetchModels 抄到每个条目上。
  */
 const REALM_LABELS = Object.freeze({ cn: 'CN', intl: 'GL', global: 'GL' });
@@ -131,14 +131,17 @@ export function scopedSelection(only = [], gateway) {
   return out;
 }
 
-/** 展示名：`<CN|GL> <上游名> <倍率>`；上游名已带同款后缀时不重复追加。 */
+/** 展示名：`<上游名> <CN|GL> <倍率>`；上游名已带同款后缀时不重复追加。 */
 export function modelDisplayName(model) {
   const prefixed = REGION_PREFIXES.find(([prefix]) => model.id.startsWith(prefix))?.[1];
   const region = prefixed ?? (typeof model.realm === 'string' ? REALM_LABELS[model.realm] : undefined);
   const base = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
   const suffix = creditsLabel(model.credits);
-  const head = region ? `${region} ${base}` : base;
-  return head.toLowerCase().endsWith(suffix.toLowerCase()) ? head : `${head} ${suffix}`;
+  // 先去掉上游名称已有的同款倍率，再把区域插到倍率前，避免产生重复倍率或把区域放到末尾。
+  const name = base.toLowerCase().endsWith(` ${suffix.toLowerCase()}`)
+    ? base.slice(0, -suffix.length).trimEnd()
+    : base;
+  return [name, region, suffix].filter(Boolean).join(' ');
 }
 
 function positiveInt(value) {

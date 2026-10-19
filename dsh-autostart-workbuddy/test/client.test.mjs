@@ -165,8 +165,8 @@ function boot(states = [], { withPrimitives = true, fetchImpl } = {}) {
 }
 
 const ROWS = [
-  { id: 'cn:alpha', label: 'CN Alpha 0.11', credits: '0.11', contextWindow: 1000000, vision: true, selected: true },
-  { id: 'global:beta', label: 'GL Beta Free', credits: 'Free', contextWindow: 200000, vision: false, selected: false },
+  { id: 'cn:alpha', label: 'Alpha CN 0.11', credits: '0.11', contextWindow: 1000000, vision: true, selected: true },
+  { id: 'global:beta', label: 'Beta GL Free', credits: 'Free', contextWindow: 200000, vision: false, selected: false },
 ];
 
 test('bundle 契约：模块名、注入的服务名、两个 slot 的 key', () => {
@@ -303,8 +303,8 @@ test('渲染（ready 态）：所有文本都是字符串，且带出模型名�
   for (const text of texts) {
     assert.equal(typeof text, 'string', `渲染出了非字符串文本：${String(text)}`);
   }
-  assert.ok(texts.includes('CN Alpha 0.11'), '应显示模型展示名');
-  assert.ok(texts.includes('GL Beta Free'), '应显示模型展示名');
+  assert.ok(texts.includes('Alpha CN 0.11'), '应显示模型展示名');
+  assert.ok(texts.includes('Beta GL Free'), '应显示模型展示名');
   assert.ok(texts.includes('x0.11'), '应显示倍率徽章');
   assert.ok(texts.includes('xFree'), '免费模型显示 xFree');
   assert.ok(texts.includes('视觉'), '支持视觉的模型带标签');
@@ -1035,7 +1035,7 @@ test('后端区：自动更新开关与状态行（待装 / 已自动更新 / �
 });
 
 test('模型区（hub）：说明当前出口；另一个出口的勾选不算，这个出口一个没勾时提示"全部"', () => {
-  const rows = [{ id: 'cn:flash', label: 'CN Flash Free', credits: 'Free' }];
+  const rows = [{ id: 'cn:flash', label: 'Flash CN Free', credits: 'Free' }];
   const meta = { enabled: true, savedEnabled: true, only: ['global:gpt-5.5'], realm: 'cn' };
   const none = boot(['ready', rows, meta, '', new Set(['global:gpt-5.5']), new Set(['global:gpt-5.5'])]);
   const text = collectText(none.renderCard()).join('\n');
@@ -1045,7 +1045,7 @@ test('模型区（hub）：说明当前出口；另一个出口的勾选不算�
   const some = boot(['ready', rows, meta, '', new Set(['global:gpt-5.5', 'cn:flash']), new Set(['global:gpt-5.5'])]);
   assert.doesNotMatch(collectText(some.renderCard()).join('\n'), /一个都没勾/);
 
-  const wb = boot(['ready', [{ id: 'cn:alpha', label: 'CN Alpha', credits: 'Free' }], { enabled: true }, '', new Set(['global:beta']), new Set()]);
+  const wb = boot(['ready', [{ id: 'cn:alpha', label: 'Alpha CN Free', credits: 'Free' }], { enabled: true }, '', new Set(['global:beta']), new Set()]);
   const wbText = collectText(wb.renderCard()).join('\n');
   assert.doesNotMatch(wbText, /hub 当前出口/, 'wb2api 没有出口一说');
   assert.doesNotMatch(wbText, /一个都没勾/, 'wb2api 下白名单非空就不是"全部"');

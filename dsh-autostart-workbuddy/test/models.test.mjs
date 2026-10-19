@@ -118,11 +118,11 @@ test('倍率标签：x0.11 → 0.11，0 / 缺失 → Free', () => {
   assert.equal(creditsLabel('Free'), 'Free');
 });
 
-test('展示名：CN / GL 前缀 + 倍率后缀，且不重复追加同款后缀', () => {
-  assert.equal(modelDisplayName({ id: 'cn:deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash', credits: 'x0.11' }), 'CN Deepseek-V4.1-Flash 0.11');
-  assert.equal(modelDisplayName({ id: 'global:hy4-preview-f', name: 'Hy4 preview', credits: 'x0.00' }), 'GL Hy4 preview Free');
-  assert.equal(modelDisplayName({ id: 'cn:hy4-preview-f', name: 'Hy4 preview Free' }), 'CN Hy4 preview Free');
-  // 没有域前缀的 id：不加前缀，但仍补倍率。
+test('展示名：模型名 + CN / GL + 倍率，且不重复追加同款倍率', () => {
+  assert.equal(modelDisplayName({ id: 'cn:deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash', credits: 'x0.11' }), 'Deepseek-V4.1-Flash CN 0.11');
+  assert.equal(modelDisplayName({ id: 'global:hy4-preview-f', name: 'Hy4 preview', credits: 'x0.00' }), 'Hy4 preview GL Free');
+  assert.equal(modelDisplayName({ id: 'cn:hy4-preview-f', name: 'Hy4 preview Free' }), 'Hy4 preview CN Free');
+  // 没有域前缀的 id：不加区域标签，但仍补倍率。
   assert.equal(modelDisplayName({ id: 'other:thing', name: 'Thing', credits: 'x0.05' }), 'Thing 0.05');
 });
 
@@ -131,7 +131,7 @@ test('条目规划：白名单按给定顺序、上游顺序兜底、排除生�
   assert.deepEqual(all.map((e) => e.id), ['cn:alpha', 'global:beta']);
   assert.deepEqual(all[0], {
     id: 'cn:alpha',
-    name: 'CN Alpha 0.11',
+    name: 'Alpha CN 0.11',
     contextWindow: 1000000,
     maxTokens: 393216,
     input: ['text', 'image'],
@@ -165,7 +165,7 @@ test('hub 白名单按出口分开记：cn:/global: 键只对当前出口生效�
   // 写进 DSH 的仍是 hub 认的裸 id，展示名带当前出口；排除也认带前缀的键。
   const entries = planModelEntries(cn, { only, exclude: ['cn:deepseek-v4.1-flash'] });
   assert.deepEqual(entries.map((entry) => entry.id), ['minimax-m3']);
-  assert.match(entries[0].name, /^CN /);
+  assert.match(entries[0].name, / CN Free$/);
 });
 
 test('wb2api 某个出口暂时缺席时，不把那个出口的勾选当成"没勾过"', () => {
@@ -191,7 +191,7 @@ test('思考档位：默认低/高/最大三档，auto 时按上游声明，不�
 
 test('YAML 标量：只有不安全时才加引号', () => {
   assert.equal(yamlScalar('cn:deepseek-v4.1-flash'), 'cn:deepseek-v4.1-flash');
-  assert.equal(yamlScalar('CN Deepseek-V4.1-Flash 0.11'), 'CN Deepseek-V4.1-Flash 0.11');
+  assert.equal(yamlScalar('Deepseek-V4.1-Flash CN 0.11'), 'Deepseek-V4.1-Flash CN 0.11');
   assert.equal(yamlScalar('a: b'), "'a: b'");
   assert.equal(yamlScalar('x #y'), "'x #y'");
   assert.equal(yamlScalar(''), "''");
@@ -201,7 +201,7 @@ test('渲染：缩进与手写文件一致', () => {
   const lines = renderModelsBlock(planModelEntries(SAMPLE, {}), 10);
   assert.deepEqual(lines.slice(0, 8), [
     '          - id: cn:alpha',
-    '            name: CN Alpha 0.11',
+    '            name: Alpha CN 0.11',
     '            contextWindow: 1000000',
     '            maxTokens: 393216',
     '            input:',
@@ -386,7 +386,7 @@ test('syncModels：经 configEditor 写进 llm-pi-ai，第二次运行判定为�
   assert.deepEqual(editor.edits.map((edit) => edit.id), ['llm-pi-ai'], '只编辑 llm-pi-ai 那一行');
   assert.deepEqual(
     providersOf(editor).workbuddy.models.map((model) => model.name),
-    ['CN Alpha 0.11', 'GL Beta Free'],
+    ['Alpha CN 0.11', 'Beta GL Free'],
   );
   assert.ok(providersOf(editor).openrouter, '别的 provider 不能被动');
 

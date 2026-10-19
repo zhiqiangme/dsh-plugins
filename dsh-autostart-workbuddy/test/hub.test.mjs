@@ -328,10 +328,10 @@ test('resolvePluginConfig(gateway: hub)：python 跑 wb_proxy.py，数据目录�
   assert.equal(plain.spec.env.API_KEY, undefined);
 });
 
-test('modelDisplayName：hub 的裸 id 按应答顶层 realm 补 CN/GL 前缀', async () => {
-  assert.equal(modelDisplayName({ id: 'hy3', name: 'Hy3', credits: 'x0.00', realm: 'cn' }), 'CN Hy3 Free');
-  assert.equal(modelDisplayName({ id: 'hy3', name: 'Hy3', credits: 'x0.11', realm: 'intl' }), 'GL Hy3 0.11');
-  assert.equal(modelDisplayName({ id: 'cn:hy3', name: 'Hy3', credits: 'x0.11', realm: 'intl' }), 'CN Hy3 0.11', 'id 自带前缀优先');
+test('modelDisplayName：hub 的裸 id 按应答顶层 realm 在模型名与倍率之间补 CN/GL', async () => {
+  assert.equal(modelDisplayName({ id: 'hy3', name: 'Hy3', credits: 'x0.00', realm: 'cn' }), 'Hy3 CN Free');
+  assert.equal(modelDisplayName({ id: 'hy3', name: 'Hy3', credits: 'x0.11', realm: 'intl' }), 'Hy3 GL 0.11');
+  assert.equal(modelDisplayName({ id: 'cn:hy3', name: 'Hy3', credits: 'x0.11', realm: 'intl' }), 'Hy3 CN 0.11', 'id 自带前缀优先');
   assert.equal(modelDisplayName({ id: 'hy3', name: 'Hy3', credits: 'x0.11' }), 'Hy3 0.11');
 
   const server = startFixture({
