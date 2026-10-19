@@ -36,12 +36,12 @@ export function compareVersions(left, right) {
   return 0;
 }
 
-function command(executable, args, cwd) {
-  const result = spawnSync(executable, args, { cwd, encoding: 'utf8', windowsHide: true });
+function command(executable, args, cwd, options = {}) {
+  const result = spawnSync(executable, args, { cwd, encoding: 'utf8', windowsHide: true, ...options });
   if (result.error || result.status !== 0) {
-    throw new Error(`${executable} ${args[0]} 失败：${result.error?.message || result.stderr || result.stdout}`);
+    throw new Error(`${executable} ${args[0]} 失败：${result.error?.message || result.stderr || result.stdout || `退出码 ${result.status}`}`);
   }
-  return result.stdout.trim();
+  return result.stdout?.trim() || '';
 }
 
 function git(cwd, ...args) {
@@ -150,24 +150,31 @@ export async function registryVersion(name, version, fetchImpl = fetch) {
   return manifest;
 }
 
-// npm 发布命令成功后，精确版本接口实测可能 1-3 分钟才可见（2026-10-17 tavily-search 26.10.17
-// 首次只等了约 62 秒而失败）。前段快速爬升，之后每 30 秒轮询，总计约 5 分钟。
-export const PUBLISH_VISIBILITY_DELAYS = [0, 2_000, 5_000, 10_000, 15_000, ...Array(9).fill(30_000)];
+// 2026-10-19 opencode2api 26.10.19 的 npm 命令成功后，版本超过 5 分钟才可见。
+// 前段快速核对，之后每 30 秒轮询，留出约 10 分钟的传播窗口；期间绝不重复发布。
+export const PUBLISH_VISIBILITY_DELAYS = [0, 2_000, 5_000, 10_000, 15_000, ...Array(19).fill(30_000)];
 
 export async function waitForPublishedVersion(name, version, integrity, {
   readVersion = registryVersion,
   wait = (ms) => new Promise((done) => setTimeout(done, ms)),
+  log = console.log,
   // 等待期间只读核对；发布命令成功后绝不自动重发。
   delays = PUBLISH_VISIBILITY_DELAYS,
 } = {}) {
-  for (const delay of delays) {
+  let waited = 0;
+  for (const [index, delay] of delays.entries()) {
     if (delay) await wait(delay);
+    waited += delay;
     const published = await readVersion(name, version);
-    if (!published) continue;
+    if (!published) {
+      log(`npm ${name}@${version} 暂未可见（第 ${index + 1}/${delays.length} 次核对，累计等待 ${waited / 1_000} 秒）`);
+      continue;
+    }
     verifyPublished({ versions: { [version]: published } }, version, integrity);
+    log(`npm ${name}@${version} 已可见，包完整性核对通过`);
     return;
   }
-  throw new Error('npm 发布命令已成功，但精确版本暂未可见；请使用原始 SHA 重跑补齐 GitHub Release');
+  throw new Error(`npm 发布命令已成功，但等待 ${waited / 1_000} 秒后精确版本仍未可见；请使用原始 SHA 重跑补齐 GitHub Release`);
 }
 
 export function verifyPublished(metadata, version, integrity) {
@@ -221,7 +228,10 @@ function releaseNotes(cwd, plugin, version, sha, tag) {
 
 export async function publishRelease({ cwd, plugin: id, sha }, {
   api = githubClient(process.env.GH_TOKEN), metadata = registryMetadata, versionMetadata = registryVersion, pack = packPackage,
-  publish = (file) => command('npm', ['publish', file, '--access', 'public', '--tag', 'latest', '--ignore-scripts', '--registry', 'https://registry.npmjs.org'], cwd),
+  // npm 的输出直接交给 Actions；认证或网络重试卡住时最多等待 5 分钟。
+  publish = (file) => command('npm', ['publish', file, '--access', 'public', '--tag', 'latest', '--ignore-scripts', '--registry', 'https://registry.npmjs.org'], cwd,
+    { stdio: ['ignore', 'inherit', 'inherit'], timeout: 5 * 60_000 }),
+  log = console.log,
 } = {}) {
   const plugin = pluginById(id);
   if (git(cwd, 'rev-parse', 'HEAD') !== sha || git(cwd, 'status', '--porcelain')) throw new Error('发布源码必须是指定 SHA 的干净检出');
@@ -240,8 +250,12 @@ export async function publishRelease({ cwd, plugin: id, sha }, {
     const body = releaseNotes(cwd, plugin, version, sha, tag);
     if (!existingTag) await api('git/refs', { method: 'POST', body: { ref: `refs/tags/${tag}`, sha } });
     if (!alreadyPublished) {
+      log(`开始发布 npm ${plugin.name}@${version}（源码 ${sha}）`);
       await publish(packed.file);
-      await waitForPublishedVersion(plugin.name, version, packed.integrity, { readVersion: versionMetadata });
+      log('npm 发布命令已成功，开始等待版本可见并核对包完整性');
+      await waitForPublishedVersion(plugin.name, version, packed.integrity, { readVersion: versionMetadata, log });
+    } else {
+      log(`npm ${plugin.name}@${version} 已存在且包完整性一致，跳过 npm 发布`);
     }
     const release = await api(`releases/tags/${tag}`, { allowMissing: true });
     if (!release) {

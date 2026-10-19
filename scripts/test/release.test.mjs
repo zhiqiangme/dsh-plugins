@@ -143,6 +143,7 @@ test('npm 精确版本查询：使用独立端点和 no-cache，拒绝错误或�
 test('发布后核对：允许精确版本延迟可见，等待期间只读，不重复发布', async () => {
   let reads = 0;
   const waits = [];
+  const logs = [];
   await waitForPublishedVersion('@scope/pkg', '26.10.17', 'sha512-same', {
     readVersion: async (name, version) => {
       assert.equal(name, '@scope/pkg');
@@ -150,28 +151,32 @@ test('发布后核对：允许精确版本延迟可见，等待期间只读，�
       reads += 1;
       return reads < 3 ? undefined : { dist: { integrity: 'sha512-same' } };
     },
-    wait: async (ms) => waits.push(ms), delays: [0, 1, 2],
+    wait: async (ms) => waits.push(ms), delays: [0, 1, 2], log: (message) => logs.push(message),
   });
   assert.equal(reads, 3);
   assert.deepEqual(waits, [1, 2]);
+  assert.equal(logs.length, 3);
+  assert.match(logs[0], /暂未可见.*1\/3.*累计等待 0 秒/);
+  assert.match(logs[1], /暂未可见.*2\/3/);
+  assert.match(logs[2], /已可见.*完整性核对通过/);
 });
 
-test('发布后核对：默认等待窗口约 5 分钟，覆盖 npm 1-3 分钟的可见延迟', async () => {
+test('发布后核对：默认等待窗口约 10 分钟，覆盖超过 5 分钟的 npm 可见延迟', async () => {
   const waits = [];
   let reads = 0;
   await assert.rejects(waitForPublishedVersion('pkg', '26.10.17', 'sha512-same', {
-    readVersion: async () => { reads += 1; return undefined; }, wait: async (ms) => waits.push(ms),
-  }), /发布命令已成功.*原始 SHA/);
+    readVersion: async () => { reads += 1; return undefined; }, wait: async (ms) => waits.push(ms), log: () => {},
+  }), /发布命令已成功.*等待 602 秒.*原始 SHA/);
   const total = waits.reduce((sum, ms) => sum + ms, 0);
-  assert.ok(total >= 290_000 && total <= 320_000, `总等待 ${total}ms`);
+  assert.ok(total >= 590_000 && total <= 620_000, `总等待 ${total}ms`);
   assert.equal(reads, PUBLISH_VISIBILITY_DELAYS.length);
-  // 第 3 分钟时仍在轮询：模拟 180 秒后才可见的版本也能确认。
+  // 旧的 5 分钟窗口会失败；模拟 6 分钟后才可见，仍应完成完整性核对。
   let elapsed = 0;
   await waitForPublishedVersion('pkg', '26.10.17', 'sha512-same', {
-    readVersion: async () => (elapsed >= 180_000 ? { dist: { integrity: 'sha512-same' } } : undefined),
-    wait: async (ms) => { elapsed += ms; },
+    readVersion: async () => (elapsed >= 360_000 ? { dist: { integrity: 'sha512-same' } } : undefined),
+    wait: async (ms) => { elapsed += ms; }, log: () => {},
   });
-  assert.ok(elapsed >= 180_000);
+  assert.ok(elapsed >= 360_000);
 });
 
 test('发布后核对：不可见时有等待上限，完整性冲突和认证失败不误报成功', async () => {
@@ -228,6 +233,7 @@ function publishing(t, { existing = false, later = false } = {}) {
     metadata: async () => state.metadata,
     versionMetadata: async (_name, version) => state.metadata.versions[version],
     publish: async () => { calls.push('npm'); state.metadata.versions['26.10.15'] = { dist: { integrity: 'sha512-same' } }; },
+    log: () => {},
   };
   return { repo, state, calls, adapters, options: { cwd: repo.cwd, plugin: 'workbuddy', sha } };
 }
