@@ -11,6 +11,7 @@ import { backendPaths, DEFAULT_CHECK_TTL_MS, purgeBackendData, stopForUpdate } f
 import { panelApiKey } from './models.js';
 import { isFile } from './services.js';
 import { extractZipEntry, extractZipTree } from './zip.js';
+import { downloadCached } from './download.js';
 
 export const TIARA_REPO = 'TiaraBasori/OpenCode2API';
 // 上游 SDK 与 1.x 协议绑定；自动装 latest 会拿到不兼容的 OpenCode 2.x。
@@ -116,6 +117,7 @@ export function describeTiara(paths) {
     data: paths.data,
     version: localTiaraVersion(paths),
     history: listTiaraVersions(paths),
+    latest: readJson(paths.releaseCache)?.latest ?? null,
   };
 }
 export function ensureTiaraConfig(paths) {
@@ -154,10 +156,10 @@ function headers(env) {
     ...(token ? { authorization: `Bearer ${token}` } : {}),
   };
 }
-export async function fetchTiaraSource({ env = process.env, apiBase = 'https://api.github.com' } = {}) {
+export async function fetchTiaraSource({ env = process.env, apiBase = 'https://api.github.com', signal } = {}) {
   const response = await fetch(`${apiBase}/repos/${TIARA_REPO}/commits/main`, {
     headers: headers(env),
-    signal: AbortSignal.timeout(20_000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000),
   });
   if (!response.ok) throw new Error(`查询 Tiara 源码版本失败：HTTP ${response.status}`);
   const body = await response.json();
@@ -186,26 +188,33 @@ export async function checkTiaraUpdate({
 }
 
 /** 子进程不走 shell，不执行包的生命周期脚本；输出只写后端日志，不返回可能含凭据的环境。 */
-export function runInstallCommand(exe, args, { cwd, env = process.env, timeoutMs = 300_000, logger } = {}) {
+export function runInstallCommand(exe, args, { cwd, env = process.env, timeoutMs = 300_000, logger, signal, onOutput } = {}) {
   return new Promise((done, fail) => {
+    signal?.throwIfAborted();
     const child = spawn(exe, args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let tail = '',
       expired = false;
     for (const stream of [child.stdout, child.stderr])
       stream.on('data', (chunk) => {
         tail = (tail + chunk).slice(-3000);
+        onOutput?.(String(chunk));
       });
+    const abort = () => child.kill();
+    signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => {
       expired = true;
       child.kill();
     }, timeoutMs);
     child.once('error', (error) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
       fail(error);
     });
     child.once('close', (code) => {
       clearTimeout(timer);
-      if (code === 0 && !expired) done();
+      signal?.removeEventListener('abort', abort);
+      if (signal?.aborted) fail(signal.reason || new Error('安装已取消'));
+      else if (code === 0 && !expired) done();
       else {
         logger?.warn?.(tail);
         fail(new Error(expired ? '安装依赖超时，请检查网络后重试' : `安装子进程退出 (${code})：${tail}`));
@@ -213,35 +222,36 @@ export function runInstallCommand(exe, args, { cwd, env = process.env, timeoutMs
     });
   });
 }
-async function download(url) {
-  // codeload 与 npm registry 都不需要 GitHub token，避免把宿主令牌发给无关域名。
-  const response = await fetch(url, { signal: AbortSignal.timeout(300_000) });
-  if (!response.ok) throw new Error(`下载失败：HTTP ${response.status} (${url})`);
-  return Buffer.from(await response.arrayBuffer());
-}
 async function npmCli(paths, options) {
   const cli = join(paths.cache, `npm-${NPM_VERSION}`, 'package', 'bin', 'npm-cli.js');
-  if (isFile(cli)) return cli;
-  const archive = await download(`https://registry.npmjs.org/npm/-/npm-${NPM_VERSION}.tgz`);
+  const completed = join(paths.cache, `npm-${NPM_VERSION}`, '.complete');
+  if (isFile(cli) && isFile(completed)) return cli;
+  const archive = await downloadCached(`https://registry.npmjs.org/npm/-/npm-${NPM_VERSION}.tgz`, join(paths.cache, 'npm.tgz'),
+    { ...options, stage: 'installer', detail: '下载 npm 安装器' });
   if (createHash('sha512').update(archive).digest('base64') !== NPM_INTEGRITY)
     throw new Error('npm 安装器完整性校验失败');
   const dir = join(paths.cache, `npm-${NPM_VERSION}`),
     file = join(paths.cache, 'npm.tgz');
+  if (existsSync(dir)) remove(paths, dir);
   mkdirSync(dir, { recursive: true });
   writeFileSync(file, archive);
   await runInstallCommand('tar.exe', ['-xzf', file, '-C', dir], options);
   if (!isFile(cli)) throw new Error('npm 安装器不完整');
+  writeFileSync(completed, NPM_VERSION);
   return cli;
 }
-export async function prepareTiaraPackage({ paths, stagedDir, latest, env, logger, arch = process.arch } = {}) {
+export async function prepareTiaraPackage({ paths, stagedDir, latest, env, logger, signal, onProgress, arch = process.arch } = {}) {
   if (process.platform !== 'win32') throw new Error('Tiara 自动安装目前仅支持 Windows');
   const binary = tiaraBinary(stagedDir, arch);
   logger?.info?.('[opencode2api] Tiara：下载固定提交的源码…');
-  const archive = await download(`https://codeload.github.com/${TIARA_REPO}/zip/${latest.commit}`);
+  const archive = await downloadCached(`https://codeload.github.com/${TIARA_REPO}/zip/${latest.commit}`,
+    join(paths.cache, `source-${latest.commit}.zip`), { signal, onProgress, stage: 'source', detail: '下载 Tiara 源码' });
+  onProgress?.({ stage: 'source', detail: '解压 Tiara 源码' });
   extractZipTree(archive, stagedDir, { prefix: `OpenCode2API-${latest.commit}/` });
   if (!isFile(join(stagedDir, 'package-lock.json')) || !isFile(join(stagedDir, 'src', 'proxy.js')))
     throw new Error('Tiara 源码缺少入口或 package-lock.json');
-  const options = { cwd: stagedDir, env: { ...process.env, ...env }, logger };
+  const options = { cwd: stagedDir, env: { ...process.env, ...env }, logger, signal, onProgress };
+  onProgress?.({ stage: 'installer', detail: '准备 npm 安装器' });
   const cli = await npmCli(paths, options);
   // 显式 registry 与独立缓存；不修改全局 npm 配置，依赖由 lockfile 的 integrity 校验。
   const common = [
@@ -253,23 +263,34 @@ export async function prepareTiaraPackage({ paths, stagedDir, latest, env, logge
     '--ignore-scripts',
     '--no-audit',
     '--no-fund',
+    '--loglevel=http',
     '--registry=https://registry.npmjs.org',
     `--cache=${join(paths.cache, 'npm-cache')}`,
   ];
   logger?.info?.('[opencode2api] Tiara：安装锁定的生产依赖…');
-  await runInstallCommand(process.execPath, [cli, 'ci', '--omit=dev', ...common], options);
+  const dependencyStamp = join(stagedDir, 'dsh-dependencies.json');
+  const lockHash = createHash('sha256').update(readFileSync(join(stagedDir, 'package-lock.json'))).digest('hex');
+  if (readJson(dependencyStamp)?.lockHash !== lockHash || !isFile(join(stagedDir, 'node_modules/express/package.json'))) {
+    let fetched = 0;
+    onProgress?.({ stage: 'dependencies', detail: '安装生产依赖，首次安装可能需要几分钟' });
+    await runInstallCommand(process.execPath, [cli, 'ci', '--omit=dev', ...common], { ...options, onOutput: (text) => {
+      fetched += (text.match(/npm http/g) || []).length;
+      if (fetched) onProgress?.({ stage: 'dependencies', detail: `安装生产依赖，已处理 ${fetched} 项下载或缓存请求` });
+    } });
+    writeJson(dependencyStamp, { lockHash });
+  }
   logger?.info?.(`[opencode2api] Tiara：下载 OpenCode ${OPENCODE_VERSION} 独立运行时…`);
   const asset = OPENCODE_ASSETS[arch];
   const cacheFile = join(paths.cache, asset.name);
   let runtime = isFile(cacheFile) ? readFileSync(cacheFile) : null;
   const digest = (data) => createHash('sha256').update(data).digest('hex');
   if (!runtime || digest(runtime) !== asset.sha256) {
-    runtime = await download(
-      `https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${asset.name}`,
-    );
+    if (runtime) rmSync(cacheFile, { force: true });
+    runtime = await downloadCached(`https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${asset.name}`,
+      cacheFile, { signal, onProgress, stage: 'runtime', detail: `下载 OpenCode ${OPENCODE_VERSION} 运行时` });
     if (digest(runtime) !== asset.sha256) throw new Error('OpenCode 运行时 SHA256 校验失败');
-    writeFileSync(cacheFile, runtime);
   }
+  onProgress?.({ stage: 'runtime', detail: '校验并解压 OpenCode 运行时' });
   mkdirSync(join(stagedDir, 'runtime'), { recursive: true });
   writeFileSync(binary, extractZipEntry(runtime, 'opencode.exe'));
   if (!isFile(binary)) throw new Error('未找到兼容的 OpenCode 1.x 程序');
@@ -322,9 +343,9 @@ async function restore(paths, swap, returnTo) {
   }
   if (swap.hadCurrent) await rename(swap.archived, paths.current);
 }
-async function startAndProbe(service) {
+async function startAndProbe(service, signal) {
   try {
-    const result = await service.ensureRunning();
+    const result = await service.ensureRunning(signal);
     return result?.state === 'failed'
       ? { ok: false, reason: result.reason }
       : await probeTiaraHealth({ host: service.spec.host, port: service.port });
@@ -341,8 +362,11 @@ export async function applyTiaraUpdate({
   keepVersions = DEFAULT_TIARA_KEEP_VERSIONS,
   target,
   prepare = prepareTiaraPackage,
+  signal,
+  onProgress,
 } = {}) {
-  const latest = target ?? (await fetchTiaraSource({ env, apiBase }));
+  onProgress?.({ stage: 'version', detail: '查询 Tiara 源码版本' });
+  const latest = target ?? (await fetchTiaraSource({ env, apiBase, signal }));
   if (!/^[a-f0-9]{40}$/.test(latest.commit ?? '') || latest.tag !== `main-${latest.commit.slice(0, 12)}`)
     throw new Error('Tiara 源码版本无效');
   const local = localTiaraVersion(paths);
@@ -350,18 +374,16 @@ export async function applyTiaraUpdate({
     return { ok: true, state: 'up-to-date', local, latest };
   layout(paths);
   const staged = join(paths.cache, `staged-${versionName(latest.tag)}`);
-  remove(paths, staged);
   mkdirSync(staged, { recursive: true });
   try {
-    await prepare({ paths, stagedDir: staged, latest, env, logger });
+    await prepare({ paths, stagedDir: staged, latest, env, logger, signal, onProgress });
     if (!isTiaraDir(staged) || readJson(join(staged, MANIFEST))?.commit !== latest.commit)
       throw new Error('Tiara 安装目录不完整或版本不符');
   } catch (error) {
-    remove(paths, staged);
+    // 重试复用已校验的下载与完成的依赖，避免大文件失败后又从头安装。
     return { ok: false, state: 'prepare-failed', reason: error.message };
   }
-  if (service?.disposed) {
-    remove(paths, staged);
+  if (service?.disposed || signal?.aborted) {
     return { ok: false, state: 'cancelled', reason: '插件已关闭，安装已取消' };
   }
   const stop = await stopForUpdate(service, logger);
@@ -371,6 +393,7 @@ export async function applyTiaraUpdate({
   }
   let swap;
   try {
+    onProgress?.({ stage: 'activate', detail: '切换到已下载的后端版本' });
     ensureTiaraConfig(paths);
     swap = await swapIn(paths, staged, local.tag);
   } catch (error) {
@@ -378,8 +401,17 @@ export async function applyTiaraUpdate({
     if (local.tag) await service.ensureRunning();
     return { ok: false, state: 'swap-failed', reason: error.message };
   }
-  const health = await startAndProbe(service);
+  const installedState = { ...latest, installedAt: new Date().toISOString(),
+    previous: local.tag ? { tag: local.tag, commit: local.revision } : undefined };
+  // 新装与首次启动是两件事。启动失败仍保留完整程序，用户可以直接重试启动。
+  onProgress?.({ stage: 'startup', detail: '启动后端并初始化模型目录，首次启动可能需要几分钟' });
+  const health = await startAndProbe(service, signal);
   if (!health.ok) {
+    if (!swap.hadCurrent) {
+      writeJson(paths.state, { ...installedState, startupError: health.reason });
+      return { ok: false, state: 'start-failed', installed: true, reason: `后端已安装，但启动失败：${health.reason}`,
+        latest, local: localTiaraVersion(paths) };
+    }
     await service.stop('Tiara 健康检查失败，回滚');
     await restore(paths, swap, join(paths.cache, `failed-${versionName(latest.tag)}`));
     const restored = swap.hadCurrent ? await service.ensureRunning() : undefined;
@@ -391,11 +423,7 @@ export async function applyTiaraUpdate({
       restored: restored?.state,
     };
   }
-  writeJson(paths.state, {
-    ...latest,
-    installedAt: new Date().toISOString(),
-    previous: local.tag ? { tag: local.tag, commit: local.revision } : undefined,
-  });
+  writeJson(paths.state, installedState);
   const history = listTiaraVersions(paths),
     kept = new Set([local.tag, ...history.map((v) => v.name)].filter(Boolean).slice(0, Math.max(1, keepVersions)));
   for (const item of history) {
@@ -415,7 +443,7 @@ export async function installTiara(options) {
   const result = await applyTiaraUpdate(options);
   return result.ok ? { ...result, state: 'installed' } : result;
 }
-export async function rollbackTiara({ paths, service, logger } = {}) {
+export async function rollbackTiara({ paths, service, logger, signal, onProgress } = {}) {
   const state = readJson(paths.state),
     previous = state?.previous;
   if (!previous?.tag) return { ok: false, state: 'no-previous', reason: '没有可回滚的 Tiara 版本' };
@@ -431,7 +459,8 @@ export async function rollbackTiara({ paths, service, logger } = {}) {
     await service.ensureRunning();
     return { ok: false, state: 'swap-failed', reason: error.message };
   }
-  const health = await startAndProbe(service);
+  onProgress?.({ stage: 'startup', detail: '启动回滚后的 Tiara 后端' });
+  const health = await startAndProbe(service, signal);
   if (!health.ok) {
     await service.stop('Tiara 回滚失败');
     await restore(paths, swap, dir);

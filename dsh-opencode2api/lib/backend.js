@@ -368,6 +368,7 @@ export async function stopForUpdate(service, logger) {
   if (!listening && !service.isAlive?.()) return { ok: true, stopped: false };
 
   const result = await service.stop('更新后端');
+  await service.starting?.catch(() => undefined);
   if (result?.stopped) return { ok: true, stopped: true };
 
   const stillListening = await probeTcp(port, host);
@@ -394,8 +395,11 @@ export async function applyUpdate({
   logger,
   keepVersions = DEFAULT_KEEP_VERSIONS,
   target,
+  signal,
+  onProgress,
 } = {}) {
-  const latest = target ?? (await fetchLatestRelease({ env, apiBase }));
+  onProgress?.({ stage: 'version', detail: '查询后端版本' });
+  const latest = target ?? (await fetchLatestRelease({ env, apiBase, signal }));
   const local = localVersion(paths);
   if (local.revision && local.revision === latest.commit) {
     return { ok: true, state: 'up-to-date', local, latest };
@@ -403,8 +407,10 @@ export async function applyUpdate({
 
   const asset = pickWindowsAsset(latest.assets);
   logger?.info?.(`[opencode2api] 下载 ${asset.name} …`);
-  const archive = await downloadAsset(asset, { env });
-  const checksums = await fetchChecksums(latest, { env, apiBase, assetName: asset.name });
+  const archive = await downloadAsset(asset, { env, signal, onProgress: (received, total) =>
+    onProgress?.({ stage: 'download', detail: `下载 ${asset.name}`, received, total }) });
+  onProgress?.({ stage: 'verify', detail: '校验后端文件' });
+  const checksums = await fetchChecksums(latest, { env, apiBase, signal, assetName: asset.name });
   const verified = verifyChecksum(archive, asset.name, checksums);
   if (!verified.ok) return { ok: false, state: 'verify-failed', reason: verified.reason, latest, asset: asset.name };
 
@@ -417,6 +423,7 @@ export async function applyUpdate({
     return { ok: false, state: 'extract-failed', reason: error instanceof Error ? error.message : String(error), latest };
   }
 
+  if (service?.disposed || signal?.aborted) return { ok: false, state: 'cancelled', reason: '插件已关闭，安装已取消' };
   ensureLayout(paths);
   const stagedExe = join(paths.cache, `staged-${versionDirName(latest.tag, latest.commit)}.exe`);
   writeFileSync(stagedExe, exeBuffer);
@@ -447,7 +454,8 @@ export async function applyUpdate({
 
   const swap = swapIn(paths, stagedExe, { from: local, to: latest });
 
-  const started = await service.ensureRunning();
+  onProgress?.({ stage: 'startup', detail: '启动后端并检查健康状态' });
+  const started = await service.ensureRunning(signal);
   const health = started?.state === 'failed'
     ? { ok: false, reason: started.reason ?? '启动失败' }
     : await probeHealthz({ host: service.spec?.host ?? '127.0.0.1', port: service.port });
@@ -487,7 +495,7 @@ export async function applyUpdate({
 }
 
 /** 回滚到清单里记录的上一版本。 */
-export async function rollbackBackend({ paths, service, logger } = {}) {
+export async function rollbackBackend({ paths, service, logger, signal, onProgress } = {}) {
   const manifest = readManifest(paths);
   const previous = manifest?.previous;
   if (!previous?.revision) {
@@ -506,7 +514,8 @@ export async function rollbackBackend({ paths, service, logger } = {}) {
   const current = localVersion(paths);
   const swap = swapIn(paths, previousExe, { from: current, to: previous });
 
-  const started = await service.ensureRunning();
+  onProgress?.({ stage: 'startup', detail: '启动回滚后的后端' });
+  const started = await service.ensureRunning(signal);
   const health = started?.state === 'failed'
     ? { ok: false, reason: started.reason ?? '启动失败' }
     : await probeHealthz({ host: service.spec?.host ?? '127.0.0.1', port: service.port });

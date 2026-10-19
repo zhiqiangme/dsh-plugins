@@ -135,3 +135,32 @@ test('Tiara 卡片快照与面板密钥按所选后端返回，普通快照不�
   const missing=await describeModels({...resolved,models:{...resolved.models,baseURL:'http://127.0.0.1:1'},env});
   assert.equal(missing.state,BACKEND_NOT_INSTALLED,'已存在的 DSH Node 运行时不能被当成已安装的 Tiara');
 });
+
+test('启动操作立即返回 202；页面重入看见同一任务，重复安装被拒绝，结束后结果保留', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'tiara-web-operation-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const env = { DSH_OPENCODE2API_BACKEND_ROOT: root }, resolved = resolvePluginConfig({ gateway: 'tiara' }, env);
+  const routes = new Map(), disposers = [];
+  let finish;
+  const service = { ensureRunning: async () => new Promise(resolve => { finish = resolve; }) };
+  const ctx = { webServer: { register: ({ path, handler }) => { routes.set(path, handler); return () => {}; } },
+    effect: f => disposers.push(f()), get: () => undefined };
+  registerPanelRoutes(ctx, { resolved, env, service, logger: { warn() {} } });
+  t.after(async () => { for (const dispose of disposers) await dispose?.(); });
+  const started = await request(routes.get(BACKEND_PATH), { method: 'POST', body: { action: 'start' } });
+  assert.equal(started.status, 202);
+  const snapshot = await request(routes.get(BACKEND_PATH));
+  assert.equal(snapshot.body.operation.id, started.body.operation.id);
+  assert.equal(snapshot.body.operation.progress.stage, 'startup');
+  assert.equal((await request(routes.get(BACKEND_PATH), { method: 'POST', body: { action: 'install' } })).status, 409);
+  assert.equal((await request(routes.get(MODELS_PATH))).body.state, 'backend-installing');
+  finish({ state: 'failed', reason: 'backend rejected startup' });
+  let done;
+  for (let n = 0; n < 20; n++) {
+    done = (await request(routes.get(BACKEND_PATH))).body.operation;
+    if (done.state !== 'running') break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(done.state, 'failed');
+  assert.match(done.result.reason, /rejected/);
+});

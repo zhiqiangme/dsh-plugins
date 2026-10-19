@@ -224,6 +224,12 @@ window.__ModuleLoader__.load({
       backendUpdated: '已更新到 {tag}，健康检查通过。',
       backendRolledBack: '已回滚到 {tag}。',
       backendUnmanaged: '未纳管',
+      backendNotInstalled: '未安装',
+      backendAvailableInstall: '可安装 {tag}',
+      backendStart: '重试启动',
+      backendStarted: '后端已启动。',
+      backendProgressHint: '安装在后台进行，可以离开此页面；完成前请保持 DSH 运行。',
+      backendElapsed: '已用时 {seconds} 秒',
       backendNoHistory: '历史版本：无',
       backendHistory: '历史版本：{list}',
       backendBuilt: '构建于 {time}',
@@ -335,6 +341,12 @@ window.__ModuleLoader__.load({
       backendUpdated: 'Updated to {tag}; health check passed.',
       backendRolledBack: 'Rolled back to {tag}.',
       backendUnmanaged: 'unmanaged',
+      backendNotInstalled: 'Not installed',
+      backendAvailableInstall: 'Available to install: {tag}',
+      backendStart: 'Retry start',
+      backendStarted: 'Backend started.',
+      backendProgressHint: 'Installation continues in the background. You can leave this page; keep DSH running until it finishes.',
+      backendElapsed: 'Elapsed: {seconds}s',
       backendNoHistory: 'History: none',
       backendHistory: 'History: {list}',
       backendBuilt: 'built {time}',
@@ -991,8 +1003,14 @@ window.__ModuleLoader__.load({
         try {
           const payload = await request(BACKEND_PATH, 'GET');
           setBackend(payload.backend ?? {});
+          setBackendOperation(payload.operation);
+          setBackendBusy(payload.operation?.state === 'running' ? payload.operation.action : undefined);
+          if (payload.backend?.latest) setCheck({ latest: payload.backend.latest,
+            upToDate: payload.backend.exeExists && payload.backend.version?.revision === payload.backend.latest.commit });
+          return payload;
         } catch (error) {
-          setBackend({ error: error instanceof Error ? error.message : String(error) });
+          // 暂时断线不抹掉已知的安装状态与进度，后续轮询继续恢复。
+          setBackendNotice({ kind: 'error', text: errorText(error) });
         }
       }, []);
 
@@ -1020,10 +1038,15 @@ window.__ModuleLoader__.load({
         async (action, extra) => {
           setBackendBusy(action);
           setBackendNotice(undefined);
+          let accepted = false;
           try {
             const payload = await request(BACKEND_PATH, 'POST', { action, ...(extra ?? {}) });
             if (payload.backend) setBackend(payload.backend);
-            if (action === 'check') {
+            if (payload.operation) {
+              accepted = true;
+              setBackendOperation(payload.operation);
+              setBackendBusy(payload.operation.state === 'running' ? payload.operation.action : undefined);
+            } else if (action === 'check') {
               setCheck(payload.check?.error ? { error: payload.check.error } : payload.check);
             } else if (payload.ok) {
               setCheck(undefined);
@@ -1047,11 +1070,13 @@ window.__ModuleLoader__.load({
             }
           } catch (error) {
             setBackendNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) });
+            const recovered = await loadBackend();
+            accepted = recovered?.operation?.state === 'running';
           } finally {
-            setBackendBusy(undefined);
+            if (!accepted) setBackendBusy(undefined);
           }
         },
-        [t, load, enableSyncAfterInstall],
+        [t, load, loadBackend, enableSyncAfterInstall],
       );
 
       // 放在所有既有 useState 之后：hooks 按调用顺序配对，插到前面会打乱上面那些状态
@@ -1081,8 +1106,36 @@ window.__ModuleLoader__.load({
       }, [t]);
 
       const [gatewaySwitch, setGatewaySwitch] = useState(undefined);
+      const [backendOperation, setBackendOperation] = useState(undefined);
+      const operationRunning = backendOperation?.state === 'running';
+      useEffect(() => {
+        if (!operationRunning) return undefined;
+        let stopped = false, timer;
+        const tick = async () => {
+          await loadBackend();
+          if (!stopped) timer = setTimeout(tick, POLL_MS);
+        };
+        timer = setTimeout(tick, POLL_MS);
+        return () => { stopped = true; clearTimeout(timer); };
+      }, [operationRunning, backendOperation?.id, loadBackend]);
+      useEffect(() => {
+        if (!backendOperation || operationRunning) return;
+        const result = backendOperation.result ?? {};
+        const action = backendOperation.action;
+        if (result.ok) {
+          const key = action === 'start' ? 'backendStarted' : action === 'uninstall' && backendOperation.gateway === 'tiara'
+            ? 'backendUninstalledTiara' : BACKEND_NOTICE[action] ?? 'backendUpdated';
+          setBackendNotice({ kind: 'ok', text: t(key, { tag: result.latest?.tag ?? result.local?.tag ?? '', root: result.root ?? '' }) });
+        } else setBackendNotice({ kind: 'error', text: result.reason ?? result.state ?? '' });
+        load().then(() => {
+          if (result.sync) setNotice(result.sync.state === 'updated' || result.sync.state === 'unchanged'
+            ? { kind: 'ok', text: t('savedSync', { count: result.sync.count ?? 0 }) }
+            : { kind: 'error', text: t('savedNoSync', { state: result.sync.reason ?? result.sync.state ?? '' }) });
+        });
+      }, [backendOperation?.id, backendOperation?.state, operationRunning, t, load]);
       const switchGateway = useCallback(async (gateway, label) => {
         setPanelKey(undefined);
+        setCheck(undefined);
         setBackendNotice(undefined);
         setGatewaySwitch({ busy: gateway, kind: 'ok', text: t('gatewayWaiting', { name: label }) });
         try {
@@ -1114,7 +1167,9 @@ window.__ModuleLoader__.load({
       const dirty = !sameSet(picked, savedPicked) || meta.enabled !== meta.savedEnabled;
       const body = [];
 
-      if (phase === 'loading') {
+      if (operationRunning) {
+        body.push(h('div', { key: 'loading', className: 'dsm-oc-empty' }, t('backendProgressHint')));
+      } else if (phase === 'loading') {
         body.push(h('div', { key: 'loading', className: 'dsm-oc-empty' }, t('loading')));
       } else if (phase === 'error') {
         body.push(
@@ -1252,8 +1307,8 @@ window.__ModuleLoader__.load({
       // 首屏那次 GET 不联网（快），点"检查更新"才真去查 release。
       if (backend) {
         const version = backend.version ?? {};
-        const currentTag =
-          version.tag ?? (version.revision ? version.revision.slice(0, 7) : null) ?? t('backendUnmanaged');
+        const currentTag = version.tag ?? (version.revision ? version.revision.slice(0, 7) : null)
+          ?? t(backend.exeExists === false ? 'backendNotInstalled' : 'backendUnmanaged');
         const history = Array.isArray(backend.history) ? backend.history : [];
         const latestTag = check?.latest?.tag ?? '';
         // 老快照没有 exeExists 字段时按"已安装"处理，避免误显示成未安装。
@@ -1297,7 +1352,7 @@ window.__ModuleLoader__.load({
               ? h(
                   'span',
                   { className: `dsm-oc-badge ${check.upToDate ? 'dsm-oc-badge-ok' : 'dsm-oc-badge-new'}` },
-                  check.upToDate ? t('backendUpToDate') : t('backendAvailable', { tag: latestTag }),
+                  check.upToDate ? t('backendUpToDate') : t(installed ? 'backendAvailable' : 'backendAvailableInstall', { tag: latestTag }),
                 )
               : null,
             h(
@@ -1312,6 +1367,9 @@ window.__ModuleLoader__.load({
             ),
             // 安装与卸载互斥：没装才显示"安装"，装了才显示"卸载"。
             // 顺序按使用频率排：更新 → 回滚 → 卸载 → 彻底卸载（删除类放最后，离"检查更新"最远，减少误点）。
+            installed && currentGateway === 'tiara'
+              ? wbButton('start', 'outline', t('backendStart'), () => runBackend('start'), Boolean(backendBusy || gatewaySwitch?.busy))
+              : null,
             installed
               ? h(
                   'button',
@@ -1379,6 +1437,15 @@ window.__ModuleLoader__.load({
             version.builtAt ? ` · ${t('backendBuilt', { time: version.builtAt })}` : '',
           ),
         );
+
+        if (operationRunning) {
+          const progress = backendOperation.progress ?? {};
+          const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+          const bytes = typeof progress.received === 'number'
+            ? ` · ${mb(progress.received)}${progress.total ? ` / ${mb(progress.total)} (${Math.min(100, Math.floor(progress.received / progress.total * 100))}%)` : ''}` : '';
+          section.push(h('div', { key: 'progress', role: 'status', 'aria-live': 'polite', className: 'dsm-oc-backend-line' },
+            progress.detail || t('backendWorking'), bytes, ` · ${t('backendElapsed', { seconds: Math.max(0, Math.floor((Date.now() - Date.parse(backendOperation.startedAt)) / 1000)) })}`));
+        }
 
         if (confirming) {
           // 老状态里可能是 true（改成动作名之前的写法），按卸载处理。

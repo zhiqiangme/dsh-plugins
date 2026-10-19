@@ -5,6 +5,15 @@ import { ensureTiaraConfig, tiaraPaths } from './tiara.js';
 /** TCP 就绪只说明有进程占端口；身份检查失败时不复用、不结束外部进程。 */
 export class GatewayService extends ManagedService {
   async ensureRunning(signal) {
+    // 首次预热期间端口尚未监听；页面重试须等待同一次启动，不能再拉起一套进程。
+    if (this.starting) return this.starting;
+    const pending = this.startGateway(signal);
+    this.starting = pending;
+    try { return await pending; }
+    finally { if (this.starting === pending) this.starting = undefined; }
+  }
+
+  async startGateway(signal) {
     if (this.disposed || signal?.aborted) return { state: 'failed', reason: '插件已关闭，取消启动后端' };
     if (this.spec.validationError) return { state: 'failed', reason: this.spec.validationError };
     if (this.spec.gateway === 'tiara' && !(await probeTcp(this.port, this.spec.host))) {

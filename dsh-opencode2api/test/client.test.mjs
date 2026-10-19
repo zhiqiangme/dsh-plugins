@@ -208,6 +208,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
+    'backendNotInstalled', 'backendAvailableInstall', 'backendStart', 'backendStarted', 'backendProgressHint', 'backendElapsed',
     'uninstallTiaraTitle', 'uninstallTiaraDesc', 'uninstallTiaraKept',
     'gatewayTitle', 'gatewayJason', 'gatewayTiara', 'gatewaySwitching', 'gatewayWaiting', 'gatewaySwitched',
     'gatewayNotInstalled', 'gatewayTimeout', 'gatewayTiaraHint', 'panelKeyCopyTiara', 'panelKeyCopiedTiara', 'backendUninstalledTiara',
@@ -891,4 +892,18 @@ test('切换等待跨过旧路由与短暂失败，新网关未安装时直接�
   assert.equal(await ready.module.waitForGateway('tiara',{waitMs:100,pollMs:1,sleep:async()=>{}}),'ready');assert.ok(calls>=4);
   const absent=boot([],{fetchImpl:async()=>({ok:true,status:200,json:async()=>({backend:{gateway:'tiara',exeExists:false}})})});
   assert.equal(await absent.module.waitForGateway('tiara',{waitMs:100,pollMs:1,sleep:async()=>{}}),'not-installed');
+});
+
+test('返回安装页面恢复进度：显示下载字节、用时和后台提示，隐藏未安装红字', () => {
+  const states = ['error', [], {}, 'backend-not-installed', new Set(), new Set(), false, undefined,
+    { gateway: 'tiara', gateways: ['jasonxu', 'tiara'], exeExists: false, version: {}, history: [] },
+    undefined, 'install'];
+  states[22] = { id: 'ongoing', gateway: 'tiara', action: 'install', state: 'running',
+    startedAt: new Date(Date.now() - 30000).toISOString(), progress: { stage: 'runtime', detail: '下载 OpenCode 运行时', received: 1048576, total: 2097152 } };
+  const { cards, t } = boot(states), tree = cards[0].component({ t, view: 'page' });
+  const text = collectText(tree).join(' ');
+  assert.match(text, /下载 OpenCode 运行时/); assert.match(text, /1.0 MB \/ 2.0 MB \(50%\)/);
+  assert.match(text, /已用时 30 秒/); assert.match(text, /可以离开此页面/);
+  assert.doesNotMatch(text, /后端还没有安装/);
+  assert.equal(collectByType(tree, 'button').find(node => collectText(node).join('') === '处理中…').props.disabled, true);
 });

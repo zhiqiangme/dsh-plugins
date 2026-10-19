@@ -10,6 +10,7 @@ import { priceLabel, modelMetadata, fetchModels, findConfigEntry, modelDisplayNa
 import { initialAdmin } from './backend-config.js';
 import { isFile } from './services.js';
 import { createVersionChecker } from './update.js';
+import { createBackendOperations } from './backend-operation.js';
 
 /** 插件名：与 package.json / cordis.patch.yml 里的 name 保持一致。 */
 const PLUGIN_ID = 'dsh-opencode2api';
@@ -252,18 +253,12 @@ function plainObject(value) {
 }
 
 /**
- * 同一时刻只允许一个更新/回滚：下载 + 换文件 + 重启后端不是幂等操作，
- * 两个请求并发进来会把 current 目录搅乱。
- */
-let backendBusy = false;
-
-/**
  * 后端版本端点。
  *
  * GET 默认**不联网**（首屏要快，GitHub 也可能慢甚至不通），带 `?check=1` 才真去查 release。
- * POST 只接受 check / update / rollback 三个动作；update 与 rollback 互斥。
+ * 修改动作创建后台任务并返回 202，GET 恢复进度和最终结果；同一时刻只允许一个任务。
  */
-async function handleBackend(req, res, { logger, resolved, env, service, editor }) {
+async function handleBackend(req, res, { resolved, env, editor, operations }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
   // 面板地址由服务规格推出来（端口可被 profile 覆盖），浏览器半侧拿它渲染可点击链接。
@@ -274,7 +269,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor 
   if (req.method === 'GET') {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (url.searchParams.get('check') !== '1' || resolved.backend?.enabled === false) {
-      json(res, 200, { ok: true, backend: snapshot(), check: null });
+      json(res, 200, { ok: true, backend: snapshot(), operation: operations.current, check: null });
       return;
     }
     try {
@@ -310,7 +305,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor 
   const action = typeof body.value.action === 'string' ? body.value.action : '';
 
   if (action === 'gateway') {
-    const result = await selectGateway({ resolved, editor, gateway: body.value.gateway, busy: backendBusy });
+    const result = await selectGateway({ resolved, editor, gateway: body.value.gateway, busy: operations.busy });
     json(res, result.ok ? 200 : 400, result);
     return;
   }
@@ -327,8 +322,8 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor 
     return;
   }
 
-  // 会改动磁盘的动作：都要串行执行（见 backendBusy），其中卸载与清除数据还要求显式二次确认。
-  const MUTATING_ACTIONS = new Set(['install', 'update', 'rollback', 'uninstall', 'purge']);
+  // 会改动磁盘的动作都由 operations 串行执行；卸载与清除数据要求显式二次确认。
+  const MUTATING_ACTIONS = new Set(['install', 'update', 'rollback', 'uninstall', 'purge', 'start']);
 
   if (MUTATING_ACTIONS.has(action) && resolved.managedExe === false) {
     json(res, 400, { ok: false, reason: '自定义 exe 不由插件管理版本，请在外部维护该后端。' });
@@ -345,42 +340,8 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor 
     return;
   }
 
-  if (backendBusy) {
-    json(res, 409, { ok: false, reason: '已有更新操作在进行中，请稍候再试' });
-    return;
-  }
-  backendBusy = true;
-  try {
-    let result;
-    if (action === 'install') {
-      result = await driver.install({
-        paths,
-        env,
-        apiBase,
-        service,
-        logger,
-        keepVersions: resolved.backend?.keepVersions,
-      });
-    } else if (action === 'uninstall') {
-      result = await driver.uninstall({ paths, service, logger });
-    } else if (action === 'purge') {
-      result = await driver.purge({ paths, service, logger, env });
-    } else if (action === 'update') {
-      result = await driver.update({
-        paths,
-        env,
-        apiBase,
-        service,
-        logger,
-        keepVersions: resolved.backend?.keepVersions,
-      });
-    } else {
-      result = await driver.rollback({ paths, service, logger });
-    }
-    json(res, result.ok ? 200 : 400, { ...result, backend: snapshot() });
-  } finally {
-    backendBusy = false;
-  }
+  const result = operations.start(action);
+  json(res, result.ok ? 202 : 409, { ...result, backend: snapshot() });
 }
 
 /** gateway 变更交给宿主重启；旧后端先停止，两套后端不同时占用同一 API 端口。 */
@@ -455,6 +416,24 @@ function forceFrom(req) {
  * checkVersion 只给测试注入，缺省用 lib/update.js 的带缓存检查器。
  */
 export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, checkVersion = createVersionChecker() }) {
+  const paths = resolved.backend?.paths ?? resolved.paths;
+  const driver = gatewayDriver(resolved);
+  const operations = createBackendOperations({ paths, gateway: driver.id, logger, run: async (action, control) => {
+    const options = { paths, env, apiBase: resolved.backend?.apiBase || undefined, service, logger,
+      keepVersions: resolved.backend?.keepVersions, ...control };
+    let result;
+    if (action === 'start') {
+      control.onProgress({ stage: 'startup', detail: '正在启动后端并初始化模型目录' });
+      const started = await service.ensureRunning(control.signal);
+      result = { ok: started.state !== 'failed', ...started };
+    } else result = await driver[action](options);
+    if (result.ok && (action === 'install' || action === 'start')) {
+      control.onProgress({ stage: 'sync', detail: '后端已启动，正在同步 DSH 模型列表' });
+      const selection = await applySelection({ resolved, editor: configEditorOf(ctx), credentials: credentialsOf(ctx), env, enabled: true });
+      result = { ...result, sync: selection.sync ?? { state: 'failed', reason: selection.reason } };
+    }
+    return result;
+  } });
   const mount = (scoped) => {
     const holder = scoped ?? ctx;
     const webServer =
@@ -490,6 +469,11 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
         path: MODELS_PATH,
         handler: guard(async (req, res) => {
           if (req.method === 'GET') {
+            if (operations.busy) {
+              json(res, 200, { ok: false, state: 'backend-installing', reason: '后端操作进行中，请查看下方进度。',
+                patchPath: configEditorOf(ctx)?.documentPath, enabled: resolved.models.enabled, only: resolved.models.only });
+              return;
+            }
             json(
               res,
               200,
@@ -519,7 +503,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       const disposeBackend = webServer.register({
         kind: 'exact',
         path: BACKEND_PATH,
-        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx) })),
+        handler: guard((req, res) => handleBackend(req, res, { resolved, env, operations, editor: configEditorOf(ctx) })),
       });
 
       const disposeVersion = webServer.register({
@@ -549,6 +533,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       });
 
       return () => {
+        const pending = operations.dispose();
         for (const dispose of [disposeModels, disposeBackend, disposeVersion, disposePanelKey]) {
           try {
             dispose?.();
@@ -556,6 +541,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
             /* 卸载阶段的释放失败不影响 DSH 退出 */
           }
         }
+        return pending;
       };
     }, `${PLUGIN_ID}: panel routes`);
   };

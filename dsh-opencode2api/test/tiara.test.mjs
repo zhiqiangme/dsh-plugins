@@ -207,8 +207,10 @@ test('新装失败没有伪装成成功；无效源码标识不进入文件操�
   service.setBroken(target('a').commit);
   const result = await installTiara({ paths, env, service, prepare, target: target('a') });
   assert.equal(result.ok, false);
-  assert.equal(result.rolledBack, false);
-  assert.equal(describeTiara(paths).exeExists, false);
+  assert.equal(result.state, 'start-failed');
+  assert.equal(result.installed, true);
+  assert.equal(describeTiara(paths).exeExists, true, '启动失败不能删除已安装的程序');
+  assert.equal(localTiaraVersion(paths).managed, true);
   await assert.rejects(
     applyTiaraUpdate({ paths, env, service, prepare, target: { commit: 'a'.repeat(40), tag: '../../escape' } }),
     /无效/,
@@ -236,7 +238,7 @@ test('内部端口冲突不启动或结束外部 OpenCode，配置冲突作为�
   assert.match((await new GatewayService(invalid.spec, console).ensureRunning()).reason, /不能/);
 });
 
-test('长安装期间插件关闭时丢弃暂存目录，不在释放后启动新后端', async (t) => {
+test('长安装期间插件关闭时保留缓存，不在释放后启动新后端', async (t) => {
   const { paths, env } = temp(t);
   const service = await serviceFor(t, paths);
   let starts = 0;
@@ -308,8 +310,9 @@ test('受管启动器等待 provider API 预热，再开放 Tiara API；停止�
   );
   const service = new GatewayService(resolved.spec, { info() {}, warn() {}, error() {} });
   try {
-    const result = await service.ensureRunning();
+    const [result, concurrent] = await Promise.all([service.ensureRunning(), service.ensureRunning()]);
     assert.equal(result.state, 'started', result.reason);
+    assert.equal(concurrent.state, 'started', concurrent.reason);
     assert.equal(existsSync(join(paths.data, 'providers-ready')), true);
     const response = await fetch(`http://127.0.0.1:${resolved.spec.port}/v1/models`);
     assert.deepEqual((await response.json()).data, [{ id: 'fixture' }]);
