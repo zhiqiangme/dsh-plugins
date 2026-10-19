@@ -209,6 +209,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
+    'diagnose', 'diagnoseCopy', 'diagnoseCopied', 'diagnoseWorking',
     'backendStarted', 'recoveryStatus', 'recoveryIdle', 'recoveryWaiting', 'recoveryRestarting', 'recoveryRecovered', 'recoveryExhausted', 'recoveryRetry',
     'backendAvailable', 'backendBuilt', 'backendCheck', 'backendCurrent', 'backendHistory',
     'backendInstall', 'backendInstalled', 'backendLatest', 'backendNoAccounts', 'backendNoHistory', 'backendRollback',
@@ -495,6 +496,19 @@ test('模型同步：勾选未变时可重试同步失败，保存期间禁用�
   assert.ok(collectByType(busy, 'input').every((node) => node.props.disabled === true));
   const toolbar = collectByType(busy, 'div').find((node) => node.props.className === 'dsm-wb-toolbar');
   assert.ok(collectByType(toolbar, 'button').every((node) => node.props.disabled === true));
+});
+
+test('一键诊断通过 POST 获取报告，提供复制入口和可选择的报告文本', async () => {
+  const requests = [];
+  const app = boot(modelStates(true), { fetchImpl: async (_path, options) => {
+    requests.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ ok: true, report: { gateway: 'hub', suggestions: ['检查账号'] } }) };
+  } });
+  await button(collectByType(app.renderCard(), 'button'), '一键诊断').props.onClick();
+  assert.deepEqual(requests, [{ action: 'diagnose' }]);
+  const tree = app.renderCard();
+  assert.ok(collectText(tree).some((text) => String(text).includes('检查账号')));
+  assert.ok(button(collectByType(tree, 'button'), '复制脱敏报告'));
 });
 
 test('渲染（summary 视图）：给行详情页的一句话，不抛错', () => {

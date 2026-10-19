@@ -227,6 +227,7 @@ window.__ModuleLoader__.load({
       recoveryStatus: '自动恢复：{state}（本窗口已尝试 {attempts} 次）',
       recoveryIdle: '待命', recoveryWaiting: '等待重试', recoveryRestarting: '正在重启', recoveryRecovered: '已恢复', recoveryExhausted: '连续失败，已暂停',
       recoveryRetry: '重试启动',
+      diagnose: '一键诊断', diagnoseCopy: '复制脱敏报告', diagnoseCopied: '诊断报告已复制', diagnoseWorking: '正在诊断…',
       backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
       backendUninstalledHub: 'hub 已卸载（hub/data/ 已保留）。',
       autoUpdateLabel: '自动更新后端',
@@ -356,6 +357,7 @@ window.__ModuleLoader__.load({
       recoveryStatus: 'Recovery: {state} ({attempts} attempts in this window)',
       recoveryIdle: 'Ready', recoveryWaiting: 'Waiting', recoveryRestarting: 'Restarting', recoveryRecovered: 'Recovered', recoveryExhausted: 'Paused after repeated failures',
       recoveryRetry: 'Retry start',
+      diagnose: 'Diagnose', diagnoseCopy: 'Copy redacted report', diagnoseCopied: 'Report copied', diagnoseWorking: 'Diagnosing…',
       backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
       backendUninstalledHub: 'Hub uninstalled (hub/data/ kept).',
       autoUpdateLabel: 'Update the backend automatically',
@@ -1240,6 +1242,17 @@ window.__ModuleLoader__.load({
         }
       }, [t, loadBackend, load]);
 
+      const [diagnostic, setDiagnostic] = useState(undefined);
+      const runDiagnostic = async () => {
+        setDiagnostic({ busy: true });
+        try { setDiagnostic({ report: (await request(BACKEND_PATH, 'POST', { action: 'diagnose' })).report }); }
+        catch (error) { setDiagnostic({ error: errorText(error) }); }
+      };
+      const copyDiagnostic = async () => {
+        try { await navigator.clipboard.writeText(JSON.stringify(diagnostic.report, null, 2)); setDiagnostic((last) => ({ ...last, copied: true })); }
+        catch { setDiagnostic((last) => ({ ...last, manual: true })); }
+      };
+
       // 行详情页在缺少包描述时才用 summary 视图；本包有 description，正常走 page。
       if (view === 'summary') {
         return h('p', { className: 'dsm-wb-desc' }, t('summary'));
@@ -1248,6 +1261,10 @@ window.__ModuleLoader__.load({
       // enabled 是开关草稿，savedEnabled 是上次读取的配置；只切换开关也必须允许保存。
       const dirty = !sameSet(picked, savedPicked) || meta.enabled !== meta.savedEnabled;
       const body = [];
+      body.push(h('div', { key: 'diagnose', className: 'dsm-wb-toolbar dsm-wb-diagnostics' },
+        wbButton('diagnose', 'outline', t(diagnostic?.busy ? 'diagnoseWorking' : 'diagnose'), runDiagnostic, diagnostic?.busy),
+        diagnostic?.report ? wbButton('copyReport', 'outline', t(diagnostic.copied ? 'diagnoseCopied' : 'diagnoseCopy'), copyDiagnostic, false) : null));
+      if (diagnostic?.report || diagnostic?.error) body.push(h('pre', { key: 'diagnosticReport', className: 'dsm-wb-hint', style: { whiteSpace: 'pre-wrap', maxHeight: 280, overflow: 'auto', userSelect: 'text' } }, diagnostic.error || JSON.stringify(diagnostic.report, null, 2)));
 
       if (phase === 'loading') {
         body.push(h('div', { key: 'loading', className: 'dsm-wb-empty' }, t('loading')));

@@ -24,6 +24,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { autoUpdateStatus } from './auto-update.js';
+import { diagnose } from './diagnostics.js';
 import { GATEWAY_IDS, backendLockHolder, gatewayDriver, withBackendLock } from './gateway.js';
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
 import {
@@ -335,7 +336,7 @@ function busyReason(holder) {
  * POST 的动作：check、gateway、autoUpdate，以及会动目录的 install / update / rollback / uninstall / purge
  * （后五个与自动更新共用一把锁，同一时刻只跑一个）。
  */
-async function handleBackend(req, res, { logger, resolved, env, service, editor, autoUpdater, recovery }) {
+async function handleBackend(req, res, { logger, resolved, env, service, editor, credentials, autoUpdater, recovery }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
   const driver = gatewayDriver(resolved);
@@ -387,6 +388,10 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
     return;
   }
   const action = typeof body.value.action === 'string' ? body.value.action : '';
+  if (action === 'diagnose') {
+    json(res, 200, { ok: true, report: await diagnose({ resolved, service, recovery, editor, credentials, env }) });
+    return;
+  }
 
   if (action === 'gateway') {
     // 后台自动下载只写 cache/ 里的暂存文件，不碰正在跑的程序：切网关重启插件不受它影响，不必等它下完。
@@ -647,7 +652,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       const disposeBackend = webServer.register({
         kind: 'exact',
         path: BACKEND_PATH,
-        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), autoUpdater, recovery })),
+        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), credentials: credentialsOf(ctx), autoUpdater, recovery })),
       });
 
       const disposeVersion = webServer.register({
