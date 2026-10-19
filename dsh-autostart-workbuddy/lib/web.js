@@ -335,7 +335,7 @@ function busyReason(holder) {
  * POST 的动作：check、gateway、autoUpdate，以及会动目录的 install / update / rollback / uninstall / purge
  * （后五个与自动更新共用一把锁，同一时刻只跑一个）。
  */
-async function handleBackend(req, res, { logger, resolved, env, service, editor, autoUpdater }) {
+async function handleBackend(req, res, { logger, resolved, env, service, editor, autoUpdater, recovery }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
   const driver = gatewayDriver(resolved);
@@ -347,6 +347,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
     gateways: [...GATEWAY_IDS],
     panelUrl,
     autoUpdate: autoUpdateStatus(resolved),
+    recovery: recovery?.status,
   });
 
   if (req.method === 'GET') {
@@ -415,7 +416,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
   }
 
   // 会改动磁盘的动作：都要串行执行（见下面的 withBackendLock），其中卸载与清除数据还要求显式二次确认。
-  const MUTATING_ACTIONS = new Set(['install', 'update', 'rollback', 'uninstall', 'purge']);
+  const MUTATING_ACTIONS = new Set(['install', 'update', 'rollback', 'uninstall', 'purge', 'start']);
 
   if (!MUTATING_ACTIONS.has(action)) {
     json(res, 400, { ok: false, reason: `不认识的动作：${action || '(空)'}` });
@@ -435,6 +436,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
 
   // 会动目录的动作与自动更新共用一把锁（见 gateway.js 的 withBackendLock）。
   const locked = await withBackendLock(action, () => {
+    if (action === 'start') { recovery?.reset(); return service.ensureRunning().then((result) => ({ ...result, ok: result.state !== 'failed' })); }
     if (action === 'install' || action === 'update') {
       return driver[action]({
         paths,
@@ -564,7 +566,7 @@ function forceFrom(req) {
  * resync 与入口处的定时器共用，面板刷新通过 tick() 立即对齐模型清单；
  * autoUpdater 同理，面板打开「自动更新」时立即查一轮。
  */
-export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, resync, autoUpdater, checkVersion = createVersionChecker() }) {
+export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, resync, autoUpdater, recovery, checkVersion = createVersionChecker() }) {
   const mount = (scoped) => {
     const holder = scoped ?? ctx;
     const webServer =
@@ -645,7 +647,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       const disposeBackend = webServer.register({
         kind: 'exact',
         path: BACKEND_PATH,
-        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), autoUpdater })),
+        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), autoUpdater, recovery })),
       });
 
       const disposeVersion = webServer.register({

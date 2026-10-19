@@ -59,6 +59,20 @@ test('启动假服务 → 端口就绪 → 停止后端口释放', async () => {
   assert.equal(service.isAlive(), false);
 });
 
+test('同一启动任务可复用，意外退出通知恢复器，主动停止不通知', async () => {
+  const port = await freePort();
+  let crashes = 0;
+  const service = new ManagedService(specFor(port), silent, { onUnexpectedExit: () => { crashes++; } });
+  try {
+    await Promise.all([service.ensureRunning(), service.ensureRunning()]);
+    service.child.kill();
+    assert.ok(await waitUntil(() => crashes === 1));
+    await service.ensureRunning();
+    await service.stop('主动停止');
+    assert.equal(crashes, 1);
+  } finally { await service.stop('测试清理'); }
+});
+
 test('端口已监听时跳过启动（幂等，不拉起第二个实例）', async () => {
   const port = await freePort();
   const occupied = createServer();

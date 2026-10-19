@@ -38,6 +38,7 @@ import { gatewayDriver } from './gateway.js';
 import { hubKeyHooks } from './hub.js';
 import { syncModels } from './models.js';
 import { createModelResync } from './resync.js';
+import { createRecovery } from './recovery.js';
 import { ManagedService, isFile } from './services.js';
 import { configEditorOf, credentialsOf, registerPanelRoutes } from './web.js';
 
@@ -92,12 +93,17 @@ export function apply(ctx, config) {
     resolved, logger, env: hostEnv, name,
     editor: () => configEditorOf(ctx), credentials: () => credentialsOf(ctx),
   });
+  const recovery = createRecovery({ service, resolved, logger, onRecovered: () => resync.tick() });
+  const afterStart = hooks.afterStart;
+  hooks.afterStart = () => { afterStart?.(); recovery.arm(); };
+  hooks.onUnexpectedExit = () => recovery.onExit();
+  hooks.beforeStop = () => recovery.suspend();
 
   // 后端自动更新：运行中后台下载暂存，下次启动时（就是下面的 startup）先换上再拉起，见 lib/auto-update.js。
   const autoUpdater = createAutoUpdater({ resolved, logger, service, env: hostEnv, name });
 
   // 后端还没起来（或没装）时打开面板也能看到状态、并就地安装。
-  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service, resync, autoUpdater });
+  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service, resync, autoUpdater, recovery });
 
   // 白名单等 models.* 与自动更新开关的改动就地生效，不重启插件（见 watchConfigUpdates）。
   const unwatchConfig = watchConfigUpdates(ctx, resolved, hostEnv, logger, config, resync);
@@ -145,6 +151,7 @@ export function apply(ctx, config) {
       process.removeListener('exit', onExit);
       unwatchConfig();
       resync.stop();
+      await recovery.stop();
       await autoUpdater.stop();
       // 先等启动流程落地，避免「正在启动」与「正在停止」互相打架。
       await startup.catch(() => undefined);

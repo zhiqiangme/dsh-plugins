@@ -267,6 +267,13 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
     spec,
     models,
     backend,
+    recovery: {
+      enabled: bool(plainObject(config.recovery).enabled, true),
+      maxAttempts: Math.max(1, Math.min(10, Math.floor(positiveNumber(plainObject(config.recovery).maxAttempts, 3)))),
+      windowMs: positiveNumber(plainObject(config.recovery).windowMs, 300_000),
+      delayMs: positiveNumber(plainObject(config.recovery).delayMs, 1000),
+      maxDelayMs: positiveNumber(plainObject(config.recovery).maxDelayMs, 30_000),
+    },
     /**
      * 国内版上游 base：wb2api 启动前写进 config.json 的 `cn.chat_base`（见 lib/backend-config.js）；
      * hub 经 spec.env 的 WB_CN_CHAT_UPSTREAM 生效。

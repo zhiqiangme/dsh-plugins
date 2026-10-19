@@ -180,6 +180,14 @@ export class ManagedService {
    * @returns {Promise<{ state: 'already-running' | 'started' | 'failed', reason?: string }>}
    */
   async ensureRunning(signal) {
+    if (this.starting) return this.starting;
+    const pending = this.#ensureRunning(signal);
+    this.starting = pending;
+    try { return await pending; }
+    finally { if (this.starting === pending) this.starting = undefined; }
+  }
+
+  async #ensureRunning(signal) {
     const { port, host } = this.spec;
 
     if (await probeTcp(port, host)) {
@@ -307,6 +315,7 @@ export class ManagedService {
       // 正常停止（disposer 主动 kill）不算异常，只有「非预期退出」才值得报警。
       if (!this.stopping) {
         this.logger.warn(`[workbuddy] ${this.title} 已退出 (code=${code}, signal=${signal})`);
+        this.#runHook('onUnexpectedExit');
       }
     });
     // 日志流在 'close' 才关：'exit' 触发时 stdio 可能还没读完（Go panic 的大段堆栈就是这样），
@@ -341,6 +350,7 @@ export class ManagedService {
    * DSH 实例留下的）不属于本实例，跟着停会误杀用户自己起的服务。
    */
   async stop(reason) {
+    this.#runHook('beforeStop');
     if (!this.startedByUs || !this.child) {
       return { stopped: false, skipped: true };
     }

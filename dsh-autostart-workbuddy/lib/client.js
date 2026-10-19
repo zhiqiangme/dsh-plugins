@@ -92,6 +92,7 @@ window.__ModuleLoader__.load({
 
     /** 后端动作 → 成功后的提示文案 key。 */
     const BACKEND_NOTICE = {
+      start: 'backendStarted',
       install: 'backendInstalled',
       update: 'backendUpdated',
       rollback: 'backendRolledBack',
@@ -222,6 +223,10 @@ window.__ModuleLoader__.load({
       backendUninstall: '卸载',
       backendInstalled: '后端已安装 {tag}。',
       backendNoAccounts: '后端已启动，但还没有可用的 WorkBuddy 账号，请打开上面的后端面板登录。',
+      backendStarted: '后端已启动。',
+      recoveryStatus: '自动恢复：{state}（本窗口已尝试 {attempts} 次）',
+      recoveryIdle: '待命', recoveryWaiting: '等待重试', recoveryRestarting: '正在重启', recoveryRecovered: '已恢复', recoveryExhausted: '连续失败，已暂停',
+      recoveryRetry: '重试启动',
       backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
       backendUninstalledHub: 'hub 已卸载（hub/data/ 已保留）。',
       autoUpdateLabel: '自动更新后端',
@@ -347,6 +352,10 @@ window.__ModuleLoader__.load({
       backendUninstall: 'Uninstall',
       backendInstalled: 'Backend installed: {tag}.',
       backendNoAccounts: 'The backend is running but has no usable WorkBuddy account yet; sign in from the backend panel above.',
+      backendStarted: 'Backend started.',
+      recoveryStatus: 'Recovery: {state} ({attempts} attempts in this window)',
+      recoveryIdle: 'Ready', recoveryWaiting: 'Waiting', recoveryRestarting: 'Restarting', recoveryRecovered: 'Recovered', recoveryExhausted: 'Paused after repeated failures',
+      recoveryRetry: 'Retry start',
       backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
       backendUninstalledHub: 'Hub uninstalled (hub/data/ kept).',
       autoUpdateLabel: 'Update the backend automatically',
@@ -1394,6 +1403,11 @@ window.__ModuleLoader__.load({
         const currentGateway = backend.gateway ?? 'wb2api';
         const gatewayLabel = (id) => t(id === 'hub' ? 'gatewayHub' : 'gatewayWb2api');
         const section = [];
+        if (backend.recovery) {
+          const recoveryKey = { idle: 'recoveryIdle', waiting: 'recoveryWaiting', restarting: 'recoveryRestarting', recovered: 'recoveryRecovered', exhausted: 'recoveryExhausted' }[backend.recovery.state] ?? 'recoveryIdle';
+          section.push(h('p', { key: 'recovery', className: 'dsm-wb-backend-line' }, t('recoveryStatus', { state: t(recoveryKey), attempts: backend.recovery.attempts ?? 0 }),
+            wbButton('retryStart', 'outline', t('recoveryRetry'), () => runBackend('start'), Boolean(backendBusy))));
+        }
         if (gateways.length > 1) {
           const gatewayBlock = [
             h(
