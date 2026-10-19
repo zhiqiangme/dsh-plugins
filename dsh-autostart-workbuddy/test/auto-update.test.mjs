@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { autoUpdateStatus, createAutoUpdater, evaluateCandidate, readAutoState } from '../lib/auto-update.js';
 import { applyUpdate, backendPaths, readBuildInfo, readManifest, rollbackBackend, writeManifest } from '../lib/backend.js';
 import { resolvePluginConfig } from '../lib/config.js';
-import { withBackendLock } from '../lib/gateway.js';
+import { gatewayDriver, withBackendLock } from '../lib/gateway.js';
 import { hubPaths, localHubVersion } from '../lib/hub.js';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
@@ -383,6 +384,92 @@ test('hub：同一套流程换的是整个目录，账号数据不动', async ()
     release.stop();
     health.stop();
   }
+});
+
+for (const gateway of ['wb2api', 'hub']) {
+  for (const phase of ['check', 'download', 'checksums']) {
+    test(`${gateway} stop()：取消进行中的 ${phase} 请求，释放锁且不写旧实例状态`, async () => {
+      let entered;
+      const requested = new Promise((done) => { entered = done; });
+      const server = createHttpServer((req, res) => {
+        if (phase === 'checksums' && req.url === '/asset') {
+          res.end('download complete');
+          return;
+        }
+        // 下载已经收到响应头和部分包体：取消必须贯穿 fetch 的整个读取过程。
+        if (phase === 'download') {
+          res.writeHead(200, { 'content-type': 'application/zip' });
+          res.write('partial zip');
+        }
+        entered();
+      });
+      await new Promise((done) => server.listen(0, '127.0.0.1', done));
+      const apiBase = `http://127.0.0.1:${server.address().port}`;
+      let paths, resolved;
+      if (gateway === 'wb2api') {
+        ({ paths, resolved } = wb2apiSetup(apiBase));
+      } else {
+        const root = mkdtempSync(join(tmpdir(), 'wb-auto-cancel-hub-'));
+        const env = { DSH_WORKBUDDY_BACKEND_ROOT: root };
+        paths = hubPaths(env);
+        mkdirSync(join(paths.current, 'python'), { recursive: true });
+        writeFileSync(paths.exe, 'MZ');
+        writeFileSync(join(paths.current, 'wb_proxy.py'), '# fixture');
+        writeFileSync(paths.manifest, JSON.stringify({ tag: 'v1.0.0' }));
+        resolved = resolvePluginConfig({ gateway, backend: { apiBase } }, env);
+      }
+      const latest = {
+        tag: 'v2.0.0', commit: NEW_COMMIT, publishedAt: '2026-01-01T00:00:00Z',
+        assets: [
+          { name: gateway === 'hub' ? 'workbuddy2api-hub-v2.0.0.zip' : 'wb2api-panel-v2.0.0-windows-amd64.zip', url: `${apiBase}/asset` },
+          { name: 'checksums.txt', url: `${apiBase}/checksums` },
+        ],
+      };
+      const driver = gatewayDriver(resolved);
+      const { updater, logger } = updaterFor(resolved, fakeService(1), {
+        driver: phase === 'check' ? driver : { ...driver, check: async () => ({ local: driver.describe(paths).version, latest }) },
+      });
+      const pending = updater.tick();
+      try {
+        await requested;
+        const stopped = await updater.stop();
+        assert.equal(stopped?.state, 'cancelled', '停止必须等当前请求中断并完成收尾');
+        assert.deepEqual(await pending, { state: 'cancelled' });
+        assert.deepEqual(await withBackendLock('install', async () => 'ready'), { acquired: true, value: 'ready' });
+        assert.equal(readAutoState(paths).pending, null);
+        assert.equal(readAutoState(paths).lastCheck, null);
+        assert.deepEqual(logger.lines.filter((line) => /^(warn|error) /.test(line)), []);
+        assert.deepEqual(await updater.tick(), { state: 'inactive', reason: 'stopped' });
+      } finally {
+        updater.stop();
+        server.closeAllConnections();
+        await new Promise((done) => server.close(done));
+        await pending;
+      }
+    });
+  }
+}
+
+test('关闭恰好发生在暂存完成时：清掉本轮产物，不再发布 pending', async () => {
+  const { paths, resolved } = wb2apiSetup('http://127.0.0.1:1');
+  const latest = { tag: 'v2.0.0', publishedAt: '2026-01-01T00:00:00Z' };
+  const staged = { path: join(paths.cache, 'late.exe') };
+  let updater;
+  const driver = {
+    describe: () => ({ exeExists: true }),
+    check: async () => ({ local: { tag: 'v1.0.0' }, latest }),
+    prepare: async () => {
+      mkdirSync(paths.cache, { recursive: true });
+      writeFileSync(staged.path, 'late result');
+      updater.stop();
+      return { ok: true, state: 'prepared', latest, staged };
+    },
+  };
+  ({ updater } = updaterFor(resolved, fakeService(1), { driver }));
+  assert.deepEqual(await updater.tick(), { state: 'cancelled' });
+  assert.equal(existsSync(staged.path), false);
+  assert.equal(readAutoState(paths).pending, null);
+  assert.equal(readAutoState(paths).lastCheck, null);
 });
 
 test('定时：start 后等 firstDelayMs 才查第一轮，stop 之后不再查', async () => {

@@ -206,16 +206,17 @@ function writeReleaseCache(paths, latest, now) {
   }
 }
 
-function fetchLatestHubRelease({ env, apiBase }) {
-  return fetchLatestRelease({ env, apiBase, repo: HUB_REPO, resolveCommit: false });
+function fetchLatestHubRelease({ env, apiBase, signal }) {
+  return fetchLatestRelease({ env, apiBase, repo: HUB_REPO, resolveCommit: false, signal });
 }
 
-export async function checkHubUpdate({ paths, env = process.env, apiBase, ttlMs = 6 * 60 * 60 * 1000, force = false, now = Date.now() } = {}) {
+export async function checkHubUpdate({ paths, env = process.env, apiBase, ttlMs = 6 * 60 * 60 * 1000, force = false, now = Date.now(), signal } = {}) {
   const local = localHubVersion(paths);
   let latest = readReleaseCache(paths, ttlMs, force, now);
   const fromCache = Boolean(latest);
   if (!latest) {
-    latest = await fetchLatestHubRelease({ env, apiBase });
+    latest = await fetchLatestHubRelease({ env, apiBase, signal });
+    signal?.throwIfAborted();
     writeReleaseCache(paths, latest, now);
   }
   const upToDate = Boolean(local.tag) && local.tag === latest.tag;
@@ -323,8 +324,8 @@ function checkStagedHub(stagedDir, latest) {
  * 更新的前半段：下载 → 校验 → 读包内 manifest → 整包解到 cache/ 暂存目录。不停服务、不碰 current/。
  * 与 backend.js 的 prepareUpdate 同一套语义与返回形状（staged.path 是目录）。
  */
-export async function prepareHubUpdate({ paths, env = process.env, apiBase, logger, target } = {}) {
-  const latest = target ?? (await fetchLatestHubRelease({ env, apiBase }));
+export async function prepareHubUpdate({ paths, env = process.env, apiBase, logger, target, signal } = {}) {
+  const latest = target ?? (await fetchLatestHubRelease({ env, apiBase, signal }));
   const local = localHubVersion(paths);
   if (local.tag && local.tag === latest.tag && isHubDir(paths.current)) {
     return { ok: true, state: 'up-to-date', local, latest };
@@ -332,8 +333,8 @@ export async function prepareHubUpdate({ paths, env = process.env, apiBase, logg
 
   const asset = pickWindowsAsset(latest.assets, HUB_ASSET_PATTERN, 'workbuddy2api-hub 便携包');
   logger?.info?.(`[workbuddy] 下载 ${asset.name} …`);
-  const archive = await downloadAsset(asset, { env, timeoutMs: 300_000 });
-  const checksums = await fetchChecksums(latest, { env, apiBase, names: HUB_CHECKSUM_NAMES });
+  const archive = await downloadAsset(asset, { env, timeoutMs: 300_000, signal });
+  const checksums = await fetchChecksums(latest, { env, apiBase, names: HUB_CHECKSUM_NAMES, signal });
   const verified = verifyChecksum(archive, asset.name, checksums);
   if (!verified.ok) return { ok: false, state: 'verify-failed', reason: verified.reason, latest, asset: asset.name };
 
@@ -348,6 +349,7 @@ export async function prepareHubUpdate({ paths, env = process.env, apiBase, logg
     return { ok: false, state: 'binary-mismatch', reason: `包内 ${HUB_MANIFEST} 的 tag（${manifest?.tag ?? '无'}）与 release（${latest.tag}）不一致`, latest };
   }
 
+  signal?.throwIfAborted();
   ensureLayout(paths);
   const stagedDir = join(paths.cache, `staged-${hubVersionDirName(latest.tag)}`);
   rmSync(stagedDir, { recursive: true, force: true });

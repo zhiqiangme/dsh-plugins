@@ -171,6 +171,7 @@ export function createAutoUpdater(options) {
     firstDelayMs = FIRST_CHECK_DELAY_MS,
   } = options;
   const paths = resolved.backend?.paths ?? resolved.paths;
+  const controller = new AbortController();
   let timer;
   let running;
   let stopped = false;
@@ -210,10 +211,12 @@ export function createAutoUpdater(options) {
   }
 
   async function runOnce() {
+    if (stopped) return { state: 'inactive', reason: 'stopped' };
     const inactive = inactiveReason();
     if (inactive) return { state: 'inactive', reason: inactive };
 
-    const check = await driver.check({ paths, env, apiBase: resolved.backend.apiBase || undefined, ttlMs: resolved.backend.checkTtlMs });
+    const check = await driver.check({ paths, env, apiBase: resolved.backend.apiBase || undefined, ttlMs: resolved.backend.checkTtlMs, signal: controller.signal });
+    controller.signal.throwIfAborted();
     let state = dropStalePending(readAutoState(paths), check.local);
     const verdict = evaluateCandidate({ latest: check.latest, local: check.local, autoState: state, delayHours: delayHours(), now: now() });
     const checkedAt = new Date(now()).toISOString();
@@ -225,10 +228,16 @@ export function createAutoUpdater(options) {
     if (state.pending?.tag === check.latest.tag) return { state: 'pending', latest: check.latest };
 
     const locked = await withBackendLock('auto-prepare', () =>
-      driver.prepare({ paths, env, apiBase: resolved.backend.apiBase || undefined, logger, target: check.latest }),
+      driver.prepare({ paths, env, apiBase: resolved.backend.apiBase || undefined, logger, target: check.latest, signal: controller.signal }),
     );
     if (!locked.acquired) return { state: 'busy', holder: locked.holder };
     const prepared = locked.value;
+    if (controller.signal.aborted) {
+      // 暂存恰好在关闭前完成时，只清理本轮产物，不发布旧实例的 pending。
+      if (prepared.state === 'prepared') removeStaged(prepared.staged);
+      return { state: 'cancelled' };
+    }
+    if (prepared.state === 'cancelled') return { state: 'cancelled' };
     // 下载期间用户可能手动更新过：重新读一次，别把别人写下的结果盖掉。
     state = readAutoState(paths);
     if (prepared.state === 'up-to-date') return { state: 'skipped', reason: 'up-to-date', latest: check.latest };
@@ -258,6 +267,7 @@ export function createAutoUpdater(options) {
     if (running) return running;
     running = runOnce()
       .catch((error) => {
+        if (controller.signal.aborted) return { state: 'cancelled' };
         // 多半是网络（GitHub 不通、下载超时）：不记成版本失败，下一轮照常重试。
         const reason = error instanceof Error ? error.message : String(error);
         writeAutoState(paths, { ...readAutoState(paths), lastCheck: { at: new Date(now()).toISOString(), state: 'error', reason, tag: null } });
@@ -360,6 +370,9 @@ export function createAutoUpdater(options) {
       stopped = true;
       if (timer) clearTimeout(timer);
       timer = undefined;
+      controller.abort(new Error('插件已关闭，后台下载中断'));
+      // disposer 等到目录锁释放及状态收尾后再让新网关实例启动。
+      return running;
     },
   };
 }

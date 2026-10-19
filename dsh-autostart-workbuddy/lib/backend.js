@@ -386,12 +386,14 @@ export async function checkForUpdate({
   ttlMs = DEFAULT_CHECK_TTL_MS,
   force = false,
   now = Date.now(),
+  signal,
 } = {}) {
   const local = localVersion(paths);
   let latest = readReleaseCache(paths, ttlMs, force, now);
   let fromCache = Boolean(latest);
   if (!latest) {
-    latest = await fetchLatestRelease({ env, apiBase });
+    latest = await fetchLatestRelease({ env, apiBase, signal });
+    signal?.throwIfAborted();
     writeReleaseCache(paths, latest, now);
     fromCache = false;
   }
@@ -542,8 +544,8 @@ function checkStagedExe(stagedExe, latest) {
  * @returns 'up-to-date'；'prepared'（带 staged：暂存路径、资产名与包的 sha256）；
  *          或 ok:false 的校验失败——此时暂存文件已删掉，cache/ 里不留未通过校验的 exe。
  */
-export async function prepareUpdate({ paths, env = process.env, apiBase, logger, target } = {}) {
-  const latest = target ?? (await fetchLatestRelease({ env, apiBase }));
+export async function prepareUpdate({ paths, env = process.env, apiBase, logger, target, signal } = {}) {
+  const latest = target ?? (await fetchLatestRelease({ env, apiBase, signal }));
   const local = localVersion(paths);
   if (local.revision && local.revision === latest.commit) {
     return { ok: true, state: 'up-to-date', local, latest };
@@ -551,8 +553,8 @@ export async function prepareUpdate({ paths, env = process.env, apiBase, logger,
 
   const asset = pickWindowsAsset(latest.assets);
   logger?.info?.(`[workbuddy] 下载 ${asset.name} …`);
-  const archive = await downloadAsset(asset, { env });
-  const checksums = await fetchChecksums(latest, { env, apiBase });
+  const archive = await downloadAsset(asset, { env, signal });
+  const checksums = await fetchChecksums(latest, { env, apiBase, signal });
   const verified = verifyChecksum(archive, asset.name, checksums);
   if (!verified.ok) return { ok: false, state: 'verify-failed', reason: verified.reason, latest, asset: asset.name };
 
@@ -563,6 +565,8 @@ export async function prepareUpdate({ paths, env = process.env, apiBase, logger,
     return { ok: false, state: 'extract-failed', reason: error instanceof Error ? error.message : String(error), latest };
   }
 
+  // 下载结束后关闭插件，也不能再创建目录或写入暂存文件。
+  signal?.throwIfAborted();
   ensureLayout(paths);
   const stagedExe = join(paths.cache, `staged-${versionDirName(latest.tag, latest.commit)}.exe`);
   writeFileSync(stagedExe, exeBuffer);

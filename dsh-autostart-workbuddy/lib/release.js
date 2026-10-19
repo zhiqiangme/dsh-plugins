@@ -42,10 +42,13 @@ function requestHeaders(env) {
   };
 }
 
-async function getJson(url, { env, timeoutMs = 20_000 } = {}) {
+/** 超时与插件关闭任一发生都取消请求，包体读取也沿用同一个信号。 */
+const requestSignal = (signal, timeoutMs) => signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+
+async function getJson(url, { env, timeoutMs = 20_000, signal } = {}) {
   let response;
   try {
-    response = await fetch(url, { headers: requestHeaders(env), signal: AbortSignal.timeout(timeoutMs) });
+    response = await fetch(url, { headers: requestHeaders(env), signal: requestSignal(signal, timeoutMs) });
   } catch (error) {
     throw new Error(`请求 ${url} 失败：${error instanceof Error ? error.message : String(error)}`);
   }
@@ -63,8 +66,8 @@ async function getJson(url, { env, timeoutMs = 20_000 } = {}) {
  * 而本地 exe 里能读到的只有 commit（`vcs.revision`）。要判定"是否最新"，
  * 必须把 tag 换算成 commit 才能比较。
  */
-export async function fetchLatestRelease({ env, apiBase = DEFAULT_API_BASE, timeoutMs, repo = REPO, resolveCommit = true } = {}) {
-  const release = await getJson(`${apiBase}/repos/${repo.owner}/${repo.name}/releases/latest`, { env, timeoutMs });
+export async function fetchLatestRelease({ env, apiBase = DEFAULT_API_BASE, timeoutMs, repo = REPO, resolveCommit = true, signal } = {}) {
+  const release = await getJson(`${apiBase}/repos/${repo.owner}/${repo.name}/releases/latest`, { env, timeoutMs, signal });
   const tag = typeof release?.tag_name === 'string' ? release.tag_name.trim() : '';
   if (!tag) throw new Error('release 数据里没有 tag_name');
 
@@ -74,6 +77,7 @@ export async function fetchLatestRelease({ env, apiBase = DEFAULT_API_BASE, time
     const commitInfo = await getJson(`${apiBase}/repos/${repo.owner}/${repo.name}/commits/${encodeURIComponent(tag)}`, {
       env,
       timeoutMs,
+      signal,
     });
     commit = typeof commitInfo?.sha === 'string' ? commitInfo.sha : '';
   }
@@ -120,10 +124,10 @@ export function parseChecksums(text) {
 }
 
 /** 下载资产到内存；进度通过 onProgress(已下载字节, 总字节) 回调。 */
-export async function downloadAsset(asset, { env, timeoutMs = 120_000, onProgress } = {}) {
+export async function downloadAsset(asset, { env, timeoutMs = 120_000, onProgress, signal } = {}) {
   let response;
   try {
-    response = await fetch(asset.url, { headers: requestHeaders(env), signal: AbortSignal.timeout(timeoutMs) });
+    response = await fetch(asset.url, { headers: requestHeaders(env), signal: requestSignal(signal, timeoutMs) });
   } catch (error) {
     throw new Error(`下载 ${asset.name} 失败：${error instanceof Error ? error.message : String(error)}`);
   }
@@ -151,10 +155,10 @@ export async function downloadAsset(asset, { env, timeoutMs = 120_000, onProgres
  * 取同一 release 里的校验和文件；没有就返回空表（调用方据此决定是否强制校验）。
  * `names` 按先后找第一个存在的（hub 同时发 checksums.txt 与 SHA256SUMS，内容一致）。
  */
-export async function fetchChecksums(release, { env, apiBase = DEFAULT_API_BASE, timeoutMs, names = [CHECKSUMS_NAME] } = {}) {
+export async function fetchChecksums(release, { env, apiBase = DEFAULT_API_BASE, timeoutMs, names = [CHECKSUMS_NAME], signal } = {}) {
   const asset = names.map((name) => (release.assets ?? []).find((item) => item.name === name)).find(Boolean);
   if (!asset) return new Map();
-  const response = await fetch(asset.url, { headers: requestHeaders(env), signal: AbortSignal.timeout(timeoutMs ?? 30_000) });
+  const response = await fetch(asset.url, { headers: requestHeaders(env), signal: requestSignal(signal, timeoutMs ?? 30_000) });
   if (!response.ok) throw new Error(`下载 ${asset.name} 返回 ${response.status}`);
   return parseChecksums(await response.text());
 }

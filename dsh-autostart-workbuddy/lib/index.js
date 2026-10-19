@@ -145,7 +145,7 @@ export function apply(ctx, config) {
       process.removeListener('exit', onExit);
       unwatchConfig();
       resync.stop();
-      autoUpdater.stop();
+      await autoUpdater.stop();
       // 先等启动流程落地，避免「正在启动」与「正在停止」互相打架。
       await startup.catch(() => undefined);
       try {
