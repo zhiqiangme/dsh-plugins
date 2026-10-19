@@ -155,9 +155,9 @@ export function createModelResync(options) {
    */
   async function checkRealm() {
     const models = resolved.models;
-    if (!models?.enabled || !(models.resyncIntervalMs > 0)) return;
+    if (stopped || !models?.enabled || !(models.resyncIntervalMs > 0)) return;
     const health = await probe(healthTarget(models.baseURL, resolved.spec)).catch(() => undefined);
-    if (!health?.ok || typeof health.realm !== 'string') return;
+    if (stopped || !health?.ok || typeof health.realm !== 'string') return;
     // 还不知道 DSH 是按哪个出口同步的（插件刚启动，启动同步不经过这里）：以现在为准。
     if (syncedRealm === undefined) {
       syncedRealm = health.realm;
@@ -168,6 +168,13 @@ export function createModelResync(options) {
       return;
     }
     if (health.realm === attemptedRealm) return;
+    if (running) {
+      // tick 会复用旧任务；等它落地后重新探出口，不能把旧出口的同步算成新出口已经尝试过。
+      // 等待期间用户也可能再次切换，必须以最新探针为准；关闭插件后不再补任务。
+      await running;
+      if (!stopped) await checkRealm();
+      return;
+    }
     attemptedRealm = health.realm;
     await tick();
   }

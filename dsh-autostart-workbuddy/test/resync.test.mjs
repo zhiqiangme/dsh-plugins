@@ -321,6 +321,60 @@ test('hub 切出口：下一轮立即按新出口的那组勾选重写 DSH，不
   assert.deepEqual(listed(), ['flash|GL Flash Free', 'gpt-5.5|GL GPT-5.5 1'], '切回来恢复 GL 那一组');
 });
 
+for (const outcome of ['unchanged', 'failed', 'stopped', 'switched-back']) {
+  test(`出口切换撞上旧同步（${outcome}）：旧任务结束后补同步当前出口，关闭后不补`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const flush = () => new Promise((done) => setImmediate(done));
+    let realm = 'intl';
+    let finishOld;
+    const oldRequest = new Promise((done) => { finishOld = done; });
+    const calls = [];
+    const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, resyncIntervalMs: 60_000 } }, { PATH: '' });
+    const resync = createModelResync({
+      resolved, logger: memoryLogger(), editor: () => undefined, credentials: () => undefined, realmPollMs: 5,
+      probe: async () => ({ ok: true, servable: true, realm }),
+      sync: async () => {
+        const requestedRealm = realm;
+        calls.push(requestedRealm);
+        const first = calls.length === 1;
+        if (first) await oldRequest;
+        return { state: first ? 'unchanged' : outcome, realm: requestedRealm };
+      },
+    });
+    let oldTick;
+    try {
+      resync.start();
+      t.mock.timers.tick(5);
+      await flush();
+      oldTick = resync.tick();
+      await flush();
+      assert.deepEqual(calls, ['intl']);
+
+      realm = 'cn';
+      t.mock.timers.tick(5);
+      await flush();
+      assert.deepEqual(calls, ['intl'], '旧任务未结束时仍串行执行');
+      if (outcome === 'stopped') resync.stop();
+      if (outcome === 'switched-back') realm = 'intl';
+      finishOld();
+      await oldTick;
+      await flush();
+      const expected = ['stopped', 'switched-back'].includes(outcome) ? ['intl'] : ['intl', 'cn'];
+      assert.deepEqual(calls, expected, '无需等到 60 秒定时同步，也不重写已经切回去的出口');
+
+      for (let i = 0; i < 3; i += 1) {
+        t.mock.timers.tick(5);
+        await flush();
+      }
+      assert.equal(calls.length, expected.length, '新出口真正尝试失败后仍交给普通定时重试');
+    } finally {
+      resync.stop();
+      finishOld();
+      await oldTick;
+    }
+  });
+}
+
 test('出口探测：几秒内发现切换并立即同步一次；同步没成也不每轮重打，wb2api 不探', async () => {
   let realm = 'intl';
   let probes = 0;
