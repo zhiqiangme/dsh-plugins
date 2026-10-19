@@ -53,18 +53,22 @@ test('实际 Tiara 代理回放：流式文本、外部工具与上游拒绝保�
     REQUEST_TIMEOUT_MS: 2000, EVENT_FIRST_DELTA_TIMEOUT_MS: 1000, EVENT_IDLE_TIMEOUT_MS: 1000 });
   if (!proxy.server.listening) await new Promise(resolve => proxy.server.once('listening', resolve));
   t.after(() => { proxy.server.closeAllConnections(); proxy.server.close(); });
-  const request = extra => fetch(`http://127.0.0.1:${proxy.server.address().port}/v1/chat/completions`, {
-    method: 'POST', headers: { authorization: 'Bearer fixture-key', 'content-type': 'application/json' },
+  const request = (extra, key = 'fixture-key') => fetch(`http://127.0.0.1:${proxy.server.address().port}/v1/chat/completions`, {
+    method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({ model: 'opencode/fixture', messages: [{ role: 'user', content: 'Reply OK' }], stream: true, ...extra }),
     signal: AbortSignal.timeout(5000),
   });
   let response = await request();
   let text = await response.text();
   assert.equal(response.status, 200); assert.match(text, /"content":"OK"/); assert.match(text, /\[DONE\]/);
+  response = await request({}, 'wrong-local-key');
+  assert.equal(response.status, 401, '本地密钥错误仍由本地鉴权正常拒绝');
   scenario = 'error'; response = await request();
-  assert.equal(response.status, 403);
+  assert.equal(response.status, 502);
+  assert.equal(response.headers.get('x-opencode-upstream-status'), '403');
   const body = await response.json(); assert.match(body.error.message, /Network rejected/);
-  assert.equal(body.error.type, 'permission_denied');
+  assert.equal(body.error.code, 'upstream_access_denied');
+  assert.doesNotMatch(`${response.status} ${body.error.message}`, /\b(?:401|403)\b/);
   scenario = 'partial-error'; response = await request(); text = await response.text();
   assert.equal(response.status, 200); assert.match(text, /"error":/); assert.match(text, /Network rejected/);
   assert.doesNotMatch(text, /"finish_reason":"stop"|\[DONE\]/);
