@@ -7,9 +7,12 @@
  */
 
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { normalizeGateway } from './gateway.js';
+import { tiaraPaths, DEFAULT_TIARA_KEEP_VERSIONS } from './tiara.js';
 import { backendPaths, DEFAULT_CHECK_TTL_MS, DEFAULT_KEEP_VERSIONS } from './backend.js';
 import { DEFAULT_EFFORTS } from './models.js';
-import { SERVICE_DEFAULTS, resolveDshHome } from './services.js';
+import { SERVICE_DEFAULTS } from './services.js';
 
 /** models 段默认值：默认关闭（不擅自改用户的 profile），开启后默认同步后端全部模型。 */
 const MODELS_DEFAULTS = Object.freeze({
@@ -149,13 +152,13 @@ function resolveBackendConfig(raw, paths) {
 export function resolvePluginConfig(raw, hostEnv = process.env) {
   const config = plainObject(raw);
 
-  const dshHome = resolveDshHome(hostEnv);
   // 日志落在 DSH home 下：与宿主同生命周期，卸载/清理时一眼能找到。
   // 目录名带插件名，与 DSH home 下其它插件的数据目录不混在一起。
-  const logDir = resolve(stringOr(config.logDir, resolve(dshHome, 'autostart-opencode2api', 'logs')));
+  const logDir = resolve(stringOr(config.logDir, backendPaths(hostEnv).logs));
 
   // 后端自管的目录布局（程序 / 数据 / 缓存分离）；默认 exe 与 cwd 都落在这里。
-  const paths = backendPaths(hostEnv);
+  const gateway = normalizeGateway(config.gateway);
+  const paths = gateway === 'tiara' ? tiaraPaths(hostEnv) : backendPaths(hostEnv);
 
   const spec = buildSpec(
     config,
@@ -169,24 +172,47 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
   );
   const webPort = positiveNumber(config.webPort, 8081);
   const webHost = stringOr(config.webHost, '127.0.0.1');
-  // 命令行覆盖让探测端口与真实监听端口一致，后台管理页也默认只绑定本机。
-  spec.args = [...spec.args, '-listen', `${spec.host}:${spec.port}`, '-web-listen', `${webHost}:${webPort}`];
+  spec.gateway = gateway;
+  const models = resolveModelsConfig(config.models, spec);
+  const backend = resolveBackendConfig(config.backend, paths);
+  let panelUrl = stringOr(config.panelUrl, `http://${webHost}:${webPort}/`);
+  if (gateway === 'tiara') {
+    // 原后端 exe/cwd/args 是 Go 的参数，切到 Tiara 时不能沿用。
+    Object.assign(spec, {
+      exe: process.execPath, cwd: paths.current, entryPoint: paths.script,
+      args: [fileURLToPath(new URL('./tiara-runner.js', import.meta.url))],
+      readinessTimeoutMs: positiveNumber(config.readinessTimeoutMs, 210_000),
+      logName: 'tiara', killTree: true,
+    });
+    const serverPort = positiveNumber(config.tiaraServerPort, 10001);
+    if (serverPort === spec.port) spec.validationError = 'tiaraServerPort 不能与 API port 相同';
+    spec.env = { ...spec.env, DSH_TIARA_CURRENT: paths.current, DSH_TIARA_DATA: paths.data,
+      DSH_TIARA_HOST: spec.host, DSH_TIARA_PORT: String(spec.port), DSH_TIARA_SERVER_PORT: String(serverPort),
+      DSH_TIARA_API_KEY: models.apiKey || hostEnv[models.apiKeyRef] || '' };
+    models.panelConfig = stringOr(plainObject(config.models).panelConfig, paths.config);
+    panelUrl = stringOr(config.panelUrl, `http://${spec.host}:${spec.port}/panel`);
+    if (plainObject(config.backend).keepVersions === undefined) backend.keepVersions = DEFAULT_TIARA_KEEP_VERSIONS;
+  } else {
+    // 命令行覆盖保证 Go 网关的真实端口与插件探测一致。
+    spec.args = [...spec.args, '-listen', `${spec.host}:${spec.port}`, '-web-listen', `${webHost}:${webPort}`];
+  }
 
   return {
     enabled: spec.enabled,
+    gateway,
     logDir,
     paths,
     spec,
-    models: resolveModelsConfig(config.models, spec),
-    backend: resolveBackendConfig(config.backend, paths),
-    panelUrl: stringOr(config.panelUrl, `http://${webHost}:${webPort}/`),
+    models,
+    backend,
+    panelUrl,
     /**
      * exe 是否来自插件自管目录（profile 里没显式配 exe）。
      *
      * 用来区分两种"文件不存在"：自管路径没有 exe = 还没装（面板里点安装）；
      * 用户自己配的 exe 不存在 = 配置错了，仍要按老行为尝试启动，把错误暴露出来。
      */
-    managedExe: !stringOr(config.exe, ''),
+    managedExe: gateway === 'tiara' || !stringOr(config.exe, ''),
   };
 }
 
@@ -194,11 +220,13 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
 export function describeConfig(resolved) {
   const spec = resolved.spec;
   return {
+    gateway: resolved.gateway,
     key: spec.key,
     title: spec.title,
     endpoint: `${spec.host}:${spec.port}`,
     exe: spec.exe,
     cwd: spec.cwd,
+    ...(spec.entryPoint ? { entryPoint: spec.entryPoint } : {}),
     args: spec.args,
     logDir: spec.logDir,
   };

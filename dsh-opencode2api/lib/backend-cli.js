@@ -21,12 +21,9 @@
 
 import {
   adoptCurrentBinary,
-  applyUpdate,
   backendPaths,
-  checkForUpdate,
-  describeBackend,
-  rollbackBackend,
 } from './backend.js';
+import { gatewayDriver } from './gateway.js';
 import { resolvePluginConfig } from './config.js';
 import { GatewayService } from './gateway-service.js';
 
@@ -44,13 +41,14 @@ const logger = {
 };
 
 // 根目录可以用环境变量整体覆盖；其余按插件默认值。
-const resolved = resolvePluginConfig({}, process.env);
+const resolved = resolvePluginConfig({ gateway: valueOf('--gateway') }, process.env);
+const driver = gatewayDriver(resolved);
 const backend = resolved.backend;
 const paths = backend.paths ?? backendPaths(process.env);
 const apiBase = backend.apiBase || undefined;
 
 function printStatus() {
-  const snapshot = describeBackend(paths);
+  const snapshot = driver.describe(paths);
   const version = snapshot.version;
   console.log(`后端根目录 : ${snapshot.root}`);
   console.log(`可执行文件 : ${snapshot.exe}${snapshot.exeExists ? '' : '  [缺失]'}`);
@@ -72,6 +70,7 @@ function exitWith(message, code = 1) {
 
 async function main() {
   if (has('--adopt')) {
+    if (resolved.gateway !== 'jasonxu') return exitWith('Tiara 源码后端不支持 --adopt');
     const tag = valueOf('--adopt');
     const result = adoptCurrentBinary(paths, { tag: tag && !tag.startsWith('--') ? tag : null });
     if (!result.ok) return exitWith(`纳管失败：${result.reason}`);
@@ -84,7 +83,7 @@ async function main() {
     const service = new GatewayService(resolved.spec, logger);
     try {
       if (has('--update')) {
-        const result = await applyUpdate({
+        const result = await driver.update({
           paths,
           env: process.env,
           apiBase,
@@ -95,7 +94,7 @@ async function main() {
         printResult(result);
         return result.ok ? undefined : exitWith(`更新失败：${result.reason ?? result.state}`);
       }
-      const result = await rollbackBackend({ paths, service, logger });
+      const result = await driver.rollback({ paths, service, logger });
       printResult(result);
       return result.ok ? undefined : exitWith(`回滚失败：${result.reason ?? result.state}`);
     } finally {
@@ -108,7 +107,7 @@ async function main() {
   if (has('--check')) {
     console.log('');
     try {
-      const check = await checkForUpdate({
+      const check = await driver.check({
         paths,
         env: process.env,
         apiBase,

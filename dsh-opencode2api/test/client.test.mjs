@@ -208,6 +208,9 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
+    'uninstallTiaraTitle', 'uninstallTiaraDesc', 'uninstallTiaraKept',
+    'gatewayTitle', 'gatewayJason', 'gatewayTiara', 'gatewaySwitching', 'gatewayWaiting', 'gatewaySwitched',
+    'gatewayNotInstalled', 'gatewayTimeout', 'gatewayTiaraHint', 'panelKeyCopyTiara', 'panelKeyCopiedTiara', 'backendUninstalledTiara',
     'backendAvailable', 'backendBuilt', 'backendCheck', 'backendCurrent', 'backendHistory',
     'backendInstall', 'backendInstalled', 'backendLatest', 'backendNoAccounts', 'backendNoHistory', 'backendRollback',
     'modelsNotInstalled', 'backendPurge', 'backendPurgeHint', 'backendPurged', 'purgeConfirm', 'purgeDesc', 'purgeKept', 'purgeTitle',
@@ -865,4 +868,27 @@ test('插件更新区：本地目录安装（file:）→ 不给更新按钮，�
 
   assert.match(renderUpdate(updateModel({ market: { ...market, source: 'generation' } })).text, /DSH 桌面端统一管理/);
   assert.ok(button(renderUpdate(updateModel({ market: { ...market, source: 'npm', updatable: true } })).buttons, '更新到 v26.10.12'));
+});
+
+test('第二后端选择与专用访问密钥按钮显示在卡片中',()=>{
+  const states=['loading',[],{},'',new Set(),new Set(),false,undefined,{gateway:'tiara',gateways:['jasonxu','tiara'],exeExists:false,version:{},history:[]}];
+  const {cards}=boot(states);const tree=cards[0].component({t:boot().t,view:'page'});
+  const text=collectText(tree).join(' ');
+  assert.match(text,/后端网关/);assert.match(text,/TiaraBasori/);assert.match(text,/复制面板访问密钥/);
+  const buttons=collectByType(tree,'button');
+  assert.equal(buttons.find(node=>collectText(node).join('')==='TiaraBasori').props.disabled,true);
+  assert.equal(buttons.find(node=>collectText(node).join('')==='jasonxu114514（默认）').props.disabled,false);
+});
+
+test('切换等待跨过旧路由与短暂失败，新网关未安装时直接返回',async()=>{
+  let calls=0;
+  const ready=boot([],{fetchImpl:async(url)=>{
+    calls++;
+    if(calls===1)throw new Error('restarting');
+    const body=String(url).endsWith('/backend')?{backend:{gateway:calls<3?'jasonxu':'tiara',exeExists:true}}:{ok:true};
+    return {ok:true,status:200,json:async()=>body};
+  }});
+  assert.equal(await ready.module.waitForGateway('tiara',{waitMs:100,pollMs:1,sleep:async()=>{}}),'ready');assert.ok(calls>=4);
+  const absent=boot([],{fetchImpl:async()=>({ok:true,status:200,json:async()=>({backend:{gateway:'tiara',exeExists:false}})})});
+  assert.equal(await absent.module.waitForGateway('tiara',{waitMs:100,pollMs:1,sleep:async()=>{}}),'not-installed');
 });

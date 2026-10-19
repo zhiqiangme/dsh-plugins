@@ -5,15 +5,7 @@
 
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  applyUpdate,
-  checkForUpdate,
-  describeBackend,
-  installBackend,
-  purgeBackendData,
-  rollbackBackend,
-  uninstallBackend,
-} from './backend.js';
+import { GATEWAY_IDS, gatewayDriver } from './gateway.js';
 import { priceLabel, modelMetadata, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, resolveCredential, syncModels } from './models.js';
 import { initialAdmin } from './backend-config.js';
 import { isFile } from './services.js';
@@ -120,6 +112,10 @@ function resolveApiKey(models, env) {
 /** 后端把管理密码迁移为哈希后，仍可提供插件最初生成的管理密码。 */
 export function readPanelKey(resolved) {
   const paths = resolved?.backend?.paths ?? resolved?.paths;
+  if (resolved?.gateway === 'tiara') {
+    const key = resolved.models?.apiKey || resolved.spec?.env?.DSH_TIARA_API_KEY || panelApiKey(paths?.config);
+    return key ? { ok: true, gateway: 'tiara', key } : { ok: false, reason: 'Tiara 尚未安装或未配置 API_KEY' };
+  }
   const admin = paths ? initialAdmin(paths) : null;
   if (!admin?.password) return { ok: false, reason: '没有插件生成的初始管理密码，请使用你为后端设置的用户名和密码。' };
   return { ok: true, key: admin.password, username: admin.username };
@@ -153,7 +149,7 @@ export async function describeModels({ spec, models, editor, credentials, env = 
   });
   if (!fetched.ok) {
     // 只在拉取失败后才看 exe 在不在：端口上若是用户另起的后端、拉取成功，就照常显示，不误报未安装。
-    if (managedExe === true && !isFile(spec.exe)) {
+    if (managedExe === true && !isFile(spec.entryPoint || spec.exe)) {
       return {
         ok: false,
         state: BACKEND_NOT_INSTALLED,
@@ -267,12 +263,13 @@ let backendBusy = false;
  * GET 默认**不联网**（首屏要快，GitHub 也可能慢甚至不通），带 `?check=1` 才真去查 release。
  * POST 只接受 check / update / rollback 三个动作；update 与 rollback 互斥。
  */
-async function handleBackend(req, res, { logger, resolved, env, service }) {
+async function handleBackend(req, res, { logger, resolved, env, service, editor }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
   // 面板地址由服务规格推出来（端口可被 profile 覆盖），浏览器半侧拿它渲染可点击链接。
   const panelUrl = resolved.panelUrl || 'http://127.0.0.1:8081/';
-  const snapshot = () => ({ ...describeBackend(paths), panelUrl });
+  const driver = gatewayDriver(resolved);
+  const snapshot = () => ({ ...driver.describe(paths), gateway: driver.id, gateways: [...GATEWAY_IDS], panelUrl });
 
   if (req.method === 'GET') {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -281,7 +278,7 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
       return;
     }
     try {
-      const check = await checkForUpdate({
+      const check = await driver.check({
         paths,
         env,
         apiBase,
@@ -312,8 +309,14 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
   }
   const action = typeof body.value.action === 'string' ? body.value.action : '';
 
+  if (action === 'gateway') {
+    const result = await selectGateway({ resolved, editor, gateway: body.value.gateway, busy: backendBusy });
+    json(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
   if (action === 'check') {
-    const check = await checkForUpdate({
+    const check = await driver.check({
       paths,
       env,
       apiBase,
@@ -350,7 +353,7 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
   try {
     let result;
     if (action === 'install') {
-      result = await installBackend({
+      result = await driver.install({
         paths,
         env,
         apiBase,
@@ -359,11 +362,11 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
         keepVersions: resolved.backend?.keepVersions,
       });
     } else if (action === 'uninstall') {
-      result = await uninstallBackend({ paths, service, logger });
+      result = await driver.uninstall({ paths, service, logger });
     } else if (action === 'purge') {
-      result = await purgeBackendData({ paths, service, logger, env });
+      result = await driver.purge({ paths, service, logger, env });
     } else if (action === 'update') {
-      result = await applyUpdate({
+      result = await driver.update({
         paths,
         env,
         apiBase,
@@ -372,12 +375,30 @@ async function handleBackend(req, res, { logger, resolved, env, service }) {
         keepVersions: resolved.backend?.keepVersions,
       });
     } else {
-      result = await rollbackBackend({ paths, service, logger });
+      result = await driver.rollback({ paths, service, logger });
     }
     json(res, result.ok ? 200 : 400, { ...result, backend: snapshot() });
   } finally {
     backendBusy = false;
   }
+}
+
+/** gateway 变更交给宿主重启；旧后端先停止，两套后端不同时占用同一 API 端口。 */
+export async function selectGateway({ resolved, editor, gateway, busy = false }) {
+  if (!GATEWAY_IDS.includes(gateway)) {
+    return { ok: false, reason: `gateway 只能是 ${GATEWAY_IDS.join(' / ')}` };
+  }
+  if (gateway === resolved.gateway) return { ok: true, state: 'unchanged', gateway };
+  if (busy) return { ok: false, reason: '后端正在安装或更新，完成后再切换' };
+  if (typeof editor?.edit !== 'function') return { ok: false, reason: '宿主没有 configEditor 服务，无法保存网关选择' };
+  const entry = findConfigEntry(editor, { id: PLUGIN_ID });
+  if (!entry) return { ok: false, reason: `DSH 里没有可编辑的 ${PLUGIN_ID} 条目` };
+  try {
+    await editor.edit(entry, (current) => ({ ...plainObject(current), gateway }));
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+  return { ok: true, state: 'switched', gateway, previous: resolved.gateway, restarting: true };
 }
 
 /**
@@ -498,7 +519,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       const disposeBackend = webServer.register({
         kind: 'exact',
         path: BACKEND_PATH,
-        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service })),
+        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx) })),
       });
 
       const disposeVersion = webServer.register({

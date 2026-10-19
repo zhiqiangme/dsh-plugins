@@ -23,7 +23,7 @@ const modelsRaw = patchPath && isFile(patchPath)
   ? readPluginModelsConfig(readFileSync(patchPath, 'utf8'), PLUGIN_ID)
   : undefined;
 
-const resolved = resolvePluginConfig(modelsRaw ? { models: modelsRaw } : {}, process.env);
+const resolved = resolvePluginConfig({ models: modelsRaw, gateway: process.argv.includes('--gateway') ? process.argv[process.argv.indexOf('--gateway') + 1] : undefined }, process.env);
 const info = describeConfig(resolved);
 
 console.log(`插件启用: ${resolved.enabled}`);
@@ -33,6 +33,7 @@ console.log(`── ${info.title} (${info.key})`);
 console.log(`   端点    : ${info.endpoint}`);
 console.log(`   可执行  : ${info.exe}${check ? (isFile(info.exe) ? '  [存在]' : '  [缺失]') : ''}`);
 console.log(`   工作目录: ${info.cwd}`);
+if (info.entryPoint) console.log(`   入口脚本: ${info.entryPoint}${check ? (isFile(info.entryPoint) ? '  [存在]' : '  [缺失]') : ''}`);
 console.log(`   argv    : ${JSON.stringify(info.args)}`);
 if (check) {
   const listening = await probeTcp(resolved.spec.port, resolved.spec.host);
@@ -60,8 +61,8 @@ if (models.enabled) {
 }
 console.log('');
 
-if (check && !isFile(info.exe)) {
-  console.log('检查发现 1 处问题：可执行文件缺失。');
+if (check && !isFile(info.entryPoint || info.exe)) {
+  console.log('检查发现 1 处问题：程序文件缺失。');
   process.exitCode = 1;
 } else {
   console.log('检查通过。');

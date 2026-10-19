@@ -3,7 +3,7 @@
  * windowsHide 静默启动；记录进程归属，退出时只回收本实例创建的进程。
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { connect } from 'node:net';
 import { homedir } from 'node:os';
@@ -325,7 +325,7 @@ export class ManagedService {
     this.stopping = true;
     this.logger.info(`[opencode2api] 停止 ${this.title} (PID ${this.pid})：${reason}`);
     try {
-      child.kill();
+      killManagedChild(child, this.spec);
     } catch (error) {
       this.logger.warn(`[opencode2api] 停止 ${this.title} 失败: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -334,7 +334,7 @@ export class ManagedService {
     if (!exited) {
       this.logger.warn(`[opencode2api] ${this.title} 未在 ${this.spec.stopTimeoutMs}ms 内退出，强制结束`);
       try {
-        child.kill('SIGKILL');
+        killManagedChild(child, this.spec, 'SIGKILL');
       } catch {
         /* 已经死了：忽略 */
       }
@@ -352,7 +352,7 @@ export class ManagedService {
     if (!this.startedByUs || !this.isAlive()) return;
     this.stopping = true;
     try {
-      this.child.kill();
+      killManagedChild(this.child, this.spec);
     } catch {
       /* 已经死了：忽略 */
     }
@@ -406,4 +406,13 @@ export function parseEnvFile(path) {
     if (key) out[key] = value;
   }
   return out;
+}
+
+/** 只对本实例创建的 PID 使用 /T，原 Go 后端仍按原来的单进程方式停止。 */
+function killManagedChild(child, spec, signal) {
+  if (spec.killTree && process.platform === 'win32') {
+    const result = spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5000 });
+    if (result.status === 0) return;
+  }
+  child.kill(signal);
 }

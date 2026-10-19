@@ -358,13 +358,14 @@ function assertManagedPath(paths, target) {
  * Windows 下运行中的 exe 被锁，必须先停。**只停本插件自己拉起的进程**：
  * 端口上如果是用户手动起的实例，拒绝更新并给出明确指引，绝不误杀。
  */
-async function stopForUpdate(service, logger) {
+export async function stopForUpdate(service, logger) {
   if (!service) return { ok: false, reason: '没有可用的托管实例，无法安全重启后端' };
 
   const host = service.spec?.host ?? '127.0.0.1';
   const port = service.port;
   const listening = await probeTcp(port, host);
-  if (!listening) return { ok: true, stopped: false };
+  // Tiara 可能还在预热 OpenCode，此时 API 尚未监听也必须先停掉自己的进程树。
+  if (!listening && !service.isAlive?.()) return { ok: true, stopped: false };
 
   const result = await service.stop('更新后端');
   if (result?.stopped) return { ok: true, stopped: true };

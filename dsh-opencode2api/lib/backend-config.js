@@ -35,7 +35,9 @@ export function ensureBackendConfig(paths, spec) {
 }
 
 export function backendApiKey(path) {
-  const keys = readBackendConfig(path)?.server_keys;
+  const config = readBackendConfig(path);
+  if (typeof config?.API_KEY === 'string') return config.API_KEY.trim();
+  const keys = config?.server_keys;
   if (!Array.isArray(keys)) return '';
   for (const entry of keys) {
     if (typeof entry === 'string' && entry.trim()) return entry.trim();

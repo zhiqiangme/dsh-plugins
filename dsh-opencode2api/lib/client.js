@@ -90,6 +90,8 @@ window.__ModuleLoader__.load({
 
     /** 模型区失败状态（lib/web.js 的 BACKEND_NOT_INSTALLED）：后端没装，提示去点「安装」。 */
     const BACKEND_NOT_INSTALLED = 'backend-not-installed';
+    const GATEWAY_WAIT_MS = 240_000;
+    const GATEWAY_POLL_MS = 500;
 
     /** 后端动作 → 成功后的提示文案 key。 */
     const BACKEND_NOTICE = {
@@ -145,6 +147,7 @@ window.__ModuleLoader__.load({
 .dsm-oc-key{display:inline-block;margin-left:4px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;font-family:ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary,#e6e6e6);user-select:all;word-break:break-all}
 .dsm-oc-path{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;word-break:break-all}
 .dsm-oc-backend{margin-top:14px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px}
+.dsm-oc-gateway{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--dsw-alias-border-l2,#36373b)}
 .dsm-oc-backend-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dsm-oc-backend-title{flex:1;min-width:100px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
 .dsm-oc-backend-line{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6;word-break:break-all}
@@ -194,6 +197,21 @@ window.__ModuleLoader__.load({
       panelKeyCopied: '初始管理密码已复制。请使用 admin 登录；如果已修改密码，请使用新密码。',
       panelKeyManual: '没能写入剪贴板，请手动选中复制：',
       panelKeyNone: '请使用后端已配置的管理员账号和密码。',
+      gatewayTitle: '后端网关',
+      gatewayJason: 'jasonxu114514（默认）',
+      gatewayTiara: 'TiaraBasori',
+      gatewaySwitching: '切换中…',
+      gatewayWaiting: '正在切换到 {name}，等它启动…',
+      gatewaySwitched: '已切换到 {name}。',
+      gatewayNotInstalled: '已切换到 {name}，尚未安装，请在下方点「安装」。',
+      gatewayTimeout: '已切换到 {name}，但 {seconds} 秒内未就绪，请查看后端日志后重试。',
+      gatewayTiaraHint: '首次安装会下载依赖与独立的 OpenCode 1.x，可能需要几分钟。模型 id 可能与原后端不同，切换后请检查勾选。',
+      uninstallTiaraTitle: '卸载 Tiara 后端？',
+      uninstallTiaraDesc: '会停止 Tiara 与它的 OpenCode 子进程，删除源码、依赖、运行时、历史版本和安装缓存。',
+      uninstallTiaraKept: 'tiara/data/ 中的密钥、配置、会话和日志会保留。',
+      panelKeyCopyTiara: '复制面板访问密钥',
+      panelKeyCopiedTiara: '已复制访问密钥，在 Tiara 面板中粘贴即可。',
+      backendUninstalledTiara: 'Tiara 已卸载（tiara/data/ 与日志保留）。',
       backendTitle: '后端版本',
       backendCurrent: '当前 {version}',
       backendLatest: '上游 {tag}',
@@ -290,6 +308,21 @@ window.__ModuleLoader__.load({
       panelKeyCopied: 'Initial admin password copied. Sign in as admin; use your new password if you have changed it.',
       panelKeyManual: 'Could not write to the clipboard; select and copy it manually: ',
       panelKeyNone: 'Use the admin credentials configured for your backend.',
+      gatewayTitle: 'Gateway',
+      gatewayJason: 'jasonxu114514 (default)',
+      gatewayTiara: 'TiaraBasori',
+      gatewaySwitching: 'Switching…',
+      gatewayWaiting: 'Switching to {name}, waiting for it to start…',
+      gatewaySwitched: 'Switched to {name}.',
+      gatewayNotInstalled: 'Switched to {name}; click Install below to install it.',
+      gatewayTimeout: '{name} was not ready within {seconds} seconds. Check backend logs and retry.',
+      gatewayTiaraHint: 'First install downloads dependencies and a separate OpenCode 1.x runtime and may take a few minutes. Check your model selection after switching; model IDs may differ.',
+      uninstallTiaraTitle: 'Uninstall the Tiara backend?',
+      uninstallTiaraDesc: 'Stops Tiara and its OpenCode child process, then deletes source, dependencies, runtime, versions and install cache.',
+      uninstallTiaraKept: 'Keys, configuration and sessions in tiara/data/ and logs are kept.',
+      panelKeyCopyTiara: 'Copy panel access key',
+      panelKeyCopiedTiara: 'Access key copied. Paste it in the Tiara panel.',
+      backendUninstalledTiara: 'Tiara uninstalled (tiara/data/ and logs kept).',
       backendTitle: 'Backend version',
       backendCurrent: 'current {version}',
       backendLatest: 'upstream {tag}',
@@ -429,7 +462,27 @@ window.__ModuleLoader__.load({
      *
      * kind 决定文案前缀（uninstall* / purge*），params 给文案插值（如 {root}）。
      */
-    function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm, kind = 'uninstall', params }) {
+    async function waitForGateway(gateway, { waitMs = GATEWAY_WAIT_MS, pollMs = GATEWAY_POLL_MS, sleep } = {}) {
+      const pause = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+      const deadline = Date.now() + waitMs;
+      while (Date.now() < deadline) {
+        try {
+          const snapshot = (await request(BACKEND_PATH, 'GET')).backend ?? {};
+          if (snapshot.gateway === gateway) {
+            if (snapshot.exeExists === false) return 'not-installed';
+            const models = await request(MODELS_PATH, 'GET');
+            if (models.ok) return 'ready';
+          }
+        } catch {
+          /* 重启中：下一轮再看 */
+        }
+        await pause(pollMs);
+      }
+      return 'timeout';
+    }
+
+    function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm, kind = 'uninstall', params, textKind }) {
+      const prefix = textKind || kind;
       const cancel = h(
         'button',
         { key: 'cancel', type: 'button', className: 'dsm-oc-btn dsm-oc-btn-outline', onClick: onCancel },
@@ -443,8 +496,8 @@ window.__ModuleLoader__.load({
       const detail = h(
         'div',
         { className: 'dsm-oc-confirm-body' },
-        h('p', { className: 'dsm-oc-hint' }, t(`${kind}Desc`, params)),
-        h('p', { className: 'dsm-oc-hint' }, t(`${kind}Kept`, params)),
+        h('p', { className: 'dsm-oc-hint' }, t(`${prefix}Desc`, params)),
+        h('p', { className: 'dsm-oc-hint' }, t(`${prefix}Kept`, params)),
       );
 
       if (typeof Modal === 'function') {
@@ -454,8 +507,8 @@ window.__ModuleLoader__.load({
             key: 'confirm',
             open: true,
             onClose: onCancel,
-            title: t(`${kind}Title`, params),
-            description: t(`${kind}Desc`, params),
+            title: t(`${prefix}Title`, params),
+            description: t(`${prefix}Desc`, params),
             footer: [cancel, confirm],
           },
           detail,
@@ -464,7 +517,7 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { key: 'confirm', className: 'dsm-oc-confirm' },
-        h('div', { className: 'dsm-oc-confirm-title' }, t(`${kind}Title`, params)),
+        h('div', { className: 'dsm-oc-confirm-title' }, t(`${prefix}Title`, params)),
         detail,
         h('div', { className: 'dsm-oc-toolbar' }, cancel, confirm),
       );
@@ -974,7 +1027,7 @@ window.__ModuleLoader__.load({
               setCheck(payload.check?.error ? { error: payload.check.error } : payload.check);
             } else if (payload.ok) {
               setCheck(undefined);
-              const done = t(BACKEND_NOTICE[action] ?? 'backendUpdated', {
+              const done = t(action === 'uninstall' && payload.backend?.gateway === 'tiara' ? 'backendUninstalledTiara' : (BACKEND_NOTICE[action] ?? 'backendUpdated'), {
                 tag: payload.latest?.tag ?? payload.local?.tag ?? '',
                 root: payload.root ?? '',
               });
@@ -1017,7 +1070,7 @@ window.__ModuleLoader__.load({
           }
           try {
             await navigator.clipboard.writeText(payload.key);
-            setPanelKey({ kind: 'ok', text: t('panelKeyCopied') });
+            setPanelKey({ kind: 'ok', text: t(payload.gateway === 'tiara' ? 'panelKeyCopiedTiara' : 'panelKeyCopied') });
           } catch {
             // 剪贴板 API 可能被宿主/非安全上下文拒绝：退回显示原文，让用户自己选中复制。
             setPanelKey({ kind: 'manual', key: payload.key });
@@ -1026,6 +1079,31 @@ window.__ModuleLoader__.load({
           setPanelKey({ kind: 'error', text: errorText(error) });
         }
       }, [t]);
+
+      const [gatewaySwitch, setGatewaySwitch] = useState(undefined);
+      const switchGateway = useCallback(async (gateway, label) => {
+        setPanelKey(undefined);
+        setBackendNotice(undefined);
+        setGatewaySwitch({ busy: gateway, kind: 'ok', text: t('gatewayWaiting', { name: label }) });
+        try {
+          const payload = await request(BACKEND_PATH, 'POST', { action: 'gateway', gateway });
+          if (!payload.ok) {
+            setGatewaySwitch({ kind: 'error', text: payload.reason ?? '' });
+            return;
+          }
+          const outcome = payload.state === 'switched' ? await waitForGateway(gateway) : 'ready';
+          await loadBackend();
+          await load(false);
+          const key = { ready: 'gatewaySwitched', 'not-installed': 'gatewayNotInstalled' }[outcome] ?? 'gatewayTimeout';
+          setGatewaySwitch({
+            kind: outcome === 'timeout' ? 'error' : 'ok',
+            text: t(key, { name: label, seconds: GATEWAY_WAIT_MS / 1000 }),
+          });
+        } catch (error) {
+          setGatewaySwitch({ kind: 'error', text: errorText(error) });
+        }
+      }, [t, loadBackend, load]);
+
 
       // 行详情页在缺少包描述时才用 summary 视图；本包有 description，正常走 page。
       if (view === 'summary') {
@@ -1181,7 +1259,36 @@ window.__ModuleLoader__.load({
         // 老快照没有 exeExists 字段时按"已安装"处理，避免误显示成未安装。
         const installed = backend.exeExists !== false;
 
-        const section = [
+        // 老宿主的快照没有 gateways 字段：不显示切换（它也不认 gateway 动作）。
+        const gateways = Array.isArray(backend.gateways) ? backend.gateways : [];
+        const currentGateway = backend.gateway ?? 'jasonxu';
+        const gatewayLabel = (id) => t(id === 'tiara' ? 'gatewayTiara' : 'gatewayJason');
+        const section = [];
+        if (gateways.length > 1) {
+          const gatewayBlock = [
+            h(
+              'div',
+              { key: 'gateway', className: 'dsm-oc-backend-head' },
+              h('span', { className: 'dsm-oc-backend-title' }, t('gatewayTitle')),
+              gateways.map((id) =>
+                wbButton(
+                  `gateway-${id}`,
+                  id === currentGateway ? 'primary' : 'outline',
+                  gatewaySwitch?.busy === id ? t('gatewaySwitching') : gatewayLabel(id),
+                  () => switchGateway(id, gatewayLabel(id)),
+                  id === currentGateway || Boolean(gatewaySwitch?.busy) || Boolean(backendBusy),
+                ),
+              ),
+            ),
+          ];
+          if (currentGateway === 'tiara') {
+            gatewayBlock.push(h('p', { key: 'gatewayHint', className: 'dsm-oc-backend-line' }, t('gatewayTiaraHint')));
+          }
+          const switched = wbNotice('gatewayNotice', gatewaySwitch);
+          if (switched) gatewayBlock.push(switched);
+          section.push(h('div', { key: 'gatewayBlock', className: 'dsm-oc-gateway' }, gatewayBlock));
+        }
+        section.push(
           h(
             'div',
             { key: 'head', className: 'dsm-oc-backend-head' },
@@ -1198,7 +1305,7 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 className: 'dsm-oc-btn dsm-oc-btn-outline',
-                disabled: Boolean(backendBusy),
+                disabled: Boolean(backendBusy || gatewaySwitch?.busy),
                 onClick: () => runBackend('check'),
               },
               backendBusy === 'check' ? t('backendWorking') : t('backendCheck'),
@@ -1211,7 +1318,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'dsm-oc-btn dsm-oc-btn-primary',
-                    disabled: Boolean(backendBusy),
+                    disabled: Boolean(backendBusy || gatewaySwitch?.busy),
                     onClick: () => runBackend('update'),
                   },
                   backendBusy === 'update' ? t('backendWorking') : t('backendUpdate'),
@@ -1221,7 +1328,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'dsm-oc-btn dsm-oc-btn-primary',
-                    disabled: Boolean(backendBusy),
+                    disabled: Boolean(backendBusy || gatewaySwitch?.busy),
                     onClick: () => runBackend('install'),
                   },
                   backendBusy === 'install' ? t('backendWorking') : t('backendInstall'),
@@ -1232,7 +1339,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'dsm-oc-btn dsm-oc-btn-outline',
-                    disabled: Boolean(backendBusy),
+                    disabled: Boolean(backendBusy || gatewaySwitch?.busy),
                     onClick: () => runBackend('rollback'),
                   },
                   backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'),
@@ -1244,7 +1351,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'dsm-oc-btn dsm-oc-btn-danger',
-                    disabled: Boolean(backendBusy),
+                    disabled: Boolean(backendBusy || gatewaySwitch?.busy),
                     onClick: () => setConfirming('uninstall'),
                   },
                   t('backendUninstall'),
@@ -1258,7 +1365,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'dsm-oc-btn dsm-oc-btn-danger',
-                    disabled: Boolean(backendBusy),
+                    disabled: Boolean(backendBusy || gatewaySwitch?.busy),
                     onClick: () => setConfirming('purge'),
                   },
                   backendBusy === 'purge' ? t('backendWorking') : t('backendPurge'),
@@ -1271,13 +1378,14 @@ window.__ModuleLoader__.load({
             h('strong', null, t('backendCurrent', { version: currentTag })),
             version.builtAt ? ` · ${t('backendBuilt', { time: version.builtAt })}` : '',
           ),
-        ];
+        );
 
         if (confirming) {
           // 老状态里可能是 true（改成动作名之前的写法），按卸载处理。
           const kind = confirming === 'purge' ? 'purge' : 'uninstall';
           section.push(renderUninstallConfirm({
             t, Modal, h, kind, params: { root: backend.root ?? '' },
+            textKind: kind === 'uninstall' && currentGateway === 'tiara' ? 'uninstallTiara' : undefined,
             onCancel: () => setConfirming(false),
             onConfirm: () => { setConfirming(false); runBackend(kind, { confirm: true }); },
           }));
@@ -1360,7 +1468,7 @@ window.__ModuleLoader__.load({
           wbButton(
             'panelKey',
             'outline dsm-oc-panel-key',
-            panelKey?.busy ? t('panelKeyWorking') : t('panelKeyCopy'),
+            panelKey?.busy ? t('panelKeyWorking') : t(backend?.gateway === 'tiara' ? 'panelKeyCopyTiara' : 'panelKeyCopy'),
             copyPanelKey,
             Boolean(panelKey?.busy),
           ),
@@ -1412,6 +1520,7 @@ window.__ModuleLoader__.load({
     }
 
     // 纯函数，导出给测试；宿主只认 name / inject / apply。
+    exports.waitForGateway = waitForGateway;
     exports.orderedSelection = orderedSelection;
     exports.renderUpdateSection = renderUpdateSection;
     exports.apply = apply;

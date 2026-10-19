@@ -1,7 +1,7 @@
 # @zhiqiangme/dsh-opencode2api
 
 让 [opencode2api](https://github.com/jasonxu114514/opencode2api) 随 DSH 启动，沿用本仓库 WorkBuddy 插件的结构。
-它托管独立的 Windows 程序，无需 Docker 或本机 OpenCode CLI。
+默认托管独立的 Windows 程序；也可在卡片中切换到 [TiaraBasori/OpenCode2API](https://github.com/TiaraBasori/OpenCode2API) 第二后端，两者无需 Docker 或全局安装 OpenCode CLI。
 
 ## 使用
 
@@ -31,6 +31,31 @@ dsh plugin --profile desktop update --latest @zhiqiangme/dsh-opencode2api
 ```
 
 Web / CLI 使用 `web` / `headless` profile。后端安装器支持 Windows x64、ARM64；现有外部实例可用自定义 `exe` / `cwd` 接入，版本需自行维护。
+
+## 第二后端（TiaraBasori）
+
+参照 WorkBuddy 插件，在「后端网关」选择 **TiaraBasori**，再点击下方「安装」。切换由宿主重启本插件：先停旧后端，再启动新后端；同一时刻只托管一个，API 端口与 DSH 的 `opencode2api` provider 沿用原设置。原后端默认选中（`gateway: jasonxu`），随时可以切回。
+
+- 首次安装从 GitHub 下载 **main 分支的固定 commit 源码**。上游没有正式 Release，检查更新按 commit 比较，卡片显示 `main-<commit>`；安装记录同时保存上游包版本和源码压缩包的 SHA256。
+- Node.js 复用 DSH 自带运行时；安装器下载并校验固定版本的 npm，按源码 `package-lock.json` 安装生产依赖，再从官方 GitHub Release 下载 **OpenCode 1.19.0** Windows x64 / ARM64 ZIP 并核对固定 SHA256。依赖安装禁用生命周期脚本，npm 使用插件自己的缓存；首次安装可能需要几分钟，需能访问 GitHub/codeload 与 npm 官方源。
+- OpenCode 版本固定是因为 Tiara 的 SDK 仍使用 1.x 协议。它的程序、配置、缓存和会话放在插件自己的目录，不升级或修改本机全局 OpenCode。
+- 管理页改为 API 端口下的 `/panel`（默认 `http://127.0.0.1:8080/panel`），点击「复制面板访问密钥」后粘贴登录。它是只读面板，配置保存在 `tiara/data/config.json`；需要上游 Zen Key 时在该文件配置 `ZEN_API_KEY`，重启插件生效。
+- 首次启动会先预热模型目录，默认等待上限为 210 秒；显式配置的 `readinessTimeoutMs` 仍优先。
+- 内部 OpenCode 服务仅监听 `127.0.0.1:10001`，可用 `tiaraServerPort` 修改；已被其他进程占用时拒绝启动。退出、切换、更新时回收本插件拉起的整个进程树。
+- 程序更新按整目录替换，支持失败恢复和手动回滚；「卸载」保留 `tiara/data/`。卡片「彻底卸载」清除两套后端及整个插件数据根目录。
+- 两种后端的数据各自保留，首次生成 Tiara 本地 Key 时优先沿用原后端本地 Key。模型 ID 可能不同，切换后检查勾选并保存同步。真实推理可用性仍取决于上游限制。
+
+配置示例（放在本插件的 `config` 下）：
+
+```yaml
+gateway: tiara          # jasonxu（默认）/ tiara
+port: 8080
+tiaraServerPort: 10001
+```
+
+Tiara 不沿用给 Go 后端设置的 `exe/cwd/args`；原值保留，切回原后端后继续生效。其 `webHost/webPort` 不参与 Tiara 面板地址，面板与 API 共用端口。
+
+命令行排障、更新可加 `--gateway tiara`，例如 `node lib/backend-cli.js --gateway tiara --check`。
 
 ## 行为
 
@@ -101,6 +126,16 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-opencode2api
 
 卸载插件保留后端和配置：DSH 卸载插件时不通知插件，插件也分不清卸载与停用、重启、更新，所以不在卸载时自动删除。卡片「卸载后端」删除 exe、版本与下载缓存，保留 `config.json`、后端状态、`data/` 和日志。卡片「彻底卸载」（在「卸载」右侧）先停掉本插件拉起的后端，再删除整个根目录（含 `config.json`、`data/` 里的凭据和日志），不可撤销；想卸载干净，在「插件」页卸载前先点它。若已同步过模型，卸载后需在 DSH 删除 `opencode2api` provider，并重新选择其他默认模型；本插件不会擅自删除会话或用户模型设置。
 
+第二后端单独使用以下目录；原后端沿用已有布局，无需迁移：
+
+```text
+tiara/backend/current/   源码、生产依赖、runtime/ 内的 OpenCode 1.x
+tiara/backend/versions/  历史程序目录
+tiara/data/              config.json、OpenCode 配置、缓存和会话（切版本保留）
+tiara/cache/             安装器、下载缓存、源码版本检查缓存
+tiara/installed.json     安装来源与上一版本
+```
+
 ## 验证与排障
 
 ```powershell
@@ -113,4 +148,4 @@ node lib/sync-cli.js           # 预览模型规划，不写 profile
 真实 Windows 后端测试可设置 `OPENCODE2API_TEST_EXE` 后运行 `test/native-smoke.test.mjs`；上游被替换为本地假服务，不消耗真实模型额度。
 后端不可达时保留原模型配置；403 / 401 等 HTTP 状态会显示为错误，不能据此把空结果写回模型列表。
 
-插件代码采用 [MIT](LICENSE)，由本仓库的 WorkBuddy 插件适配而来；独立下载的上游 opencode2api 使用 GPL-3.0-or-later，遵循其自身许可。本 npm 包不包含上游二进制。
+插件代码采用 [MIT](LICENSE)，由本仓库的 WorkBuddy 插件适配而来；独立下载的原后端 jasonxu114514/opencode2api 使用 GPL-3.0-or-later，TiaraBasori/OpenCode2API 使用 MIT，OpenCode 运行时遵循其自身许可。本 npm 包不包含这些上游程序。

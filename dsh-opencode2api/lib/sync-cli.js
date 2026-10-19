@@ -54,7 +54,7 @@ if (!modelsRaw) {
 }
 
 // 服务规格仍用内置默认值；如果改过后端端口，请同时配 models.baseURL。
-const models = resolvePluginConfig({ models: modelsRaw }, process.env).models;
+const models = resolvePluginConfig({ models: modelsRaw, gateway: process.argv.includes('--gateway') ? process.argv[process.argv.indexOf('--gateway') + 1] : undefined }, process.env).models;
 
 if (!models.enabled) {
   console.log(`profile 里 ${PLUGIN_ID} 的 models.enabled 不是 true，未开启同步。`);

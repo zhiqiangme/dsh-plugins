@@ -9,7 +9,7 @@
  *   - 移除模型要连续两轮确认（removalGuard），避免一次刷新抖动把模型删掉又加回来。
  */
 
-import { probeHealthz } from './backend.js';
+import { gatewayDriver } from './gateway.js';
 import { syncModels } from './models.js';
 
 /** 探测 /healthz 的地址：跟随 models.baseURL（可能指向外部实例），解析不了再退回托管端口。 */
@@ -35,7 +35,7 @@ export function healthTarget(baseURL, spec) {
  * @param {string} [options.name]    日志前缀
  */
 export function createModelResync(options) {
-  const { resolved, logger, editor, credentials, env = process.env, probe = probeHealthz, sync = syncModels, name = 'dsh-opencode2api' } = options;
+  const { resolved, logger, editor, credentials, env = process.env, probe = gatewayDriver(resolved).probe, sync = syncModels, name = 'dsh-opencode2api' } = options;
   const removalGuard = { missing: new Set() };
   let timer;
   let running;

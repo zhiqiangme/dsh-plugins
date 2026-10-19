@@ -13,6 +13,8 @@
  */
 
 import { inflateRawSync } from 'node:zlib';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 const SIG_EOCD = 0x06054b50;
 const SIG_CENTRAL = 0x02014b50;
@@ -97,4 +99,31 @@ export function extractZipEntry(buffer, wanted) {
     throw new Error(`${wanted} 解压后大小不符（期望 ${entry.uncompressedSize}，实际 ${data.length}）`);
   }
   return data;
+}
+
+/** 解出固定 commit 的源码目录；沿用 WorkBuddy 的路径越界检查。 */
+export function extractZipTree(buffer, destDir, { prefix = '' } = {}) {
+  const root = resolve(destDir);
+  const normalizedPrefix = prefix && !prefix.endsWith('/') ? `${prefix}/` : prefix;
+  let written = 0;
+  for (const entry of listZipEntries(buffer)) {
+    const name = entry.name.replace(/\\/g, '/');
+    if (normalizedPrefix && !name.startsWith(normalizedPrefix)) continue;
+    const rel = name.slice(normalizedPrefix.length);
+    if (!rel) continue;
+    if (isAbsolute(rel) || /^[A-Za-z]:/.test(rel) || rel.split('/').includes('..')) {
+      throw new Error(`ZIP 条目路径不安全：${entry.name}`);
+    }
+    const target = join(root, rel);
+    const inside = relative(root, target);
+    if (inside.startsWith('..') || isAbsolute(inside)) throw new Error(`ZIP 条目路径不安全：${entry.name}`);
+    if (name.endsWith('/')) {
+      mkdirSync(target, { recursive: true });
+      continue;
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, extractZipEntry(buffer, entry.name));
+    written += 1;
+  }
+  return written;
 }

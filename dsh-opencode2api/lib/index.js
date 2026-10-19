@@ -5,7 +5,7 @@
 
 import { isDeepStrictEqual } from 'node:util';
 
-import { checkForUpdate } from './backend.js';
+import { gatewayDriver } from './gateway.js';
 import { resolvePluginConfig } from './config.js';
 import { syncModels } from './models.js';
 import { createModelResync } from './resync.js';
@@ -44,7 +44,7 @@ export function apply(ctx, config) {
   }
 
   const service = new GatewayService(resolved.spec, logger);
-  const installed = isFile(resolved.spec.exe);
+  const installed = resolved.gateway === 'tiara' ? gatewayDriver(resolved).describe(resolved.paths).exeExists : isFile(resolved.spec.exe);
   // 只有"用插件自管路径、但文件不存在"才当作未安装（提示去面板装）；
   // 用户在 profile 里显式配了 exe 却指错时，仍按老行为尝试启动，让错误暴露出来。
   const notInstalled = !installed && resolved.managedExe === true;
@@ -66,14 +66,15 @@ export function apply(ctx, config) {
   });
 
   // 白名单等 models.* 的改动就地生效，不重启插件（见 watchConfigUpdates）。
-  watchConfigUpdates(ctx, resolved, hostEnv, logger, config, resync);
+  const unwatch = watchConfigUpdates(ctx, resolved, hostEnv, logger, config, resync);
 
   // 启动时查一次后端更新（**只提示**，安装永远由用户在面板里点）。
   checkBackendUpdateOnStart(resolved, hostEnv, logger);
 
   // 没装后端就不启动：否则 spawn 必然失败、日志只会刷错误。
   // 生命周期照常登记——用户在面板里点「安装」把后端拉起来之后，DSH 退出仍会把它停掉。
-  const startup = notInstalled ? Promise.resolve({ state: 'not-installed' }) : start(service, logger, resolved);
+  const startupAbort = new AbortController();
+  const startup = notInstalled ? Promise.resolve({ state: 'not-installed' }) : start(service, logger, resolved, startupAbort.signal);
 
   // 模型列表同步：等后端就绪后再拉 `/v1/models`，经宿主 configEditor 写进 llm-pi-ai（见 lib/models.js）。
   // 同样不 await：拉取可能耗时数十秒，不能拖住插件树加载。
@@ -94,6 +95,9 @@ export function apply(ctx, config) {
     return async () => {
       if (disposed) return;
       disposed = true;
+      unwatch?.();
+      service.disposed = true;
+      startupAbort.abort();
       process.removeListener('exit', onExit);
       resync.stop();
       // 先等启动流程落地，避免「正在启动」与「正在停止」互相打架。
@@ -124,9 +128,11 @@ export function apply(ctx, config) {
  * /v1/models 拉取就是 fetch failed，白名单写进去了、模型清单却没跟上（实际遇到过）。
  */
 function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig, resync) {
-  if (typeof ctx?.on !== 'function') return;
+  if (typeof ctx?.on !== 'function') return () => undefined;
   let currentConfig = initialConfig;
-  ctx.on('internal/update', (config, _noSave, next) => {
+  let active = true;
+  const off = ctx.on('internal/update', (config, _noSave, next) => {
+    if (!active) return next();
     const updated = resolvePluginConfig(config, hostEnv);
     const changed = changedFields(resolvePluginConfig(currentConfig, hostEnv), updated);
     if (changed.length > 0) {
@@ -141,6 +147,7 @@ function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig, resyn
     logger.info(`[${name}] models 配置已更新（就地生效，不重启插件）`);
     return undefined;
   });
+  return () => { active = false; if (typeof off === 'function') off(); };
 }
 
 /** 两份解析结果里除 models 以外不相等的字段路径（展开到第二层，方便从日志看出是哪一项触发了重启）。 */
@@ -163,11 +170,11 @@ export function changedFields(previous, next) {
 }
 
 /** 启动失败只记日志：一个上游起不来不应该让 DSH 启动失败。 */
-async function start(service, logger, resolved) {
+async function start(service, logger, resolved, signal) {
   let result;
   try {
-    if (resolved.managedExe) ensureBackendConfig(resolved.paths, resolved.spec);
-    result = await service.ensureRunning();
+    if (resolved.managedExe && resolved.gateway !== 'tiara') ensureBackendConfig(resolved.paths, resolved.spec);
+    result = await service.ensureRunning(signal);
   } catch (error) {
     result = { state: 'failed', reason: error instanceof Error ? error.message : String(error) };
   }
@@ -220,7 +227,7 @@ function checkBackendUpdateOnStart(resolved, hostEnv, logger) {
   const backend = resolved.backend;
   if (!backend?.enabled || !backend.checkOnStart) return;
 
-  checkForUpdate({
+  gatewayDriver(resolved).check({
     paths: backend.paths,
     env: hostEnv,
     apiBase: backend.apiBase || undefined,

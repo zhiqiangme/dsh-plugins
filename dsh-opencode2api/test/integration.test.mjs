@@ -311,3 +311,13 @@ test('配置变更：apply 之后宿主 process.env 有变动，保存白名单�
   assert.equal(ctx.restarts, 0, ctx.lines.join('\n'));
   assert.ok(ctx.lines.some((line) => line.includes('就地生效')), ctx.lines.join('\n'));
 });
+
+test('插件重启后过期的 update 钩子不能吞掉切回原配置的请求',async()=>{
+  const ctx=fakeContext();
+  const original=fakeServiceConfig(1,{exe:join(tmpdir(),'dsh-missing-first.exe')});
+  apply(ctx,original);await ctx.disposeAll();
+  apply(ctx,{...original,port:2});
+  ctx.update(original);
+  assert.equal(ctx.restarts,1,'已释放实例的钩子必须放行，新实例才能处理切回原配置');
+  await ctx.disposeAll();
+});

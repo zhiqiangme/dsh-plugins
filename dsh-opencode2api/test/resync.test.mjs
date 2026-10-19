@@ -189,3 +189,11 @@ test('healthTarget 跟随 models.baseURL，解析不了退回托管端口', () =
   assert.deepEqual(healthTarget('http://127.0.0.1:9090/v1', { host: '127.0.0.1', port: 8080 }), { host: '127.0.0.1', port: 9090 });
   assert.deepEqual(healthTarget('', { host: '127.0.0.1', port: 8080 }), { host: '127.0.0.1', port: 8080 });
 });
+
+test('Tiara 定时同步默认使用 /health，不依赖 Go 后端的 /healthz',async t=>{
+  const hits=[];let synced=0;
+  const url=await serve(t,(req,res)=>{hits.push(req.url);res.end(JSON.stringify({status:'ok',proxy:true}));});
+  const resolved=resolvePluginConfig({gateway:'tiara',models:{enabled:true,baseURL:url}},{});
+  const resync=createModelResync({resolved,logger:memoryLogger(),editor:()=>undefined,credentials:()=>undefined,sync:async()=>{synced++;return {state:'unchanged'};}});
+  assert.equal((await resync.tick()).state,'unchanged');assert.deepEqual(hits,['/health']);assert.equal(synced,1);resync.stop();
+});

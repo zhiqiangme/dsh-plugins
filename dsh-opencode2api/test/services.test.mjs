@@ -200,3 +200,13 @@ test('waitForPort：shouldContinue 返回 false 时立即放弃', async () => {
   assert.equal(ready, false);
   assert.ok(Date.now() - began < 1_000);
 });
+
+test('Tiara 进程树停止：受管父进程与它的子进程端口一起释放', async t => {
+  const port=await freePort(),childPort=await freePort();
+  const service=new ManagedService(specFor(port,{killTree:true,args:[fileURLToPath(new URL('../fixtures/tree-server.mjs',import.meta.url))],env:{...process.env,TEST_PORT:String(port),TEST_CHILD_PORT:String(childPort)}}),silent);
+  t.after(()=>service.stop('cleanup'));
+  assert.equal((await service.ensureRunning()).state,'started');
+  assert.equal(await waitForPort(childPort,{timeoutMs:5000}),true);
+  await service.stop('test complete');
+  assert.equal(await probeTcp(port),false);assert.equal(await probeTcp(childPort),false);
+});

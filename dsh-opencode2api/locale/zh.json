@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "OpenCode API",
-    "description": "托管 opencode2api 后端，安装、更新、回滚，并将选中的模型同步到 DSH。"
+    "description": "托管两种 OpenCode API 后端，支持切换、安装更新、回滚与模型同步。"
   }
 }

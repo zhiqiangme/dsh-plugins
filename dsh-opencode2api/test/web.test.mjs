@@ -104,3 +104,34 @@ test('模型卡片显示真实能力和价格，保存勾选立即同步',async(
   // 既不带 only 也不带 enabled 的空请求没有意义，仍按参数缺失拒绝。
   assert.equal((await applySelection({resolved,editor})).ok,false);
 });
+
+test('网关切换只写当前插件的 gateway，保留模型选择、端口及其他后端配置',async()=>{
+  const {selectGateway}=await import('../lib/web.js');
+  const editor=createFakeConfigEditor(profileRows({models:{enabled:true,only:['saved-model']}}));
+  const row=editor.entry('dsh-opencode2api');row.options.config={...row.options.config,port:9123,exe:'custom.exe'};
+  const resolved=resolvePluginConfig(row.options.config,{DSH_HOME:join(tmpdir(),'not-used')});
+  const before=structuredClone(row.options.config);
+  assert.equal((await selectGateway({resolved,editor,gateway:'bad'})).ok,false);
+  assert.equal((await selectGateway({resolved,editor,gateway:'tiara',busy:true})).ok,false);
+  assert.deepEqual(row.options.config,before);
+  const result=await selectGateway({resolved,editor,gateway:'tiara'});
+  assert.equal(result.state,'switched');assert.equal(result.restarting,true);
+  assert.deepEqual(editor.entry('dsh-opencode2api').options.config,{...before,gateway:'tiara'});
+  assert.equal(resolved.gateway,'jasonxu','当前解析结果在旧实例释放前不能先换网关');
+});
+
+test('Tiara 卡片快照与面板密钥按所选后端返回，普通快照不暴露访问密钥',async t=>{
+  const {ensureTiaraConfig}=await import('../lib/tiara.js');
+  const {readPanelKey}=await import('../lib/web.js');
+  const root=mkdtempSync(join(tmpdir(),'tiara-web-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const env={DSH_OPENCODE2API_BACKEND_ROOT:root};const resolved=resolvePluginConfig({gateway:'tiara'},env);ensureTiaraConfig(resolved.paths);
+  const key=readPanelKey(resolved);assert.equal(key.gateway,'tiara');assert.ok(key.key.length>20);
+  const routes=new Map();const ctx={webServer:{register:({path,handler})=>{routes.set(path,handler);return()=>{};}},effect:f=>f(),get:()=>undefined};
+  registerPanelRoutes(ctx,{resolved,env,logger:{warn(){}},checkVersion:async()=>({ok:false})});
+  const response=await request(routes.get(BACKEND_PATH));
+  assert.equal(response.body.backend.gateway,'tiara');assert.deepEqual(response.body.backend.gateways,['jasonxu','tiara']);
+  assert.equal(response.body.backend.panelUrl,'http://127.0.0.1:8080/panel');assert.equal(response.body.backend.exeExists,false);
+  assert.equal(JSON.stringify(response.body).includes(key.key),false);
+  const missing=await describeModels({...resolved,models:{...resolved.models,baseURL:'http://127.0.0.1:1'},env});
+  assert.equal(missing.state,BACKEND_NOT_INSTALLED,'已存在的 DSH Node 运行时不能被当成已安装的 Tiara');
+});
