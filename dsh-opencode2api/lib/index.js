@@ -1,10 +1,14 @@
 /**
  * 随 DSH 生命周期托管 opencode2api。启动失败只记录日志；只结束自己拉起的进程。
  * 后端安装更新和模型同步沿用本仓库现有结构，配置写入交给宿主 configEditor。
+ *
+ * 原后端默认自动更新（lib/auto-update.js）：运行中后台下载并校验新版本，下次 DSH 启动时先换上再拉起，
+ * 不打断正在用的后端；面板与 profile 的 backend.autoUpdate 可以关掉。Tiara 网关不自动更新。
  */
 
 import { isDeepStrictEqual } from 'node:util';
 
+import { autoUpdateStatus, createAutoUpdater } from './auto-update.js';
 import { gatewayDriver } from './gateway.js';
 import { resolvePluginConfig } from './config.js';
 import { syncModels } from './models.js';
@@ -55,9 +59,12 @@ export function apply(ctx, config) {
       : `[${name}] 准备托管 ${service.title} (${service.port})；日志目录 ${resolved.logDir}`,
   );
 
+  // 后端自动更新：运行中后台下载暂存，下次启动时（就是下面的 startup）先换上再拉起，见 lib/auto-update.js。
+  const autoUpdater = createAutoUpdater({ resolved, logger, service, env: hostEnv, name });
+
   // Web 面板路由（浏览器半侧 lib/client.js 的取数口）。与后端启动无关，先挂上：
   // 这样后端还没起来（或没装）时打开面板也能看到状态、并就地安装。
-  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service });
+  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service, autoUpdater });
 
   // 运行中定时重同步模型列表（见 lib/resync.js）：后端下架模型后，DSH 不重启也能跟上。
   const resync = createModelResync({
@@ -65,16 +72,26 @@ export function apply(ctx, config) {
     editor: () => configEditorOf(ctx), credentials: () => credentialsOf(ctx),
   });
 
-  // 白名单等 models.* 的改动就地生效，不重启插件（见 watchConfigUpdates）。
+  // 白名单等 models.* 与自动更新开关的改动就地生效，不重启插件（见 watchConfigUpdates）。
   const unwatch = watchConfigUpdates(ctx, resolved, hostEnv, logger, config, resync);
 
-  // 启动时查一次后端更新（**只提示**，安装永远由用户在面板里点）。
-  checkBackendUpdateOnStart(resolved, hostEnv, logger);
+  // 自动更新关着或管不到（自配 exe、Tiara）时，退回启动时查一次、只提示；开着时由自动更新的定时检查接手。
+  const auto = autoUpdateStatus(resolved);
+  if (!auto.enabled || !auto.available) checkBackendUpdateOnStart(resolved, hostEnv, logger);
 
   // 没装后端就不启动：否则 spawn 必然失败、日志只会刷错误。
   // 生命周期照常登记——用户在面板里点「安装」把后端拉起来之后，DSH 退出仍会把它停掉。
+  // 换装上次暂存的新版本必须在拉起之前：换成功时新版本已经由换装流程拉起并通过健康检查；
+  // 没换、换失败（已退回原版本）或出任何意外，都照常走一遍 start（幂等，在跑就跳过）。
   const startupAbort = new AbortController();
-  const startup = notInstalled ? Promise.resolve({ state: 'not-installed' }) : start(service, logger, resolved, startupAbort.signal);
+  const startup = notInstalled
+    ? Promise.resolve({ state: 'not-installed' })
+    : autoUpdater
+        .applyPending({ signal: startupAbort.signal })
+        .catch((error) => {
+          logger.warn(`[${name}] 启动时换装后端新版本出错：${error instanceof Error ? error.message : String(error)}`);
+        })
+        .then((updated) => (updated?.ok ? { state: 'started' } : start(service, logger, resolved, startupAbort.signal)));
 
   // 模型列表同步：等后端就绪后再拉 `/v1/models`，经宿主 configEditor 写进 llm-pi-ai（见 lib/models.js）。
   // 同样不 await：拉取可能耗时数十秒，不能拖住插件树加载。
@@ -82,7 +99,12 @@ export function apply(ctx, config) {
 
   // 启动流程落地后才开始计时，第一轮不会和启动同步撞在一起。没装后端时也排上：
   // 用户之后在面板里装好并拉起后端，定时同步会接手；后端不在时每轮只探测 /healthz 就跳过。
-  startup.finally(() => resync.start()).catch(() => undefined);
+  startup
+    .finally(() => {
+      resync.start();
+      autoUpdater.start();
+    })
+    .catch(() => undefined);
 
   ctx.effect(() => {
     // exit 钩子只做同步发信号：进程退出阶段不允许异步等待，异步等待在下面的 disposer 里。
@@ -100,6 +122,7 @@ export function apply(ctx, config) {
       startupAbort.abort();
       process.removeListener('exit', onExit);
       resync.stop();
+      autoUpdater.stop();
       // 先等启动流程落地，避免「正在启动」与「正在停止」互相打架。
       await startup.catch(() => undefined);
       try {
@@ -118,7 +141,7 @@ export function apply(ctx, config) {
  *
  * cordis 对配置变更的默认处理是重启插件：先 dispose（把本插件托管的 opencode2api 停掉）再重新 apply。
  * 面板每次保存白名单都会改本插件的配置，照默认走就是"点一次保存、后端断一下"。
- * 所以只有 models.* 变了时就地换掉 resolved.models、不调 next()（即否决这次重启）；
+ * 所以只有 models.* 与自动更新开关（IN_PLACE_FIELDS）变了时就地换掉、不调 next()（即否决这次重启）；
  * 端口、exe、env 等别的字段变了仍调 next()，按原样重启让新规格生效。
  * resolved 是 web 路由与同步共用的同一个对象，换掉 models 后下一个请求就用上新值。
  *
@@ -135,20 +158,30 @@ function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig, resyn
     if (!active) return next();
     const updated = resolvePluginConfig(config, hostEnv);
     const changed = changedFields(resolvePluginConfig(currentConfig, hostEnv), updated);
-    if (changed.length > 0) {
+    const restartFields = changed.filter((field) => !IN_PLACE_FIELDS.has(field));
+    if (restartFields.length > 0) {
       // 只记字段名不记值：spec.env 里可能有密钥。
-      logger.info(`[${name}] 配置变更涉及 ${changed.join(', ')}，按默认流程重启插件`);
+      logger.info(`[${name}] 配置变更涉及 ${restartFields.join(', ')}，按默认流程重启插件`);
       return next();
     }
     currentConfig = config;
     resolved.models = updated.models;
+    // 自动更新每轮现读这两项，改完下一轮就按新值走。
+    resolved.backend.autoUpdate = updated.backend.autoUpdate;
+    resolved.backend.autoUpdateDelayHours = updated.backend.autoUpdateDelayHours;
     // 定时同步原先被关掉（resyncIntervalMs: 0）时，按新配置重新排上；已在计时则不动。
     resync?.start();
-    logger.info(`[${name}] models 配置已更新（就地生效，不重启插件）`);
+    logger.info(`[${name}] ${changed.length > 0 ? '自动更新设置' : 'models 配置'}已更新（就地生效，不重启插件）`);
     return undefined;
   });
   return () => { active = false; if (typeof off === 'function') off(); };
 }
+
+/**
+ * 除 models 外也就地生效的字段：面板上的「自动更新」开关写的就是它们，
+ * 照默认流程重启插件会把托管的后端停掉再拉起，为一个开关断一次线不值得。
+ */
+const IN_PLACE_FIELDS = new Set(['backend.autoUpdate', 'backend.autoUpdateDelayHours']);
 
 /** 两份解析结果里除 models 以外不相等的字段路径（展开到第二层，方便从日志看出是哪一项触发了重启）。 */
 export function changedFields(previous, next) {
@@ -218,7 +251,7 @@ function syncAfterStartup(ctx, startup, resolved, hostEnv, logger) {
 }
 
 /**
- * 启动时查一次后端更新，**只写日志提示**，不下载也不安装。
+ * 启动时查一次后端更新，**只写日志提示**，不下载也不安装。自动更新（默认开）关掉或管不到时才用它。
  *
  * 结果走 release 查询缓存（默认 6 小时），所以频繁重启 DSH 不会反复打 GitHub API。
  * 任何失败都只记一条 warn：查更新失败不该影响 DSH 启动。

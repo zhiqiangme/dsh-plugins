@@ -229,6 +229,9 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'updatePendingRestart', 'updateProgress', 'updateRefreshHint',
     'updateRestartHint', 'updateRolledBack', 'updateRunning', 'updateStartFailed', 'updateSucceeded',
     'updateTitle', 'updateTooFresh', 'updateUpToDate', 'updateLocal',
+    // 后端自动更新
+    'autoUpdateDrifted', 'autoUpdateError', 'autoUpdateFailed', 'autoUpdateHint', 'autoUpdateLabel', 'autoUpdateLast',
+    'autoUpdatePending', 'autoUpdateRolledBack', 'autoUpdateTiara', 'autoUpdateUnavailable', 'autoUpdateUnknown', 'autoUpdateWaiting',
   ];
   assert.deepEqual(Object.keys(entry.zh).sort(), expected.sort());
   assert.match(entry.zh.panelKeyCopied, /初始管理密码已复制/);
@@ -906,4 +909,53 @@ test('返回安装页面恢复进度：显示下载字节、用时和后台提�
   assert.match(text, /已用时 30 秒/); assert.match(text, /可以离开此页面/);
   assert.doesNotMatch(text, /后端还没有安装/);
   assert.equal(collectByType(tree, 'button').find(node => collectText(node).join('') === '处理中…').props.disabled, true);
+});
+
+test('后端区：自动更新开关与状态行（待装 / 已自动更新 / 失败 / 冷却期 / 回滚跳过 / 检查失败 / Tiara 不适用）', () => {
+  const { module, t } = boot();
+  const toggled = [];
+  const render = (auto, tag = 'v1.0.0', busy) => module.renderAutoUpdate(auto, tag, { busy, onToggle: (value) => toggled.push(value) }, t);
+  const text = (nodes) => collectText(nodes).join('\n');
+  const base = { enabled: true, available: true, unavailable: null, delayHours: 24, pending: null, failed: null, last: null, lastCheck: null };
+
+  assert.deepEqual(render(undefined), [], '老宿主的快照没有 autoUpdate 字段时什么都不显示');
+
+  const idle = render(base);
+  const box = collectByType(idle, 'input')[0];
+  assert.equal(box.props.checked, true);
+  assert.equal(box.props.disabled, false);
+  box.props.onChange({ target: { checked: false } });
+  assert.deepEqual(toggled, [false]);
+  assert.match(text(idle), /自动更新后端/);
+  assert.match(text(idle), /发布满 24 小时/);
+
+  assert.match(text(render({ ...base, pending: { tag: 'v1.1.0' } })), /已下载 v1\.1\.0，下次启动 DSH 时自动安装/);
+  const last = { from: 'v0.9.0', to: 'v1.0.0', at: '2026-10-19T00:00:00Z' };
+  assert.match(text(render({ ...base, last })), /从 v0\.9\.0 更新到 v1\.0\.0/);
+  assert.doesNotMatch(text(render({ ...base, last }, 'v0.9.0')), /更新到 v1\.0\.0/, '回滚之后不再说"已自动更新"');
+  assert.match(text(render({ ...base, failed: { tag: 'v1.1.0', reason: '/healthz 返回 500' } })), /自动更新到 v1\.1\.0 没成功（\/healthz 返回 500）/);
+  assert.doesNotMatch(text(render({ ...base, failed: { tag: 'v1.0.0', reason: 'x' } })), /没成功/, '手动装上了失败过的版本就不再提');
+  assert.match(
+    text(render({ ...base, lastCheck: { state: 'skipped', reason: 'too-fresh', tag: 'v1.1.0', readyAt: '2026-10-20T00:00:00Z' } })),
+    /上游 v1\.1\.0 发布未满 24 小时/,
+  );
+  assert.match(text(render({ ...base, lastCheck: { state: 'skipped', reason: 'rolled-back', tag: 'v1.1.0' } })), /你从 v1\.1\.0 回滚过/);
+  assert.match(text(render({ ...base, lastCheck: { state: 'error', reason: 'fetch failed' } })), /上次自动检查更新失败：fetch failed/);
+  assert.doesNotMatch(text(render({ ...base, lastCheck: { state: 'skipped', reason: 'up-to-date', tag: 'v1.0.0' } })), /v1\.0\.0/, '已是最新不多说');
+
+  assert.doesNotMatch(text(render({ ...base, enabled: false, pending: { tag: 'v1.1.0' } })), /已下载/, '关着时不显示状态行');
+  const custom = render({ ...base, available: false, unavailable: 'custom-exe' });
+  assert.equal(collectByType(custom, 'input')[0].props.disabled, true);
+  assert.match(text(custom), /自动更新不生效/);
+  const tiara = render({ ...base, available: false, unavailable: 'unsupported-gateway' }, 'main-aaaaaaaaaaaa');
+  assert.equal(collectByType(tiara, 'input')[0].props.disabled, true);
+  assert.match(text(tiara), /Tiara 没有正式发布版本/);
+  assert.equal(collectByType(render(base, 'v1.0.0', 'update'), 'input')[0].props.disabled, true, '有操作在进行时禁用开关');
+
+  // 卡片里：装了才显示（首次安装永远由用户点），位置在后端版本区里。
+  const auto = { ...base, pending: { tag: 'v1.1.0' } };
+  const installed = boot(backendStates({ exeExists: true, version: { tag: 'v1.0.0' }, history: [], autoUpdate: auto }));
+  assert.match(collectText(backendSection(installed.renderCard())).join('\n'), /已下载 v1\.1\.0/);
+  const missing = boot(backendStates({ exeExists: false, version: {}, history: [], autoUpdate: auto }));
+  assert.doesNotMatch(collectText(missing.renderCard()).join('\n'), /自动更新后端/);
 });

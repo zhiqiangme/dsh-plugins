@@ -164,3 +164,82 @@ test('启动操作立即返回 202；页面重入看见同一任务，重复安�
   assert.equal(done.state, 'failed');
   assert.match(done.result.reason, /rejected/);
 });
+
+/** 挂上面板路由，返回 /backend 的 handler；ctx.get 能软取到 configEditor。 */
+function backendRoute(t, { resolved, editor, autoUpdater, service }) {
+  const routes = new Map(), disposers = [];
+  const ctx = { webServer: { register: ({ path, handler }) => { routes.set(path, handler); return () => {}; } },
+    effect: f => disposers.push(f()), get: (name) => (name === 'configEditor' ? editor : undefined) };
+  registerPanelRoutes(ctx, { resolved, env: {}, service, autoUpdater, logger: { warn() {} }, checkVersion: async () => ({ ok: false }) });
+  t.after(async () => { for (const dispose of disposers) await dispose?.(); });
+  return routes.get(BACKEND_PATH);
+}
+
+test('自动更新开关写 backend.autoUpdate（保留 backend 其它字段），打开时立即查一轮；快照带自动更新状态', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'opencode-web-auto-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const resolved = resolvePluginConfig({}, { DSH_OPENCODE2API_BACKEND_ROOT: root });
+  const editor = createFakeConfigEditor([{ id: 'dsh-opencode2api', config: { backend: { keepVersions: 5 } } }]);
+  let ticks = 0;
+  const autoUpdater = { tick: async () => { ticks += 1; return { state: 'skipped' }; } };
+  const handler = backendRoute(t, { resolved, editor, autoUpdater });
+
+  const status = await request(handler);
+  assert.deepEqual(status.body.backend.autoUpdate, {
+    enabled: true, available: true, unavailable: null, delayHours: 24, pending: null, failed: null, last: null, lastCheck: null,
+  });
+
+  const off = await request(handler, { method: 'POST', body: { action: 'autoUpdate', enabled: false } });
+  assert.equal(off.status, 200, JSON.stringify(off.body));
+  assert.deepEqual(editor.entry('dsh-opencode2api').options.config.backend, { keepVersions: 5, autoUpdate: false });
+  assert.equal(resolved.backend.autoUpdate, false, '手里的配置同步改掉，不等宿主转发');
+  assert.equal(off.body.backend.autoUpdate.enabled, false);
+  assert.equal(ticks, 0, '关掉时不查');
+
+  const on = await request(handler, { method: 'POST', body: { action: 'autoUpdate', enabled: true } });
+  assert.equal(on.body.backend.autoUpdate.enabled, true);
+  assert.equal(ticks, 1, '打开时立即查一轮');
+
+  const bad = await request(handler, { method: 'POST', body: { action: 'autoUpdate', enabled: 'yes' } });
+  assert.equal(bad.status, 400);
+  assert.equal(editor.edits.length, 2, '非法值不写配置');
+
+  const tiara = resolvePluginConfig({ gateway: 'tiara' }, { DSH_OPENCODE2API_BACKEND_ROOT: root });
+  const tiaraStatus = await request(backendRoute(t, { resolved: tiara, editor }));
+  assert.equal(tiaraStatus.body.backend.autoUpdate.available, false, 'Tiara 不自动更新，面板据此禁用开关');
+  assert.equal(tiaraStatus.body.backend.autoUpdate.unavailable, 'unsupported-gateway');
+});
+
+test('后台自动下载占着锁时：手动更新 409 并说明原因；切换网关不用等它，换装进行中才要等', async t => {
+  const { withBackendLock } = await import('../lib/backend-operation.js');
+  const root = mkdtempSync(join(tmpdir(), 'opencode-web-lock-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const resolved = resolvePluginConfig({}, { DSH_OPENCODE2API_BACKEND_ROOT: root });
+  const editor = createFakeConfigEditor([{ id: 'dsh-opencode2api', config: {} }]);
+  const handler = backendRoute(t, { resolved, editor });
+
+  let releaseLock;
+  const held = withBackendLock('auto-prepare', () => new Promise(resolve => { releaseLock = resolve; }));
+  try {
+    const update = await request(handler, { method: 'POST', body: { action: 'update' } });
+    assert.equal(update.status, 409);
+    assert.match(update.body.reason, /后台正在自动下载/);
+    assert.equal((await request(handler)).body.operation, undefined, '被拒的操作不建任务');
+
+    const switched = await request(handler, { method: 'POST', body: { action: 'gateway', gateway: 'tiara' } });
+    assert.equal(switched.body.state, 'switched', JSON.stringify(switched.body));
+  } finally {
+    releaseLock();
+    await held;
+  }
+
+  const applying = withBackendLock('auto-apply', () => new Promise(resolve => { releaseLock = resolve; }));
+  try {
+    const blocked = await request(handler, { method: 'POST', body: { action: 'gateway', gateway: 'tiara' } });
+    assert.equal(blocked.status, 400);
+    assert.match(blocked.body.reason, /完成后再切换/);
+  } finally {
+    releaseLock();
+    await applying;
+  }
+});

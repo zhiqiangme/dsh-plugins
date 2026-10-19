@@ -2,8 +2,10 @@
 import {
   applyUpdate,
   checkForUpdate,
+  commitUpdate,
   describeBackend,
   installBackend,
+  prepareUpdate,
   probeHealthz,
   purgeBackendData,
   rollbackBackend,
@@ -32,11 +34,19 @@ const JASON = Object.freeze({
   check: checkForUpdate,
   install: installBackend,
   update: applyUpdate,
+  /** 自动更新的两半：后台下载暂存 / 下次启动时换上（见 auto-update.js）。 */
+  prepare: prepareUpdate,
+  commit: commitUpdate,
   rollback: rollbackBackend,
   uninstall: uninstallBackend,
   purge: purgeBackendData,
   probe: probeHealthz,
 });
+/**
+ * Tiara 刻意不提供 prepare / commit，自动更新因此跳过它（见 auto-update.js）：上游没有正式 release，
+ * 只有 main 分支的提交（版本号是 main-<commit>，比不出新旧）；tiara-compat.js 还要按上游源码的固定片段
+ * 打兼容补丁，main 一变就可能对不上、启动失败。哪个提交能用要跟着插件一起验证，所以只留手动「更新」。
+ */
 const TIARA = Object.freeze({
   id: 'tiara',
   title: 'TiaraBasori/OpenCode2API',

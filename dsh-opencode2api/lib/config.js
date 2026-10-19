@@ -8,6 +8,7 @@
 
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_AUTO_UPDATE_DELAY_HOURS } from './auto-update.js';
 import { normalizeGateway } from './gateway.js';
 import { tiaraPaths, DEFAULT_TIARA_KEEP_VERSIONS } from './tiara.js';
 import { backendPaths, DEFAULT_CHECK_TTL_MS, DEFAULT_KEEP_VERSIONS } from './backend.js';
@@ -42,6 +43,13 @@ function bool(value, fallback) {
 function positiveNumber(value, fallback) {
   const n = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** 非负数解析：0 是合法值（例如不要发布冷却期），负数、空串与非法值退回默认。 */
+function nonNegativeNumber(value, fallback) {
+  if (value === '' || value === null || value === undefined) return fallback;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 function stringOr(value, fallback) {
@@ -127,13 +135,17 @@ function resolveModelsConfig(raw, spec) {
 /**
  * 解析 backend 段（后端版本管理）。
  *
- * 默认"启动时检查一次、只提示"：安装动作永远由用户点，插件不会自己换二进制。
+ * 默认开启自动更新（autoUpdate）：后台下载发布满 autoUpdateDelayHours 的正式版，下次启动 DSH 时换上，
+ * 规则见 lib/auto-update.js（Tiara 网关不自动更新）。关掉后（或自动更新管不到时）退回
+ * "启动时检查一次、只提示"，安装由用户在面板里点。
  */
 function resolveBackendConfig(raw, paths) {
   const backend = plainObject(raw);
   return {
     enabled: bool(backend.enabled, true),
     checkOnStart: bool(backend.checkOnStart, true),
+    autoUpdate: bool(backend.autoUpdate, true),
+    autoUpdateDelayHours: nonNegativeNumber(backend.autoUpdateDelayHours, DEFAULT_AUTO_UPDATE_DELAY_HOURS),
     checkTtlMs: positiveNumber(backend.checkTtlMs, DEFAULT_CHECK_TTL_MS),
     keepVersions: positiveNumber(backend.keepVersions, DEFAULT_KEEP_VERSIONS),
     /** 覆盖 GitHub API 基址（镜像 / 测试用）；空 = 官方 api.github.com。 */

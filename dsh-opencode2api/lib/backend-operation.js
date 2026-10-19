@@ -5,6 +5,46 @@ import { join } from 'node:path';
 
 export const operationActive = (value) => value?.state === 'running';
 
+/**
+ * 后端目录的独占锁。面板的各项操作（安装 / 更新 / 回滚 / 卸载 / 彻底卸载 / 重试启动），以及自动更新的
+ * 后台下载（auto-prepare）与启动时换装（auto-apply），都会动 current/、versions/、cache/ 里的暂存文件
+ * 或停起后端；这些不是幂等操作，两个并发进来会把目录搅乱，所以同一时刻只放一个。
+ *
+ * 放在模块级而不是 createBackendOperations 里：面板操作实例每次 apply 新建一个，插件因配置变更重启
+ * （dispose 再 apply）时模块不会重新加载——锁跨重启有效，新旧实例与自动更新共用同一把。
+ */
+let lockHolder;
+
+/** 正在持锁的动作名（如 'update'、'auto-prepare'）；没人持锁时为 undefined。 */
+export function backendLockHolder() {
+  return lockHolder;
+}
+
+/** 锁被占着时给面板的说明：后台自动下载与手点的操作分开说，用户才知道该等什么。 */
+export function busyReason(holder) {
+  if (holder === 'auto-prepare') return '后台正在自动下载后端新版本，请稍候再试';
+  if (holder === 'auto-apply') return '正在换装自动下载的后端新版本，请稍候再试';
+  return '已有后端操作在进行中，请等待当前任务完成';
+}
+
+/**
+ * 持锁执行 task；锁被占着时不等待，直接返回 { acquired: false, holder }。
+ *
+ * @template T
+ * @param {string} holder 动作名，给"被谁占着"的提示用
+ * @param {() => Promise<T>} task
+ * @returns {Promise<{ acquired: true, value: T } | { acquired: false, holder: string }>}
+ */
+export async function withBackendLock(holder, task) {
+  if (lockHolder) return { acquired: false, holder: lockHolder };
+  lockHolder = holder;
+  try {
+    return { acquired: true, value: await task() };
+  } finally {
+    lockHolder = undefined;
+  }
+}
+
 export function createBackendOperations({ paths, gateway, logger, run }) {
   const file = join(paths.root, 'operation.json');
   let operation, controller, task;
@@ -29,6 +69,9 @@ export function createBackendOperations({ paths, gateway, logger, run }) {
     get busy() { return operationActive(operation); },
     start(action) {
       if (operationActive(operation)) return { ok: false, reason: '已有后端操作在进行中，请等待当前任务完成', operation };
+      // 目录锁要在这里同步拿到：拿不到就立即答 409，不能先建任务再在后台失败。
+      if (lockHolder) return { ok: false, reason: busyReason(lockHolder), holder: lockHolder, operation };
+      lockHolder = action;
       controller = new AbortController();
       operation = { id: randomUUID(), gateway, action, state: 'running', startedAt: new Date().toISOString(),
         progress: { stage: 'prepare', detail: '正在准备后端操作' } };
@@ -48,6 +91,9 @@ export function createBackendOperations({ paths, gateway, logger, run }) {
           // 彻底卸载已删掉整个根目录，不能为了记录成功又把目录建回来。
           save(!(action === 'purge' && result.ok));
           return operation;
+        })
+        .finally(() => {
+          lockHolder = undefined;
         });
       return { ok: true, operation: initial };
     },

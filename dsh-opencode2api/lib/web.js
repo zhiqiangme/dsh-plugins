@@ -5,12 +5,13 @@
 
 import { isDeepStrictEqual } from 'node:util';
 
+import { autoUpdateStatus } from './auto-update.js';
 import { GATEWAY_IDS, gatewayDriver } from './gateway.js';
 import { priceLabel, modelMetadata, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, resolveCredential, syncModels } from './models.js';
 import { initialAdmin } from './backend-config.js';
 import { isFile } from './services.js';
 import { createVersionChecker } from './update.js';
-import { createBackendOperations } from './backend-operation.js';
+import { backendLockHolder, createBackendOperations } from './backend-operation.js';
 
 /** 插件名：与 package.json / cordis.patch.yml 里的 name 保持一致。 */
 const PLUGIN_ID = 'dsh-opencode2api';
@@ -21,7 +22,7 @@ export const PANEL_BASE = `/plugins/${PLUGIN_ID}`;
 /** 模型清单与勾选结果的读写端点（GET 读 / POST 写）。 */
 export const MODELS_PATH = `${PANEL_BASE}/models`;
 
-/** 后端版本与更新端点（GET 读状态 / POST 执行 check|update|rollback）。 */
+/** 后端版本与更新端点（GET 读状态 / POST 执行 check|update|rollback|autoUpdate…）。 */
 export const BACKEND_PATH = `${PANEL_BASE}/backend`;
 
 /** 本插件自身的版本检查端点：当前运行版本 vs npm latest（?force=1 绕过缓存）。与后端 opencode2api 的版本无关。 */
@@ -256,15 +257,23 @@ function plainObject(value) {
  * 后端版本端点。
  *
  * GET 默认**不联网**（首屏要快，GitHub 也可能慢甚至不通），带 `?check=1` 才真去查 release。
- * 修改动作创建后台任务并返回 202，GET 恢复进度和最终结果；同一时刻只允许一个任务。
+ * 修改动作创建后台任务并返回 202，GET 恢复进度和最终结果；同一时刻只允许一个任务，
+ * 且与自动更新共用 backend-operation.js 的目录锁（后台正在自动下载时答 409 并说明原因）。
+ * gateway、autoUpdate 两个动作只写配置，不进任务队列。
  */
-async function handleBackend(req, res, { resolved, env, editor, operations }) {
+async function handleBackend(req, res, { resolved, env, editor, operations, autoUpdater }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
   // 面板地址由服务规格推出来（端口可被 profile 覆盖），浏览器半侧拿它渲染可点击链接。
   const panelUrl = resolved.panelUrl || 'http://127.0.0.1:8081/';
   const driver = gatewayDriver(resolved);
-  const snapshot = () => ({ ...driver.describe(paths), gateway: driver.id, gateways: [...GATEWAY_IDS], panelUrl });
+  const snapshot = () => ({
+    ...driver.describe(paths),
+    gateway: driver.id,
+    gateways: [...GATEWAY_IDS],
+    panelUrl,
+    autoUpdate: autoUpdateStatus(resolved),
+  });
 
   if (req.method === 'GET') {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -305,8 +314,19 @@ async function handleBackend(req, res, { resolved, env, editor, operations }) {
   const action = typeof body.value.action === 'string' ? body.value.action : '';
 
   if (action === 'gateway') {
-    const result = await selectGateway({ resolved, editor, gateway: body.value.gateway, busy: operations.busy });
+    // 后台自动下载只写 cache/ 里的暂存文件，不碰正在跑的程序：切网关重启插件时它随旧实例中断，不必等它下完。
+    const holder = backendLockHolder();
+    const busy = operations.busy || (Boolean(holder) && holder !== 'auto-prepare');
+    const result = await selectGateway({ resolved, editor, gateway: body.value.gateway, busy });
     json(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  if (action === 'autoUpdate') {
+    const result = await setAutoUpdate({ resolved, editor, enabled: body.value.enabled });
+    // 刚打开就查一轮，不用等下一次定时；下载可能要几十秒，不等它，结果从后续快照里看。
+    if (result.ok && result.enabled) autoUpdater?.tick();
+    json(res, result.ok ? 200 : 400, { ...result, backend: snapshot() });
     return;
   }
 
@@ -342,6 +362,29 @@ async function handleBackend(req, res, { resolved, env, editor, operations }) {
 
   const result = operations.start(action);
   json(res, result.ok ? 202 : 409, { ...result, backend: snapshot() });
+}
+
+/**
+ * 面板的「自动更新」开关：写本插件那一行的 `config.backend.autoUpdate`（保留 backend 的其它字段）。
+ *
+ * 写完宿主会触发 internal/update，index.js 的钩子把它当就地生效的字段处理，不重启插件；
+ * 这里也同步改一次手里的 resolved，宿主没转发 internal/update 时（测试、旧版本）同样立即生效。
+ */
+export async function setAutoUpdate({ resolved, editor, enabled }) {
+  if (typeof enabled !== 'boolean') return { ok: false, reason: 'enabled 必须是布尔值' };
+  if (typeof editor?.edit !== 'function') return { ok: false, reason: '宿主没有 configEditor 服务，无法保存自动更新设置' };
+  const entry = findConfigEntry(editor, { id: PLUGIN_ID });
+  if (!entry) return { ok: false, reason: `DSH 里没有可编辑的 ${PLUGIN_ID} 条目` };
+  try {
+    await editor.edit(entry, (current) => {
+      const config = plainObject(current);
+      return { ...config, backend: { ...plainObject(config.backend), autoUpdate: enabled } };
+    });
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+  if (resolved.backend) resolved.backend.autoUpdate = enabled;
+  return { ok: true, enabled };
 }
 
 /** gateway 变更交给宿主重启；旧后端先停止，两套后端不同时占用同一 API 端口。 */
@@ -414,8 +457,9 @@ function forceFrom(req) {
  * 注册面板路由；宿主没有 webServer 时只记一条 warn。
  *
  * checkVersion 只给测试注入，缺省用 lib/update.js 的带缓存检查器。
+ * autoUpdater 与入口处的定时检查共用：面板打开「自动更新」时立即查一轮。
  */
-export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, checkVersion = createVersionChecker() }) {
+export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, autoUpdater, checkVersion = createVersionChecker() }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const driver = gatewayDriver(resolved);
   const operations = createBackendOperations({ paths, gateway: driver.id, logger, run: async (action, control) => {
@@ -503,7 +547,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       const disposeBackend = webServer.register({
         kind: 'exact',
         path: BACKEND_PATH,
-        handler: guard((req, res) => handleBackend(req, res, { resolved, env, operations, editor: configEditorOf(ctx) })),
+        handler: guard((req, res) => handleBackend(req, res, { resolved, env, operations, autoUpdater, editor: configEditorOf(ctx) })),
       });
 
       const disposeVersion = webServer.register({

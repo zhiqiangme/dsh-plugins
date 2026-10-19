@@ -137,6 +137,8 @@ export function localVersion(paths) {
     managed: Boolean(manifest),
     /** true = 清单记录的 commit 与二进制实际 commit 不同（手动换过 exe） */
     drifted: Boolean(manifest?.commit && info?.revision && manifest.commit !== info.revision),
+    /** 安装来源：github-release / auto-update / rollback / adopted；自动更新据此识别"用户回滚过"。 */
+    source: typeof manifest?.source === 'string' ? manifest.source : null,
     previous: manifest?.previous ?? null,
   };
 }
@@ -382,22 +384,35 @@ export async function stopForUpdate(service, logger) {
 }
 
 /**
- * 执行更新：下载 → 校验 → 解压 → 落地校验 → 停服 → 切换 → 起服 → 健康检查（失败回滚）。
- *
- * @param {{ paths: object, env?: object, apiBase?: string, service?: object, logger?: object,
- *           keepVersions?: number, target?: object }} options
+ * 落地校验：暂存的 exe 必须自称是目标 commit，否则说明资产与 tag 对不上（或暂存文件被换过）。
+ * 不通过时返回失败结果，通过返回 undefined。
  */
-export async function applyUpdate({
-  paths,
-  env = process.env,
-  apiBase,
-  service,
-  logger,
-  keepVersions = DEFAULT_KEEP_VERSIONS,
-  target,
-  signal,
-  onProgress,
-} = {}) {
+function checkStagedExe(stagedExe, latest) {
+  const stagedInfo = readBuildInfo(stagedExe);
+  if (!stagedInfo) {
+    return { ok: false, state: 'binary-unknown', reason: '下载到的 exe 里读不到构建信息，拒绝安装', latest };
+  }
+  if (latest.commit && stagedInfo.revision !== latest.commit) {
+    return {
+      ok: false,
+      state: 'binary-mismatch',
+      reason: `包内 exe 的 revision（${stagedInfo.revision.slice(0, 7)}）与 release 的 commit（${latest.commit.slice(0, 7)}）不一致`,
+      latest,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * 更新的前半段：下载 → 校验 → 解压到 cache/ 暂存 → 落地校验。不停服务、不碰 current/。
+ *
+ * 手动更新紧接着调 commitUpdate；自动更新（auto-update.js）在后台只做这一步，
+ * 把暂存结果记下来，等下次 DSH 启动、后端还没起来时再换上。
+ *
+ * @returns 'up-to-date'；'prepared'（带 staged：暂存路径、资产名与包的 sha256）；'cancelled'；
+ *          或 ok:false 的校验失败——此时暂存文件已删掉，cache/ 里不留未通过校验的 exe。
+ */
+export async function prepareUpdate({ paths, env = process.env, apiBase, logger, target, signal, onProgress } = {}) {
   onProgress?.({ stage: 'version', detail: '查询后端版本' });
   const latest = target ?? (await fetchLatestRelease({ env, apiBase, signal }));
   const local = localVersion(paths);
@@ -423,34 +438,67 @@ export async function applyUpdate({
     return { ok: false, state: 'extract-failed', reason: error instanceof Error ? error.message : String(error), latest };
   }
 
-  if (service?.disposed || signal?.aborted) return { ok: false, state: 'cancelled', reason: '插件已关闭，安装已取消' };
+  if (signal?.aborted) return { ok: false, state: 'cancelled', reason: '插件已关闭，安装已取消' };
   ensureLayout(paths);
   const stagedExe = join(paths.cache, `staged-${versionDirName(latest.tag, latest.commit)}.exe`);
   writeFileSync(stagedExe, exeBuffer);
+  const rejected = checkStagedExe(stagedExe, latest);
+  if (rejected) {
+    rmSync(stagedExe, { force: true });
+    forgetBuildInfo(stagedExe);
+    return rejected;
+  }
+  return { ok: true, state: 'prepared', local, latest, staged: { path: stagedExe, asset: asset.name, sha256: verified.actual } };
+}
+
+/**
+ * 更新的后半段：停服 → 切换 → 起服 → 健康检查（失败回滚）→ 写清单。
+ *
+ * 暂存的 exe 可能是上一次 DSH 运行时下载的（自动更新），换上之前再核对一次身份：
+ * 文件在这期间被删、被截断或被换掉，都不该装上去。
+ *
+ * @param {{ paths: object, service?: object, logger?: object, keepVersions?: number,
+ *           latest: { tag: string, commit?: string }, staged: { path: string, asset?: string, sha256?: string },
+ *           keepStaged?: boolean, source?: string, signal?: AbortSignal, onProgress?: Function }} options
+ *   keepStaged：这次换不了（端口上是别人起的进程、插件正在关闭）时保留暂存文件（自动更新下次启动再试）；
+ *   source：写进清单的安装来源，自动更新记 'auto-update'。
+ */
+export async function commitUpdate({
+  paths,
+  service,
+  logger,
+  keepVersions = DEFAULT_KEEP_VERSIONS,
+  latest,
+  staged,
+  keepStaged = false,
+  source = 'github-release',
+  signal,
+  onProgress,
+} = {}) {
+  const stagedExe = staged?.path;
   // 暂存文件只在换上去时被挪走；之前任何一步拒绝安装，都把它删掉，不在 cache/ 里留一个未通过校验的 exe。
   const discardStaged = (result) => {
     rmSync(stagedExe, { force: true });
     forgetBuildInfo(stagedExe);
     return result;
   };
-
-  // 落地校验：包里的 exe 必须自称是目标 commit，否则说明资产与 tag 对不上
-  const stagedInfo = readBuildInfo(stagedExe);
-  if (!stagedInfo) {
-    return discardStaged({ ok: false, state: 'binary-unknown', reason: '下载到的 exe 里读不到构建信息，拒绝安装', latest });
+  if (!isFile(stagedExe)) {
+    return { ok: false, state: 'staged-missing', reason: `找不到暂存的新版本：${stagedExe ?? '(空)'}`, latest };
   }
-  if (latest.commit && stagedInfo.revision !== latest.commit) {
-    return discardStaged({
-      ok: false,
-      state: 'binary-mismatch',
-      reason: `包内 exe 的 revision（${stagedInfo.revision.slice(0, 7)}）与 release 的 commit（${latest.commit.slice(0, 7)}）不一致`,
-      latest,
-    });
+  const rejected = checkStagedExe(stagedExe, latest);
+  if (rejected) return discardStaged(rejected);
+  if (service?.disposed || signal?.aborted) {
+    const cancelled = { ok: false, state: 'cancelled', reason: '插件已关闭，安装已取消' };
+    return keepStaged ? cancelled : discardStaged(cancelled);
   }
 
-  ensureBackendConfig(paths, service.spec);
+  const local = localVersion(paths);
+  ensureBackendConfig(paths, service?.spec);
   const stop = await stopForUpdate(service, logger);
-  if (!stop.ok) return discardStaged({ ok: false, state: 'not-owned', reason: stop.reason, latest });
+  if (!stop.ok) {
+    const refused = { ok: false, state: 'not-owned', reason: stop.reason, latest };
+    return keepStaged ? refused : discardStaged(refused);
+  }
 
   const swap = swapIn(paths, stagedExe, { from: local, to: latest });
 
@@ -481,17 +529,40 @@ export async function applyUpdate({
   writeManifest(paths, {
     tag: latest.tag,
     commit: latest.commit,
-    asset: asset.name,
-    sha256: verified.actual,
+    asset: staged.asset ?? null,
+    sha256: staged.sha256 ?? null,
     installedAt: new Date().toISOString(),
-    source: 'github-release',
+    source,
     previous: local.revision ? { tag: local.tag, revision: local.revision } : undefined,
   });
   const pruned = pruneVersions(paths, keepVersions);
-  logger?.info?.(`[opencode2api] 后端已更新到 ${latest.tag}（${latest.commit.slice(0, 7)}）`);
+  logger?.info?.(`[opencode2api] 后端已更新到 ${latest.tag}（${String(latest.commit ?? '').slice(0, 7)}）`);
   if (health.servable === false) logger?.info?.('[opencode2api] 模型目录尚未就绪，请在后端管理页检查上游配置与连接状态');
 
   return { ok: true, state: 'updated', latest, health, pruned, local: localVersion(paths) };
+}
+
+/**
+ * 执行更新（面板「更新」/「安装」）：prepareUpdate 紧接 commitUpdate，
+ * 即 下载 → 校验 → 解压 → 落地校验 → 停服 → 切换 → 起服 → 健康检查（失败回滚）。
+ *
+ * @param {{ paths: object, env?: object, apiBase?: string, service?: object, logger?: object,
+ *           keepVersions?: number, target?: object, signal?: AbortSignal, onProgress?: Function }} options
+ */
+export async function applyUpdate({
+  paths,
+  env = process.env,
+  apiBase,
+  service,
+  logger,
+  keepVersions = DEFAULT_KEEP_VERSIONS,
+  target,
+  signal,
+  onProgress,
+} = {}) {
+  const prepared = await prepareUpdate({ paths, env, apiBase, logger, target, signal, onProgress });
+  if (prepared.state !== 'prepared') return prepared;
+  return commitUpdate({ paths, service, logger, keepVersions, latest: prepared.latest, staged: prepared.staged, signal, onProgress });
 }
 
 /** 回滚到清单里记录的上一版本。 */
