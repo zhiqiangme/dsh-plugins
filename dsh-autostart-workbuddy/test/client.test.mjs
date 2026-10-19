@@ -250,6 +250,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
+    'emptyFiltered', 'recoveryOff', 'recoveryExternal',
     'accountOverview', 'balanceOverview', 'balanceUnknown', 'balanceUnsupported', 'balanceUnavailable', 'balanceHint', 'balanceUpdated',
     'hubFollowKey',
     'hubDual', 'hubDualHint', 'hubCnKey', 'hubGlKey', 'hubApply', 'hubDualSaved', 'hubBoth',
@@ -456,6 +457,29 @@ test('模型开关：只开启同步就能保存，POST 同时传开关和白名
   assert.equal(button(collectByType(tree, 'button'), '保存并同步').props.disabled, false, '成功后仍允许重新同步');
 });
 
+test('持续规则可从卡片保存，搜索与区域过滤不写入配置', async () => {
+  const requests = [];
+  const states = modelStates(true);
+  states[2] = { enabled: true, savedEnabled: true, only: [], rules: {}, savedRules: {} };
+  states[4] = new Set(ROWS.map((row) => row.id));
+  states[5] = new Set(ROWS.map((row) => row.id));
+  const { renderCard } = boot(states, { fetchImpl: async (_path, options) => {
+    if (options.body) requests.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ ok: true, enabled: true, only: [], rules: { freeOnly: true }, models: ROWS, sync: { state: 'updated', count: 1 } }) };
+  } });
+  const free = collectByType(renderCard(), 'label').find((node) => collectText(node).includes('只同步免费模型'));
+  collectByType(free, 'input')[0].props.onChange({ target: { checked: true } });
+  const search = collectByType(renderCard(), 'input').find((node) => node.props.type === 'search');
+  search.props.onChange({ target: { value: 'Beta' } });
+  const region = collectByType(renderCard(), 'select').find((node) => node.props['aria-label'] === '全部区域');
+  region.props.onChange({ target: { value: 'global' } });
+  const tree = renderCard();
+  assert.ok(!collectText(tree).includes('Alpha CN 0.11'));
+  assert.ok(collectText(tree).includes('Beta GL Free'));
+  await button(collectByType(tree, 'button'), '保存并同步').props.onClick();
+  assert.deepEqual(requests, [{ enabled: true, only: [], rules: { freeOnly: true } }]);
+});
+
 test('装好后端：自动打开同步（不带 only，沿用白名单）并刷新模型区', async () => {
   const requests = [];
   const notInstalled = { exeExists: false, version: {}, history: [] };
@@ -537,10 +561,25 @@ test('模型同步：勾选未变时可重试同步失败，保存期间禁用�
 
   const states = modelStates(true);
   states[6] = true;
+  states[8] = { exeExists: true, gateways: ['wb2api', 'hub'], gateway: 'wb2api', history: [] };
   const busy = boot(states).renderCard();
   assert.ok(collectByType(busy, 'input').every((node) => node.props.disabled === true));
   const toolbar = collectByType(busy, 'div').find((node) => node.props.className === 'dsm-wb-toolbar');
   assert.ok(collectByType(toolbar, 'button').every((node) => node.props.disabled === true));
+  for (const label of ['更新', '回滚', '卸载', 'workbuddy2api-hub']) {
+    const operation = button(collectByType(busy, 'button'), label);
+    assert.ok(operation, `${label} 按钮存在`);
+    assert.equal(operation.props.disabled, true, `${label} 在保存期间禁用`);
+  }
+});
+
+test('搜索隐藏的勾选仍然生效，不误提示当前区域已选择全部', () => {
+  const states = modelStates(true);
+  states[2].realm = 'dual';
+  const app = boot(states);
+  const search = collectByType(app.renderCard(), 'input').find((node) => node.props.type === 'search');
+  search.props.onChange({ target: { value: 'Beta' } });
+  assert.ok(!collectText(app.renderCard()).includes(app.t('emptyHint')));
 });
 
 test('一键诊断通过 POST 获取报告，提供复制入口和可选择的报告文本', async () => {

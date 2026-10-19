@@ -37,9 +37,15 @@ export function createRecovery({ service, resolved, logger, onRecovered, now = D
       if (stopped) return;
       if (!locked.acquired) { schedule(); return; }
       if (locked.value?.state === 'failed') { schedule(); return; }
+      if (locked.value?.state === 'already-running' && !service.isAlive?.()) {
+        status = { state: 'external', attempts: attempts.length, reason: '端口已被外部进程占用，自动恢复暂停，请检查诊断' };
+        logger.warn(`[workbuddy] ${status.reason}`);
+        return;
+      }
       status = { state: 'recovered', attempts: attempts.length, at: new Date(now()).toISOString() };
       logger.info('[workbuddy] 后端已自动恢复');
-      await onRecovered?.();
+      try { await onRecovered?.(); }
+      catch (error) { logger.warn(`[workbuddy] 后端已恢复，但模型同步失败：${error.message}`); }
     } catch (error) {
       if (!stopped) {
         logger.warn(`[workbuddy] 恢复后端失败：${error.message}`);
@@ -52,7 +58,7 @@ export function createRecovery({ service, resolved, logger, onRecovered, now = D
     onExit() {
       if (!stopped && armed && service.startedByUs && !service.stopping && !running) schedule();
     },
-    reset() { attempts.length = 0; status = { state: 'idle', attempts: 0 }; },
+    reset() { if (timer) clearTimeout(timer); timer = undefined; attempts.length = 0; status = { state: 'idle', attempts: 0 }; },
     suspend() {
       if (timer) clearTimeout(timer);
       timer = undefined;

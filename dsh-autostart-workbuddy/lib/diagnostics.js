@@ -1,14 +1,14 @@
 /** 诊断只做探测，不改配置、不发送对话；报告在离开宿主前统一脱敏。 */
 import { homedir } from 'node:os';
 import { gatewayDriver } from './gateway.js';
-import { fetchModels, resolveModelApiKey, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE } from './models.js';
+import { fetchModels, fetchHubRegions, hubRegionKeys, resolveModelApiKey, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE } from './models.js';
 import { isFile, probeTcp } from './services.js';
 import { healthTarget } from './resync.js';
 
 export function redactReport(value, secrets = [], home = homedir()) {
   const redact = (text) => {
     let out = text;
-    for (const secret of secrets.filter((s) => typeof s === 'string' && s.length >= 4).sort((a, b) => b.length - a.length)) out = out.replaceAll(secret, '[redacted]');
+    for (const secret of secrets.filter((s) => typeof s === 'string' && s.length > 0).sort((a, b) => b.length - a.length)) out = out.replaceAll(secret, '[redacted]');
     if (home) for (const path of new Set([home, home.replaceAll('\\', '/')])) out = out.replaceAll(path, '<home>');
     return out.replace(/(Bearer\s+)[^\s"',;]+/gi, '$1[redacted]')
       .replace(/(["']?(?:api[_-]?key|password|access_token|refresh_token|token|secret|cookie|uid|account)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, '$1[redacted]')
@@ -24,20 +24,21 @@ export async function diagnose({ resolved, service, recovery, editor, credential
   const models = resolved.models;
   const apiKey = await resolveModelApiKey(models, env, credentials);
   const secrets = [apiKey, ...Object.entries({ ...env, ...resolved.spec.env }).filter(([key]) => /key|token|password|secret|cookie/i.test(key)).map(([, value]) => value)];
+  if (models.hubDual) secrets.push(...Object.values(await hubRegionKeys(credentials, env)));
   const checks = [{ id: 'executable', ok: isFile(resolved.spec.exe), detail: resolved.spec.exe }];
   const target = healthTarget(models.baseURL, resolved.spec);
   const [listening, health, catalog] = await Promise.all([
     tcp(target.port, target.host),
     driver.probe({ ...target, timeoutMs: 5000 }),
-    fetchModels({ baseURL: models.baseURL, apiKey, timeoutMs: 5000 }),
+    models.hubDual ? fetchHubRegions({ models: { ...models, timeoutMs: 5000 }, credentials, env }) : fetchModels({ baseURL: models.baseURL, apiKey, timeoutMs: 5000 }),
   ]);
   checks.push({ id: 'port', ok: listening, detail: `${target.host}:${target.port}` });
   checks.push({ id: 'gateway', ok: health.ok, detail: health.ok ? driver.title : health.reason });
   checks.push({ id: 'accounts', ok: health.servable === true, detail: { ready: health.healthy ?? null, total: health.total ?? null } });
-  checks.push({ id: 'models', ok: catalog.ok, detail: catalog.ok ? { count: catalog.models.length, realm: catalog.realm } : catalog.reason });
+  checks.push({ id: 'models', ok: catalog.ok, detail: catalog.ok ? { count: catalog.models?.length ?? catalog.regions.reduce((n, region) => n + region.models.length, 0), realm: models.hubDual ? 'dual' : catalog.realm } : catalog.reason });
   const entry = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE });
   const ref = providerKeyRef(entry?.options?.config, models.provider);
-  if (ref && typeof credentials?.resolve === 'function') {
+  if (!models.hubDual && ref && typeof credentials?.resolve === 'function') {
     try {
       const value = await credentials.resolve(ref);
       const stored = typeof value === 'string' ? value : value?.value;

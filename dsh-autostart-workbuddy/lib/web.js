@@ -149,16 +149,9 @@ async function readJsonBody(req) {
   return { ok: true, value };
 }
 
-/** 取网关密钥：显式配置 → 环境变量 → 面板自己的 config.json。 */
-function resolveApiKey(models, env) {
-  if (models.apiKey) return models.apiKey;
-  const fromEnv = typeof env.WORKBUDDY_PROXY_KEY === 'string' ? env.WORKBUDDY_PROXY_KEY.trim() : '';
-  return fromEnv || panelApiKey(models.panelConfig);
-}
-
 /**
  * 读后端控制台的访问密钥：就是 wb2api 自己 config.json 里的 api_key（控制台的密钥门校验的正是它）。
- * 不走 resolveApiKey——那里优先用 profile/环境变量里给 DSH 调用的网关密钥，未必与 config.json 一致。
+ * 不走 resolveModelApiKey——那里优先用 profile/凭据库里给 DSH 调用的网关密钥，未必与 config.json 一致。
  *
  * key 为空字符串 = config.json 没设 api_key，控制台不鉴权、不会弹密钥框。
  */

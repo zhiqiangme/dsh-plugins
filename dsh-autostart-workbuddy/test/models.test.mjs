@@ -201,6 +201,19 @@ test('显式规则没有匹配项时清空管理的列表，避免继续展示�
   } finally { backend.stop(); }
 });
 
+test('规则已开启但白名单模型暂时缺席时，保留现有列表', async () => {
+  const backend = startFixture({ TEST_MODE: 'http-models', TEST_MODELS_JSON: JSON.stringify({ data: [{ id: 'global:free', credits: 'x0' }] }) });
+  try {
+    const { spec, models } = configFor(await backend.ready, { only: ['cn:missing'], rules: { freeOnly: true } });
+    const editor = createFakeConfigEditor(profileRows());
+    const before = structuredClone(providersOf(editor));
+    const result = await syncModels({ spec, models, editor, env: {} });
+    assert.equal(result.state, 'skipped');
+    assert.deepEqual(providersOf(editor), before);
+    assert.deepEqual(editor.edits, []);
+  } finally { backend.stop(); }
+});
+
 test('YAML 标量：只有不安全时才加引号', () => {
   assert.equal(yamlScalar('cn:deepseek-v4.1-flash'), 'cn:deepseek-v4.1-flash');
   assert.equal(yamlScalar('Deepseek-V4.1-Flash CN 0.11'), 'Deepseek-V4.1-Flash CN 0.11');

@@ -83,7 +83,7 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, rem
   const groups = fetched.regions.map((region) => ({ ...region, name: dualProviderName(models.provider, region.realm), entries: planModelEntries(region.models, models) }));
   if (groups.some((group) => group.models.length === 0)) return { state: 'skipped', reason: '某个区域返回空目录，保留现有列表', documentPath };
   for (const group of groups) {
-    if (!group.entries.length && !hasModelRules(models.rules)) return { state: 'skipped', reason: '某个区域按白名单过滤后为空，保留现有列表', documentPath };
+    if (!group.entries.length && (!hasModelRules(models.rules) || !selectModels(group.models, models.only).length)) return { state: 'skipped', reason: '某个区域按白名单过滤后为空，保留现有列表', documentPath };
     const existing = target.options?.config?.providers?.[group.name];
     if (existing && !ownsDualProvider(existing, group.ref)) return { state: 'failed', reason: `provider ${group.name} 已被占用，请先修改分组名`, documentPath };
   }
@@ -623,7 +623,7 @@ export async function syncModels(options) {
   // hub 的当前出口（应答顶层的 realm）；wb2api 没有这一项。定时同步靠它认出"出口切换了"。
   const realm = fetched.realm;
   const entries = planModelEntries(fetched.models, models);
-  if (entries.length === 0 && !hasModelRules(models.rules)) {
+  if (entries.length === 0 && (!hasModelRules(models.rules) || !selectModels(fetched.models, models.only).length)) {
     return { state: 'skipped', reason: '按 only/exclude 过滤后没有可写的模型', realm, documentPath };
   }
 

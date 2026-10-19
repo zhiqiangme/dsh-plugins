@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { resolvePluginConfig } from '../lib/config.js';
 import { describeModels, setHubMode } from '../lib/web.js';
 import { syncModels } from '../lib/models.js';
+import { diagnose } from '../lib/diagnostics.js';
 import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 async function setup(t) {
@@ -76,4 +77,22 @@ test('未绑定 Key 单独存入凭据库，关闭双区域后可以继续跟随
   const provider = editor.entry('llm-pi-ai').options.config.providers.workbuddy;
   assert.equal(provider.models[0].name, 'Shared CN Free');
   assert.equal(resolved.models.apiKeyRef, 'WORKBUDDY_PROXY_KEY');
+});
+
+test('双区域诊断使用各自凭据并遮盖两把 Key，白名单暂时缺席时不清空分组', async (t) => {
+  const { resolved, editor, credentials, options } = await setup(t);
+  await setHubMode({ ...options, enabled: true, cnKey: 'cn-secret', globalKey: 'gl-secret' });
+  const report = await diagnose({ ...options, service: { recentStderr: ['cn-secret gl-secret'] }, driver: {
+    title: 'fixture', probe: async () => ({ ok: true, servable: true, healthy: 2, total: 2 }),
+  } });
+  assert.deepEqual(report.checks.find((check) => check.id === 'models').detail, { count: 2, realm: 'dual' });
+  assert.ok(!JSON.stringify(report).includes('cn-secret'));
+  assert.ok(!JSON.stringify(report).includes('gl-secret'));
+  assert.ok(!report.checks.some((check) => check.id === 'credential' && !check.ok));
+  resolved.models.only = ['cn:missing'];
+  resolved.models.rules = { freeOnly: true };
+  const before = structuredClone(editor.entry('llm-pi-ai').options.config);
+  const result = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} });
+  assert.equal(result.state, 'skipped');
+  assert.deepEqual(editor.entry('llm-pi-ai').options.config, before);
 });

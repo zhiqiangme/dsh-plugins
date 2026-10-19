@@ -87,7 +87,8 @@ export function createModelResync(options) {
     if (!models?.enabled) return { state: 'disabled' };
 
     const health = await probe(healthTarget(models.baseURL, resolved.spec));
-    if (!health.ok || !health.servable) {
+    // 双区域的请求由各自 Key 路由，不能用看板当前出口的账号状态挡住另一组目录。
+    if (!health.ok || (!models.hubDual && !health.servable)) {
       const result = { state: 'not-ready', reason: health.ok ? '账号池暂无可用账号' : health.reason };
       note('info', `定时同步跳过：${result.reason}`);
       return result;

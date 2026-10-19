@@ -45,6 +45,18 @@ async function setup(t, { probe = READY, credentials = createFakeCredentials() }
   return { backend, resolved, editor, credentials, logger, resync, ids };
 }
 
+test('双区域定时同步不被看板当前出口的空账号池挡住', async () => {
+  const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, hubDual: true } }, {});
+  let calls = 0;
+  const resync = createModelResync({ resolved, logger: memoryLogger(), editor: () => undefined, credentials: () => undefined,
+    probe: async () => ({ ok: true, servable: false, realm: 'intl' }),
+    sync: async ({ models }) => { calls++; assert.equal(models.hubDual, true); return { state: 'unchanged', entries: [], realm: 'dual' }; },
+  });
+  assert.equal((await resync.tick()).state, 'unchanged');
+  assert.equal(calls, 1);
+  assert.equal(resync.status.realm, 'dual');
+});
+
 test('上游下架的模型连续两轮缺席后从 DSH 移除，之后保持不变', async (t) => {
   const { backend, editor, resync, ids } = await setup(t);
   const edits = editor.edits.length;

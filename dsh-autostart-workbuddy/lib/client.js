@@ -110,6 +110,9 @@ window.__ModuleLoader__.load({
 
     const CSS = `
 .dsm-wb-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;padding:14px 16px}
+.dsm-wb-filters input:not([type=checkbox]),.dsm-wb-filters select,.dsm-wb-gateway input[type=password]{font:inherit;font-size:12px;color:var(--dsw-alias-label-primary,#e6e6e6);background:var(--dsw-alias-bg-layer-2,#25262b);border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;padding:6px 8px;max-width:100%;box-sizing:border-box}
+.dsm-wb-filters label{font-size:12px;color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-wb-gateway input[type=password]{display:block;width:100%;margin:6px 0}
 .dsm-wb-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:15px;font-weight:600;line-height:1.4}
 .dsm-wb-desc{margin:4px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
 .dsm-wb-panel{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
@@ -226,12 +229,12 @@ window.__ModuleLoader__.load({
       backendStarted: '后端已启动。',
       recoveryStatus: '自动恢复：{state}（本窗口已尝试 {attempts} 次）',
       recoveryIdle: '待命', recoveryWaiting: '等待重试', recoveryRestarting: '正在重启', recoveryRecovered: '已恢复', recoveryExhausted: '连续失败，已暂停',
-      recoveryRetry: '重试启动',
+      recoveryRetry: '重试启动', recoveryOff: '已关闭', recoveryExternal: '端口被外部进程占用，已暂停',
       diagnose: '一键诊断', diagnoseCopy: '复制脱敏报告', diagnoseCopied: '诊断报告已复制', diagnoseWorking: '正在诊断…',
-      modelSearch: '搜索模型', regionAll: '全部区域', ruleFree: '只同步免费模型', ruleVision: '只同步视觉模型', ruleMax: '最高倍率（留空不限）',
+      emptyFiltered: '没有符合筛选条件的模型', modelSearch: '搜索模型', regionAll: '全部区域', ruleFree: '只同步免费模型', ruleVision: '只同步视觉模型', ruleMax: '最高倍率（留空不限）',
       sortUpstream: '上游顺序', sortName: '按名称排序', sortCredits: '按倍率排序', ruleHint: '规则与勾选共同生效，新增模型也按规则筛选；未定价的模型不会视为免费。批量操作只影响当前筛选结果。',
       hubDual: 'CN / GL 同时使用', hubDualHint: '先在 HUB 设置页创建分别绑定国内和国际出口的 API Key；只存入 DSH 凭据库，不写进 profile。留空沿用已保存的 Key。',
-      hubCnKey: 'CN 绑定区域的 Key', hubGlKey: 'GL 绑定区域的 Key', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存并同步', hubBoth: 'CN + GL（独立路由）',
+      hubCnKey: 'CN 绑定区域的 Key', hubGlKey: 'GL 绑定区域的 Key', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存', hubBoth: 'CN + GL（独立路由）',
       hubFollowKey: '跟随出口的未绑定 Key（可选，供关闭双区域后使用）',
       accountOverview: '账号概览：可用 {ready} / 总计 {total}', balanceOverview: '{realm} 剩余积分：{balance}；启用账号 {enabled}，有积分数据 {known}',
       balanceUnknown: '尚未获取', balanceUnsupported: '后端版本不支持', balanceUnavailable: '暂不可用或密钥无效', balanceHint: '积分来自 HUB 缓存，不发起对话、不刷新上游积分。', balanceUpdated: '积分快照：{time}',
@@ -363,12 +366,12 @@ window.__ModuleLoader__.load({
       backendStarted: 'Backend started.',
       recoveryStatus: 'Recovery: {state} ({attempts} attempts in this window)',
       recoveryIdle: 'Ready', recoveryWaiting: 'Waiting', recoveryRestarting: 'Restarting', recoveryRecovered: 'Recovered', recoveryExhausted: 'Paused after repeated failures',
-      recoveryRetry: 'Retry start',
+      recoveryRetry: 'Retry start', recoveryOff: 'Disabled', recoveryExternal: 'Paused: port belongs to another process',
       diagnose: 'Diagnose', diagnoseCopy: 'Copy redacted report', diagnoseCopied: 'Report copied', diagnoseWorking: 'Diagnosing…',
-      modelSearch: 'Search models', regionAll: 'All regions', ruleFree: 'Sync free models only', ruleVision: 'Sync vision models only', ruleMax: 'Maximum multiplier (blank: unlimited)',
+      emptyFiltered: 'No models match the filters', modelSearch: 'Search models', regionAll: 'All regions', ruleFree: 'Sync free models only', ruleVision: 'Sync vision models only', ruleMax: 'Maximum multiplier (blank: unlimited)',
       sortUpstream: 'Upstream order', sortName: 'Sort by name', sortCredits: 'Sort by multiplier', ruleHint: 'Rules and selections both apply, including to new models. Unknown prices are not treated as free. Bulk actions affect only filtered rows.',
       hubDual: 'Use CN and GL together', hubDualHint: 'Create keys bound to China and international in HUB settings. Keys are stored only in DSH credentials. Leave blank to reuse saved keys.',
-      hubCnKey: 'CN bound API key', hubGlKey: 'GL bound API key', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved and synced', hubBoth: 'CN + GL (independent routes)',
+      hubCnKey: 'CN bound API key', hubGlKey: 'GL bound API key', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved', hubBoth: 'CN + GL (independent routes)',
       hubFollowKey: 'Unbound key for follow mode (optional)',
       accountOverview: 'Accounts: {ready} ready / {total} total', balanceOverview: '{realm} remaining credits: {balance}; {enabled} enabled accounts, {known} with balance data',
       balanceUnknown: 'Not available yet', balanceUnsupported: 'Unsupported backend version', balanceUnavailable: 'Unavailable or invalid key', balanceHint: 'Reads cached HUB balances without chat requests or upstream refreshes.', balanceUpdated: 'Balance snapshot: {time}',
@@ -1302,7 +1305,7 @@ window.__ModuleLoader__.load({
           try {
             if (document.visibilityState === 'hidden' || blocked()) return;
             const payload = await request(`${BACKEND_PATH}?overview=1`, 'GET');
-            if (!active) return;
+            if (!active || blocked()) return;
             setBackend(payload.backend ?? {});
             const stamp = JSON.stringify([payload.backend?.gateway, payload.backend?.modelStatus, payload.backend?.recovery?.state]);
             if (stamp === lastStamp || blocked()) return;
@@ -1351,10 +1354,10 @@ window.__ModuleLoader__.load({
       };
       const body = [];
       if (backend?.gateway === 'hub') body.push(h('div', { key: 'hubMode', className: 'dsm-wb-gateway' },
-        h('label', { className: 'dsm-wb-sync' }, h('input', { type: 'checkbox', checked: hubDraft?.enabled ?? meta.hubDual ?? false, disabled: Boolean(backendBusy), onChange: (e) => setHubDraft((last) => ({ ...last, enabled: e.target.checked })) }), t('hubDual')),
+        h('label', { className: 'dsm-wb-sync' }, h('input', { type: 'checkbox', checked: hubDraft?.enabled ?? meta.hubDual ?? false, disabled: Boolean(saving || backendBusy), onChange: (e) => setHubDraft((last) => ({ ...last, enabled: e.target.checked })) }), t('hubDual')),
         h('p', { className: 'dsm-wb-hint' }, t('hubDualHint')),
-        ...[['cnKey', 'hubCnKey'], ['globalKey', 'hubGlKey'], ['followKey', 'hubFollowKey']].map(([key, label]) => h('input', { key, type: 'password', autoComplete: 'off', 'aria-label': t(label), placeholder: t(label), value: hubDraft?.[key] ?? '', disabled: Boolean(backendBusy), onChange: (e) => setHubDraft((last) => ({ ...last, [key]: e.target.value })) })),
-        wbButton('applyHubMode', 'outline', t('hubApply'), applyHubMode, Boolean(backendBusy))));
+        ...[['cnKey', 'hubCnKey'], ['globalKey', 'hubGlKey'], ['followKey', 'hubFollowKey']].map(([key, label]) => h('input', { key, type: 'password', autoComplete: 'off', 'aria-label': t(label), placeholder: t(label), value: hubDraft?.[key] ?? '', disabled: Boolean(saving || backendBusy), onChange: (e) => setHubDraft((last) => ({ ...last, [key]: e.target.value })) })),
+        wbButton('applyHubMode', 'outline', t('hubApply'), applyHubMode, Boolean(saving || backendBusy))));
       body.push(h('div', { key: 'diagnose', className: 'dsm-wb-toolbar dsm-wb-diagnostics' },
         wbButton('diagnose', 'outline', t(diagnostic?.busy ? 'diagnoseWorking' : 'diagnose'), runDiagnostic, diagnostic?.busy),
         diagnostic?.report ? wbButton('copyReport', 'outline', t(diagnostic.copied ? 'diagnoseCopied' : 'diagnoseCopy'), copyDiagnostic, false) : null));
@@ -1379,7 +1382,7 @@ window.__ModuleLoader__.load({
             h('input', {
               type: 'checkbox',
               checked: meta.enabled === true,
-              disabled: saving,
+              disabled: Boolean(saving || backendBusy),
               onChange: (event) => {
                 const enabled = event.target.checked;
                 setMeta((previous) => ({ ...previous, enabled }));
@@ -1394,13 +1397,13 @@ window.__ModuleLoader__.load({
         );
         const setRule = (key, value) => setMeta((last) => ({ ...last, rules: { ...last.rules, [key]: value } }));
         body.push(h('div', { key: 'filters', className: 'dsm-wb-toolbar dsm-wb-filters' },
-          h('input', { type: 'search', placeholder: t('modelSearch'), 'aria-label': t('modelSearch'), value: filters?.query ?? '', disabled: saving, onChange: (e) => setFilters((last) => ({ ...last, query: e.target.value })) }),
-          h('select', { 'aria-label': t('regionAll'), value: filters?.region ?? 'all', disabled: saving, onChange: (e) => setFilters((last) => ({ ...last, region: e.target.value })) },
+          h('input', { type: 'search', placeholder: t('modelSearch'), 'aria-label': t('modelSearch'), value: filters?.query ?? '', disabled: Boolean(saving || backendBusy), onChange: (e) => setFilters((last) => ({ ...last, query: e.target.value })) }),
+          h('select', { 'aria-label': t('regionAll'), value: filters?.region ?? 'all', disabled: Boolean(saving || backendBusy), onChange: (e) => setFilters((last) => ({ ...last, region: e.target.value })) },
             h('option', { value: 'all' }, t('regionAll')), h('option', { value: 'cn' }, 'CN'), h('option', { value: 'global' }, 'GL')),
-          h('select', { 'aria-label': t('sortName'), value: meta.rules?.sort ?? 'upstream', disabled: saving, onChange: (e) => setRule('sort', e.target.value) },
+          h('select', { 'aria-label': t('sortName'), value: meta.rules?.sort ?? 'upstream', disabled: Boolean(saving || backendBusy), onChange: (e) => setRule('sort', e.target.value) },
             ...['upstream', 'name', 'credits'].map((value) => h('option', { key: value, value }, t({ upstream: 'sortUpstream', name: 'sortName', credits: 'sortCredits' }[value])))),
-          ...[['freeOnly', 'ruleFree'], ['visionOnly', 'ruleVision']].map(([key, label]) => h('label', { key }, h('input', { type: 'checkbox', checked: meta.rules?.[key] === true, disabled: saving, onChange: (e) => setRule(key, e.target.checked) }), t(label))),
-          h('input', { type: 'number', min: 0, step: 'any', placeholder: t('ruleMax'), 'aria-label': t('ruleMax'), value: meta.rules?.maxCredits ?? '', disabled: saving, onChange: (e) => setRule('maxCredits', e.target.value === '' ? null : Number(e.target.value)) })));
+          ...[['freeOnly', 'ruleFree'], ['visionOnly', 'ruleVision']].map(([key, label]) => h('label', { key }, h('input', { type: 'checkbox', checked: meta.rules?.[key] === true, disabled: Boolean(saving || backendBusy), onChange: (e) => setRule(key, e.target.checked) }), t(label))),
+          h('input', { type: 'number', min: 0, step: 'any', placeholder: t('ruleMax'), 'aria-label': t('ruleMax'), value: meta.rules?.maxCredits ?? '', disabled: Boolean(saving || backendBusy), onChange: (e) => setRule('maxCredits', e.target.value === '' ? null : Number(e.target.value)) })));
         body.push(h('p', { key: 'ruleHint', className: 'dsm-wb-hint' }, t('ruleHint')));
         body.push(
           h(
@@ -1412,7 +1415,7 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 className: 'dsm-wb-btn dsm-wb-btn-outline',
-                disabled: saving,
+                disabled: Boolean(saving || backendBusy),
                 onClick: () => {
                   setPicked((previous) => new Set([...previous, ...sorted.map((row) => row.id)]));
                   setNotice(undefined);
@@ -1425,7 +1428,7 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 className: 'dsm-wb-btn dsm-wb-btn-outline',
-                disabled: saving,
+                disabled: Boolean(saving || backendBusy),
                 onClick: () => {
                   setPicked((previous) => new Set([...previous].filter((id) => !sorted.some((row) => row.id === id))));
                   setNotice(undefined);
@@ -1433,14 +1436,14 @@ window.__ModuleLoader__.load({
               },
               t('clearAll'),
             ),
-            h('button', { type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', disabled: saving, onClick: load }, t('refresh')),
+            h('button', { type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', disabled: Boolean(saving || backendBusy), onClick: load }, t('refresh')),
             h(
               'button',
               {
                 type: 'button',
                 className: 'dsm-wb-btn dsm-wb-btn-primary',
                 // 同步已开启时允许重复保存，修复旧清单或重试上次失败无需先改勾选。
-                disabled: saving || (!dirty && meta.enabled !== true),
+                disabled: Boolean(saving || backendBusy) || (!dirty && meta.enabled !== true),
                 onClick: save,
               },
               saving ? t('saving') : t(meta.enabled === true ? 'saveSync' : 'save'),
@@ -1449,7 +1452,7 @@ window.__ModuleLoader__.load({
         );
 
         if (sorted.length === 0) {
-          body.push(h('div', { key: 'empty', className: 'dsm-wb-empty' }, t('emptyBackend')));
+          body.push(h('div', { key: 'empty', className: 'dsm-wb-empty' }, t(rows.length ? 'emptyFiltered' : 'emptyBackend')));
         } else {
           body.push(
             h(
@@ -1462,7 +1465,7 @@ window.__ModuleLoader__.load({
                   h('input', {
                     type: 'checkbox',
                     checked: picked.has(row.id),
-                    disabled: saving,
+                    disabled: Boolean(saving || backendBusy),
                     onChange: () => toggle(row.id),
                   }),
                   h('span', { className: 'dsm-wb-label' }, row.label),
@@ -1486,7 +1489,7 @@ window.__ModuleLoader__.load({
         }
 
         // hub 的勾选按出口分开：另一个出口的勾选不算，这个出口一个没勾就是"全部"。
-        const nonePicked = meta.realm ? sorted.every((row) => !picked.has(row.id)) : picked.size === 0;
+        const nonePicked = meta.realm ? rows.every((row) => !picked.has(row.id)) : picked.size === 0;
         if (nonePicked && sorted.length > 0) {
           body.push(h('p', { key: 'emptyHint', className: 'dsm-wb-hint' }, t('emptyHint')));
         }
@@ -1536,9 +1539,9 @@ window.__ModuleLoader__.load({
           if (overview.balances?.length) section.push(h('p', { key: 'balanceHint', className: 'dsm-wb-hint' }, t('balanceHint')));
         }
         if (backend.recovery) {
-          const recoveryKey = { idle: 'recoveryIdle', waiting: 'recoveryWaiting', restarting: 'recoveryRestarting', recovered: 'recoveryRecovered', exhausted: 'recoveryExhausted' }[backend.recovery.state] ?? 'recoveryIdle';
-          section.push(h('p', { key: 'recovery', className: 'dsm-wb-backend-line' }, t('recoveryStatus', { state: t(recoveryKey), attempts: backend.recovery.attempts ?? 0 }),
-            wbButton('retryStart', 'outline', t('recoveryRetry'), () => runBackend('start'), Boolean(backendBusy))));
+          const recoveryKey = { idle: 'recoveryIdle', waiting: 'recoveryWaiting', restarting: 'recoveryRestarting', recovered: 'recoveryRecovered', exhausted: 'recoveryExhausted', external: 'recoveryExternal' }[backend.recovery.state] ?? 'recoveryIdle';
+          section.push(h('p', { key: 'recovery', className: 'dsm-wb-backend-line' }, t('recoveryStatus', { state: t(backend.recovery.enabled === false ? 'recoveryOff' : recoveryKey), attempts: backend.recovery.attempts ?? 0 }),
+            wbButton('retryStart', 'outline', t('recoveryRetry'), () => runBackend('start'), Boolean(saving || backendBusy))));
         }
         if (gateways.length > 1) {
           const gatewayBlock = [
@@ -1552,7 +1555,7 @@ window.__ModuleLoader__.load({
                   id === currentGateway ? 'primary' : 'outline',
                   gatewaySwitch?.busy === id ? t('gatewaySwitching') : gatewayLabel(id),
                   () => switchGateway(id, gatewayLabel(id)),
-                  id === currentGateway || Boolean(gatewaySwitch?.busy) || Boolean(backendBusy),
+                  id === currentGateway || Boolean(gatewaySwitch?.busy || saving || backendBusy),
                 ),
               ),
             ),
@@ -1581,7 +1584,7 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 className: 'dsm-wb-btn dsm-wb-btn-outline',
-                disabled: Boolean(backendBusy),
+                disabled: Boolean(saving || backendBusy),
                 onClick: () => runBackend('check'),
               },
               backendBusy === 'check' ? t('backendWorking') : t('backendCheck'),
@@ -1594,7 +1597,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'dsm-wb-btn dsm-wb-btn-primary',
-                    disabled: Boolean(backendBusy),
+                    disabled: Boolean(saving || backendBusy),
                     onClick: () => runBackend('update'),
                   },
                   backendBusy === 'update' ? t('backendWorking') : t('backendUpdate'),
@@ -1604,7 +1607,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'dsm-wb-btn dsm-wb-btn-primary',
-                    disabled: Boolean(backendBusy),
+                    disabled: Boolean(saving || backendBusy),
                     onClick: () => runBackend('install'),
                   },
                   backendBusy === 'install' ? t('backendWorking') : t('backendInstall'),
@@ -1615,7 +1618,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'dsm-wb-btn dsm-wb-btn-outline',
-                    disabled: Boolean(backendBusy),
+                    disabled: Boolean(saving || backendBusy),
                     onClick: () => runBackend('rollback'),
                   },
                   backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'),
@@ -1627,7 +1630,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'dsm-wb-btn dsm-wb-btn-danger',
-                    disabled: Boolean(backendBusy),
+                    disabled: Boolean(saving || backendBusy),
                     onClick: () => setConfirming('uninstall'),
                   },
                   t('backendUninstall'),
@@ -1641,7 +1644,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'dsm-wb-btn dsm-wb-btn-danger',
-                    disabled: Boolean(backendBusy),
+                    disabled: Boolean(saving || backendBusy),
                     onClick: () => setConfirming('purge'),
                   },
                   backendBusy === 'purge' ? t('backendWorking') : t('backendPurge'),

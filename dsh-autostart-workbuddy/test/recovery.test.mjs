@@ -58,3 +58,21 @@ test('关闭插件后取消恢复，迟到的退出事件无效', async (t) => {
   x.recovery.arm(); x.recovery.onExit(); await x.advance(100);
   assert.equal(x.calls(), 0);
 });
+
+test('重试前端口被外部进程占用时暂停，不把它认作自己已恢复', async (t) => {
+  const x = setup(t, 'already-running');
+  x.service.isAlive = () => false;
+  x.recovery.onExit(); await x.advance(5);
+  assert.equal(x.recovery.status.state, 'external');
+  await x.advance(100);
+  assert.equal(x.calls(), 1);
+});
+
+test('手动重试重置恢复预算并取消尚未执行的自动重试', async (t) => {
+  const x = setup(t);
+  x.recovery.onExit();
+  x.recovery.reset();
+  await x.advance(100);
+  assert.equal(x.calls(), 0);
+  assert.equal(x.recovery.status.state, 'idle');
+});
