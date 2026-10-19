@@ -128,11 +128,11 @@ test('apply 立即返回（后台启动），disposer 能停掉自己拉起的�
   // 无论断言是否失败都要收尾，否则残留的子进程会让测试运行器永远无法退出。
   t.after(() => ctx.disposeAll());
 
-  const began = Date.now();
-  apply(ctx, fakeServiceConfig(port, { env: dummyEnv(port) }));
-  const elapsed = Date.now() - began;
-  // apply 里不能 await 端口就绪（最多 30s），否则会拖住整棵插件树。
-  assert.ok(elapsed < 200, `apply 应立刻返回，实际耗时 ${elapsed}ms`);
+  const result = apply(ctx, fakeServiceConfig(port, { env: dummyEnv(port) }));
+  // Cordis 会等待 apply 返回的 Promise；验证同步返回且启动仍未完成，
+  // 不用包含 mkdir/spawn 开销的毫秒阈值，避免共享 CI 的调度抖动误报。
+  assert.equal(result, undefined, 'apply 不应把启动 Promise 交给宿主等待');
+  assert.equal(ctx.lines.some((line) => line.includes('已启动')), false, '启动应继续在后台进行');
   assert.equal(ctx.disposers.length, 1, '应注册一个生命周期 disposer');
 
   assert.ok(await waitForLog(ctx, '已启动'), `日志应记录启动：${ctx.lines.join('\n')}`);
@@ -182,8 +182,7 @@ test('开启模型同步后：apply 会在后端就绪后经 configEditor 写进
   const ctx = fakeContext({ configEditor: editor });
   t.after(() => ctx.disposeAll());
 
-  const began = Date.now();
-  apply(
+  const result = apply(
     ctx,
     fakeServiceConfig(port, {
       // 假后端同时提供 /v1/models，才能把"拉起服务 → 拉模型 → 写配置"整条链路跑通。
@@ -191,9 +190,8 @@ test('开启模型同步后：apply 会在后端就绪后经 configEditor 写进
       models: { enabled: true, apiKey: 'test-key', timeoutMs: 5_000 },
     }),
   );
-  const elapsed = Date.now() - began;
-  // 模型同步是后台动作，不能拖住插件树加载。
-  assert.ok(elapsed < 200, `apply 应立刻返回，实际耗时 ${elapsed}ms`);
+  assert.equal(result, undefined, '模型同步不应让 apply 返回待等待的 Promise');
+  assert.equal(editor.edits.length, 0, '模型同步应在后端就绪后于后台执行');
 
   assert.ok(await waitForLog(ctx, '模型列表已同步'), ctx.lines.join('\n'));
   const workbuddy = editor.entry('llm-pi-ai').options.config.providers.workbuddy;
