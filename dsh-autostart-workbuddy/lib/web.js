@@ -31,6 +31,12 @@ import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js'
 import {
   creditsLabel,
   fetchModels,
+  fetchHubRegions,
+  hubRegionKeys,
+  HUB_KEY_REFS,
+  providerKeyRef,
+  resolveModelApiKey,
+  LLM_PI_AI_PACKAGE,
   findConfigEntry,
   modelDisplayName,
   panelApiKey,
@@ -189,7 +195,7 @@ function positiveIntOrNull(value) {
  * `models` 是插件手里的当前配置（随配置变更就地刷新，见 index.js），`patchPath` 只用来
  * 告诉用户写到了哪个文件。
  */
-export async function describeModels({ spec, models, editor, env = process.env, managedExe, gateway, probe }) {
+export async function describeModels({ spec, models, editor, env = process.env, managedExe, gateway, probe, credentials }) {
   const patchPath = editor?.documentPath;
   const only = scopedSelection(models.only ?? [], gateway);
   const enabled = models.enabled;
@@ -197,7 +203,7 @@ export async function describeModels({ spec, models, editor, env = process.env, 
   // hub 的 /v1/models 不看账号池：一个账号都没有也照样返回内置目录（实测 17 个），
   // 勾上同步进 DSH 后对话只会 503 "no usable account"。所以先问 /health，账号池空着就不列模型。
   // wb2api 的目录本来就是用账号拉的，不需要这一步。探针不通时不拦，交给下面的拉取报真实错误。
-  if (gateway === 'hub' && typeof probe === 'function') {
+  if (gateway === 'hub' && !models.hubDual && typeof probe === 'function') {
     const health = await probe(healthTarget(models.baseURL, spec)).catch(() => undefined);
     if (health?.ok && health.servable === false) {
       return {
@@ -210,11 +216,15 @@ export async function describeModels({ spec, models, editor, env = process.env, 
     }
   }
 
-  const fetched = await fetchModels({
+  const fetched = models.hubDual ? await fetchHubRegions({ models, credentials, env }) : await fetchModels({
     baseURL: models.baseURL || `http://${spec.host}:${spec.port}`,
-    apiKey: resolveApiKey(models, env),
+    apiKey: await resolveModelApiKey(models, env, credentials),
     timeoutMs: models.timeoutMs,
   });
+  if (fetched.ok && models.hubDual) {
+    fetched.models = fetched.regions.flatMap((region) => region.models.map((model) => ({ ...model, id: selectionKey(model) })));
+    fetched.realm = 'dual';
+  }
   if (!fetched.ok) {
     // 只在拉取失败后才看 exe 在不在：端口上若是用户另起的后端、拉取成功，就照常显示，不误报未安装。
     if (managedExe === true && !isFile(spec.exe)) {
@@ -229,7 +239,9 @@ export async function describeModels({ spec, models, editor, env = process.env, 
   }
 
   // 与同步同一套挑选规则（含 hub 当前出口没勾过任何模型时按"全部"算），面板显示的勾选就是 DSH 会得到的。
-  const selected = new Set(selectModels(fetched.models, only).map((model) => model.id));
+  const selected = new Set(models.hubDual
+    ? fetched.regions.flatMap((region) => selectModels(region.models, only).map(selectionKey))
+    : selectModels(fetched.models, only).map((model) => model.id));
   const rows = fetched.models.map((model) => ({
     id: selectionKey(model),
     label: modelDisplayName(model),
@@ -246,6 +258,7 @@ export async function describeModels({ spec, models, editor, env = process.env, 
     url: fetched.url,
     // hub 的当前出口（intl / cn）；wb2api 没有。
     realm: fetched.realm,
+    hubDual: models.hubDual,
     patchPath,
     enabled,
     provider: models.provider,
@@ -398,6 +411,11 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
     return;
   }
   const action = typeof body.value.action === 'string' ? body.value.action : '';
+  if (action === 'hubMode') {
+    const result = await setHubMode({ resolved, editor, credentials, env, enabled: body.value.enabled, cnKey: body.value.cnKey, globalKey: body.value.globalKey, followKey: body.value.followKey });
+    json(res, result.ok ? 200 : 400, result);
+    return;
+  }
   if (action === 'diagnose') {
     json(res, 200, { ok: true, report: await diagnose({ resolved, service, recovery, editor, credentials, env }) });
     return;
@@ -494,6 +512,49 @@ export async function setAutoUpdate({ resolved, editor, enabled }) {
   }
   if (resolved.backend) resolved.backend.autoUpdate = enabled;
   return { ok: true, enabled };
+}
+
+/** 区域 Key 只写凭据库，profile 和面板快照只保存模式开关。 */
+export async function setHubMode({ resolved, editor, credentials, env = process.env, enabled, cnKey, globalKey, followKey }) {
+  if (resolved.gateway !== 'hub' || typeof enabled !== 'boolean') return { ok: false, reason: '请在 HUB 网关下设置双区域模式' };
+  const entry = findConfigEntry(editor, { id: PLUGIN_ID });
+  if (!entry || typeof editor?.edit !== 'function') return { ok: false, reason: '宿主没有可编辑的插件配置' };
+  try {
+    const follow = typeof followKey === 'string' ? followKey.trim() : '';
+    const keyRef = providerKeyRef(findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config, resolved.models.provider) || 'WORKBUDDY_PROXY_KEY';
+    if (follow) {
+      if (typeof credentials?.set !== 'function') return { ok: false, reason: '保存 Key 需要 DSH 凭据服务' };
+      if (env[keyRef] && env[keyRef] !== follow) return { ok: false, reason: `${keyRef} 来自只读环境变量` };
+      const checked = await Promise.all(['cn', 'intl'].map((realm) => fetchModels({ baseURL: resolved.models.baseURL, apiKey: follow, realm, timeoutMs: resolved.models.timeoutMs })));
+      if (checked.some((result, i) => !result.ok || ![i === 0 ? 'cn' : 'intl', ...(i === 1 ? ['global'] : [])].includes(result.realm))) return { ok: false, reason: '跟随出口的 Key 必须有效且不绑定区域，请在 HUB 设置页核对' };
+    }
+    if (!enabled && !follow) {
+      const apiKey = await resolveModelApiKey(resolved.models, env, credentials);
+      const check = await fetchModels({ baseURL: resolved.models.baseURL, apiKey, timeoutMs: resolved.models.timeoutMs });
+      if (!check.ok) return { ok: false, reason: '当前跟随模式 Key 已失效，请填写一把不绑定区域的 Key 后再应用' };
+    }
+    if (enabled) {
+      const providers = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config?.providers ?? {};
+      for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) {
+        const name = `${resolved.models.provider}-hub-${realm === 'cn' ? 'cn' : 'global'}`;
+        if (providers[name] && (providers[name].apiKeyEnv !== ref || providers[name].api !== 'openai-completions')) return { ok: false, reason: `provider ${name} 已被占用，请先修改分组名` };
+      }
+      if (typeof credentials?.set !== 'function' || typeof credentials?.resolve !== 'function') return { ok: false, reason: '双区域模式需要 DSH 凭据服务' };
+      const existing = await hubRegionKeys(credentials, env);
+      const keys = { cn: typeof cnKey === 'string' && cnKey.trim() ? cnKey.trim() : existing.cn, intl: typeof globalKey === 'string' && globalKey.trim() ? globalKey.trim() : existing.intl };
+      const checked = await fetchHubRegions({ models: resolved.models, keys });
+      if (!checked.ok) return checked;
+      // 先检查所有只读环境引用，避免写完一个区域后才发现另一个不能修改。
+      for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (env[ref] && env[ref] !== keys[realm]) return { ok: false, reason: `${ref} 来自只读环境变量，请先在启动环境中修改` };
+      for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (keys[realm] !== existing[realm]) await credentials.set(ref, keys[realm]);
+    }
+    if (follow) await credentials.set(keyRef, follow);
+    const keyPatch = follow ? { apiKeyRef: keyRef } : {};
+    await editor.edit(entry, (current) => ({ ...plainObject(current), models: { ...plainObject(current?.models), ...keyPatch, hubDual: enabled } }));
+    resolved.models = { ...resolved.models, ...keyPatch, hubDual: enabled };
+    const synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env });
+    return { ok: true, enabled, sync: { state: synced.state, reason: synced.reason, count: synced.entries?.length } };
+  } catch { return { ok: false, reason: '保存双区域设置失败，请检查凭据库和 profile 的写入权限' }; }
 }
 
 /**
@@ -622,7 +683,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               200,
               await describeModels({
                 spec: resolved.spec, models: resolved.models, managedExe: resolved.managedExe,
-                editor: configEditorOf(ctx), env, gateway: resolved.gateway, probe: gatewayDriver(resolved).probe,
+                editor: configEditorOf(ctx), env, gateway: resolved.gateway, probe: gatewayDriver(resolved).probe, credentials: credentialsOf(ctx),
               }),
             );
             return;
@@ -639,7 +700,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               const synced = await resync.tick();
               const payload = await describeModels({
                 spec: resolved.spec, models: resolved.models, managedExe: resolved.managedExe,
-                editor: configEditorOf(ctx), env, gateway: resolved.gateway, probe: gatewayDriver(resolved).probe,
+                editor: configEditorOf(ctx), env, gateway: resolved.gateway, probe: gatewayDriver(resolved).probe, credentials: credentialsOf(ctx),
               });
               json(res, 200, { ...payload, sync: { state: synced.state, reason: synced.reason } });
               return;

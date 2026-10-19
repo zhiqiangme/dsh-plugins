@@ -250,6 +250,8 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
+    'hubFollowKey',
+    'hubDual', 'hubDualHint', 'hubCnKey', 'hubGlKey', 'hubApply', 'hubDualSaved', 'hubBoth',
     'modelSearch', 'regionAll', 'ruleFree', 'ruleVision', 'ruleMax', 'sortUpstream', 'sortName', 'sortCredits', 'ruleHint',
     'diagnose', 'diagnoseCopy', 'diagnoseCopied', 'diagnoseWorking',
     'backendStarted', 'recoveryStatus', 'recoveryIdle', 'recoveryWaiting', 'recoveryRestarting', 'recoveryRecovered', 'recoveryExhausted', 'recoveryRetry',

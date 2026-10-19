@@ -178,6 +178,7 @@ function resolveModelsConfig(raw, spec) {
     panelConfig: stringOr(models.panelConfig, spec.cwd ? join(spec.cwd, 'config.json') : ''),
     // 空 = 依次尝试 WORKBUDDY_PROXY_KEY 与面板 config.json 的 api_key。
     apiKey: stringOr(models.apiKey, ''),
+    apiKeyRef: typeof models.apiKeyRef === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(models.apiKeyRef) ? models.apiKeyRef : '',
     baseURL: stringOr(models.baseURL, `http://${spec.host}:${spec.port}`),
     timeoutMs: positiveNumber(models.timeoutMs, MODELS_DEFAULTS.timeoutMs),
     resyncIntervalMs: resyncInterval(models.resyncIntervalMs),
@@ -249,6 +250,7 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
     ? buildHubSpec(config, common, hostEnv, hubKey, cnChatBase)
     : buildSpec(config, common, hostEnv);
   const models = resolveModelsConfig(config.models, spec);
+  models.hubDual = gateway === 'hub' && rawModels.hubDual === true;
   if (gateway === 'hub') {
     // hub 没有 wb2api 那份 config.json：密钥直接给定，不再回落去读面板配置。
     models.apiKey = hubKey;

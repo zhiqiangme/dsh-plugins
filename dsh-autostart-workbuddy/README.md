@@ -39,6 +39,14 @@
 
 hub 是 wb2api 停更时的备选。
 
+### HUB：CN 与 GL 同时使用
+
+默认仍跟随 HUB 看板的全局出口。要同时列出两组模型，先在 HUB 登录两种区域的账号，再在 HUB「设置」创建两把分别绑定国内、国际的 Key，填入插件卡片，勾选「CN / GL 同时使用」并应用。模型同步开关开启时，会生成 WorkBuddy CN 和 WorkBuddy GL 两个 provider，同名模型独立显示、请求按各自 Key 路由，不受全局出口切换影响。
+
+Key 只保存在 DSH 凭据库的 `WORKBUDDY_PROXY_KEY_CN` / `WORKBUDDY_PROXY_KEY_GLOBAL`，profile 只记 `models.hubDual`。原 workbuddy 分组暂时清空模型并保留连接配置，关闭模式后恢复，自动创建的两个分组移除；其它 provider 不动。专用分组名为 `<provider>-hub-cn` / `<provider>-hub-global`，名称冲突时会拒绝覆盖。
+
+HUB 配置多 Key 后，启动参数里的旧 Key 可能不再有效。可同时填写一把不绑定区域的「跟随出口 Key」，它单独写入原 provider 对应的 DSH 凭据，profile 只保存 `models.apiKeyRef`，供关闭双区域后使用。Key 留空沿用已保存的值。启用时验证区域绑定，关闭时验证跟随 Key；校验不通过不会切换模式。
+
 - **切换**：宿主按"配置变更"重启本插件，停掉旧网关，再按新网关拉起（没装就提示去点「安装」）。卡片会等到新网关接管、模型区能答才刷新（最多 60 秒）。两种网关的程序和账号各存一份，切换不会覆盖对方的数据；但账号要在 hub 看板里另外登录或导入。
 - **端口与 provider**：两者都监听 7863，DSH 里 workbuddy provider 的 `baseURL` 不用改。
 - **网关密钥**：hub 的密钥按 插件配置 `models.apiKey` → 环境变量 `WORKBUDDY_PROXY_KEY` → wb2api `config.json` 的 `api_key` 的顺序沿用，所以凭据库里现有的 `WORKBUDDY_PROXY_KEY` 不用改。都没有时插件生成一个，存进 `hub/data/plugin-api-key`。密钥经环境变量 `API_KEY` 传给 hub，不出现在命令行里。

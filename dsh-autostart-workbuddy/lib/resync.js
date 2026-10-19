@@ -93,7 +93,7 @@ export function createModelResync(options) {
       return result;
     }
 
-    const realmSwitched = Boolean(watchRealm && syncedRealm && health.realm && health.realm !== syncedRealm);
+    const realmSwitched = Boolean(watchRealm && !models.hubDual && syncedRealm && health.realm && health.realm !== syncedRealm);
     if (realmSwitched) {
       // 上个出口的缺席记录对新出口没有意义，清掉，免得之后切回来时被误当成"已确认过一轮"。
       removalGuard.missing = new Set();
@@ -157,7 +157,7 @@ export function createModelResync(options) {
    */
   async function checkRealm() {
     const models = resolved.models;
-    if (stopped || !models?.enabled || !(models.resyncIntervalMs > 0)) return;
+    if (stopped || models?.hubDual || !models?.enabled || !(models.resyncIntervalMs > 0)) return;
     const health = await probe(healthTarget(models.baseURL, resolved.spec)).catch(() => undefined);
     if (stopped || !health?.ok || typeof health.realm !== 'string') return;
     // 还不知道 DSH 是按哪个出口同步的（插件刚启动，启动同步不经过这里）：以现在为准。
@@ -192,7 +192,7 @@ export function createModelResync(options) {
 
   return {
     tick,
-    get status() { return { realm: syncedRealm, ...lastSync }; },
+    get status() { return { realm: resolved.models.hubDual ? 'dual' : syncedRealm, ...lastSync }; },
     /** 面板同步进行中也要排上定时链；timer 到期时 tick 会复用正在进行的一轮。 */
     start() {
       schedule();

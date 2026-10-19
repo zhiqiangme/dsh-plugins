@@ -230,6 +230,9 @@ window.__ModuleLoader__.load({
       diagnose: '一键诊断', diagnoseCopy: '复制脱敏报告', diagnoseCopied: '诊断报告已复制', diagnoseWorking: '正在诊断…',
       modelSearch: '搜索模型', regionAll: '全部区域', ruleFree: '只同步免费模型', ruleVision: '只同步视觉模型', ruleMax: '最高倍率（留空不限）',
       sortUpstream: '上游顺序', sortName: '按名称排序', sortCredits: '按倍率排序', ruleHint: '规则与勾选共同生效，新增模型也按规则筛选；未定价的模型不会视为免费。批量操作只影响当前筛选结果。',
+      hubDual: 'CN / GL 同时使用', hubDualHint: '先在 HUB 设置页创建分别绑定国内和国际出口的 API Key；只存入 DSH 凭据库，不写进 profile。留空沿用已保存的 Key。',
+      hubCnKey: 'CN 绑定区域的 Key', hubGlKey: 'GL 绑定区域的 Key', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存并同步', hubBoth: 'CN + GL（独立路由）',
+      hubFollowKey: '跟随出口的未绑定 Key（可选，供关闭双区域后使用）',
       backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
       backendUninstalledHub: 'hub 已卸载（hub/data/ 已保留）。',
       autoUpdateLabel: '自动更新后端',
@@ -362,6 +365,9 @@ window.__ModuleLoader__.load({
       diagnose: 'Diagnose', diagnoseCopy: 'Copy redacted report', diagnoseCopied: 'Report copied', diagnoseWorking: 'Diagnosing…',
       modelSearch: 'Search models', regionAll: 'All regions', ruleFree: 'Sync free models only', ruleVision: 'Sync vision models only', ruleMax: 'Maximum multiplier (blank: unlimited)',
       sortUpstream: 'Upstream order', sortName: 'Sort by name', sortCredits: 'Sort by multiplier', ruleHint: 'Rules and selections both apply, including to new models. Unknown prices are not treated as free. Bulk actions affect only filtered rows.',
+      hubDual: 'Use CN and GL together', hubDualHint: 'Create keys bound to China and international in HUB settings. Keys are stored only in DSH credentials. Leave blank to reuse saved keys.',
+      hubCnKey: 'CN bound API key', hubGlKey: 'GL bound API key', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved and synced', hubBoth: 'CN + GL (independent routes)',
+      hubFollowKey: 'Unbound key for follow mode (optional)',
       backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
       backendUninstalledHub: 'Hub uninstalled (hub/data/ kept).',
       autoUpdateLabel: 'Update the backend automatically',
@@ -506,7 +512,7 @@ window.__ModuleLoader__.load({
         for (const id of oldSaved) if (!oldPicked.has(id)) picked.delete(id);
       }
       const old = previous.meta ?? {};
-      const meta = { ...old, only: payload.only, realm: payload.realm, savedEnabled: payload.enabled, savedRules: payload.rules,
+      const meta = { ...old, only: payload.only, realm: payload.realm, hubDual: payload.hubDual, savedEnabled: payload.enabled, savedRules: payload.rules,
         enabled: old.enabled !== old.savedEnabled ? old.enabled : payload.enabled,
         rules: JSON.stringify(old.rules) !== JSON.stringify(old.savedRules) ? old.rules : payload.rules };
       return { rows, picked, savedPicked, meta };
@@ -1075,7 +1081,7 @@ window.__ModuleLoader__.load({
           const list = payload.models ?? [];
           const selected = new Set([...(payload.only ?? []), ...list.filter((row) => row.selected).map((row) => row.id)]);
           setRows(list);
-          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, only: payload.only, patchPath: payload.patchPath, url: payload.url, realm: payload.realm, rules: payload.rules, savedRules: payload.rules });
+          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, only: payload.only, patchPath: payload.patchPath, url: payload.url, realm: payload.realm, hubDual: payload.hubDual, rules: payload.rules, savedRules: payload.rules });
           setPicked(selected);
           setSavedPicked(new Set(selected));
           setPhase('ready');
@@ -1281,6 +1287,7 @@ window.__ModuleLoader__.load({
 
       const [diagnostic, setDiagnostic] = useState(undefined);
       const [filters, setFilters] = useState(undefined);
+      const [hubDraft, setHubDraft] = useState(undefined);
       const sorted = useMemo(() => filterRows(rows, { ...meta.rules, ...filters }), [rows, meta.rules, filters]);
       const live = useMemo(() => ({}), []);
       live.current = { meta, rows, picked, savedPicked, saving, backendBusy, gatewaySwitch, phase };
@@ -1323,7 +1330,27 @@ window.__ModuleLoader__.load({
 
       // enabled 是开关草稿，savedEnabled 是上次读取的配置；只切换开关也必须允许保存。
       const dirty = !sameSet(picked, savedPicked) || meta.enabled !== meta.savedEnabled || JSON.stringify(meta.rules) !== JSON.stringify(meta.savedRules);
+      const applyHubMode = async () => {
+        setBackendBusy('hubMode');
+        try {
+          const payload = await request(BACKEND_PATH, 'POST', { action: 'hubMode', enabled: hubDraft?.enabled ?? meta.hubDual ?? false, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, followKey: hubDraft?.followKey });
+          if (['failed', 'skipped'].includes(payload.sync?.state)) throw new Error(payload.sync.reason);
+          setHubDraft(undefined);
+          const inventory = await request(MODELS_PATH, 'GET');
+          if (inventory.ok) {
+            const next = mergeLiveSnapshot(live.current, inventory);
+            setRows(next.rows); setPicked(next.picked); setSavedPicked(next.savedPicked); setMeta(next.meta); setPhase('ready');
+          }
+          setNotice({ kind: 'ok', text: t('hubDualSaved') });
+        } catch (error) { setNotice({ kind: 'error', text: errorText(error) }); }
+        finally { setBackendBusy(undefined); }
+      };
       const body = [];
+      if (backend?.gateway === 'hub') body.push(h('div', { key: 'hubMode', className: 'dsm-wb-gateway' },
+        h('label', { className: 'dsm-wb-sync' }, h('input', { type: 'checkbox', checked: hubDraft?.enabled ?? meta.hubDual ?? false, disabled: Boolean(backendBusy), onChange: (e) => setHubDraft((last) => ({ ...last, enabled: e.target.checked })) }), t('hubDual')),
+        h('p', { className: 'dsm-wb-hint' }, t('hubDualHint')),
+        ...[['cnKey', 'hubCnKey'], ['globalKey', 'hubGlKey'], ['followKey', 'hubFollowKey']].map(([key, label]) => h('input', { key, type: 'password', autoComplete: 'off', 'aria-label': t(label), placeholder: t(label), value: hubDraft?.[key] ?? '', disabled: Boolean(backendBusy), onChange: (e) => setHubDraft((last) => ({ ...last, [key]: e.target.value })) })),
+        wbButton('applyHubMode', 'outline', t('hubApply'), applyHubMode, Boolean(backendBusy))));
       body.push(h('div', { key: 'diagnose', className: 'dsm-wb-toolbar dsm-wb-diagnostics' },
         wbButton('diagnose', 'outline', t(diagnostic?.busy ? 'diagnoseWorking' : 'diagnose'), runDiagnostic, diagnostic?.busy),
         diagnostic?.report ? wbButton('copyReport', 'outline', t(diagnostic.copied ? 'diagnoseCopied' : 'diagnoseCopy'), copyDiagnostic, false) : null));
@@ -1359,7 +1386,7 @@ window.__ModuleLoader__.load({
           ),
           h('p', { key: 'syncHint', className: 'dsm-wb-hint' }, t(meta.enabled === true ? 'syncHint' : 'disabledHint')),
           // hub 才有出口（应答顶层的 realm）：说明这一页勾的是哪一组。
-          meta.realm ? h('p', { key: 'hubRealm', className: 'dsm-wb-hint' }, t('hubRealm', { realm: meta.realm === 'cn' ? 'CN' : 'GL' })) : null,
+          meta.realm ? h('p', { key: 'hubRealm', className: 'dsm-wb-hint' }, meta.realm === 'dual' ? t('hubBoth') : t('hubRealm', { realm: meta.realm === 'cn' ? 'CN' : 'GL' })) : null,
         );
         const setRule = (key, value) => setMeta((last) => ({ ...last, rules: { ...last.rules, [key]: value } }));
         body.push(h('div', { key: 'filters', className: 'dsm-wb-toolbar dsm-wb-filters' },

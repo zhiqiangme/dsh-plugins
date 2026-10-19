@@ -27,6 +27,96 @@ import { applyModelRules, hasModelRules } from './model-rules.js';
 
 /** llm-pi-ai 的包名：按包名找 Loader 条目，profile 里的行 id 可能被用户改过。 */
 export const LLM_PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
+export const HUB_KEY_REFS = Object.freeze({ cn: 'WORKBUDDY_PROXY_KEY_CN', intl: 'WORKBUDDY_PROXY_KEY_GLOBAL' });
+
+export async function resolveModelApiKey(models, env = process.env, credentials) {
+  if (models.apiKeyRef) {
+    const result = await credentials?.resolve?.(models.apiKeyRef);
+    return env[models.apiKeyRef] || (typeof result === 'string' ? result : result?.value) || '';
+  }
+  return models.apiKey || env.WORKBUDDY_PROXY_KEY || panelApiKey(models.panelConfig);
+}
+
+export async function hubRegionKeys(credentials, env = process.env) {
+  const keys = {};
+  for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) {
+    const result = await credentials?.resolve?.(ref);
+    keys[realm] = env[ref] || (typeof result === 'string' ? result : result?.value) || '';
+  }
+  return keys;
+}
+
+/** 不把 Key 放到 URL；必须核对应答区域，旧 HUB 或错误绑定不能静默退回全局出口。 */
+export async function fetchHubRegions({ models, credentials, env = process.env, keys }) {
+  keys ??= await hubRegionKeys(credentials, env);
+  const regions = await Promise.all(['cn', 'intl'].map(async (realm) => {
+    if (!keys[realm]) return { ok: false, reason: `请先填写并保存 ${realm === 'cn' ? 'CN' : 'GL'} 绑定区域的 API Key` };
+    const fetched = await fetchModels({ baseURL: models.baseURL, apiKey: keys[realm], timeoutMs: models.timeoutMs });
+    if (!fetched.ok) return { ok: false, reason: `${realm === 'cn' ? 'CN' : 'GL'} 模型接口失败，请检查绑定 Key 和 HUB 状态` };
+    if (fetched.realm !== realm && !(realm === 'intl' && fetched.realm === 'global')) return { ok: false, reason: 'API Key 未绑定正确区域，或 HUB 版本不支持按 Key 路由；请在 HUB 设置页核对' };
+    return { ...fetched, realm, models: fetched.models.map((model) => ({ ...model, realm })), ref: HUB_KEY_REFS[realm] };
+  }));
+  const failed = regions.find((region) => !region.ok);
+  return failed ?? { ok: true, regions };
+}
+
+function dualProviderName(provider, realm) { return `${provider}-hub-${realm === 'cn' ? 'cn' : 'global'}`; }
+function ownsDualProvider(provider, ref) { return provider?.apiKeyEnv === ref && provider?.api === 'openai-completions'; }
+
+/** 只删除使用本插件专用凭据引用的分组，不动名称碰巧相同的用户 provider。 */
+function dropDualProviders(config, provider) {
+  const providers = { ...config.providers };
+  let changed = false;
+  for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) {
+    const name = dualProviderName(provider, realm);
+    if (ownsDualProvider(providers[name], ref)) { delete providers[name]; changed = true; }
+  }
+  return changed ? { ...config, providers } : config;
+}
+
+async function syncHubDual({ spec, models, editor, credentials, env, dryRun, removalGuard }) {
+  const target = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE });
+  if (!target) return { state: 'skipped', reason: `DSH 里没有可编辑的 ${LLM_PI_AI_PACKAGE} 条目` };
+  const fetched = await fetchHubRegions({ models, credentials, env });
+  if (!fetched.ok) return { state: 'failed', reason: fetched.reason };
+  const documentPath = editor.documentPath;
+  const groups = fetched.regions.map((region) => ({ ...region, name: dualProviderName(models.provider, region.realm), entries: planModelEntries(region.models, models) }));
+  if (groups.some((group) => group.models.length === 0)) return { state: 'skipped', reason: '某个区域返回空目录，保留现有列表', documentPath };
+  for (const group of groups) {
+    if (!group.entries.length && !hasModelRules(models.rules)) return { state: 'skipped', reason: '某个区域按白名单过滤后为空，保留现有列表', documentPath };
+    const existing = target.options?.config?.providers?.[group.name];
+    if (existing && !ownsDualProvider(existing, group.ref)) return { state: 'failed', reason: `provider ${group.name} 已被占用，请先修改分组名`, documentPath };
+  }
+  if (removalGuard) {
+    removalGuard.regions ??= {};
+    let deferred = false;
+    for (const group of groups) {
+      const guard = removalGuard.regions[group.realm] ??= { missing: new Set() };
+      if (!confirmRemovals(guard, providerModelIds(target.options?.config, group.name), group.entries.map((entry) => entry.id)).ok) deferred = true;
+    }
+    if (deferred) return { state: 'deferred', reason: '区域目录中的模型需连续两轮缺席后移除', realm: 'dual', documentPath };
+  }
+  const plan = (current) => {
+    let config = current;
+    for (const group of groups) {
+      const existing = config?.providers?.[group.name];
+      if (existing && !ownsDualProvider(existing, group.ref)) throw new Error(`provider ${group.name} 已被占用`);
+      const skeleton = { ...providerSkeleton(models, spec), displayName: `WorkBuddy ${group.realm === 'cn' ? 'CN' : 'GL'}`, apiKeyEnv: group.ref };
+      const providers = { ...plainObject(config).providers, [group.name]: { ...plainObject(existing), ...skeleton, models: group.entries } };
+      // 原分组暂时清空，保留连接配置，关闭双区域后能恢复原有分组。
+      if (providers[models.provider]) providers[models.provider] = { ...providers[models.provider], models: [] };
+      config = { ...config, providers };
+    }
+    return config;
+  };
+  const entries = groups.flatMap((group) => group.entries);
+  const planned = plan(target.options?.config ?? {});
+  if (isDeepStrictEqual(planned, target.options?.config)) return { state: 'unchanged', entries, realm: 'dual', documentPath };
+  if (dryRun) return { state: 'dry-run', entries, realm: 'dual', documentPath };
+  try { await editor.edit(target, plan); }
+  catch (error) { return { state: 'failed', reason: error.message, documentPath }; }
+  return { state: 'updated', entries, realm: 'dual', documentPath };
+}
 
 /** 默认保留的思考档位：与 DSH 既有的三档 UI 对齐（低/高/最大）。 */
 export const DEFAULT_EFFORTS = Object.freeze(['low', 'high', 'max']);
@@ -326,11 +416,12 @@ export function panelApiKey(panelConfigPath) {
 
 /** 拉取模型清单；任何失败都返回 ok:false，由调用方决定是否保持现有配置。 */
 export async function fetchModels(options = {}) {
-  const { baseURL, apiKey = '', timeoutMs = 30_000, signal } = options;
+  const { baseURL, apiKey = '', timeoutMs = 30_000, signal, realm: requestRealm } = options;
   const url = modelsEndpoint(baseURL);
   if (!url) return { ok: false, reason: '没有可用的网关地址' };
 
   const headers = { accept: 'application/json' };
+  if (requestRealm) headers['x-realm'] = requestRealm;
   if (apiKey) headers.authorization = `Bearer ${apiKey}`;
 
   const timeout = AbortSignal.timeout(timeoutMs);
@@ -509,15 +600,13 @@ export async function syncModels(options) {
   if (typeof editor?.edit !== 'function') {
     return { state: 'skipped', reason: '宿主没有 configEditor 服务，无法写入模型列表' };
   }
+  if (models.hubDual) return syncHubDual(options);
   const documentPath = editor.documentPath;
 
   const target = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE });
   if (!target) return { state: 'skipped', reason: `DSH 里没有可编辑的 ${LLM_PI_AI_PACKAGE} 条目`, documentPath };
 
-  const apiKey =
-    models.apiKey ||
-    (typeof env.WORKBUDDY_PROXY_KEY === 'string' ? env.WORKBUDDY_PROXY_KEY.trim() : '') ||
-    panelApiKey(models.panelConfig);
+  const apiKey = await resolveModelApiKey(models, env, credentials);
 
   const fetched = await fetchModels({
     baseURL: models.baseURL || `http://${spec.host}:${spec.port}`,
@@ -547,7 +636,12 @@ export async function syncModels(options) {
   }
 
   const skeleton = providerSkeleton(models, spec);
-  const planned = withProviderModels(target.options?.config, models.provider, entries, skeleton);
+  const singlePlan = (config) => {
+    const planned = withProviderModels(config, models.provider, entries, skeleton);
+    const cleaned = dropDualProviders(planned.config, models.provider);
+    return { ...planned, config: cleaned, changed: planned.changed || cleaned !== planned.config };
+  };
+  const planned = singlePlan(target.options?.config);
   if (dryRun) {
     return planned.changed
       ? { state: 'dry-run', entries, created: planned.created, realm, documentPath }
@@ -566,7 +660,7 @@ export async function syncModels(options) {
   let written = planned.config;
   try {
     await editor.edit(target, (current) => {
-      const next = withProviderModels(current, models.provider, entries, skeleton);
+      const next = singlePlan(current);
       created = next.created;
       written = next.config;
       return next.config;

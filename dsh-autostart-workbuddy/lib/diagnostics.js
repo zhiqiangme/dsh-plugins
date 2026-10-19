@@ -1,7 +1,7 @@
 /** 诊断只做探测，不改配置、不发送对话；报告在离开宿主前统一脱敏。 */
 import { homedir } from 'node:os';
 import { gatewayDriver } from './gateway.js';
-import { fetchModels, panelApiKey, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE } from './models.js';
+import { fetchModels, resolveModelApiKey, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE } from './models.js';
 import { isFile, probeTcp } from './services.js';
 import { healthTarget } from './resync.js';
 
@@ -22,7 +22,7 @@ export function redactReport(value, secrets = [], home = homedir()) {
 
 export async function diagnose({ resolved, service, recovery, editor, credentials, env = process.env, driver = gatewayDriver(resolved), tcp = probeTcp }) {
   const models = resolved.models;
-  const apiKey = models.apiKey || env.WORKBUDDY_PROXY_KEY || panelApiKey(models.panelConfig);
+  const apiKey = await resolveModelApiKey(models, env, credentials);
   const secrets = [apiKey, ...Object.entries({ ...env, ...resolved.spec.env }).filter(([key]) => /key|token|password|secret|cookie/i.test(key)).map(([, value]) => value)];
   const checks = [{ id: 'executable', ok: isFile(resolved.spec.exe), detail: resolved.spec.exe }];
   const target = healthTarget(models.baseURL, resolved.spec);
