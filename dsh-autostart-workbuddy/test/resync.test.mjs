@@ -272,3 +272,94 @@ test('healthTarget 跟随 models.baseURL，解析不了退回托管端口', () =
   assert.deepEqual(healthTarget('http://127.0.0.1:9090/v1', { host: '127.0.0.1', port: 7863 }), { host: '127.0.0.1', port: 9090 });
   assert.deepEqual(healthTarget('', { host: '127.0.0.1', port: 7863 }), { host: '127.0.0.1', port: 7863 });
 });
+
+/** 假 hub：/v1/models 只列当前出口的裸 id，出口写在应答顶层（与真 hub 同形状）。 */
+async function serveHub(t, hub) {
+  const server = createServer((_req, res) => {
+    hub.hits += 1;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ object: 'list', data: hub.models[hub.realm], realm: hub.realm }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  return `http://127.0.0.1:${server.address().port}`;
+}
+
+test('hub 切出口：下一轮立即按新出口的那组勾选重写 DSH，不等"连续两轮缺席"', async (t) => {
+  const hub = {
+    realm: 'intl',
+    hits: 0,
+    models: {
+      intl: [{ id: 'flash', name: 'Flash', credits: 'x0.00' }, { id: 'gpt-5.5', name: 'GPT-5.5', credits: 'x1' }],
+      cn: [{ id: 'flash', name: 'Flash', credits: 'x0.11' }, { id: 'minimax-m3', name: 'MiniMax', credits: 'x0.2' }],
+    },
+  };
+  const url = await serveHub(t, hub);
+  const only = ['global:flash', 'global:gpt-5.5', 'cn:minimax-m3'];
+  const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, apiKey: 'gw-key', baseURL: url, only } }, { PATH: '' });
+  const editor = createFakeConfigEditor(profileRows());
+  const credentials = createFakeCredentials();
+  assert.equal((await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} })).state, 'updated');
+  const probe = async () => ({ ok: true, servable: true, realm: hub.realm });
+  const logger = memoryLogger();
+  const resync = createModelResync({ resolved, logger, env: {}, probe, editor: () => editor, credentials: () => credentials });
+  const listed = () => editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((model) => `${model.id}|${model.name}`);
+  assert.deepEqual(listed(), ['flash|GL Flash Free', 'gpt-5.5|GL GPT-5.5 1']);
+
+  assert.equal((await resync.tick()).state, 'unchanged', '先认下当前出口');
+  hub.realm = 'cn';
+  const switched = await resync.tick();
+  assert.equal(switched.state, 'updated', '少了 gpt-5.5 也当轮写入');
+  assert.deepEqual(listed(), ['minimax-m3|CN MiniMax 0.2'], 'CN 只勾了 minimax-m3');
+  assert.ok(logger.lines.some(([, line]) => line.includes('出口从 intl 切到 cn')), JSON.stringify(logger.lines));
+
+  // 同一出口里的上游抖动照旧要两轮确认。
+  hub.models.cn = [{ id: 'flash', name: 'Flash', credits: 'x0.11' }];
+  assert.equal((await resync.tick()).state, 'skipped', 'minimax 暂时不在：白名单里 cn 只有它，过滤后为空则不写');
+  hub.realm = 'intl';
+  assert.equal((await resync.tick()).state, 'updated');
+  assert.deepEqual(listed(), ['flash|GL Flash Free', 'gpt-5.5|GL GPT-5.5 1'], '切回来恢复 GL 那一组');
+});
+
+test('出口探测：几秒内发现切换并立即同步一次；同步没成也不每轮重打，wb2api 不探', async () => {
+  let realm = 'intl';
+  let probes = 0;
+  const calls = [];
+  let outcome = 'unchanged';
+  const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true } }, { PATH: '' });
+  const resync = createModelResync({
+    resolved, logger: memoryLogger(), editor: () => undefined, credentials: () => undefined, realmPollMs: 5,
+    probe: async () => { probes += 1; return { ok: true, servable: true, realm }; },
+    sync: async (options) => { calls.push({ realm, guarded: Boolean(options.removalGuard) }); return { state: outcome, realm }; },
+  });
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  try {
+    resync.start();
+    await wait(40);
+    assert.equal(calls.length, 0, '第一次探到只记下当前出口，不同步');
+    realm = 'cn';
+    await wait(40);
+    assert.deepEqual(calls, [{ realm: 'cn', guarded: false }], '切换后立即同步一次，且不走两轮确认');
+
+    outcome = 'failed';
+    realm = 'intl';
+    await wait(60);
+    assert.equal(calls.length, 2, '同步没成：交给定时同步重试，不每 5 秒再打一次');
+  } finally {
+    resync.stop();
+  }
+  const seen = probes;
+  await wait(30);
+  assert.equal(probes, seen, 'stop 之后不再探');
+
+  let wbProbes = 0;
+  const wb = createModelResync({
+    resolved: resolvePluginConfig({ models: { enabled: true } }, { PATH: '' }), logger: memoryLogger(),
+    editor: () => undefined, credentials: () => undefined, realmPollMs: 5,
+    probe: async () => { wbProbes += 1; return { ok: true, servable: true }; }, sync: async () => ({ state: 'unchanged' }),
+  });
+  wb.start();
+  await wait(30);
+  wb.stop();
+  assert.equal(wbProbes, 0, 'wb2api 两个出口同时列出，不需要盯');
+});

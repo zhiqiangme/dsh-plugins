@@ -780,3 +780,29 @@ test('GET（hub）：账号池为空时不列模型（hub 的 /v1/models 照样�
     fixture.stop();
   }
 });
+
+test('GET（hub）：行 id 是带出口前缀的白名单键，老的裸 id 回显成两个出口各一条，勾选按当前出口算', async (t) => {
+  const hub = { realm: 'cn', data: [{ id: 'flash', name: 'Flash' }, { id: 'minimax-m3', name: 'MiniMax' }] };
+  const server = createHttpServer((_req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ object: 'list', data: hub.data, realm: hub.realm }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  const ready = async () => ({ ok: true, servable: true, healthy: 1, total: 1 });
+  const describe = (only) => {
+    const resolved = resolvePluginConfig({ port: server.address().port, models: { enabled: true, apiKey: 'k', only } }, { PATH: '' });
+    return describeModels({ ...resolved, env: {}, gateway: 'hub', probe: ready });
+  };
+
+  const legacy = await describe(['flash', 'global:gpt-5.5']);
+  assert.equal(legacy.realm, 'cn');
+  assert.deepEqual(legacy.models.map((row) => [row.id, row.label, row.selected]), [
+    ['cn:flash', 'CN Flash Free', true],
+    ['cn:minimax-m3', 'CN MiniMax Free', false],
+  ]);
+  assert.deepEqual(legacy.only, ['cn:flash', 'global:flash', 'global:gpt-5.5'], '裸 id 拆成两个出口，保存后取消一个出口不连带另一个');
+
+  const neverPicked = await describe(['global:gpt-5.5']);
+  assert.deepEqual(neverPicked.models.map((row) => row.selected), [true, true], 'CN 从没勾过：与同步一致，按全部算');
+});

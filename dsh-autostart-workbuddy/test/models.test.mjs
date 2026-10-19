@@ -28,6 +28,9 @@ import {
   readPluginModelsConfig,
   renderModelsBlock,
   resolveProfilePatchPath,
+  scopedSelection,
+  selectModels,
+  selectionKey,
   syncModels,
   withProviderModels,
   yamlScalar,
@@ -142,6 +145,39 @@ test('条目规划：白名单按给定顺序、上游顺序兜底、排除生�
 
   const excluded = planModelEntries(SAMPLE, { exclude: ['cn:alpha'] });
   assert.deepEqual(excluded.map((e) => e.id), ['global:beta']);
+});
+
+test('hub 白名单按出口分开记：cn:/global: 键只对当前出口生效，当前出口没勾过任何模型时按全部算', () => {
+  const cn = [{ id: 'deepseek-v4.1-flash', realm: 'cn' }, { id: 'minimax-m3', realm: 'cn' }, { id: 'glm-5.3', realm: 'cn' }];
+  const intl = [{ id: 'deepseek-v4.1-flash', realm: 'intl' }, { id: 'gpt-5.5', realm: 'intl' }];
+  assert.equal(selectionKey(cn[1]), 'cn:minimax-m3');
+  assert.equal(selectionKey(intl[1]), 'global:gpt-5.5', 'hub 的 intl 对应 wb2api 的 global: 前缀');
+  assert.equal(selectionKey({ id: 'cn:alpha' }), 'cn:alpha', 'wb2api 的 id 本身就是键');
+
+  const only = ['global:gpt-5.5', 'cn:minimax-m3', 'cn:deepseek-v4.1-flash'];
+  const ids = (models, list) => selectModels(models, list).map((model) => model.id);
+  assert.deepEqual(ids(cn, only), ['minimax-m3', 'deepseek-v4.1-flash'], '按白名单顺序，只取 cn: 那一组');
+  assert.deepEqual(ids(intl, only), ['gpt-5.5']);
+  assert.deepEqual(ids(intl, ['cn:minimax-m3']), ['deepseek-v4.1-flash', 'gpt-5.5'], '国际出口从没勾过 → 全部');
+  assert.deepEqual(ids(cn, ['deepseek-v4.1-flash', 'cn:deepseek-v4.1-flash']), ['deepseek-v4.1-flash'], '老的裸 id 两个出口都生效，同一模型只取一次');
+  assert.deepEqual(ids(cn, ['global:gpt-5.5', 'cn:not-listed']), [], '当前出口勾过、只是都暂时不在 → 不当成"全部"');
+
+  // 写进 DSH 的仍是 hub 认的裸 id，展示名带当前出口；排除也认带前缀的键。
+  const entries = planModelEntries(cn, { only, exclude: ['cn:deepseek-v4.1-flash'] });
+  assert.deepEqual(entries.map((entry) => entry.id), ['minimax-m3']);
+  assert.match(entries[0].name, /^CN /);
+});
+
+test('wb2api 某个出口暂时缺席时，不把那个出口的勾选当成"没勾过"', () => {
+  // CN 拉取失败、只剩 global：白名单只勾了 CN，结果应为空（同步跳过、保持现状），而不是换成 GL 的全部模型。
+  assert.deepEqual(selectModels([{ id: 'global:beta' }], ['cn:alpha']), []);
+  assert.deepEqual(selectModels([{ id: 'global:beta' }], []).map((model) => model.id), ['global:beta']);
+});
+
+test('scopedSelection：hub 下把老的裸 id 展开成两个出口各一条，wb2api 原样', () => {
+  assert.deepEqual(scopedSelection(['flash', 'cn:mini', 'cn:flash'], 'hub'), ['cn:flash', 'global:flash', 'cn:mini']);
+  assert.deepEqual(scopedSelection(['flash', 'cn:mini'], 'wb2api'), ['flash', 'cn:mini']);
+  assert.deepEqual(scopedSelection([], 'hub'), []);
 });
 
 test('思考档位：默认低/高/最大三档，auto 时按上游声明，不支持思考则不给档位', () => {

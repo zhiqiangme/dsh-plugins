@@ -243,7 +243,8 @@ window.__ModuleLoader__.load({
       gatewayWaiting: '正在切换到 {name}，等它启动…',
       gatewayNotInstalled: '已切换到 {name}，但它还没安装：请在下方点「安装」。',
       gatewayTimeout: '已切换到 {name}，但 {seconds} 秒内没等到它就绪；稍后可点模型区的「重试」或「刷新」。',
-      gatewayHubHint: 'hub 的模型 id 不带 cn:/global: 前缀，国内/国际跟随 hub 看板顶部的出口开关；从 wb2api 切过来后需要重新勾选模型。',
+      gatewayHubHint: 'hub 一次只服务一个出口（国内 / 国际），跟随 hub 看板顶部的出口开关。CN 与 GL 的勾选分开保存（与 wb2api 的 cn: / global: 共用），在看板切换出口后，DSH 的模型列表几秒内自动换成那一组。',
+      hubRealm: 'hub 当前出口：{realm}。这里勾的是 {realm} 这一组；切到另一个出口后，DSH 自动换成那一组的勾选（从没勾过就是全部）。',
       panelPasswordCopy: '复制面板密码',
       panelPasswordCopied: '已复制 hub 的默认面板密码 admin：打开后端面板粘贴即可；登录后建议在看板「设置」里改掉。',
       panelPasswordChanged: 'hub 的面板密码已经改过：hub 只存它的哈希，插件读不到明文，请用你自己设的密码登录。',
@@ -367,7 +368,8 @@ window.__ModuleLoader__.load({
       gatewayWaiting: 'Switching to {name}, waiting for it to start…',
       gatewayNotInstalled: 'Switched to {name}, but it is not installed yet: click "Install" below.',
       gatewayTimeout: 'Switched to {name}, but it was not ready within {seconds} s; try "Retry" or "Refresh" in the model list later.',
-      gatewayHubHint: 'Hub model ids have no cn:/global: prefix; China vs. international follows the exit switch at the top of the hub dashboard. Re-select your models after switching from wb2api.',
+      gatewayHubHint: 'The hub serves one exit at a time (China or international), following the exit switch at the top of the hub dashboard. CN and GL selections are saved separately (shared with wb2api\'s cn: / global: ids); after you switch the exit in the dashboard, the DSH model list changes to that set within seconds.',
+      hubRealm: 'Current hub exit: {realm}. You are choosing the {realm} set; after switching to the other exit, DSH uses that exit\'s own selection (all of its models if you never chose any).',
       panelPasswordCopy: 'Copy panel password',
       panelPasswordCopied: "Copied the hub's default panel password admin: paste it in the backend panel; consider changing it under Settings after signing in.",
       panelPasswordChanged: "The hub's panel password has been changed: the hub stores only its hash, so the plugin cannot read it. Sign in with the password you set.",
@@ -1025,7 +1027,7 @@ window.__ModuleLoader__.load({
           const list = payload.models ?? [];
           const selected = new Set([...(payload.only ?? []), ...list.filter((row) => row.selected).map((row) => row.id)]);
           setRows(list);
-          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, only: payload.only, patchPath: payload.patchPath, url: payload.url });
+          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, only: payload.only, patchPath: payload.patchPath, url: payload.url, realm: payload.realm });
           setPicked(selected);
           setSavedPicked(new Set(selected));
           setPhase('ready');
@@ -1267,6 +1269,8 @@ window.__ModuleLoader__.load({
             t('syncEnabled'),
           ),
           h('p', { key: 'syncHint', className: 'dsm-wb-hint' }, t(meta.enabled === true ? 'syncHint' : 'disabledHint')),
+          // hub 才有出口（应答顶层的 realm）：说明这一页勾的是哪一组。
+          meta.realm ? h('p', { key: 'hubRealm', className: 'dsm-wb-hint' }, t('hubRealm', { realm: meta.realm === 'cn' ? 'CN' : 'GL' })) : null,
         );
         body.push(
           h(
@@ -1351,7 +1355,9 @@ window.__ModuleLoader__.load({
           );
         }
 
-        if (picked.size === 0 && sorted.length > 0) {
+        // hub 的勾选按出口分开：另一个出口的勾选不算，这个出口一个没勾就是"全部"。
+        const nonePicked = meta.realm ? sorted.every((row) => !picked.has(row.id)) : picked.size === 0;
+        if (nonePicked && sorted.length > 0) {
           body.push(h('p', { key: 'emptyHint', className: 'dsm-wb-hint' }, t('emptyHint')));
         }
       }

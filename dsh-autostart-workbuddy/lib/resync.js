@@ -9,10 +9,19 @@
  *
  * 网关密钥：syncModels 每轮会调 ensureProxyCredential，它只读凭据库，值已在（且不是占位值）就不写，
  * 所以定时同步不会每轮重写 WORKBUDDY_PROXY_KEY；推迟写入的那一轮连读都不读。
+ *
+ * hub 一次只服务一个出口（国内 / 国际），用户在 hub 看板顶部切换。为了让 DSH 的模型列表跟着换：
+ *   - 每 REALM_POLL_MS 探一次 hub 的 `/health`（它报当前出口，hub 也不给这条请求记日志），
+ *     出口变了就立即同步一轮，不等下一个 resyncIntervalMs；
+ *   - 出口切换后的那一轮跳过"移除要连续两轮确认"：模型变少是用户切出口的结果，不是上游抖动。
+ * 白名单按出口分开记（cn: / global: 键，见 models.js 的 selectionKey），所以切过去用的是那个出口自己的勾选。
  */
 
 import { gatewayDriver } from './gateway.js';
 import { syncModels } from './models.js';
+
+/** 探 hub 当前出口的间隔：探的是本机 /health（不鉴权、hub 不记日志），几秒一次的开销可以忽略。 */
+export const REALM_POLL_MS = 5_000;
 
 /** 健康探针的地址：跟随 models.baseURL（可能指向外部实例），解析不了再退回托管端口。 */
 export function healthTarget(baseURL, spec) {
@@ -35,13 +44,25 @@ export function healthTarget(baseURL, spec) {
  * @param {Function} [options.probe] 测试替身：默认按网关取（wb2api 探 /healthz，hub 探 /health）
  * @param {Function} [options.sync]  测试替身：默认 syncModels
  * @param {string} [options.name]    日志前缀
+ * @param {number} [options.realmPollMs] 测试用：探 hub 出口的间隔
  */
 export function createModelResync(options) {
-  const { resolved, logger, editor, credentials, env = process.env, probe = gatewayDriver(options.resolved).probe, sync = syncModels, name = 'dsh-autostart-workbuddy' } = options;
+  const {
+    resolved, logger, editor, credentials, env = process.env, probe = gatewayDriver(options.resolved).probe, sync = syncModels,
+    name = 'dsh-autostart-workbuddy', realmPollMs = REALM_POLL_MS,
+  } = options;
   const removalGuard = { missing: new Set() };
+  // 只有 hub 一次只服务一个出口；wb2api 两个出口同时列出，不需要盯。
+  const watchRealm = resolved.gateway === 'hub';
   let timer;
+  let realmTimer;
   let running;
   let stopped = false;
+  // DSH 里的模型列表最后一次是按哪个出口同步的；undefined = 还不知道（第一次探到时记下）。
+  let syncedRealm;
+  // 已为哪个出口立即同步过一次：那一轮没成（新出口暂无可用账号等）就交给定时同步重试，
+  // 不能每 REALM_POLL_MS 都再打一次 /v1/models（hub 会给每次模型请求记一行日志）。
+  let attemptedRealm;
   // 同一原因只记一次：后端长时间没起来时不能每轮刷一条 warn。
   let lastNote;
 
@@ -71,9 +92,19 @@ export function createModelResync(options) {
       return result;
     }
 
+    const realmSwitched = Boolean(watchRealm && syncedRealm && health.realm && health.realm !== syncedRealm);
+    if (realmSwitched) {
+      // 上个出口的缺席记录对新出口没有意义，清掉，免得之后切回来时被误当成"已确认过一轮"。
+      removalGuard.missing = new Set();
+      logger.info(`[${name}] hub 出口从 ${syncedRealm} 切到 ${health.realm}，按新出口同步模型列表`);
+    }
     const result = await sync({
-      spec: resolved.spec, models, editor: editor(), credentials: credentials(), env, removalGuard,
+      spec: resolved.spec, models, editor: editor(), credentials: credentials(), env,
+      removalGuard: realmSwitched ? undefined : removalGuard,
     });
+    if (watchRealm && ['updated', 'unchanged', 'deferred'].includes(result.state)) {
+      syncedRealm = result.realm ?? health.realm ?? syncedRealm;
+    }
     if (result.state === 'updated') {
       lastNote = undefined;
       logger.info(`[${name}] 定时同步：模型列表已更新为 ${result.entries.length} 个模型 → ${result.documentPath}`);
@@ -118,16 +149,51 @@ export function createModelResync(options) {
     timer.unref?.();
   }
 
+  /**
+   * 盯 hub 的出口：变了就立即同步一轮。与定时同步同一个开关：models 没开或 resyncIntervalMs 为 0
+   * （用户关了后台同步）时只空转、不探测。tick 自带去重，与定时那一轮撞上时共用同一轮。
+   */
+  async function checkRealm() {
+    const models = resolved.models;
+    if (!models?.enabled || !(models.resyncIntervalMs > 0)) return;
+    const health = await probe(healthTarget(models.baseURL, resolved.spec)).catch(() => undefined);
+    if (!health?.ok || typeof health.realm !== 'string') return;
+    // 还不知道 DSH 是按哪个出口同步的（插件刚启动，启动同步不经过这里）：以现在为准。
+    if (syncedRealm === undefined) {
+      syncedRealm = health.realm;
+      return;
+    }
+    if (health.realm === syncedRealm) {
+      attemptedRealm = undefined;
+      return;
+    }
+    if (health.realm === attemptedRealm) return;
+    attemptedRealm = health.realm;
+    await tick();
+  }
+
+  function scheduleRealm() {
+    if (stopped || realmTimer || !watchRealm) return;
+    realmTimer = setTimeout(() => {
+      realmTimer = undefined;
+      checkRealm().catch(() => undefined).then(scheduleRealm);
+    }, realmPollMs);
+    realmTimer.unref?.();
+  }
+
   return {
     tick,
     /** 面板同步进行中也要排上定时链；timer 到期时 tick 会复用正在进行的一轮。 */
     start() {
       schedule();
+      scheduleRealm();
     },
     stop() {
       stopped = true;
       if (timer) clearTimeout(timer);
+      if (realmTimer) clearTimeout(realmTimer);
       timer = undefined;
+      realmTimer = undefined;
     },
     get removalGuard() {
       return removalGuard;

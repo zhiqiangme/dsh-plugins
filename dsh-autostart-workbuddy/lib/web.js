@@ -26,7 +26,17 @@ import { isDeepStrictEqual } from 'node:util';
 import { autoUpdateStatus } from './auto-update.js';
 import { GATEWAY_IDS, backendLockHolder, gatewayDriver, withBackendLock } from './gateway.js';
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
-import { creditsLabel, fetchModels, findConfigEntry, modelDisplayName, panelApiKey, syncModels } from './models.js';
+import {
+  creditsLabel,
+  fetchModels,
+  findConfigEntry,
+  modelDisplayName,
+  panelApiKey,
+  scopedSelection,
+  selectionKey,
+  selectModels,
+  syncModels,
+} from './models.js';
 import { healthTarget } from './resync.js';
 import { isFile } from './services.js';
 import { createVersionChecker } from './update.js';
@@ -171,12 +181,15 @@ function positiveIntOrNull(value) {
  *
  * 白名单为空 = 同步后端全部模型（既有语义），此时所有条目都标记为已选。
  *
+ * hub：行的 id 是带出口前缀的白名单键（cn:xxx / global:xxx，见 models.js 的 selectionKey），回显的白名单
+ * 也把老的裸 id 展开成两个出口的键。浏览器半侧原样回传，存下来的勾选就按出口分开，hub 切出口时各用各的。
+ *
  * `models` 是插件手里的当前配置（随配置变更就地刷新，见 index.js），`patchPath` 只用来
  * 告诉用户写到了哪个文件。
  */
 export async function describeModels({ spec, models, editor, env = process.env, managedExe, gateway, probe }) {
   const patchPath = editor?.documentPath;
-  const only = models.only ?? [];
+  const only = scopedSelection(models.only ?? [], gateway);
   const enabled = models.enabled;
 
   // hub 的 /v1/models 不看账号池：一个账号都没有也照样返回内置目录（实测 17 个），
@@ -213,20 +226,23 @@ export async function describeModels({ spec, models, editor, env = process.env, 
     return { ok: false, reason: fetched.reason, patchPath, enabled, only };
   }
 
-  const selected = new Set(only);
+  // 与同步同一套挑选规则（含 hub 当前出口没勾过任何模型时按"全部"算），面板显示的勾选就是 DSH 会得到的。
+  const selected = new Set(selectModels(fetched.models, only).map((model) => model.id));
   const rows = fetched.models.map((model) => ({
-    id: model.id,
+    id: selectionKey(model),
     label: modelDisplayName(model),
     credits: creditsLabel(model.credits),
     contextWindow: positiveIntOrNull(model.context_length),
     maxTokens: positiveIntOrNull(model.max_output_tokens),
     vision: model.supports_images === true,
-    selected: only.length === 0 ? true : selected.has(model.id),
+    selected: selected.has(model.id),
   }));
 
   return {
     ok: true,
     url: fetched.url,
+    // hub 的当前出口（intl / cn）；wb2api 没有。
+    realm: fetched.realm,
     patchPath,
     enabled,
     provider: models.provider,

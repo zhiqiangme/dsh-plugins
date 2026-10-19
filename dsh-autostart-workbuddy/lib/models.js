@@ -55,6 +55,82 @@ export function creditsLabel(credits) {
  */
 const REALM_LABELS = Object.freeze({ cn: 'CN', intl: 'GL', global: 'GL' });
 
+/** hub 的出口 → 白名单键前缀：与 wb2api 的模型 id 前缀一致，两种网关因此共用同一份白名单。 */
+const REALM_KEY_PREFIXES = Object.freeze({ cn: 'cn:', intl: 'global:', global: 'global:' });
+
+/** 键带的出口前缀（cn: / global:）；不带前缀返回 undefined。 */
+function regionPrefixOf(key) {
+  return REGION_PREFIXES.find(([prefix]) => String(key).startsWith(prefix))?.[0];
+}
+
+/**
+ * 模型在白名单（models.only / exclude）里的键。
+ *
+ * wb2api 的 id 本身带 cn:/global:，键就是 id。hub 的 id 不带前缀、一次只服务一个出口，
+ * 键 = 出口前缀 + id：CN 与 GL 的勾选因此分开记，hub 在看板里切出口后，同步自动换成那个出口的那一组，
+ * 不用回插件卡片重新勾。写进 DSH 的模型 id 仍是 hub 认的裸 id，键只用于挑选。
+ */
+export function selectionKey(model) {
+  if (regionPrefixOf(model.id)) return model.id;
+  const prefix = typeof model.realm === 'string' ? REALM_KEY_PREFIXES[model.realm] : undefined;
+  return prefix ? `${prefix}${model.id}` : model.id;
+}
+
+/**
+ * 按白名单挑模型（保持白名单里的先后顺序，同一模型只取一次）。
+ *
+ * - 白名单为空 = 全部（既有语义）；
+ * - wb2api：键就是 id，逐个对上；
+ * - hub：不带前缀的老条目（改按出口记之前存下的）对任何出口都生效；带前缀的只对当前出口生效。
+ *   当前出口在白名单里一个条目都没有时按"空 = 全部"处理：第一次切到一个从没勾过的出口，
+ *   DSH 里换成它的全部模型，而不是留着上个出口的旧条目。
+ *
+ * @returns {object[]} 选中的模型
+ */
+export function selectModels(models, only = []) {
+  const byId = new Map();
+  const byKey = new Map();
+  for (const model of models) {
+    if (!model || typeof model.id !== 'string' || !model.id.trim() || byId.has(model.id)) continue;
+    byId.set(model.id, model);
+    byKey.set(model.id, model);
+    byKey.set(selectionKey(model), model);
+  }
+  const list = Array.isArray(only) ? only : [];
+  // 只有 hub 这种"裸 id + 出口"的清单才按出口挑。wb2api 一次列出两个出口，某个出口暂时缺席
+  // （网络故障）时，不能把它当成"这个出口没勾过"、换成另一个出口的全部模型。
+  const realmScoped = [...byId.values()].some((model) => selectionKey(model) !== model.id);
+  const listed = new Set([...byKey.keys()].map(regionPrefixOf).filter(Boolean));
+  const applicable = realmScoped
+    ? list.filter((key) => {
+        const prefix = regionPrefixOf(key);
+        return !prefix || listed.has(prefix);
+      })
+    : list;
+  if (applicable.length === 0) return [...byId.values()];
+  const picked = new Map();
+  for (const key of applicable) {
+    const model = byKey.get(key);
+    if (model && !picked.has(model.id)) picked.set(model.id, model);
+  }
+  return [...picked.values()];
+}
+
+/**
+ * 面板回显用的白名单：hub 下把不带前缀的老条目展开成 cn: 与 global: 两条（语义不变：两个出口都选中）。
+ * 面板之后保存的就全是带前缀的键，取消一个出口的勾选不会连带另一个出口。
+ */
+export function scopedSelection(only = [], gateway) {
+  if (gateway !== 'hub') return [...only];
+  const out = [];
+  for (const key of only) {
+    for (const scoped of regionPrefixOf(key) ? [key] : REGION_PREFIXES.map(([prefix]) => `${prefix}${key}`)) {
+      if (!out.includes(scoped)) out.push(scoped);
+    }
+  }
+  return out;
+}
+
 /** 展示名：`<CN|GL> <上游名> <倍率>`；上游名已带同款后缀时不重复追加。 */
 export function modelDisplayName(model) {
   const prefixed = REGION_PREFIXES.find(([prefix]) => model.id.startsWith(prefix))?.[1];
@@ -90,22 +166,12 @@ export function modelEfforts(model, efforts) {
  * @param {{ only?: string[], exclude?: string[], efforts?: string[] | 'auto' }} options
  */
 export function planModelEntries(models, options = {}) {
-  const only = Array.isArray(options.only) ? options.only : [];
   const exclude = new Set(Array.isArray(options.exclude) ? options.exclude : []);
   const efforts = options.efforts === 'auto' ? 'auto' : Array.isArray(options.efforts) ? options.efforts : DEFAULT_EFFORTS;
 
-  const byId = new Map();
-  for (const model of models) {
-    if (model && typeof model.id === 'string' && model.id.trim() && !byId.has(model.id)) {
-      byId.set(model.id, model);
-    }
-  }
-
-  const picked = only.length > 0 ? only.map((id) => byId.get(id)).filter(Boolean) : [...byId.values()];
-
   const entries = [];
-  for (const model of picked) {
-    if (exclude.has(model.id)) continue;
+  for (const model of selectModels(models, options.only)) {
+    if (exclude.has(model.id) || exclude.has(selectionKey(model))) continue;
     const entry = { id: model.id, name: modelDisplayName(model) };
     const contextWindow = positiveInt(model.context_length);
     if (contextWindow) entry.contextWindow = contextWindow;
@@ -461,16 +527,18 @@ export async function syncModels(options) {
     return { state: 'skipped', reason: '后端返回空模型列表，保持现有配置', documentPath };
   }
 
+  // hub 的当前出口（应答顶层的 realm）；wb2api 没有这一项。定时同步靠它认出"出口切换了"。
+  const realm = fetched.realm;
   const entries = planModelEntries(fetched.models, models);
   if (entries.length === 0) {
-    return { state: 'skipped', reason: '按 only/exclude 过滤后没有可写的模型', documentPath };
+    return { state: 'skipped', reason: '按 only/exclude 过滤后没有可写的模型', realm, documentPath };
   }
 
   // 推迟时连密钥也不碰：本轮什么都不写，下一轮确认后照常补。
   if (removalGuard) {
     const removal = confirmRemovals(removalGuard, providerModelIds(target.options?.config, models.provider), entries.map((entry) => entry.id));
     if (!removal.ok) {
-      return { state: 'deferred', reason: `后端暂未提供 ${removal.missing.join(', ')}，下一轮仍缺席再移除`, missing: removal.missing, entries, documentPath };
+      return { state: 'deferred', reason: `后端暂未提供 ${removal.missing.join(', ')}，下一轮仍缺席再移除`, missing: removal.missing, entries, realm, documentPath };
     }
   }
 
@@ -478,14 +546,14 @@ export async function syncModels(options) {
   const planned = withProviderModels(target.options?.config, models.provider, entries, skeleton);
   if (dryRun) {
     return planned.changed
-      ? { state: 'dry-run', entries, created: planned.created, documentPath }
-      : { state: 'unchanged', entries, documentPath };
+      ? { state: 'dry-run', entries, created: planned.created, realm, documentPath }
+      : { state: 'unchanged', entries, realm, documentPath };
   }
   if (!planned.changed) {
     const credential = await ensureProxyCredential({
       credentials, ref: providerKeyRef(planned.config, models.provider), apiKey,
     });
-    return { state: 'unchanged', entries, credential, documentPath };
+    return { state: 'unchanged', entries, credential, realm, documentPath };
   }
 
   // change 回调拿的是 configEditor 在锁内重新读出的最新配置：在它上面重算，
@@ -505,7 +573,7 @@ export async function syncModels(options) {
   const credential = await ensureProxyCredential({
     credentials, ref: providerKeyRef(written, models.provider), apiKey,
   });
-  return { state: 'updated', entries, created, credential, documentPath };
+  return { state: 'updated', entries, created, credential, realm, documentPath };
 }
 
 /**

@@ -233,6 +233,8 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     // 后端自动更新
     'autoUpdateDrifted', 'autoUpdateError', 'autoUpdateFailed', 'autoUpdateHint', 'autoUpdateLabel', 'autoUpdateLast',
     'autoUpdatePending', 'autoUpdateRolledBack', 'autoUpdateUnavailable', 'autoUpdateUnknown', 'autoUpdateWaiting',
+    // hub 出口
+    'hubRealm',
   ];
   assert.deepEqual(Object.keys(entry.zh).sort(), expected.sort());
 });
@@ -730,7 +732,7 @@ test('后端网关（hub）：给出模型 id 与出口的说明；卸载确认�
     gatewayStates({ ...GATEWAY_BACKEND, gateway: 'hub' }, { kind: 'ok', text: '已切换到 workbuddy2api-hub' }, { confirming: 'uninstall' }),
   );
   const text = collectText(render(renderCard()));
-  assert.ok(text.some((line) => String(line).startsWith('hub 的模型 id')), '应说明 hub 的模型 id 与出口开关');
+  assert.ok(text.some((line) => String(line).startsWith('hub 一次只服务一个出口')), '应说明 hub 的出口开关与按出口分开的勾选');
   assert.ok(text.includes('卸载 hub？'), '卸载确认用 hub 的标题');
   assert.ok(text.includes('hub 的账号凭证、设置与用量（hub/data/）会保留。'));
   assert.ok(text.includes('已切换到 workbuddy2api-hub'));
@@ -1030,4 +1032,21 @@ test('后端区：自动更新开关与状态行（待装 / 已自动更新 / �
   assert.match(collectText(backendSection(installed.renderCard())).join('\n'), /已下载 v1\.1\.0/);
   const missing = boot(backendStates({ exeExists: false, version: {}, history: [], autoUpdate: auto }));
   assert.doesNotMatch(collectText(missing.renderCard()).join('\n'), /自动更新后端/);
+});
+
+test('模型区（hub）：说明当前出口；另一个出口的勾选不算，这个出口一个没勾时提示"全部"', () => {
+  const rows = [{ id: 'cn:flash', label: 'CN Flash Free', credits: 'Free' }];
+  const meta = { enabled: true, savedEnabled: true, only: ['global:gpt-5.5'], realm: 'cn' };
+  const none = boot(['ready', rows, meta, '', new Set(['global:gpt-5.5']), new Set(['global:gpt-5.5'])]);
+  const text = collectText(none.renderCard()).join('\n');
+  assert.match(text, /hub 当前出口：CN/);
+  assert.match(text, /一个都没勾/, 'CN 这一组一个没勾 = CN 全部');
+
+  const some = boot(['ready', rows, meta, '', new Set(['global:gpt-5.5', 'cn:flash']), new Set(['global:gpt-5.5'])]);
+  assert.doesNotMatch(collectText(some.renderCard()).join('\n'), /一个都没勾/);
+
+  const wb = boot(['ready', [{ id: 'cn:alpha', label: 'CN Alpha', credits: 'Free' }], { enabled: true }, '', new Set(['global:beta']), new Set()]);
+  const wbText = collectText(wb.renderCard()).join('\n');
+  assert.doesNotMatch(wbText, /hub 当前出口/, 'wb2api 没有出口一说');
+  assert.doesNotMatch(wbText, /一个都没勾/, 'wb2api 下白名单非空就不是"全部"');
 });

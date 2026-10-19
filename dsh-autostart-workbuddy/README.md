@@ -33,7 +33,7 @@
 | 程序 | 单个 `wb2api.exe`（Go） | 便携包整目录：脚本 + 自带的 CPython 运行时（约 33MB） |
 | 目录 | `wb2api/backend/`、`wb2api/data/` | `hub/backend/`、`hub/data/`（账号与用量） |
 | 版本身份 | exe 里的 Go `vcs.revision` | 包内 `release-manifest.json` 的 tag |
-| 模型 id | `cn:xxx` / `global:xxx`，两个出口同时列出 | 不带前缀，一次只列一个出口；国内/国际跟随 hub 看板顶部的出口开关 |
+| 模型 id | `cn:xxx` / `global:xxx`，两个出口同时列出 | 不带前缀，一次只列一个出口；国内/国际跟随 hub 看板顶部的出口开关，切换后 DSH 的模型列表自动跟着换 |
 | 管理面板 | `http://127.0.0.1:7863/panel`，用 `config.json` 的 `api_key` 进 | `http://127.0.0.1:7863/`，用面板密码进（默认 `admin`，登录后请改） |
 
 hub 是 wb2api 停更时的备选。
@@ -41,7 +41,11 @@ hub 是 wb2api 停更时的备选。
 - **切换**：宿主按"配置变更"重启本插件，停掉旧网关，再按新网关拉起（没装就提示去点「安装」）。卡片会等到新网关接管、模型区能答才刷新（最多 60 秒）。两种网关的程序和账号各存一份，切换不会覆盖对方的数据；但账号要在 hub 看板里另外登录或导入。
 - **端口与 provider**：两者都监听 7863，DSH 里 workbuddy provider 的 `baseURL` 不用改。
 - **网关密钥**：hub 的密钥按 插件配置 `models.apiKey` → 环境变量 `WORKBUDDY_PROXY_KEY` → wb2api `config.json` 的 `api_key` 的顺序沿用，所以凭据库里现有的 `WORKBUDDY_PROXY_KEY` 不用改。都没有时插件生成一个，存进 `hub/data/plugin-api-key`。密钥经环境变量 `API_KEY` 传给 hub，不出现在命令行里。
-- **模型白名单**：从 wb2api 切到 hub 后，`models.only` 里的 `cn:` / `global:` id 都对不上，需要在卡片里重新勾选。展示名前缀（CN / GL）按 hub 当前的出口补上。hub 账号池里还没有可用账号时，它的 `/v1/models` 仍会返回内置目录，卡片按 `/health` 的 `accounts_ready` 判断，为 0 就不列模型，提示先去看板登录。
+- **模型白名单按出口分开记**：hub 的模型 id 不带前缀，一次只列当前出口的模型。插件在白名单里给它们补上出口前缀（国内 `cn:xxx`、国际 `global:xxx`，与 wb2api 的 id 一致），所以 CN 和 GL 各有一组勾选，而且从 wb2api 切过来不用重新勾。写进 DSH 的模型 id 仍是 hub 认的裸 id，展示名前缀（CN / GL）按当前出口补上。
+  - 不带前缀的老条目（改版前存下的）对两个出口都生效；在卡片里保存一次后会拆成两个出口各一条，之后取消一个出口的勾选不影响另一个。
+  - 当前出口在白名单里一条都没有时按「全部模型」处理（与"白名单留空 = 全部"同一语义）：第一次切到一个从没勾过的出口，DSH 换成它的全部模型，再到卡片里删减即可。
+- **跟随出口切换**：在 hub 看板顶部切换国内 / 国际后，插件约 5 秒内发现（每 5 秒探一次 hub 的 `/health`，它报当前出口，hub 不给这条请求记日志），立即按新出口的那组勾选重写 DSH 的模型列表，不用回卡片点「刷新」「保存」。这一轮跳过"移除要连续两轮确认"——模型变少是切出口的结果，不是上游抖动。与定时同步同一个开关：`models.enabled` 关着或 `resyncIntervalMs: 0` 时不跟。已经打开的卡片不会自己刷新，点一下「刷新」就是新出口的列表。
+- hub 账号池里还没有可用账号时，它的 `/v1/models` 仍会返回内置目录，卡片按 `/health` 的 `accounts_ready` 判断，为 0 就不列模型，提示先去看板登录。
 - **Clash 全局模式**：hub 的国内版上游同样写死成 `copilot.tencent.com`，海外出口下 CN 账号的对话会 TLS 失败。插件启动 hub 时传 `WB_CN_CHAT_UPSTREAM`（取 `cnChatBase`），需要 hub 认这个变量（fork 分支 `fix/cn-chat-upstream`，待合入上游）；不认的版本照旧。背景与改法见 [docs/hub-cn-base.md](https://github.com/zhiqiangme/dsh-plugins/blob/main/dsh-autostart-workbuddy/docs/hub-cn-base.md)。
 - **命令行**：`lib/backend-cli.js` 只管 wb2api；hub 的安装、更新与回滚在卡片里操作。
 
@@ -63,6 +67,7 @@ hub 是 wb2api 停更时的备选。
   倍率取上游的 `credits`（`x0.11` → `0.11`，`x0.00` 或缺失 → `Free`）。
 - 每个模型默认给**低/高/最大**三个思考档位（`efforts: auto` 则按上游声明的档位）。
 - `models.only` 是白名单：留空 = 同步后端全部模型；填了就只保留列出的 id，并按列出顺序展示。
+  hub 网关下按出口分开算（`cn:xxx` / `global:xxx`），见[后端网关](#后端网关)。
 - 后端返回空列表（面板在上游故障时就是这么降级的）或请求失败时**不动现有配置**。
 - 运行中默认每分钟（`resyncIntervalMs`）再同步一次，上游下架或新增、网络恢复后重新出现的模型不必重启 DSH 就能跟上。
   后端 `/healthz` 不通或账号池暂无可用账号时跳过；某个模型要连续两轮缺席才会移除，避免上游抖动误删。
@@ -218,7 +223,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | 字段 | 说明 |
 | --- | --- |
 | `enabled` | 是否接管模型列表，默认 **false**（不开就不碰 profile） |
-| `only` | 白名单，按列出顺序写；空 = 后端全部模型 |
+| `only` | 白名单，按列出顺序写；空 = 后端全部模型。hub 网关下写 `cn:xxx` / `global:xxx`，按当前出口生效 |
 | `exclude` | 黑名单，优先级高于 `only` |
 | `efforts` | 每个模型的思考档位，默认 `[low, high, max]`；填 `auto` 用上游声明的档位 |
 | `panelConfig` | 读网关密钥的面板配置，默认 `<cwd>/config.json` |
