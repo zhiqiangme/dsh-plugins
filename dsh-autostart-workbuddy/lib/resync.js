@@ -58,6 +58,7 @@ export function createModelResync(options) {
   let realmTimer;
   let running;
   let stopped = false;
+  let lastSync;
   // DSH 里的模型列表最后一次是按哪个出口同步的；undefined = 还不知道（第一次探到时记下）。
   let syncedRealm;
   // 已为哪个出口立即同步过一次：那一轮没成（新出口暂无可用账号等）就交给定时同步重试，
@@ -123,6 +124,7 @@ export function createModelResync(options) {
   function tick() {
     if (running) return running;
     running = runOnce()
+      .then((result) => { lastSync = { at: new Date().toISOString(), state: result.state }; return result; })
       .catch((error) => {
         const reason = error instanceof Error ? error.message : String(error);
         note('warn', `定时同步出错：${reason}`);
@@ -190,6 +192,7 @@ export function createModelResync(options) {
 
   return {
     tick,
+    get status() { return { realm: syncedRealm, ...lastSync }; },
     /** 面板同步进行中也要排上定时链；timer 到期时 tick 会复用正在进行的一轮。 */
     start() {
       schedule();

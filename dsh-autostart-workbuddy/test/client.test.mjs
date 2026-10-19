@@ -36,7 +36,7 @@ function loadBundle({ fetchImpl = globalThis.fetch } = {}) {
 }
 
 /** 替身 React：createElement 产出普通对象；useState 按调用顺序喂预设状态。 */
-function makeReact(states) {
+function makeReact(states, effects) {
   let index = 0;
   return {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
@@ -47,7 +47,7 @@ function makeReact(states) {
     beginRender: () => { index = 0; },
     useCallback: (fn) => fn,
     useMemo: (fn) => fn(),
-    useEffect: () => {},
+    useEffect: (effect) => { effects?.push(effect); },
   };
 }
 
@@ -113,11 +113,11 @@ function interpolate(value, params) {
  * @param {unknown[]} states 组件渲染时 useState 按顺序返回的值
  * @param {{ withPrimitives?: boolean }} [options] withPrimitives=false 时模拟宿主组件不可用
  */
-function boot(states = [], { withPrimitives = true, fetchImpl } = {}) {
+function boot(states = [], { withPrimitives = true, fetchImpl, effects } = {}) {
   const { registration, styles } = loadBundle({ fetchImpl });
   const dicts = new Map();
   const cards = [];
-  const React = makeReact(states);
+  const React = makeReact(states, effects);
 
   /** 替身 primitives：只提供 Modal，渲染成普通 div 便于断言内容。 */
   const primitives = {
@@ -202,6 +202,39 @@ test('模型筛选按搜索、区域、免费、视觉与倍率组合，保留�
   assert.deepEqual(module.filterRows(rows, { freeOnly: true }).map((x) => x.id), ['global:beta']);
   assert.deepEqual(module.filterRows(rows, { query: 'alpha', region: 'cn', visionOnly: true, maxCredits: 0.2 }).map((x) => x.id), ['cn:alpha']);
   assert.deepEqual(module.filterRows(rows, { sort: 'credits' }).map((x) => x.id), ['global:beta', 'cn:alpha', 'cn:unknown']);
+});
+
+test('实时刷新保留跨区域勾选草稿、取消项与未保存的开关和规则', () => {
+  const { module } = boot();
+  const next = module.mergeLiveSnapshot({
+    picked: new Set(['global:keep', 'global:added']), savedPicked: new Set(['global:keep', 'global:removed']),
+    meta: { enabled: false, savedEnabled: true, rules: { freeOnly: true }, savedRules: { freeOnly: false } },
+  }, { enabled: true, rules: { freeOnly: false }, realm: 'cn', only: ['global:removed'], models: [{ id: 'cn:new', selected: true }] });
+  assert.ok(next.picked.has('global:added'));
+  assert.ok(next.picked.has('global:keep'));
+  assert.ok(next.picked.has('cn:new'));
+  assert.equal(next.picked.has('global:removed'), false);
+  assert.equal(next.meta.enabled, false);
+  assert.equal(next.meta.rules.freeOnly, true);
+  assert.equal(next.meta.realm, 'cn');
+});
+
+test('实时轮询刷新模型与后端状态，卸载卡片后停止', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const effects = [], requests = [];
+  const app = boot(modelStates(true), { effects, fetchImpl: async (path) => {
+    requests.push(path);
+    return { ok: true, json: async () => path.endsWith('/backend') ? { backend: { modelStatus: { realm: 'cn', at: 'new' } } } :
+      { ok: true, enabled: true, only: [], realm: 'cn', models: [{ id: 'cn:new', label: 'New CN Free', selected: true }] } };
+  } });
+  app.renderCard();
+  const stop = effects.at(-1)();
+  t.after(stop);
+  t.mock.timers.tick(5000); await new Promise((done) => setImmediate(done));
+  assert.equal(requests.length, 2);
+  assert.ok(collectText(app.renderCard()).includes('New CN Free'));
+  stop(); t.mock.timers.tick(20_000); await new Promise((done) => setImmediate(done));
+  assert.equal(requests.length, 2);
 });
 
 test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 的键集合一致', () => {

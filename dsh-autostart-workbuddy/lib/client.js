@@ -492,6 +492,26 @@ window.__ModuleLoader__.load({
       return list;
     }
 
+    /** 应用新快照时保留用户相对于旧快照的增删，跨出口的草稿也不丢。 */
+    function mergeLiveSnapshot(previous, payload) {
+      const rows = payload.models ?? [];
+      const savedPicked = new Set([...(payload.only ?? []), ...rows.filter((row) => row.selected).map((row) => row.id)]);
+      const picked = new Set(savedPicked);
+      const oldPicked = previous.picked ?? new Set();
+      const oldSaved = previous.savedPicked ?? new Set();
+      const edited = !sameSet(oldPicked, oldSaved);
+      if (edited) {
+        const visible = new Set(rows.map((row) => row.id));
+        for (const id of oldPicked) if (!oldSaved.has(id) || !visible.has(id)) picked.add(id);
+        for (const id of oldSaved) if (!oldPicked.has(id)) picked.delete(id);
+      }
+      const old = previous.meta ?? {};
+      const meta = { ...old, only: payload.only, realm: payload.realm, savedEnabled: payload.enabled, savedRules: payload.rules,
+        enabled: old.enabled !== old.savedEnabled ? old.enabled : payload.enabled,
+        rules: JSON.stringify(old.rules) !== JSON.stringify(old.savedRules) ? old.rules : payload.rules };
+      return { rows, picked, savedPicked, meta };
+    }
+
     /**
      * 保存用的白名单：按面板展示顺序排，而不是勾选的先后。
      *
@@ -1262,6 +1282,30 @@ window.__ModuleLoader__.load({
       const [diagnostic, setDiagnostic] = useState(undefined);
       const [filters, setFilters] = useState(undefined);
       const sorted = useMemo(() => filterRows(rows, { ...meta.rules, ...filters }), [rows, meta.rules, filters]);
+      const live = useMemo(() => ({}), []);
+      live.current = { meta, rows, picked, savedPicked, saving, backendBusy, gatewaySwitch, phase };
+      useEffect(() => {
+        let active = true, timer, lastStamp;
+        const blocked = () => live.current.saving || live.current.backendBusy || live.current.gatewaySwitch?.busy || live.current.phase === 'loading';
+        const poll = async () => {
+          try {
+            if (document.visibilityState === 'hidden' || blocked()) return;
+            const payload = await request(BACKEND_PATH, 'GET');
+            if (!active) return;
+            setBackend(payload.backend ?? {});
+            const stamp = JSON.stringify([payload.backend?.gateway, payload.backend?.modelStatus, payload.backend?.recovery?.state]);
+            if (stamp === lastStamp || blocked()) return;
+            const inventory = await request(MODELS_PATH, 'GET');
+            if (!active || blocked() || !inventory.ok) return;
+            const next = mergeLiveSnapshot(live.current, inventory);
+            setRows(next.rows); setPicked(next.picked); setSavedPicked(next.savedPicked); setMeta(next.meta); setPhase('ready');
+            lastStamp = stamp;
+          } catch { /* 保留当前内容与草稿，下一轮重试。 */ }
+          finally { if (active) { timer = setTimeout(poll, 5000); timer.unref?.(); } }
+        };
+        timer = setTimeout(poll, 5000); timer.unref?.();
+        return () => { active = false; clearTimeout(timer); };
+      }, [live]);
       const runDiagnostic = async () => {
         setDiagnostic({ busy: true });
         try { setDiagnostic({ report: (await request(BACKEND_PATH, 'POST', { action: 'diagnose' })).report }); }
@@ -1717,6 +1761,7 @@ window.__ModuleLoader__.load({
     // 纯函数，导出给测试；宿主只认 name / inject / apply。
     exports.orderedSelection = orderedSelection;
     exports.filterRows = filterRows;
+    exports.mergeLiveSnapshot = mergeLiveSnapshot;
     exports.renderUpdateSection = renderUpdateSection;
     exports.renderAutoUpdate = renderAutoUpdate;
     exports.waitForGateway = waitForGateway;
