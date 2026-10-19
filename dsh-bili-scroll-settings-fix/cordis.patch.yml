@@ -1,3 +1,0 @@
-# Keep the upstream bundle's client and row id, replacing only its host adapter.
-- id: bili-scroll
-  name: '@zhiqiangme/dsh-bili-scroll-settings-fix'
