@@ -331,7 +331,9 @@ export function createAutoUpdater(options) {
         staged: pending.staged,
         keepStaged: true,
         source: 'auto-update',
-      }),
+      })
+        // 文件占用、权限等异常也要进入失败记录，否则 pending 会在每次启动时重复换装。
+        .catch((error) => ({ ok: false, state: 'swap-failed', reason: error instanceof Error ? error.message : String(error) })),
     );
     if (!locked.acquired) return { state: 'busy', holder: locked.holder };
     const result = locked.value;

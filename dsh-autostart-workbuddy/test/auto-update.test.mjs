@@ -299,6 +299,40 @@ test('关掉自动更新 / 自配 exe：不检查；之前暂存的包在启动�
   assert.equal(autoUpdateStatus(custom).available, false, '面板据此禁用开关');
 });
 
+test('启动换装抛异常：持久化失败并清理 pending，新实例不再重试该版本', async () => {
+  const release = startFixture({ TEST_MODE: 'http-release' });
+  const apiBase = `http://127.0.0.1:${await release.ready}`;
+  const { paths, resolved } = wb2apiSetup(apiBase);
+  let attempts = 0;
+  const driver = {
+    ...gatewayDriver(resolved),
+    commit: async () => {
+      attempts += 1;
+      throw new Error('EPERM: rename blocked');
+    },
+  };
+  const { updater } = updaterFor(resolved, fakeService(1), { driver });
+  try {
+    assert.equal((await updater.tick()).state, 'prepared');
+    const staged = readAutoState(paths).pending.staged.path;
+    const failed = await updater.applyPending();
+    assert.equal(failed.state, 'swap-failed');
+    assert.equal(readAutoState(paths).failed.tag, 'v9.9.9');
+    assert.match(readAutoState(paths).failed.reason, /EPERM/);
+    assert.equal(readAutoState(paths).pending, null);
+    assert.equal(existsSync(staged), false);
+    assert.equal(readBuildInfo(paths.exe).revision, OLD_REVISION);
+
+    const { updater: restarted } = updaterFor(resolved, fakeService(1), { driver });
+    assert.equal(await restarted.applyPending(), undefined);
+    assert.equal((await restarted.tick()).reason, 'failed-before');
+    assert.equal(attempts, 1);
+    assert.deepEqual(await withBackendLock('update', async () => 'ready'), { acquired: true, value: 'ready' });
+  } finally {
+    release.stop();
+  }
+});
+
 test('用户手动更新到了暂存的版本：下一轮清掉过期的暂存包', async () => {
   const release = startFixture({ TEST_MODE: 'http-release' });
   const health = startFixture({ TEST_MODE: 'http-health' });
