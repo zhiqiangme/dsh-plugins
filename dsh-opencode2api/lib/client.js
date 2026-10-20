@@ -1050,7 +1050,9 @@ window.__ModuleLoader__.load({
         load();
       }, [load]);
 
-      const sorted = useMemo(() => sortRows(rows), [rows]);
+      // 已选项置顶，组内保留原顺序；保存白名单仍沿用原排序规则。
+      const sorted = useMemo(() => sortRows(rows)
+        .sort((a, b) => Number(picked.has(b.id)) - Number(picked.has(a.id))), [rows, picked]);
 
       const toggle = useCallback((id) => {
         setPicked((previous) => {
