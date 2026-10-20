@@ -88,7 +88,7 @@ git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.1
 1. 在原始提交上打包，核对包名、版本、入口、图标、补丁、LICENSE 与文件清单。
 2. 创建 `<插件前缀>-v<版本>` tag，固定源码提交。
 3. 用 npm Trusted Publishing（OIDC）发布该 `.tgz` 为公开包，更新 npm 的 `latest`。
-4. 核对 npm 包完整性后创建对应 GitHub Release 草案，记录提交、变更及安装 / 更新命令；用户确认后再转正式版。npm 包在该流水线中直接发布，GitHub 草案不阻止 npm 安装。
+4. 核对 npm 包完整性后创建对应的正式 GitHub Release，记录提交、变更及安装 / 更新命令。
 
 普通代码或文档提交不发布；添加本工作流也不会自动补发现有的 `26.10.16`。
 PR 和 `main` 都会执行 [ci.yml](.github/workflows/ci.yml)：Node 22 / 24，Windows 测三个插件，
@@ -129,7 +129,7 @@ CI 使用 GitHub 托管 runner、Node 24、npm ≥11.5.1，以及 `id-token: wri
 
 发布脚本位于 [scripts/release.mjs](scripts/release.mjs)，只依赖 Node、Git、npm；使用仓库自带测试验证发布决策与失败恢复，
 测试过程不调用真实 npm / GitHub 发布接口。自动 tag 和 npm 发布在同一次工作流内完成，避免 `GITHUB_TOKEN`
-创建 tag 后不会再触发 tag push 工作流的问题。每个包独立生成 Release 草案，重跑保留已有草案或正式状态，不设置整个仓库的 “Latest release”。
+创建 tag 后不会再触发 tag push 工作流的问题。每个包独立生成正式 Release，重跑保留已有 Release 的草案或正式状态，不设置整个仓库的 “Latest release”。
 
 ## 参与开发
 

@@ -259,12 +259,12 @@ export async function publishRelease({ cwd, plugin: id, sha }, {
     }
     const release = await api(`releases/tags/${tag}`, { allowMissing: true });
     if (!release) {
-      // npm 已按发布请求公开；GitHub Release 默认留草案，转正式版由用户另行确认。
-      await api('releases', { method: 'POST', body: { tag_name: tag, target_commitish: sha, name: tag, body, draft: true, make_latest: 'false' } });
+      // npm 核对通过后直接创建正式 Release；多插件共用仓库，不抢占整个仓库的 Latest。
+      await api('releases', { method: 'POST', body: { tag_name: tag, target_commitish: sha, name: tag, body, draft: false, make_latest: 'false' } });
     } else if (release.prerelease) {
       throw new Error(`${tag} 已有 prerelease，请先核对 GitHub Release 状态`);
     }
-    return { plugin: id, version, tag, sha, alreadyPublished, draft: release ? release.draft === true : true };
+    return { plugin: id, version, tag, sha, alreadyPublished, draft: release ? release.draft === true : false };
   } finally {
     packed.cleanup();
   }

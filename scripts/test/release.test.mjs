@@ -245,12 +245,12 @@ test('发布顺序：先锁定 tag，再发 npm，核对成功后创建 Release'
   assert.equal(result.alreadyPublished, false);
   assert.deepEqual(context.calls, ['pack', 'tag', 'npm', 'release', 'cleanup']);
   assert.match(context.state.release.body, /dsh plugin --profile desktop add @zhiqiangme\/dsh-autostart-workbuddy@26\.10\.15/);
-  assert.equal(context.state.release.draft, true);
+  assert.equal(context.state.release.draft, false);
   assert.equal(context.state.release.make_latest, 'false');
-  assert.equal(result.draft, true);
+  assert.equal(result.draft, false);
 });
 
-test('重跑保留已有 Release 状态，不自动发布草案或把正式版降回草案', async (t) => {
+test('重跑保留已有 Release 状态，不改动已有草案或把正式版降回草案', async (t) => {
   for (const draft of [true, false]) {
     const context = publishing(t, { existing: true });
     context.state.release = { draft, prerelease: false };
