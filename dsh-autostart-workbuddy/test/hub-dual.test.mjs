@@ -60,7 +60,7 @@ test('HUB 双区域：只有一个 WorkBuddy 分组，CN / GL 同名模型独立
   assert.deepEqual(workbuddy.models.map(({ id, name }) => ({ id, name })), [
     { id: 'cn:shared', name: 'Shared CN Free' }, { id: 'global:shared', name: 'Shared GL Free' },
   ]);
-  assert.equal(workbuddy.apiKeyEnv, 'WORKBUDDY_PROXY_KEY');
+  assert.equal(workbuddy.apiKeyEnv, 'WORKBUDDY_HUB_KEY');
   assert.ok(!credentials.sets.some((row) => /_CN$|_GLOBAL$/.test(row.ref)));
   assert.equal(await chatRealm(workbuddy, credentials, 'cn:shared'), 'cn');
   assert.equal(await chatRealm(workbuddy, credentials, 'global:shared'), 'intl');
@@ -105,7 +105,10 @@ test('未勾选双区域时也保存表单里的三个 Key，重新读取能确�
   assert.deepEqual(saved.settings, { enabled: false, keys: { cn: 'saved', global: 'saved', follow: 'saved' } });
   assert.equal(credentials.values.WORKBUDDY_PROXY_KEY_CN, 'cn-secret');
   assert.equal(credentials.values.WORKBUDDY_PROXY_KEY_GLOBAL, 'gl-secret');
-  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'follow-secret');
+  assert.equal(credentials.values.WORKBUDDY_HUB_KEY, 'follow-secret');
+  const savedModels = editor.entry('dsh-autostart-workbuddy').options.config.models;
+  assert.equal(savedModels.hubApiKeyRef, 'WORKBUDDY_HUB_KEY');
+  assert.equal(savedModels.apiKeyRef, undefined, 'HUB 表单不再污染 wb2api 的引用');
   assert.equal(config().providers['workbuddy-hub-cn'], undefined, '保存 Key 不擅自开启固定分组');
   assert.equal(resolved.models.hubDual, false);
   assert.deepEqual(await describeHubSettings(options), saved.settings, '重新打开页面由凭据服务读取持久化状态');
@@ -149,7 +152,7 @@ test('设置落盘后同步抛错，仍确认保存成功，不把同步失败�
   });
   const saved = await setHubMode({ ...options, enabled: false, followKey: 'follow-secret' });
   assert.equal(saved.ok, true);
-  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'follow-secret');
+  assert.equal(credentials.values.WORKBUDDY_HUB_KEY, 'follow-secret');
   assert.equal(saved.sync.state, 'failed');
   assert.doesNotMatch(JSON.stringify(saved), /private-secret|follow-secret/);
 });
@@ -164,7 +167,7 @@ test('网关 Key 在 HUB 里绑了区域时 X-Realm 无效：拒绝开启；只�
 
   // 网关 Key 绑的是国际：只补 CN 区域 Key，GL 继续用网关 Key。
   assert.equal((await setHubMode({ ...options, enabled: true, cnKey: 'cn-secret' })).ok, true);
-  assert.equal(config().providers.workbuddy.apiKeyEnv, 'WORKBUDDY_PROXY_KEY');
+  assert.equal(config().providers.workbuddy.apiKeyEnv, 'WORKBUDDY_HUB_KEY');
   assert.equal(await chatRealm(config().providers.workbuddy, credentials, 'cn:shared'), 'cn');
   assert.equal(await chatRealm(config().providers.workbuddy, credentials, 'global:shared'), 'intl');
 });
@@ -202,13 +205,13 @@ test('未绑定 Key 单独存入凭据库，关闭双区域后可以继续跟随
   const { hub, resolved, editor, credentials, options } = await setup(t);
   const enabled = await setHubMode({ ...options, enabled: true, followKey: 'follow-secret' });
   assert.equal(enabled.ok, true);
-  assert.equal((await credentials.resolve('WORKBUDDY_PROXY_KEY')).value, 'follow-secret');
+  assert.equal((await credentials.resolve('WORKBUDDY_HUB_KEY')).value, 'follow-secret');
   assert.ok(!JSON.stringify(editor.edits).includes('follow-secret'));
   hub.realm = 'cn';
   assert.equal((await setHubMode({ ...options, enabled: false })).ok, true);
   const provider = editor.entry('llm-pi-ai').options.config.providers.workbuddy;
   assert.equal(provider.models[0].name, 'Shared CN Free');
-  assert.equal(resolved.models.apiKeyRef, 'WORKBUDDY_PROXY_KEY');
+  assert.equal(resolved.models.apiKeyRef, 'WORKBUDDY_HUB_KEY');
 });
 
 test('双区域诊断遮盖所有 Key，白名单暂时缺席时不清空分组', async (t) => {

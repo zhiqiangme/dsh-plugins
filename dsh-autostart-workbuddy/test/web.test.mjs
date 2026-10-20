@@ -351,7 +351,7 @@ test('POST：首次开启同步，即使白名单没变也会保存开关并补�
     assert.equal(result.sync.state, 'updated');
     assert.equal(result.sync.created, true);
     assert.equal(result.sync.credential, 'created', '补建 provider 的同时要把网关密钥补进凭据库');
-    assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'test-key');
+    assert.equal(credentials.values.WORKBUDDY_WB2API_KEY, 'test-key');
     assert.equal(resolved.models.enabled, true);
     assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models, { ...models, enabled: true });
     const provider = editor.entry('llm-pi-ai').options.config.providers.workbuddy;
@@ -579,7 +579,7 @@ test('后端路由（hub）：快照来自 hub 的目录，面板地址是 hub �
   const root = mkdtempSync(join(tmpdir(), 'wb-web-hub-'));
   const resolved = resolvePluginConfig({ gateway: 'hub', port: await freePort() }, { DSH_WORKBUDDY_BACKEND_ROOT: root, PATH: '' });
   const editor = editorFor();
-  const credentials = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY_CN: 'cn-secret', WORKBUDDY_PROXY_KEY: 'follow-secret' } });
+  const credentials = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY_CN: 'cn-secret', WORKBUDDY_HUB_KEY: 'follow-secret' } });
   const ctx = fakeCtx({ configEditor: editor, credentials });
   registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env });
   const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;

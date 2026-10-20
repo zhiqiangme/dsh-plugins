@@ -12,9 +12,9 @@ import { backendPaths, DEFAULT_CHECK_TTL_MS, DEFAULT_KEEP_VERSIONS } from './bac
 import { DEFAULT_CN_CHAT_BASE } from './backend-config.js';
 import { normalizeGateway } from './gateway.js';
 import { DEFAULT_HUB_KEEP_VERSIONS, hubPaths, readHubApiKey } from './hub.js';
-import { DEFAULT_EFFORTS, panelApiKey } from './models.js';
+import { DEFAULT_EFFORTS, GATEWAY_KEY_REFS, HUB_KEY_REFS, panelApiKey } from './models.js';
 import { normalizeModelRules } from './model-rules.js';
-import { SERVICE_DEFAULTS, resolveDshHome } from './services.js';
+import { SERVICE_DEFAULTS, isFile, resolveDshHome } from './services.js';
 
 /** models 段默认值：默认关闭（不擅自改用户的 profile），开启后默认同步后端全部模型。 */
 const MODELS_DEFAULTS = Object.freeze({
@@ -176,9 +176,10 @@ function resolveModelsConfig(raw, spec) {
     efforts: models.efforts === 'auto' ? 'auto' : stringArray(models.efforts, DEFAULT_EFFORTS),
     provider: stringOr(models.provider, MODELS_DEFAULTS.provider),
     panelConfig: stringOr(models.panelConfig, spec.cwd ? join(spec.cwd, 'config.json') : ''),
-    // 空 = 依次尝试 WORKBUDDY_PROXY_KEY 与面板 config.json 的 api_key。
+    // 后续按网关选择来源：本机 wb2api 优先自身 config.json，HUB 读其专用凭据。
     apiKey: stringOr(models.apiKey, ''),
     apiKeyRef: typeof models.apiKeyRef === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(models.apiKeyRef) ? models.apiKeyRef : '',
+    hubApiKeyRef: typeof models.hubApiKeyRef === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(models.hubApiKeyRef) ? models.hubApiKeyRef : '',
     baseURL: stringOr(models.baseURL, `http://${spec.host}:${spec.port}`),
     timeoutMs: positiveNumber(models.timeoutMs, MODELS_DEFAULTS.timeoutMs),
     resyncIntervalMs: resyncInterval(models.resyncIntervalMs),
@@ -250,11 +251,23 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
     ? buildHubSpec(config, common, hostEnv, hubKey, cnChatBase)
     : buildSpec(config, common, hostEnv);
   const models = resolveModelsConfig(config.models, spec);
+  models.gateway = gateway;
   models.hubDual = gateway === 'hub' && rawModels.hubDual === true;
   if (gateway === 'hub') {
+    models.apiKeyRef = models.hubApiKeyRef || models.apiKeyRef;
     // hub 没有 wb2api 那份 config.json：密钥直接给定，不再回落去读面板配置。
     models.apiKey = hubKey;
     models.panelConfig = '';
+  } else {
+    try {
+      const target = new URL(models.baseURL);
+      const loopback = (host) => ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(host);
+      models.preferPanelKey = target.protocol === 'http:' && (Number(target.port) || 80) === spec.port &&
+        (target.hostname === spec.host || (loopback(target.hostname) && loopback(spec.host))) && isFile(models.panelConfig);
+    } catch { models.preferPanelKey = false; }
+    // apiKeyRef 曾由 HUB 表单写入共享配置。只忽略已知 HUB 引用；用户的其它自定义引用仍保留。
+    if ([GATEWAY_KEY_REFS.hub, ...Object.values(HUB_KEY_REFS)].includes(models.apiKeyRef) ||
+        (models.preferPanelKey && models.apiKeyRef === 'WORKBUDDY_PROXY_KEY')) models.apiKeyRef = '';
   }
   const backend = resolveBackendConfig(config.backend, paths);
   backend.kind = gateway;

@@ -49,7 +49,7 @@ hub 是 wb2api 停更时的备选。
 - **关闭**：恢复原 workbuddy provider 的 HUB 直连地址、裸模型 id，继续跟随看板出口。其它 provider 和保存的 Key 保留，profile 中仍用 `models.hubDual` 控制开关。
 - **从旧版升级**：首次同步会将原 WorkBuddy / WorkBuddy CN / WorkBuddy GL 合并，移除本插件创建的两个旧区域分组，已保存的区域 Key 继续使用。旧分组名碰巧被用户自建 provider 占用时拒绝覆盖。模型引用变为 `workbuddy/cn:xxx` 或 `workbuddy/global:xxx`，旧会话、默认模型或子代理配置中的旧引用需要重新选择一次。
 
-HUB 配了多把 Key 之后，启动参数里的旧 Key 可能不再有效。这时可以另填一把不绑定区域的「跟随出口 Key」：它写进原 provider 对应的 DSH 凭据（没有区域 Key 时也用它），profile 只保存 `models.apiKeyRef`。开启时核对两个区域，关闭时核对跟随 Key；核对不通过就不切换模式。
+HUB 配了多把 Key 之后，启动参数里的旧 Key 可能不再有效。这时可以另填一把不绑定区域的「跟随出口 Key」：它写进 HUB 专用的 DSH 凭据 `WORKBUDDY_HUB_KEY`（没有区域 Key 时也用它），profile 只保存 `models.hubApiKeyRef`。开启时核对两个区域，关闭时核对跟随 Key；核对不通过就不切换模式。
 
 点击「应用区域模式」时，填写的 Key 即使没勾选双区域也会先校验再保存，留空保留旧值。每项旁边显示「已保存」或未配置状态，重新打开卡片仍可确认；保存成功的提示就在按钮下方。为避免回显密钥，成功后输入框会清空，失败则保留输入。Key 保存与模型同步分别提示，同步失败不会误报为 Key 未保存。
 
@@ -58,6 +58,7 @@ HUB 配了多把 Key 之后，启动参数里的旧 Key 可能不再有效。这
 - **切换**：宿主按"配置变更"重启本插件，停掉旧网关，再按新网关拉起（没装就提示去点「安装」）。卡片会等到新网关接管、模型区能答才刷新（最多 60 秒）。两种网关的程序和账号各存一份，切换不会覆盖对方的数据；但账号要在 hub 看板里另外登录或导入。
 - **端口与 provider**：两种后端都监听 7863；插件自动维护 workbuddy provider 的直连或双区域转发地址。
 - **网关密钥**：hub 的密钥按 插件配置 `models.apiKey` → 环境变量 `WORKBUDDY_PROXY_KEY` → wb2api `config.json` 的 `api_key` 的顺序沿用，所以凭据库里现有的 `WORKBUDDY_PROXY_KEY` 不用改。都没有时插件生成一个，存进 `hub/data/plugin-api-key`。密钥经环境变量 `API_KEY` 传给 hub，不出现在命令行里。
+- **切换时的凭据**：wb2api 和 HUB 的 provider 分别使用 `WORKBUDDY_WB2API_KEY` / `WORKBUDDY_HUB_KEY`，旧的共享引用和 CN / GL Key 保留。切回本机 wb2api 时读取它自己的 `config.json`，成功拉取目录后一起恢复直连地址和凭据引用，避免把 HUB 的 Key 或转发地址带过去。用户显式指定的其它 `models.apiKeyRef` 仍优先；HUB 表单保存的 Key 只影响 HUB。
 - **模型白名单按出口分开记**：hub 的模型 id 不带前缀，一次只列当前出口的模型。插件在白名单里给它们补上出口前缀（国内 `cn:xxx`、国际 `global:xxx`，与 wb2api 的 id 一致），所以 CN 和 GL 各有一组勾选，而且从 wb2api 切过来不用重新勾。单区域写入裸 id，双区域写入带前缀 id，由转发端点还原；展示名中的区域标签（CN / GL）都在模型名与倍率之间。
   - 不带前缀的老条目（改版前存下的）对两个出口都生效；在卡片里保存一次后会拆成两个出口各一条，之后取消一个出口的勾选不影响另一个。
   - 当前出口在白名单里一条都没有时按「全部模型」处理（与"白名单留空 = 全部"同一语义）：第一次切到一个从没勾过的出口，DSH 换成它的全部模型，再到卡片里删减即可。
@@ -75,11 +76,11 @@ HUB 配了多把 Key 之后，启动参数里的旧 Key 可能不再有效。这
 - 写入走 DSH 自己的 **configEditor**（设置页用的同一个入口）：持 profile 锁、按 llm-pi-ai 的 schema
   校验、原子写、只热重载被改的那一行，失败自动回滚。不再自己改 `cordis.patch.yml` 的文本，
   所以不会和设置页的保存互相覆盖。代价是 llm-pi-ai 那一行会按 DSH 的格式重新排版（行内注释不保留）。
-- workbuddy provider 整段不在时会按原有形状补建（`apiKeyEnv: WORKBUDDY_PROXY_KEY`，密钥不落明文）。
-- 同步后会检查 DSH 凭据库里有没有 provider 引用的密钥（`WORKBUDDY_PROXY_KEY`）：没有就写入拉模型用的那个
+- workbuddy provider 整段不在时会按原有形状补建，`apiKeyEnv` 随后端使用专用引用，密钥不落明文。
+- 同步后会检查 DSH 凭据库里有没有 provider 引用的密钥：没有就写入拉模型用的那个
   网关密钥（插件配置 `apiKey`，否则面板 `config.json` 的 `api_key`）；`api_key` 为空（网关不鉴权）时写占位值
   `workbuddy-no-auth`，因为 llm-pi-ai 解析不到非空密钥会整轮报 `MISSING_CREDENTIAL`，而凭据库不收空串。
-  凭据库里已存的或启动环境给的值一律不覆盖；只有现值是这个占位值、而面板后来设了密钥时才换成真密钥。
+  后端专用引用会随成功校验过的 Key 更新，支持面板轮换密钥。旧共享引用和用户自定义引用已有的非空值保留；占位值可以换成真密钥。启动环境给的值由宿主管理，插件无法覆盖。
 - 展示名统一成 `<上游名> <CN|GL> <倍率>`：`cn:` → `CN`、`global:` → `GL`；
   倍率取上游的 `credits`（`x0.11` → `0.11`，`x0.00` 或缺失 → `Free`）。例如 `DeepSeek V4.1 Flash CN Free`。
 - 每个模型默认给**低/高/最大**三个思考档位（`efforts: auto` 则按上游声明的档位）。
@@ -252,7 +253,9 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | `exclude` | 黑名单，优先级高于 `only` |
 | `efforts` | 每个模型的思考档位，默认 `[low, high, max]`；填 `auto` 用上游声明的档位 |
 | `panelConfig` | 读网关密钥的面板配置，默认 `<cwd>/config.json` |
-| `apiKey` | 显式指定网关密钥，默认依次尝试 `WORKBUDDY_PROXY_KEY`、面板 `config.json` 的 `api_key` |
+| `apiKey` | 显式指定网关密钥；本机 wb2api 默认读自己的 `config.json`，HUB 沿用启动密钥或已保存的 HUB Key |
+| `apiKeyRef` | 自定义凭据引用；旧版 HUB 表单写入的共享引用会在切回本机 wb2api 时自动隔离 |
+| `hubApiKeyRef` | HUB 跟随出口 Key 的凭据引用，表单默认写入 `WORKBUDDY_HUB_KEY`，不影响 wb2api |
 | `baseURL` | 模型接口地址，默认 `http://<host>:<port>` |
 | `timeoutMs` | 拉取超时，默认 60000（面板的模型列表缓存 1h，冷缓存要等上游） |
 | `resyncIntervalMs` | 运行中定时重同步的间隔，默认 / 最小 60000（1 分钟）；`0` = 关闭后台定时同步，仍可通过插件页刷新立即同步 |

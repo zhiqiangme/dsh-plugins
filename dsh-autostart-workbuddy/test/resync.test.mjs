@@ -30,7 +30,7 @@ async function serve(t, backend) {
 
 /**
  * 已经过一次启动同步的 profile（与真实运行顺序一致：启动同步不带移除确认，之后才轮到定时同步）。
- * credentials 默认是空凭据库：启动同步会补一次 WORKBUDDY_PROXY_KEY。
+ * credentials 默认是空凭据库：启动同步会补一次 WORKBUDDY_WB2API_KEY。
  */
 async function setup(t, { probe = READY, credentials = createFakeCredentials() } = {}) {
   const backend = { models: [ALPHA, BETA], hits: 0 };
@@ -149,7 +149,7 @@ test('后端返回空列表时不清空，也不算作缺席', async (t) => {
 
 test('网关密钥只在启动同步时补一次，定时同步不会每轮重写', async (t) => {
   const { backend, credentials, resync } = await setup(t);
-  assert.deepEqual(credentials.sets, [{ ref: 'WORKBUDDY_PROXY_KEY', value: 'gw-key' }]);
+  assert.deepEqual(credentials.sets, [{ ref: 'WORKBUDDY_WB2API_KEY', value: 'gw-key' }]);
   for (let i = 0; i < 3; i += 1) assert.equal((await resync.tick()).state, 'unchanged');
   backend.models = [ALPHA, BETA, { id: 'cn:gamma' }];
   assert.equal((await resync.tick()).state, 'updated');
@@ -163,8 +163,9 @@ test('用户自己存的网关密钥不被定时同步覆盖；推迟的那一�
   credentials.resolve = (ref) => { resolves += 1; return resolve(ref); };
   const { backend, resync } = await setup(t, { credentials });
   assert.equal((await resync.tick()).state, 'unchanged');
-  assert.deepEqual(credentials.sets, []);
+  assert.deepEqual(credentials.sets, [{ ref: 'WORKBUDDY_WB2API_KEY', value: 'gw-key' }]);
   assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'user-key');
+  assert.equal(credentials.values.WORKBUDDY_WB2API_KEY, 'gw-key');
 
   const before = resolves;
   backend.models = [ALPHA];

@@ -432,7 +432,7 @@ test('syncModels：白名单决定写入哪些模型与顺序；provider 丢失�
   const workbuddy = providersOf(editor).workbuddy;
   assert.deepEqual(workbuddy.models.map((model) => model.id), ['global:beta']);
   assert.equal(workbuddy.baseURL, `http://127.0.0.1:${resolved.spec.port}/v1/`);
-  assert.equal(workbuddy.apiKeyEnv, 'WORKBUDDY_PROXY_KEY');
+  assert.equal(workbuddy.apiKeyEnv, 'WORKBUDDY_WB2API_KEY');
 });
 
 test('syncModels：空列表 / 请求失败 / 没有 editor / 没有 llm-pi-ai / 编辑失败都不写', async (t) => {
@@ -554,8 +554,8 @@ test('syncModels：补建 provider 后把拉模型用的密钥写进凭据库，
   const result = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: { PATH: '' } });
   assert.equal(result.state, 'updated');
   assert.equal(result.created, true);
-  assert.deepEqual(result.credential, { state: 'created', ref: 'WORKBUDDY_PROXY_KEY', placeholder: false });
-  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'test-key');
+  assert.deepEqual(result.credential, { state: 'created', ref: 'WORKBUDDY_WB2API_KEY', placeholder: false });
+  assert.equal(credentials.values.WORKBUDDY_WB2API_KEY, 'test-key');
 
   const again = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: { PATH: '' } });
   assert.equal(again.state, 'unchanged');
@@ -563,7 +563,7 @@ test('syncModels：补建 provider 后把拉模型用的密钥写进凭据库，
   assert.equal(credentials.sets.length, 1);
 });
 
-test('syncModels：模型无变化时也补密钥（来自 config.json），用户已设的不覆盖', async (t) => {
+test('syncModels：模型无变化时也补后端专用密钥（来自 config.json），保留旧共享密钥', async (t) => {
   const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'panel-key' });
   t.after(fixture.stop);
   const dir = mkdtempSync(join(tmpdir(), 'wb-cred-'));
@@ -581,11 +581,12 @@ test('syncModels：模型无变化时也补密钥（来自 config.json），用�
   const unchanged = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: { PATH: '' } });
   assert.equal(unchanged.state, 'unchanged');
   assert.equal(unchanged.credential.state, 'created');
-  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'panel-key');
+  assert.equal(credentials.values.WORKBUDDY_WB2API_KEY, 'panel-key');
 
   const userSet = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY: 'user-key' } });
   const kept = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials: userSet, env: { PATH: '' } });
-  assert.equal(kept.credential.state, 'kept');
+  assert.equal(kept.credential.state, 'created');
+  assert.equal(userSet.values.WORKBUDDY_WB2API_KEY, 'panel-key');
   assert.equal(userSet.values.WORKBUDDY_PROXY_KEY, 'user-key');
 });
 

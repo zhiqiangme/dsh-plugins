@@ -39,6 +39,7 @@ import {
   HUB_KEY_REFS,
   HUB_ROUTER_PATH,
   providerKeyRef,
+  proxyCredentialRef,
   resolveModelApiKey,
   LLM_PI_AI_PACKAGE,
   findConfigEntry,
@@ -519,7 +520,7 @@ export async function setAutoUpdate({ resolved, editor, enabled }) {
 
 /** 只回传凭据是否已配置，输入框不回填密钥；重新打开页面也能确认保存结果。 */
 export async function describeHubSettings({ resolved, editor, credentials, env = process.env }) {
-  const followRef = resolved.models.apiKeyRef || providerKeyRef(findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config, resolved.models.provider) || 'WORKBUDDY_PROXY_KEY';
+  const followRef = proxyCredentialRef(resolved.models);
   const state = async (ref) => {
     try {
       if (typeof credentials?.resolve !== 'function') return env[ref] ? 'environment' : 'unavailable';
@@ -528,7 +529,10 @@ export async function describeHubSettings({ resolved, editor, credentials, env =
       return result?.source === 'env' ? 'environment' : 'saved';
     } catch { return 'unavailable'; }
   };
-  const [cn, global, follow] = await Promise.all([state(HUB_KEY_REFS.cn), state(HUB_KEY_REFS.intl), state(followRef)]);
+  const [cn, global, savedFollow] = await Promise.all([state(HUB_KEY_REFS.cn), state(HUB_KEY_REFS.intl), state(followRef)]);
+  // 旧版跟随 Key 尚未迁移时，仍按实际读取的旧引用显示状态。
+  const follow = savedFollow === 'missing' && resolved.models.apiKeyRef && resolved.models.apiKeyRef !== followRef
+    ? await state(resolved.models.apiKeyRef) : savedFollow;
   return { enabled: resolved.models.hubDual === true, keys: { cn, global, follow } };
 }
 
@@ -542,7 +546,7 @@ export async function setHubMode({ resolved, editor, credentials, env = process.
     const existing = await hubRegionKeys(credentials, env);
     const typed = { cn: typeof cnKey === 'string' ? cnKey.trim() : '', intl: typeof globalKey === 'string' ? globalKey.trim() : '' };
     const keys = { cn: typed.cn || existing.cn, intl: typed.intl || existing.intl };
-    const keyRef = providerKeyRef(findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config, resolved.models.provider) || 'WORKBUDDY_PROXY_KEY';
+    const keyRef = proxyCredentialRef(resolved.models);
     if ((typed.cn || typed.intl || follow) && typeof credentials?.set !== 'function') return { ok: false, reason: '保存 Key 需要 DSH 凭据服务' };
     if (follow) {
       if (env[keyRef] && env[keyRef] !== follow) return { ok: false, reason: `${keyRef} 来自只读环境变量` };
@@ -574,9 +578,9 @@ export async function setHubMode({ resolved, editor, credentials, env = process.
     for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (typed[realm] && env[ref] && env[ref] !== keys[realm]) return { ok: false, reason: `${ref} 来自只读环境变量，请先在启动环境中修改` };
     for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (typed[realm] && keys[realm] !== existing[realm]) await credentials.set(ref, keys[realm]);
     if (follow) await credentials.set(keyRef, follow);
-    const keyPatch = follow ? { apiKeyRef: keyRef } : {};
+    const keyPatch = follow ? { hubApiKeyRef: keyRef } : {};
     await editor.edit(entry, (current) => ({ ...plainObject(current), models: { ...plainObject(current?.models), ...keyPatch, hubDual: enabled } }));
-    resolved.models = { ...resolved.models, ...keyPatch, hubDual: enabled };
+    resolved.models = { ...resolved.models, ...keyPatch, ...(follow ? { apiKeyRef: keyRef } : {}), hubDual: enabled };
     let synced;
     try { synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env }); }
     catch { synced = { state: 'failed', reason: '模型同步失败，请稍后重试' }; }

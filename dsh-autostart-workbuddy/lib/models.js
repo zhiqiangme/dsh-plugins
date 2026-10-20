@@ -28,6 +28,8 @@ import { applyModelRules, hasModelRules } from './model-rules.js';
 /** llm-pi-ai 的包名：按包名找 Loader 条目，profile 里的行 id 可能被用户改过。 */
 export const LLM_PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
 export const HUB_KEY_REFS = Object.freeze({ cn: 'WORKBUDDY_PROXY_KEY_CN', intl: 'WORKBUDDY_PROXY_KEY_GLOBAL' });
+/** 两种后端可以有不同的 Key；旧的共享引用只作为迁移读取来源，不再互相覆盖。 */
+export const GATEWAY_KEY_REFS = Object.freeze({ wb2api: 'WORKBUDDY_WB2API_KEY', hub: 'WORKBUDDY_HUB_KEY' });
 /** hub 按请求选出口的请求头：Key 未绑定区域时由它决定出口（绑定了区域的 Key 优先，见 hub 的 _request_realm）。 */
 export const HUB_REALM_HEADER = 'X-Realm';
 export const HUB_ROUTER_PATH = '/plugins/dsh-autostart-workbuddy/hub/v1';
@@ -37,7 +39,21 @@ export async function resolveModelApiKey(models, env = process.env, credentials)
     const result = await credentials?.resolve?.(models.apiKeyRef);
     return env[models.apiKeyRef] || (typeof result === 'string' ? result : result?.value) || '';
   }
+  if (models.gateway === 'hub') {
+    const result = await credentials?.resolve?.(GATEWAY_KEY_REFS.hub);
+    const stored = typeof result === 'string' ? result : result?.value;
+    if (env[GATEWAY_KEY_REFS.hub] || stored) return env[GATEWAY_KEY_REFS.hub] || stored;
+  }
+  // 本机 wb2api 由 config.json 鉴权，HUB 保存过的共享 Key / 引用不能压过它。
+  if (models.preferPanelKey) return models.apiKey || env[GATEWAY_KEY_REFS.wb2api] || panelApiKey(models.panelConfig);
   return models.apiKey || env.WORKBUDDY_PROXY_KEY || panelApiKey(models.panelConfig);
+}
+
+/** profile 的 provider 凭据引用随后端选择；显式自定义引用仍由用户管理。 */
+export function proxyCredentialRef(models) {
+  if (models.gateway === 'hub') return models.hubApiKeyRef || GATEWAY_KEY_REFS.hub;
+  if (models.gateway === 'wb2api') return models.apiKeyRef && models.apiKeyRef !== 'WORKBUDDY_PROXY_KEY' ? models.apiKeyRef : GATEWAY_KEY_REFS.wb2api;
+  return 'WORKBUDDY_PROXY_KEY';
 }
 
 /** 可选的区域绑定 Key（覆盖项）；没存的区域为空串，改走共享 Key + X-Realm。 */
@@ -153,7 +169,7 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     const config = plainObject(current);
     const conflicted = dualProviderConflict(config, models.provider);
     if (conflicted) throw new Error(`provider ${conflicted} 已被占用`);
-    const sharedRef = providerKeyRef(config, models.provider) || models.apiKeyRef || providerSkeleton(models, spec).apiKeyEnv;
+    const sharedRef = proxyCredentialRef(models);
     const planned = withProviderModels(config, models.provider, entries, providerSkeleton(models, spec)).config;
     const provider = planned.providers[models.provider];
     const headers = Object.fromEntries(Object.entries(plainObject(provider.headers)).filter(([key]) => key.toLowerCase() !== 'x-realm'));
@@ -164,7 +180,7 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
   if (dryRun) return { state: changed ? 'dry-run' : 'unchanged', entries, realm: 'dual', documentPath };
   try { if (changed) await editor.edit(target, plan); }
   catch (error) { return { state: 'failed', reason: error.message, documentPath }; }
-  const credential = await ensureProxyCredential({ credentials, ref: providerKeyRef(planned, models.provider), apiKey: await resolveModelApiKey(models, env, credentials) });
+  const credential = await ensureProxyCredential({ credentials, ref: providerKeyRef(planned, models.provider), apiKey: await resolveModelApiKey(models, env, credentials), managed: providerKeyRef(planned, models.provider) === GATEWAY_KEY_REFS[models.gateway] });
   return { state: changed ? 'updated' : 'unchanged', entries, credential, realm: 'dual', documentPath };
 }
 
@@ -421,7 +437,7 @@ export function confirmRemovals(guard, currentIds, nextIds) {
 export function providerSkeleton(models, spec) {
   return {
     displayName: models.provider === 'workbuddy' ? 'WorkBuddy' : models.provider,
-    apiKeyEnv: 'WORKBUDDY_PROXY_KEY',
+    apiKeyEnv: proxyCredentialRef(models),
     baseURL: providerBaseURL(models.baseURL || `http://${spec.host}:${spec.port}`),
     api: 'openai-completions',
     reasoning: 'max',
@@ -697,9 +713,12 @@ async function syncFollowProvider(options) {
   const singlePlan = (config) => {
     const planned = withProviderModels(config, models.provider, entries, skeleton);
     let cleaned = dropDualProviders(planned.config, models.provider);
-    // 关闭双区域/切回 wb2api 时恢复直连地址，不能把裸 id 发给只接收区域 id 的转发端点。
+    // 地址和凭据必须与刚验证过的后端一致；401 时旧代码跳过整个计划，残留 HUB 地址又会引发 405。
     const provider = cleaned.providers[models.provider];
-    if (provider?.baseURL?.endsWith(`${HUB_ROUTER_PATH}/`)) cleaned = { ...cleaned, providers: { ...cleaned.providers, [models.provider]: { ...provider, baseURL: skeleton.baseURL } } };
+    if (models.gateway || provider?.baseURL?.replace(/\/+$/, '').endsWith(HUB_ROUTER_PATH)) {
+      const updated = { ...provider, baseURL: skeleton.baseURL, ...(models.gateway ? { apiKeyEnv: proxyCredentialRef(models) } : {}) };
+      if (!isDeepStrictEqual(provider, updated)) cleaned = { ...cleaned, providers: { ...cleaned.providers, [models.provider]: updated } };
+    }
     return { ...planned, config: cleaned, changed: planned.changed || cleaned !== planned.config };
   };
   const planned = singlePlan(target.options?.config);
@@ -710,7 +729,7 @@ async function syncFollowProvider(options) {
   }
   if (!planned.changed) {
     const credential = await ensureProxyCredential({
-      credentials, ref: providerKeyRef(planned.config, models.provider), apiKey,
+      credentials, ref: providerKeyRef(planned.config, models.provider), apiKey, managed: providerKeyRef(planned.config, models.provider) === GATEWAY_KEY_REFS[models.gateway],
     });
     return { state: 'unchanged', entries, credential, realm, documentPath };
   }
@@ -730,7 +749,7 @@ async function syncFollowProvider(options) {
     return { state: 'failed', reason: error instanceof Error ? error.message : String(error), entries, documentPath };
   }
   const credential = await ensureProxyCredential({
-    credentials, ref: providerKeyRef(written, models.provider), apiKey,
+    credentials, ref: providerKeyRef(written, models.provider), apiKey, managed: providerKeyRef(written, models.provider) === GATEWAY_KEY_REFS[models.gateway],
   });
   return { state: 'updated', entries, created, credential, realm, documentPath };
 }
@@ -758,19 +777,21 @@ export function providerKeyRef(config, providerName) {
  * 确保 provider 引用的网关密钥在凭据库里有值，否则 llm-pi-ai 一发消息就报 MISSING_CREDENTIAL。
  *
  * 实际遇到过的情况：新装的机器上同步补建了 workbuddy provider（只写变量名），模型选择器里有了
- * WorkBuddy 模型，但凭据库里没有 WORKBUDDY_PROXY_KEY，于是每轮都失败。
+ * WorkBuddy 模型，但凭据库里没有 provider 引用的 Key，于是每轮都失败。
  *
  * 规则：
- *   - 已有非空值（凭据库存的、或启动环境给的）且不是本插件的占位值 → 一律不动，用户设的优先；
+ *   - 旧共享引用、用户自定义引用已有非空值且不是占位值 → 保留；
+ *   - 本插件管理的后端专用引用 → 更新为刚通过模型接口校验的 Key，支持面板轮换密钥；
  *   - 没有值 → 写入同步时拉模型用的那个密钥（插件配置 apiKey / config.json 的 api_key），
  *     密钥为空（网关不鉴权）就写占位值；
  *   - 现值是占位值而网关后来设了密钥 → 换成真密钥。
  * 失败只体现在返回值里，不影响模型列表的同步结果。
  *
- * @param {{ credentials?: object, ref?: string, apiKey?: string }} options
+ * @param {{ credentials?: object, ref?: string, apiKey?: string, managed?: boolean }} options
  *   `credentials` 是宿主的 credentials 服务（resolve / set）。
+ *   `managed` 只用于本插件的后端专用引用，调用前须已成功拉取该后端的模型目录。
  */
-export async function ensureProxyCredential({ credentials, ref, apiKey = '' }) {
+export async function ensureProxyCredential({ credentials, ref, apiKey = '', managed = false }) {
   if (!ref) return { state: 'skipped', reason: 'provider 没有可用的 apiKeyEnv' };
   if (typeof credentials?.resolve !== 'function' || typeof credentials?.set !== 'function') {
     return { state: 'skipped', ref, reason: '宿主没有 credentials 服务' };
@@ -779,7 +800,7 @@ export async function ensureProxyCredential({ credentials, ref, apiKey = '' }) {
   try {
     const current = await credentials.resolve(ref);
     const value = typeof current?.value === 'string' ? current.value : '';
-    if (value === desired || (value && value !== PLACEHOLDER_PROXY_KEY)) return { state: 'kept', ref };
+    if (value === desired || (!managed && value && value !== PLACEHOLDER_PROXY_KEY)) return { state: 'kept', ref };
     await credentials.set(ref, desired);
     return { state: value ? 'replaced' : 'created', ref, placeholder: !apiKey };
   } catch (error) {
