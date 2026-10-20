@@ -34,7 +34,7 @@ Web / CLI 使用 `web` / `headless` profile。后端安装器支持 Windows x64�
 
 ## 第二后端（TiaraBasori）
 
-参照 WorkBuddy 插件，在「后端网关」选择 **TiaraBasori**，再点击下方「安装」。切换由宿主重启本插件：先停旧后端，再启动新后端；同一时刻只托管一个，API 端口与 DSH 的 `opencode2api` provider 沿用原设置。原后端默认选中（`gateway: jasonxu`），随时可以切回。
+参照 WorkBuddy 插件，在「后端网关」选择 **TiaraBasori**，再点击下方「安装」。切换由宿主重启本插件：先停旧后端，再启动新后端；同一时刻只托管一个，API 端口与 DSH 的 `opencode2api` provider 沿用原设置。卡片等待新后端就绪后自动刷新目录，按已保存的白名单执行保存同步，更新本地 Key、调用地址和模型列表后才提示完成，不用再手点「刷新」「保存并同步」。同步原本关闭时保持关闭；同步失败会显示原因。原后端默认选中（`gateway: jasonxu`），随时可以切回。
 
 - 首次安装从 GitHub 下载 **main 分支的固定 commit 源码**。上游没有正式 Release，检查更新按 commit 比较，卡片显示 `main-<commit>`；安装记录同时保存上游包版本和源码压缩包的 SHA256。
 - Node.js 复用 DSH 自带运行时；安装器下载并校验固定版本的 npm，按源码 `package-lock.json` 安装生产依赖，再从官方 GitHub Release 下载 **OpenCode 1.19.0** Windows x64 / ARM64 ZIP 并核对固定 SHA256。依赖安装禁用生命周期脚本，npm 使用插件自己的缓存；首次安装可能需要几分钟，需能访问 GitHub/codeload 与 npm 官方源。
@@ -48,7 +48,7 @@ Web / CLI 使用 `web` / `headless` profile。后端安装器支持 Windows x64�
 - 内部 OpenCode 服务仅监听 `127.0.0.1:10001`，可用 `tiaraServerPort` 修改；已被其他进程占用时拒绝启动。退出、切换、更新时回收本插件拉起的整个进程树。
 - 程序更新按整目录替换，支持失败恢复和手动回滚；「卸载」保留 `tiara/data/`。卡片「彻底卸载」清除两套后端及整个插件数据根目录。
 - Tiara **不自动更新**，有新提交时需手动点「更新」，原因见[后端自动更新](#后端自动更新)。启动时照旧查一次 main 分支并在日志里提示。
-- 两种后端的数据各自保留，首次生成 Tiara 本地 Key 时优先沿用原后端本地 Key。模型 ID 可能不同，切换后检查勾选并保存同步。真实推理可用性仍取决于上游限制。
+- 两种后端的数据各自保留，首次生成 Tiara 本地 Key 时优先沿用原后端本地 Key。模型 ID 可能不同，旧白名单没有匹配项时会提示自动同步未完成，需重新勾选目标后端的模型。真实推理可用性仍取决于上游限制。
 
 配置示例（放在本插件的 `config` 下）：
 

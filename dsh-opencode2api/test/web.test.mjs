@@ -120,6 +120,43 @@ test('网关切换只写当前插件的 gateway，保留模型选择、端口及
   assert.equal(resolved.gateway,'jasonxu','当前解析结果在旧实例释放前不能先换网关');
 });
 
+for (const gateway of ['jasonxu', 'tiara']) {
+  test(`切换到 ${gateway} 后自动刷新再保存：Key、地址和模型同时对齐，过期请求被拒绝`, async (t) => {
+    const key = `${gateway}-key`;
+    const url = await serve(t, (req, res) => {
+      if (req.headers.authorization !== `Bearer ${key}`) { res.writeHead(401); res.end('{}'); return; }
+      res.end(JSON.stringify({ data: catalog }));
+    });
+    const models = { enabled: true, only: ['vision-free'], apiKey: key, baseURL: url };
+    const resolved = resolvePluginConfig({ gateway, models }, {});
+    const editor = createFakeConfigEditor(profileRows({ models }));
+    const credentials = memoryCredentials();
+    credentials.values.set('OPENCODE2API_PROXY_KEY', 'previous-gateway-key');
+    const routes = new Map(), disposers = [];
+    const ctx = { webServer: { register: ({ path, handler }) => { routes.set(path, handler); return () => {}; } },
+      effect: f => disposers.push(f()), get: name => ({ configEditor: editor, credentials })[name] };
+    registerPanelRoutes(ctx, { resolved, env: {}, logger: { warn() {} } });
+    t.after(async () => { for (const dispose of disposers) await dispose?.(); });
+    const handler = routes.get(MODELS_PATH);
+    const inventory = await request(handler);
+    assert.equal(inventory.body.ok, true);
+    assert.equal(credentials.values.get('OPENCODE2API_PROXY_KEY'), 'previous-gateway-key', '单独读取目录不会更新对话 Key');
+    const saved = await request(handler, { method: 'POST', body: { gateway, enabled: true } });
+    assert.equal(saved.body.sync.state, 'updated', saved.body.sync.reason);
+    assert.equal(credentials.values.get('OPENCODE2API_PROXY_KEY'), key);
+    const provider = editor.entry('llm-pi-ai').options.config.providers.opencode2api;
+    assert.equal(provider.baseURL, `${url}/v1/`);
+    assert.equal(provider.apiKeyEnv, 'OPENCODE2API_PROXY_KEY');
+    assert.deepEqual(provider.models.map(model => model.id), ['vision-free']);
+    assert.deepEqual(editor.entry('dsh-opencode2api').options.config.models, models);
+    const edits = editor.edits.length, writes = credentials.writes.length;
+    const rejected = await request(handler, { method: 'POST', body: { gateway: gateway === 'tiara' ? 'jasonxu' : 'tiara', enabled: true } });
+    assert.equal(rejected.status, 409);
+    assert.equal(editor.edits.length, edits);
+    assert.equal(credentials.writes.length, writes);
+  });
+}
+
 test('Tiara 卡片快照与面板密钥按所选后端返回，普通快照不暴露访问密钥',async t=>{
   const {ensureTiaraConfig}=await import('../lib/tiara.js');
   const {readPanelKey}=await import('../lib/web.js');
@@ -153,6 +190,7 @@ test('启动操作立即返回 202；页面重入看见同一任务，重复安�
   assert.equal(snapshot.body.operation.id, started.body.operation.id);
   assert.equal(snapshot.body.operation.progress.stage, 'startup');
   assert.equal((await request(routes.get(BACKEND_PATH), { method: 'POST', body: { action: 'install' } })).status, 409);
+  assert.equal((await request(routes.get(MODELS_PATH), { method: 'POST', body: { gateway: 'tiara', enabled: true } })).status, 409, '安装任务运行中不能同步半安装的后端');
   assert.equal((await request(routes.get(MODELS_PATH))).body.state, 'backend-installing');
   finish({ state: 'failed', reason: 'backend rejected startup' });
   let done;

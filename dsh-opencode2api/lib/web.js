@@ -534,6 +534,15 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               json(res, 400, { ok: false, reason: body.reason });
               return;
             }
+            // 等待期间可能又发生切换或安装；旧页面不能保存到另一实例或半安装的后端。
+            if (body.value.gateway !== undefined && body.value.gateway !== resolved.gateway) {
+              json(res, 409, { ok: false, reason: '后端已再次切换，请刷新后重试同步' });
+              return;
+            }
+            if (operations.busy) {
+              json(res, 409, { ok: false, reason: '后端操作进行中，请完成后重试同步' });
+              return;
+            }
             const result = await applySelection({
               resolved, editor: configEditorOf(ctx), credentials: credentialsOf(ctx), env, only: body.value.only, enabled: body.value.enabled,
             });

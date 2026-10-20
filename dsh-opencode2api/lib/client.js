@@ -203,6 +203,8 @@ window.__ModuleLoader__.load({
       gatewaySwitching: '切换中…',
       gatewayWaiting: '正在切换到 {name}，等它启动…',
       gatewaySwitched: '已切换到 {name}。',
+      gatewaySynced: '已切换到 {name}，模型、地址和凭据已自动保存并同步。',
+      gatewaySyncFailed: '后端已切换，但自动同步未完成：{reason}',
       gatewayNotInstalled: '已切换到 {name}，尚未安装，请在下方点「安装」。',
       gatewayTimeout: '已切换到 {name}，但 {seconds} 秒内未就绪，请查看后端日志后重试。',
       gatewayTiaraHint: '首次安装会下载依赖与独立的 OpenCode 1.x，可能需要几分钟。模型 id 可能与原后端不同，切换后请检查勾选。',
@@ -332,6 +334,8 @@ window.__ModuleLoader__.load({
       gatewaySwitching: 'Switching…',
       gatewayWaiting: 'Switching to {name}, waiting for it to start…',
       gatewaySwitched: 'Switched to {name}.',
+      gatewaySynced: 'Switched to {name}. Models, URL and credentials were saved and synchronized automatically.',
+      gatewaySyncFailed: 'The gateway switched, but automatic synchronization did not finish: {reason}',
       gatewayNotInstalled: 'Switched to {name}; click Install below to install it.',
       gatewayTimeout: '{name} was not ready within {seconds} seconds. Check backend logs and retry.',
       gatewayTiaraHint: 'First install downloads dependencies and a separate OpenCode 1.x runtime and may take a few minutes. Check your model selection after switching; model IDs may differ.',
@@ -515,6 +519,19 @@ window.__ModuleLoader__.load({
         await pause(pollMs);
       }
       return 'timeout';
+    }
+
+    /** 沿用新实例已保存的选择，不把旧页面的勾选草稿或当前目录固化为白名单。 */
+    async function syncGatewayModels(gateway) {
+      const refreshed = await request(MODELS_PATH, 'GET');
+      if (!refreshed.ok) return { state: 'failed', reason: refreshed.reason };
+      if (refreshed.enabled !== true) return { state: 'disabled' };
+      // 读到目录不代表 DSH 的调用凭据已更新；保存同步会先校验并写入本地 Key，再更新 provider。
+      // 只传开关，让宿主现取完整白名单；原本关闭同步时不擅自开启。
+      const saved = await request(MODELS_PATH, 'POST', { gateway, enabled: true });
+      const sync = saved.sync ?? {};
+      if (!saved.ok || !['updated', 'unchanged'].includes(sync.state)) return { state: 'failed', reason: saved.reason ?? sync.reason ?? sync.state };
+      return sync;
     }
 
     function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm, kind = 'uninstall', params, textKind }) {
@@ -1244,12 +1261,16 @@ window.__ModuleLoader__.load({
             return;
           }
           const outcome = payload.state === 'switched' ? await waitForGateway(gateway) : 'ready';
+          const sync = outcome === 'ready' ? await syncGatewayModels(gateway) : undefined;
           await loadBackend();
           await load(false);
-          const key = { ready: 'gatewaySwitched', 'not-installed': 'gatewayNotInstalled' }[outcome] ?? 'gatewayTimeout';
+          const syncFailed = sync?.state === 'failed';
+          const key = syncFailed ? 'gatewaySyncFailed'
+            : ['updated', 'unchanged'].includes(sync?.state) ? 'gatewaySynced'
+              : { ready: 'gatewaySwitched', 'not-installed': 'gatewayNotInstalled' }[outcome] ?? 'gatewayTimeout';
           setGatewaySwitch({
-            kind: outcome === 'timeout' ? 'error' : 'ok',
-            text: t(key, { name: label, seconds: GATEWAY_WAIT_MS / 1000 }),
+            kind: outcome === 'timeout' || syncFailed ? 'error' : 'ok',
+            text: t(key, { name: label, seconds: GATEWAY_WAIT_MS / 1000, reason: sync?.reason ?? t('saveFailed') }),
           });
         } catch (error) {
           setGatewaySwitch({ kind: 'error', text: errorText(error) });
@@ -1693,6 +1714,7 @@ window.__ModuleLoader__.load({
 
     // 纯函数，导出给测试；宿主只认 name / inject / apply。
     exports.waitForGateway = waitForGateway;
+    exports.syncGatewayModels = syncGatewayModels;
     exports.orderedSelection = orderedSelection;
     exports.renderUpdateSection = renderUpdateSection;
     exports.renderAutoUpdate = renderAutoUpdate;

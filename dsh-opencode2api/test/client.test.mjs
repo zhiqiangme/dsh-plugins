@@ -211,6 +211,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'backendNotInstalled', 'backendAvailableInstall', 'backendStart', 'backendStarted', 'backendProgressHint', 'backendElapsed',
     'uninstallTiaraTitle', 'uninstallTiaraDesc', 'uninstallTiaraKept',
     'gatewayTitle', 'gatewayJason', 'gatewayTiara', 'gatewaySwitching', 'gatewayWaiting', 'gatewaySwitched',
+    'gatewaySynced', 'gatewaySyncFailed',
     'gatewayNotInstalled', 'gatewayTimeout', 'gatewayTiaraHint', 'panelKeyCopyTiara', 'panelKeyCopiedTiara', 'backendUninstalledTiara',
     'backendAvailable', 'backendBuilt', 'backendCheck', 'backendCurrent', 'backendHistory',
     'backendInstall', 'backendInstalled', 'backendLatest', 'backendNoAccounts', 'backendNoHistory', 'backendRollback',
@@ -895,6 +896,48 @@ test('切换等待跨过旧路由与短暂失败，新网关未安装时直接�
   assert.equal(await ready.module.waitForGateway('tiara',{waitMs:100,pollMs:1,sleep:async()=>{}}),'ready');assert.ok(calls>=4);
   const absent=boot([],{fetchImpl:async()=>({ok:true,status:200,json:async()=>({backend:{gateway:'tiara',exeExists:false}})})});
   assert.equal(await absent.module.waitForGateway('tiara',{waitMs:100,pollMs:1,sleep:async()=>{}}),'not-installed');
+});
+
+test('切换后端按钮自动刷新并保存同步，完成前不宣告成功，保留宿主选择', async () => {
+  for (const sync of [{ state: 'updated' }, { state: 'failed', reason: '保存 DSH 凭据失败' }]) {
+    const calls = [];
+    const backend = { gateway: 'jasonxu', gateways: ['jasonxu', 'tiara'], exeExists: true, version: {}, history: [] };
+    const inventory = { ok: true, enabled: true, only: ['saved-model'], models: ROWS };
+    const app = boot(backendStates(backend), { fetchImpl: async (path, options) => {
+      const body = options.body ? JSON.parse(options.body) : undefined;
+      calls.push({ path, method: options.method, body });
+      const payload = path.endsWith('/backend')
+        ? options.method === 'POST' ? { ok: true, state: 'switched' } : { ok: true, backend: { ...backend, gateway: 'tiara' } }
+        : options.method === 'GET' ? inventory : { ok: true, sync };
+      return { ok: true, json: async () => payload };
+    } });
+    await button(collectByType(app.renderCard(), 'button'), 'TiaraBasori').props.onClick();
+    assert.deepEqual(calls.filter((call) => call.method === 'POST').map((call) => call.body), [
+      { action: 'gateway', gateway: 'tiara' }, { gateway: 'tiara', enabled: true },
+    ], '只传同步开关，让宿主读取已有完整白名单');
+    const text = collectText(app.renderCard()).join('|');
+    if (sync.state === 'failed') {
+      assert.match(text, /后端已切换，但自动同步未完成：保存 DSH 凭据失败/);
+      assert.doesNotMatch(text, /模型、地址和凭据已自动保存并同步/);
+    } else assert.match(text, /已切换到 TiaraBasori，模型、地址和凭据已自动保存并同步/);
+  }
+});
+
+test('切换后自动同步保持关闭状态，目录或保存失败时报告失败', async () => {
+  for (const [inventory, saved, expected] of [
+    [{ ok: true, enabled: false }, undefined, 'disabled'],
+    [{ ok: false, reason: '目录读取失败' }, undefined, 'failed'],
+    [{ ok: true, enabled: true }, { ok: false, reason: 'profile locked' }, 'failed'],
+    [{ ok: true, enabled: true }, { ok: true, sync: { state: 'skipped', reason: '白名单没有匹配项' } }, 'failed'],
+  ]) {
+    const calls = [];
+    const { module } = boot([], { fetchImpl: async (_path, options) => {
+      calls.push(options.method);
+      return { ok: true, json: async () => options.method === 'GET' ? inventory : saved };
+    } });
+    assert.equal((await module.syncGatewayModels('tiara')).state, expected);
+    assert.deepEqual(calls, saved ? ['GET', 'POST'] : ['GET']);
+  }
 });
 
 test('返回安装页面恢复进度：显示下载字节、用时和后台提示，隐藏未安装红字', () => {
