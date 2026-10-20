@@ -5,7 +5,7 @@
  *   - `hub`：ardeyouxipianyi/workbuddy2api-hub，自带 Python 运行时的目录，见 hub.js。
  *     作为 wb2api 停更时的备选。
  *
- * 两者监听同一个端口（默认 7863），DSH 里 workbuddy provider 的 baseURL 不用改；同一时刻只跑一个。
+ * 两者监听同一个端口（默认 7863），同一时刻只跑一个；provider 的直连/双区域转发地址由模型同步维护。
  * 面板路由、启动检查与定时同步都只经这里拿"当前网关的那套操作"，不直接调 backend.js / hub.js。
  */
 

@@ -50,15 +50,15 @@ test('双区域定时同步不被看板当前出口的空账号池挡住', async
   let calls = 0;
   const resync = createModelResync({ resolved, logger: memoryLogger(), editor: () => undefined, credentials: () => undefined,
     probe: async () => ({ ok: true, servable: false, realm: 'intl' }),
-    sync: async ({ models }) => { calls++; assert.equal(models.hubDual, true); return { state: 'unchanged', entries: [], realm: 'intl' }; },
+    sync: async ({ models }) => { calls++; assert.equal(models.hubDual, true); return { state: 'unchanged', entries: [], realm: 'dual' }; },
   });
   assert.equal((await resync.tick()).state, 'unchanged');
   assert.equal(calls, 1);
-  assert.equal(resync.status.realm, 'intl', '原分组仍按看板出口记录');
+  assert.equal(resync.status.realm, 'dual');
   assert.equal(resync.status.dual, true);
 });
 
-test('双区域下原分组仍跟随看板出口：切换后立即同步，区域分组的移除确认不被跳过', async () => {
+test('合并双区域不随看板切换重写清单，手动定时同步仍使用移除确认', async () => {
   let realm = 'intl';
   const calls = [];
   const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, hubDual: true } }, { PATH: '' });
@@ -73,7 +73,9 @@ test('双区域下原分组仍跟随看板出口：切换后立即同步，区�
     await wait(40);
     realm = 'cn';
     await wait(40);
-    assert.deepEqual(calls, [{ realm: 'cn', guarded: false, regionGuarded: true }]);
+    assert.deepEqual(calls, []);
+    await resync.tick();
+    assert.deepEqual(calls, [{ realm: 'cn', guarded: true, regionGuarded: true }]);
   } finally {
     resync.stop();
   }

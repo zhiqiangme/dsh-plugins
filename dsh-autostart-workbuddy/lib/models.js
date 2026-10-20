@@ -30,6 +30,7 @@ export const LLM_PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
 export const HUB_KEY_REFS = Object.freeze({ cn: 'WORKBUDDY_PROXY_KEY_CN', intl: 'WORKBUDDY_PROXY_KEY_GLOBAL' });
 /** hub 按请求选出口的请求头：Key 未绑定区域时由它决定出口（绑定了区域的 Key 优先，见 hub 的 _request_realm）。 */
 export const HUB_REALM_HEADER = 'X-Realm';
+export const HUB_ROUTER_PATH = '/plugins/dsh-autostart-workbuddy/hub/v1';
 
 export async function resolveModelApiKey(models, env = process.env, credentials) {
   if (models.apiKeyRef) {
@@ -117,12 +118,14 @@ function dropDualProviders(config, provider) {
 }
 
 /**
- * 双区域的两个固定分组：`<provider>-hub-cn` / `<provider>-hub-global`。
- * 原分组（跟随看板出口）由 syncFollowProvider 照常维护，这里不碰它，已有会话与默认模型的引用不失效。
+ * 双区域合并到原 provider；带区域前缀的 id 经本插件转发，HUB 始终收到裸 id。
+ * 旧区域 provider 只删除本插件创建的两项，其它 provider 和凭据不动。
  */
 async function syncHubDual({ spec, models, editor, credentials, env, dryRun, regionGuard }) {
   const target = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE });
   if (!target) return { state: 'skipped', reason: `DSH 里没有可编辑的 ${LLM_PI_AI_PACKAGE} 条目` };
+  const baseURL = typeof models.hubProxyBaseURL === 'function' ? models.hubProxyBaseURL() : models.hubProxyBaseURL;
+  if (!baseURL) return { state: 'skipped', reason: '宿主模型路由尚未就绪，请稍后重试' };
   const fetched = await fetchHubRegions({ models, credentials, env });
   if (!fetched.ok) return { state: 'failed', reason: fetched.reason };
   const documentPath = editor.documentPath;
@@ -138,45 +141,31 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     let deferred = false;
     for (const group of groups) {
       const guard = regionGuard.regions[group.realm] ??= { missing: new Set() };
-      if (!confirmRemovals(guard, providerModelIds(target.options?.config, group.name), group.entries.map((entry) => entry.id)).ok) deferred = true;
+      const prefix = group.realm === 'cn' ? 'cn:' : 'global:';
+      const previous = providerModelIds(target.options?.config, models.provider).filter((id) => id.startsWith(prefix)).map((id) => id.slice(prefix.length));
+      previous.push(...providerModelIds(target.options?.config, group.name));
+      if (!confirmRemovals(guard, [...new Set(previous)], group.entries.map((entry) => entry.id)).ok) deferred = true;
     }
     if (deferred) return { state: 'deferred', reason: '区域目录中的模型需连续两轮缺席后移除', realm: 'dual', documentPath };
   }
+  const entries = groups.flatMap((group) => group.entries.map((entry) => ({ ...entry, id: selectionKey({ id: entry.id, realm: group.realm }) })));
   const plan = (current) => {
-    let config = plainObject(current);
+    const config = plainObject(current);
     const conflicted = dualProviderConflict(config, models.provider);
     if (conflicted) throw new Error(`provider ${conflicted} 已被占用`);
-    // 未绑定区域的分组与跟随分组共用同一个凭据引用，Key 只存一份。
     const sharedRef = providerKeyRef(config, models.provider) || models.apiKeyRef || providerSkeleton(models, spec).apiKeyEnv;
-    for (const group of groups) {
-      const existing = plainObject(plainObject(config.providers)[group.name]);
-      const skeleton = {
-        ...providerSkeleton(models, spec),
-        displayName: `WorkBuddy ${REALM_LABELS[group.realm]}`,
-        apiKeyEnv: group.bound ? HUB_KEY_REFS[group.realm] : sharedRef,
-        headers: { ...plainObject(existing.headers), [HUB_REALM_HEADER]: group.realm },
-      };
-      config = { ...config, providers: { ...plainObject(config.providers), [group.name]: { ...existing, ...skeleton, models: group.entries } } };
-    }
-    return config;
+    const planned = withProviderModels(config, models.provider, entries, providerSkeleton(models, spec)).config;
+    const provider = planned.providers[models.provider];
+    const headers = Object.fromEntries(Object.entries(plainObject(provider.headers)).filter(([key]) => key.toLowerCase() !== 'x-realm'));
+    return dropDualProviders({ ...planned, providers: { ...planned.providers, [models.provider]: { ...provider, baseURL, apiKeyEnv: sharedRef, ...(provider.headers ? { headers } : {}) } } }, models.provider);
   };
-  const entries = groups.flatMap((group) => group.entries);
   const planned = plan(target.options?.config ?? {});
-  if (isDeepStrictEqual(planned, target.options?.config)) return { state: 'unchanged', entries, realm: 'dual', documentPath };
-  if (dryRun) return { state: 'dry-run', entries, realm: 'dual', documentPath };
-  try { await editor.edit(target, plan); }
+  const changed = !isDeepStrictEqual(planned, target.options?.config);
+  if (dryRun) return { state: changed ? 'dry-run' : 'unchanged', entries, realm: 'dual', documentPath };
+  try { if (changed) await editor.edit(target, plan); }
   catch (error) { return { state: 'failed', reason: error.message, documentPath }; }
-  return { state: 'updated', entries, realm: 'dual', documentPath };
-}
-
-/** 合并跟随分组与区域分组的结果时，取更需要用户注意的那个状态。 */
-const SYNC_STATE_RANK = ['failed', 'skipped', 'deferred', 'updated', 'dry-run', 'unchanged'];
-
-/** realm 仍是跟随分组的出口（定时同步靠它认出看板切了出口）；区域分组的结果另放在 dual 里。 */
-function mergeDualResult(follow, dual) {
-  const rank = (state) => { const index = SYNC_STATE_RANK.indexOf(state); return index < 0 ? SYNC_STATE_RANK.length : index; };
-  const worst = rank(dual.state) < rank(follow.state) ? { ...dual, reason: dual.reason && `区域分组：${dual.reason}` } : follow;
-  return { ...follow, state: worst.state, reason: worst.reason, entries: [...(follow.entries ?? []), ...(dual.entries ?? [])], dual };
+  const credential = await ensureProxyCredential({ credentials, ref: providerKeyRef(planned, models.provider), apiKey: await resolveModelApiKey(models, env, credentials) });
+  return { state: changed ? 'updated' : 'unchanged', entries, credential, realm: 'dual', documentPath };
 }
 
 /** 默认保留的思考档位：与 DSH 既有的三档 UI 对齐（低/高/最大）。 */
@@ -664,14 +653,11 @@ export async function syncModels(options) {
     return { state: 'skipped', reason: '宿主没有 configEditor 服务，无法写入模型列表' };
   }
   if (!models.hubDual) return syncFollowProvider(options);
-  // 双区域：原分组照旧跟随看板出口（已有会话、默认模型的引用都指向它），另加两个固定出口的分组。
-  const follow = await syncFollowProvider(options, { keepDual: true });
-  const dual = await syncHubDual({ ...options, regionGuard: options.regionGuard ?? options.removalGuard });
-  return mergeDualResult(follow, dual);
+  return syncHubDual({ ...options, regionGuard: options.regionGuard ?? options.removalGuard });
 }
 
-/** 跟随看板出口的原分组；keepDual=false（单区域）时顺手移除本插件建的区域分组。 */
-async function syncFollowProvider(options, { keepDual = false } = {}) {
+/** 单区域跟随看板出口，并移除本插件旧版建的区域分组。 */
+async function syncFollowProvider(options) {
   const { spec, models, editor, credentials, env = process.env, dryRun = false, removalGuard } = options;
   const documentPath = editor.documentPath;
 
@@ -710,7 +696,10 @@ async function syncFollowProvider(options, { keepDual = false } = {}) {
   const skeleton = providerSkeleton(models, spec);
   const singlePlan = (config) => {
     const planned = withProviderModels(config, models.provider, entries, skeleton);
-    const cleaned = keepDual ? planned.config : dropDualProviders(planned.config, models.provider);
+    let cleaned = dropDualProviders(planned.config, models.provider);
+    // 关闭双区域/切回 wb2api 时恢复直连地址，不能把裸 id 发给只接收区域 id 的转发端点。
+    const provider = cleaned.providers[models.provider];
+    if (provider?.baseURL?.endsWith(`${HUB_ROUTER_PATH}/`)) cleaned = { ...cleaned, providers: { ...cleaned.providers, [models.provider]: { ...provider, baseURL: skeleton.baseURL } } };
     return { ...planned, config: cleaned, changed: planned.changed || cleaned !== planned.config };
   };
   const planned = singlePlan(target.options?.config);

@@ -15,7 +15,7 @@
  *     出口变了就立即同步一轮，不等下一个 resyncIntervalMs；
  *   - 出口切换后的那一轮跳过"移除要连续两轮确认"：模型变少是用户切出口的结果，不是上游抖动。
  * 白名单按出口分开记（cn: / global: 键，见 models.js 的 selectionKey），所以切过去用的是那个出口自己的勾选。
- * 双区域模式下原分组仍跟随看板出口（已有会话指向它），所以出口探测照常运行；两个固定出口的分组每轮一起同步。
+ * 双区域时两个出口合在同一分组中，按模型 id 路由，不需要随看板出口变化重写清单。
  */
 
 import { gatewayDriver } from './gateway.js';
@@ -95,7 +95,7 @@ export function createModelResync(options) {
       return result;
     }
 
-    const realmSwitched = Boolean(watchRealm && syncedRealm && health.realm && health.realm !== syncedRealm);
+    const realmSwitched = Boolean(watchRealm && !models.hubDual && syncedRealm && health.realm && health.realm !== syncedRealm);
     if (realmSwitched) {
       // 上个出口的缺席记录对新出口没有意义，清掉，免得之后切回来时被误当成"已确认过一轮"。
       removalGuard.missing = new Set();
@@ -161,7 +161,7 @@ export function createModelResync(options) {
    */
   async function checkRealm() {
     const models = resolved.models;
-    if (stopped || !models?.enabled || !(models.resyncIntervalMs > 0)) return;
+    if (stopped || !models?.enabled || models.hubDual || !(models.resyncIntervalMs > 0)) return;
     const health = await probe(healthTarget(models.baseURL, resolved.spec)).catch(() => undefined);
     if (stopped || !health?.ok || typeof health.realm !== 'string') return;
     // 还不知道 DSH 是按哪个出口同步的（插件刚启动，启动同步不经过这里）：以现在为准。

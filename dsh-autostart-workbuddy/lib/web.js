@@ -26,6 +26,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { autoUpdateStatus } from './auto-update.js';
 import { diagnose } from './diagnostics.js';
 import { createAccountOverview } from './overview.js';
+import { createHubRouter } from './hub-router.js';
 import { creditValue, normalizeModelRules } from './model-rules.js';
 import { GATEWAY_IDS, backendLockHolder, gatewayDriver, withBackendLock } from './gateway.js';
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
@@ -36,6 +37,7 @@ import {
   fetchHubRegions,
   hubRegionKeys,
   HUB_KEY_REFS,
+  HUB_ROUTER_PATH,
   providerKeyRef,
   resolveModelApiKey,
   LLM_PI_AI_PACKAGE,
@@ -699,6 +701,16 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
     };
 
     ctx.effect(() => {
+      let disposeRouter;
+      let router;
+      if (resolved.gateway === 'hub') {
+        router = createHubRouter({ resolved, env, credentials: () => credentialsOf(ctx), editor: () => configEditorOf(ctx) });
+        resolved.models.hubProxyBaseURL = () => {
+          try { return `${webServer.getOrigin()}${HUB_ROUTER_PATH}/`; } catch { return undefined; }
+        };
+        // 模型调用来自宿主 HTTP 客户端，沿用 provider 的 Bearer 凭据鉴权，不要求浏览器会话 Cookie。
+        disposeRouter = webServer.register({ kind: 'prefix', path: HUB_ROUTER_PATH, handler: (req, res) => router.handle(req, res) });
+      }
       const disposeModels = webServer.register({
         kind: 'exact',
         path: MODELS_PATH,
@@ -780,7 +792,8 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       });
 
       return () => {
-        for (const dispose of [disposeModels, disposeBackend, disposeVersion, disposePanelKey]) {
+        router?.stop();
+        for (const dispose of [disposeRouter, disposeModels, disposeBackend, disposeVersion, disposePanelKey]) {
           try {
             dispose?.();
           } catch {

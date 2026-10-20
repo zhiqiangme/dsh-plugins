@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { resolvePluginConfig } from '../lib/config.js';
 import { describeHubSettings, describeModels, setHubMode } from '../lib/web.js';
-import { syncModels } from '../lib/models.js';
+import { HUB_ROUTER_PATH, syncModels } from '../lib/models.js';
+import { createHubRouter } from '../lib/hub-router.js';
 import { diagnose } from '../lib/diagnostics.js';
 import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
 
@@ -12,12 +13,17 @@ import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../f
  * cn-secret / gl-secret 是绑定 Key；其余 Key 视为未绑定，boundShared 时模拟网关 Key 在 HUB 里被绑到国际。
  */
 async function setup(t) {
-  const hub = { realm: 'intl', wrongBinding: false, boundShared: false, hits: [] };
-  const server = createServer((req, res) => {
+  const hub = { realm: 'intl', wrongBinding: false, boundShared: false, hits: [], chats: [] };
+  const server = createServer(async (req, res) => {
     const key = req.headers.authorization;
     const bound = key === 'Bearer cn-secret' ? 'cn' : key === 'Bearer gl-secret' ? 'intl' : hub.boundShared ? 'intl' : '';
     const realm = hub.wrongBinding ? 'intl' : bound || req.headers['x-realm'] || hub.realm;
     hub.hits.push([req.url, realm]);
+    if (req.method === 'POST') {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      hub.chats.push({ ...JSON.parse(Buffer.concat(chunks)), realm, key });
+    }
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify(req.url.endsWith('/models') ? { realm, data: [{ id: 'shared', name: 'Shared', credits: 'x0.00' }] } : { realm }));
   });
@@ -27,44 +33,45 @@ async function setup(t) {
   const editor = createFakeConfigEditor(profileRows());
   const credentials = createFakeCredentials();
   const options = { resolved, editor, credentials, env: {} };
+  const router = createHubRouter({ resolved, editor: () => editor, credentials: () => credentials, env: {} });
+  const proxy = createServer((req, res) => router.handle(req, res));
+  await new Promise((done) => proxy.listen(0, '127.0.0.1', done));
+  resolved.models.hubProxyBaseURL = `http://127.0.0.1:${proxy.address().port}${HUB_ROUTER_PATH}/`;
+  t.after(() => new Promise((done) => { router.stop(); proxy.closeAllConnections(); proxy.close(done); }));
   const config = () => editor.entry('llm-pi-ai').options.config;
   return { hub, resolved, editor, credentials, options, config };
 }
 
 /** 按 llm-pi-ai 的方式发一条对话：provider 的 headers 加上凭据库里 apiKeyEnv 的值。 */
-async function chatRealm(provider, credentials) {
+async function chatRealm(provider, credentials, model = provider.models[0].id) {
   const key = (await credentials.resolve(provider.apiKeyEnv)).value;
-  const reply = await fetch(`${provider.baseURL}chat/completions`, { method: 'POST', headers: { ...provider.headers, authorization: `Bearer ${key}` } });
+  const reply = await fetch(`${provider.baseURL}chat/completions`, { method: 'POST', headers: { ...provider.headers, authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify({ model, messages: [] }) });
+  assert.equal(reply.status, 200, await reply.clone().text());
   return (await reply.json()).realm;
 }
 
-test('HUB 双区域：无需另建 Key，按 X-Realm 头分出 CN / GL 分组，原分组照旧跟随看板出口', async (t) => {
+test('HUB 双区域：只有一个 WorkBuddy 分组，CN / GL 同名模型独立路由且不受看板切换影响', async (t) => {
   const { hub, resolved, editor, credentials, options, config } = await setup(t);
   const saved = await setHubMode({ ...options, enabled: true });
   assert.equal(saved.ok, true);
   assert.equal(saved.sync.state, 'updated');
-  const { workbuddy, 'workbuddy-hub-cn': cn, 'workbuddy-hub-global': gl } = config().providers;
-  assert.equal(cn.models[0].id, 'shared');
-  assert.equal(cn.models[0].name, 'Shared CN Free');
-  assert.equal(gl.models[0].name, 'Shared GL Free');
-  assert.deepEqual([cn.headers, gl.headers], [{ 'X-Realm': 'cn' }, { 'X-Realm': 'intl' }]);
-  // 与原分组共用一个凭据引用，不另建区域凭据。
-  assert.equal(cn.apiKeyEnv, workbuddy.apiKeyEnv);
-  assert.equal(gl.apiKeyEnv, workbuddy.apiKeyEnv);
+  const { workbuddy } = config().providers;
+  assert.deepEqual(Object.keys(config().providers), ['openrouter', 'workbuddy']);
+  assert.deepEqual(workbuddy.models.map(({ id, name }) => ({ id, name })), [
+    { id: 'cn:shared', name: 'Shared CN Free' }, { id: 'global:shared', name: 'Shared GL Free' },
+  ]);
+  assert.equal(workbuddy.apiKeyEnv, 'WORKBUDDY_PROXY_KEY');
   assert.ok(!credentials.sets.some((row) => /_CN$|_GLOBAL$/.test(row.ref)));
-  // 已有会话和默认模型引用的 workbuddy/shared 仍然可用。
-  assert.equal(workbuddy.models[0].id, 'shared');
-  assert.equal(workbuddy.models[0].name, 'Shared GL Free');
-  assert.equal(await chatRealm(cn, credentials), 'cn');
-  assert.equal(await chatRealm(gl, credentials), 'intl');
+  assert.equal(await chatRealm(workbuddy, credentials, 'cn:shared'), 'cn');
+  assert.equal(await chatRealm(workbuddy, credentials, 'global:shared'), 'intl');
+  assert.ok(hub.chats.every((chat) => chat.model === 'shared'), 'HUB 收到裸模型 id');
 
   hub.realm = 'cn';
   const switched = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} });
-  assert.equal(switched.state, 'updated');
-  assert.equal(switched.realm, 'cn', 'realm 仍报跟随分组的出口，定时同步靠它认出切换');
-  assert.equal(switched.dual.state, 'unchanged');
+  assert.equal(switched.state, 'unchanged');
+  assert.equal(switched.realm, 'dual');
   assert.equal(config().providers.workbuddy.models[0].name, 'Shared CN Free');
-  assert.equal(await chatRealm(config().providers['workbuddy-hub-global'], credentials), 'intl', '看板切到 CN 后 GL 分组仍走国际');
+  assert.equal(await chatRealm(config().providers.workbuddy, credentials, 'global:shared'), 'intl', '看板切到 CN 后 GL 仍走国际');
 
   const snapshot = await describeModels({ ...options, spec: resolved.spec, models: resolved.models, gateway: 'hub' });
   assert.deepEqual(snapshot.models.map((row) => row.id), ['cn:shared', 'global:shared']);
@@ -75,17 +82,17 @@ test('HUB 双区域：无需另建 Key，按 X-Realm 头分出 CN / GL 分组，
   assert.equal(config().providers['workbuddy-hub-cn'], undefined);
   assert.equal(config().providers['workbuddy-hub-global'], undefined);
   assert.equal(config().providers.workbuddy.models[0].id, 'shared');
+  assert.equal(config().providers.workbuddy.baseURL, `${resolved.models.baseURL}/v1/`, '关闭后恢复直连 HUB');
   assert.ok(config().providers.openrouter);
 });
 
-test('区域 Key 是可选覆盖：填了的区域改用专用凭据，Key 不进 profile 和返回值', async (t) => {
-  const { credentials, options, config } = await setup(t);
+test('区域 Key 是可选覆盖：同一分组按区域取专用凭据，Key 不进 profile 和返回值', async (t) => {
+  const { hub, credentials, options, config } = await setup(t);
   const saved = await setHubMode({ ...options, enabled: true, cnKey: 'cn-secret', globalKey: 'gl-secret' });
   assert.equal(saved.ok, true);
-  const { 'workbuddy-hub-cn': cn, 'workbuddy-hub-global': gl } = config().providers;
-  assert.deepEqual([cn.apiKeyEnv, gl.apiKeyEnv], ['WORKBUDDY_PROXY_KEY_CN', 'WORKBUDDY_PROXY_KEY_GLOBAL']);
-  assert.equal(await chatRealm(cn, credentials), 'cn');
-  assert.equal(await chatRealm(gl, credentials), 'intl');
+  assert.equal(await chatRealm(config().providers.workbuddy, credentials, 'cn:shared'), 'cn');
+  assert.equal(await chatRealm(config().providers.workbuddy, credentials, 'global:shared'), 'intl');
+  assert.deepEqual(hub.chats.map((chat) => chat.key), ['Bearer cn-secret', 'Bearer gl-secret']);
   assert.ok(!JSON.stringify(config()).includes('cn-secret'));
   assert.ok(!JSON.stringify(saved).includes('gl-secret'));
   assert.deepEqual(saved.settings, { enabled: true, keys: { cn: 'saved', global: 'saved', follow: 'saved' } });
@@ -157,9 +164,9 @@ test('网关 Key 在 HUB 里绑了区域时 X-Realm 无效：拒绝开启；只�
 
   // 网关 Key 绑的是国际：只补 CN 区域 Key，GL 继续用网关 Key。
   assert.equal((await setHubMode({ ...options, enabled: true, cnKey: 'cn-secret' })).ok, true);
-  const { workbuddy, 'workbuddy-hub-cn': cn, 'workbuddy-hub-global': gl } = config().providers;
-  assert.equal(cn.apiKeyEnv, 'WORKBUDDY_PROXY_KEY_CN');
-  assert.equal(gl.apiKeyEnv, workbuddy.apiKeyEnv);
+  assert.equal(config().providers.workbuddy.apiKeyEnv, 'WORKBUDDY_PROXY_KEY');
+  assert.equal(await chatRealm(config().providers.workbuddy, credentials, 'cn:shared'), 'cn');
+  assert.equal(await chatRealm(config().providers.workbuddy, credentials, 'global:shared'), 'intl');
 });
 
 test('区域 Key 绑定错误和 provider 名称冲突时，不保存模式或凭据', async (t) => {
@@ -173,7 +180,7 @@ test('区域 Key 绑定错误和 provider 名称冲突时，不保存模式或�
   assert.deepEqual(editor.edits, []); assert.deepEqual(credentials.sets, []);
 });
 
-test('从旧版双区域升级：认得旧分组，补上 X-Realm 头，清空过的原分组恢复模型', async (t) => {
+test('从旧版双区域升级：合并旧分组并保留区域凭据和其它 provider', async (t) => {
   const { resolved, editor, credentials, config } = await setup(t);
   const providers = config().providers;
   const legacy = (ref) => ({ displayName: 'old', apiKeyEnv: ref, baseURL: providers.workbuddy.baseURL, api: 'openai-completions', models: [] });
@@ -184,9 +191,11 @@ test('从旧版双区域升级：认得旧分组，补上 X-Realm 头，清空�
   await credentials.set('WORKBUDDY_PROXY_KEY_GLOBAL', 'gl-secret');
   const result = await syncModels({ spec: resolved.spec, models: { ...resolved.models, hubDual: true }, editor, credentials, env: {} });
   assert.equal(result.state, 'updated');
-  assert.equal(config().providers.workbuddy.models[0].id, 'shared');
-  assert.equal(config().providers['workbuddy-hub-cn'].headers['X-Realm'], 'cn');
-  assert.equal(config().providers['workbuddy-hub-cn'].apiKeyEnv, 'WORKBUDDY_PROXY_KEY_CN');
+  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['cn:shared', 'global:shared']);
+  assert.equal(config().providers['workbuddy-hub-cn'], undefined);
+  assert.equal(config().providers['workbuddy-hub-global'], undefined);
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY_CN, 'cn-secret');
+  assert.ok(config().providers.openrouter);
 });
 
 test('未绑定 Key 单独存入凭据库，关闭双区域后可以继续跟随看板出口', async (t) => {

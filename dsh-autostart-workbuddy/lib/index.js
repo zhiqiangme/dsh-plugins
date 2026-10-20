@@ -201,7 +201,7 @@ function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig, resyn
       return next();
     }
     currentConfig = config;
-    resolved.models = updated.models;
+    resolved.models = { ...updated.models, ...(resolved.models.hubProxyBaseURL ? { hubProxyBaseURL: resolved.models.hubProxyBaseURL } : {}) };
     // 自动更新每轮现读这两项，改完下一轮就按新值走。
     resolved.backend.autoUpdate = updated.backend.autoUpdate;
     resolved.backend.autoUpdateDelayHours = updated.backend.autoUpdateDelayHours;

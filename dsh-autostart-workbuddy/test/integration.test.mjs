@@ -10,14 +10,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { apply, inject, name } from '../lib/index.js';
-import { MODELS_PATH } from '../lib/web.js';
-import { createFakeConfigEditor, profileRows } from '../fixtures/fake-config-editor.mjs';
+import { BACKEND_PATH, MODELS_PATH } from '../lib/web.js';
+import { HUB_ROUTER_PATH } from '../lib/models.js';
+import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 const DUMMY = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
 
@@ -110,6 +112,34 @@ test('插件导出 Cordis 契约：name / inject / apply', () => {
   assert.equal(name, 'dsh-autostart-workbuddy');
   assert.deepEqual(inject, []);
   assert.equal(typeof apply, 'function');
+});
+
+test('HUB 合并路由挂载后，保存模型规则仍可同步到同一分组，不丢失运行时转发地址', async (t) => {
+  const server = createHttpServer((req, res) => res.end(JSON.stringify({ realm: req.headers['x-realm'] || 'intl', data: [{ id: 'shared', name: 'Shared', credits: 'Free' }] })));
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(done); }));
+  const editor = createFakeConfigEditor(profileRows());
+  const credentials = createFakeCredentials();
+  const routes = [];
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const ctx = fakeContext({ configEditor: editor, credentials, webServer: { getOrigin: () => origin, register: (route) => { routes.push(route); return () => {}; } } });
+  t.after(() => ctx.disposeAll());
+  const config = { gateway: 'hub', backend: { enabled: false, autoUpdate: false }, models: { enabled: true, hubDual: true, baseURL: origin } };
+  apply(ctx, config);
+  assert.ok(routes.some((route) => route.kind === 'prefix' && route.path === HUB_ROUTER_PATH));
+  ctx.update({ ...config, models: { ...config.models, rules: { freeOnly: true } } });
+  assert.equal(ctx.restarts, 0);
+  const response = { writeHead(status) { this.status = status; }, end(body) { this.body = JSON.parse(body); } };
+  const body = Buffer.from(JSON.stringify({ action: 'hubMode', enabled: true }));
+  await routes.find((route) => route.path === BACKEND_PATH).handler({
+    method: 'POST', headers: { host: '127.0.0.1', 'content-type': 'application/json' }, socket: { remoteAddress: '127.0.0.1' }, async *[Symbol.asyncIterator]() { yield body; },
+  }, response);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.sync.state, 'updated');
+  const providers = editor.entry('llm-pi-ai').options.config.providers;
+  assert.equal(providers.workbuddy.baseURL, `${origin}${HUB_ROUTER_PATH}/`);
+  assert.deepEqual(providers.workbuddy.models.map((model) => model.id), ['cn:shared', 'global:shared']);
+  assert.equal(providers['workbuddy-hub-cn'], undefined);
 });
 
 /** 轮询等待日志出现某段文本（比直接探测端口稳：端口先就绪、日志后写入）。 */
