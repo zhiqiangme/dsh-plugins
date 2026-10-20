@@ -263,6 +263,10 @@ window.__ModuleLoader__.load({
       gatewayHub: 'workbuddy2api-hub',
       gatewaySwitching: '切换中…',
       gatewaySwitched: '已切换到 {name}。',
+      gatewaySynced: '已切换到 {name}，模型、地址和凭据已自动保存并同步。',
+      gatewaySyncFailed: '后端已切换，但自动同步未完成：{reason}',
+      gatewayCredentialFailed: '网关凭据未能保存，请检查 DSH 凭据服务后重试。',
+      gatewayNoAccounts: '后端已切换，但账号池为空；添加可用账号后再同步模型。',
       gatewayWaiting: '正在切换到 {name}，等它启动…',
       gatewayNotInstalled: '已切换到 {name}，但它还没安装：请在下方点「安装」。',
       gatewayTimeout: '已切换到 {name}，但 {seconds} 秒内没等到它就绪；稍后可点模型区的「重试」或「刷新」。',
@@ -404,6 +408,10 @@ window.__ModuleLoader__.load({
       gatewayHub: 'workbuddy2api-hub',
       gatewaySwitching: 'Switching…',
       gatewaySwitched: 'Switched to {name}.',
+      gatewaySynced: 'Switched to {name}. Models, URL and credentials were saved and synchronized automatically.',
+      gatewaySyncFailed: 'The gateway switched, but automatic synchronization did not finish: {reason}',
+      gatewayCredentialFailed: 'Gateway credentials could not be saved. Check the DSH credentials service and retry.',
+      gatewayNoAccounts: 'The gateway switched, but its account pool is empty. Add a usable account before syncing models.',
       gatewayWaiting: 'Switching to {name}, waiting for it to start…',
       gatewayNotInstalled: 'Switched to {name}, but it is not installed yet: click "Install" below.',
       gatewayTimeout: 'Switched to {name}, but it was not ready within {seconds} s; try "Retry" or "Refresh" in the model list later.',
@@ -600,6 +608,21 @@ window.__ModuleLoader__.load({
         await pause(pollMs);
       }
       return 'timeout';
+    }
+
+    /** 沿用宿主已保存的选择，不能把当前出口的可见子集或旧页面草稿写成新白名单。 */
+    async function syncGatewayModels(gateway) {
+      const refreshed = await request(MODELS_PATH, 'POST', { action: 'refresh', gateway });
+      if (!refreshed.ok) return refreshed.state === BACKEND_NO_ACCOUNTS
+        ? { state: 'no-accounts' } : { state: 'failed', reason: refreshed.reason };
+      if (refreshed.enabled !== true) return { state: 'disabled' };
+      // 刷新有“连续两轮缺席”的保护；切换是明确操作，再走保存同步立即对齐新后端。
+      // 只发 enabled，让宿主现取完整白名单和规则，且不擅自打开原本关闭的同步。
+      const saved = await request(MODELS_PATH, 'POST', { gateway, enabled: true });
+      const sync = saved.sync ?? {};
+      if (!saved.ok || !['updated', 'unchanged'].includes(sync.state)) return { state: 'failed', reason: saved.reason ?? sync.reason ?? sync.state };
+      if (['failed', 'skipped'].includes(sync.credential)) return { state: 'credential-failed' };
+      return sync;
     }
 
     function renderUninstallConfirm({ t, Modal, h, onCancel, onConfirm, kind: action = 'uninstall', textKind, params }) {
@@ -1280,7 +1303,7 @@ window.__ModuleLoader__.load({
 
       // 切换后端网关。宿主写完 config.gateway 会重启本插件（停旧网关、按新网关拉起）；
       // 新网关要几秒才监听（hub 带 Python 冷启动），固定延时去读会读到 fetch failed，
-      // 所以轮询到"后端快照已是新网关、模型区能答"为止，再刷新两块（见 waitForGateway）。
+      // 等新网关能答后自动刷新并保存同步；仅能读取目录还不能证明对话配置已更新。
       const [gatewaySwitch, setGatewaySwitch] = useState(undefined);
       const switchGateway = useCallback(async (gateway, label) => {
         setGatewaySwitch({ busy: gateway, kind: 'ok', text: t('gatewayWaiting', { name: label }) });
@@ -1291,12 +1314,17 @@ window.__ModuleLoader__.load({
             return;
           }
           const outcome = payload.state === 'switched' ? await waitForGateway(gateway) : 'ready';
+          const sync = outcome === 'ready' ? await syncGatewayModels(gateway) : undefined;
           await loadBackend();
           await load(false);
-          const key = { ready: 'gatewaySwitched', 'not-installed': 'gatewayNotInstalled' }[outcome] ?? 'gatewayTimeout';
+          const syncFailed = sync?.state === 'failed' || sync?.state === 'credential-failed';
+          const key = syncFailed ? 'gatewaySyncFailed'
+            : sync?.state === 'no-accounts' ? 'gatewayNoAccounts'
+              : ['updated', 'unchanged'].includes(sync?.state) ? 'gatewaySynced'
+                : { ready: 'gatewaySwitched', 'not-installed': 'gatewayNotInstalled' }[outcome] ?? 'gatewayTimeout';
           setGatewaySwitch({
-            kind: outcome === 'timeout' ? 'error' : 'ok',
-            text: t(key, { name: label, seconds: GATEWAY_WAIT_MS / 1000 }),
+            kind: outcome === 'timeout' || syncFailed || sync?.state === 'no-accounts' ? 'error' : 'ok',
+            text: t(key, { name: label, seconds: GATEWAY_WAIT_MS / 1000, reason: sync?.state === 'credential-failed' ? t('gatewayCredentialFailed') : sync?.reason ?? t('saveFailed') }),
           });
         } catch (error) {
           setGatewaySwitch({ kind: 'error', text: errorText(error) });
@@ -1840,6 +1868,7 @@ window.__ModuleLoader__.load({
     exports.renderUpdateSection = renderUpdateSection;
     exports.renderAutoUpdate = renderAutoUpdate;
     exports.waitForGateway = waitForGateway;
+    exports.syncGatewayModels = syncGatewayModels;
     exports.apply = apply;
     exports.inject = inject;
     exports.name = name;

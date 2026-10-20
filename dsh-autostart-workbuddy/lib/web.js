@@ -736,6 +736,11 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               json(res, 400, { ok: false, reason: body.reason });
               return;
             }
+            // 等待新后端期间可能又发生一次切换，旧页面不能再保存到另一后端。
+            if (body.value.gateway !== undefined && body.value.gateway !== resolved.gateway) {
+              json(res, 409, { ok: false, reason: '后端已再次切换，请刷新后重试同步' });
+              return;
+            }
             if (body.value.action === 'refresh') {
               // 刷新只沿用已保存的选择：不能把当前可见的 GL 子集写成永久白名单。
               // 与定时同步共用健康检查、移除确认和并发保护；恢复的模型当轮即可补回。

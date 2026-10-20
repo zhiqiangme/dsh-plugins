@@ -272,6 +272,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     // 后端网关切换与 hub 专用文案
     'backendUninstalledHub', 'gatewayHub', 'gatewayHubHint', 'gatewayNotInstalled', 'gatewaySwitched', 'gatewaySwitching',
     'gatewayTimeout', 'gatewayTitle', 'gatewayWaiting', 'gatewayWb2api', 'panelPasswordChanged', 'panelPasswordCopied',
+    'gatewaySynced', 'gatewaySyncFailed', 'gatewayCredentialFailed', 'gatewayNoAccounts',
     'panelPasswordCopy', 'uninstallHubConfirm', 'uninstallHubDesc', 'uninstallHubKept', 'uninstallHubTitle',
     // 插件自身更新区（与后端版本区无关）
     'restartFailed', 'restartNow', 'restarting', 'updateAvailable', 'updateCancelled', 'updateCheck',
@@ -1164,6 +1165,48 @@ test('waitForGateway：新网关没装就不等；账号池为空也算网关已
 
   const stuck = boot([], { fetchImpl: scriptedFetch({ backend: [{ ok: true, backend: { gateway: 'hub' } }], models: [{}] }).fetchImpl });
   assert.equal(await stuck.module.waitForGateway('wb2api', { waitMs: 30, sleep: (ms) => new Promise((r) => setTimeout(r, 5)) }), 'timeout');
+});
+
+test('后端切换按钮：等待就绪后自动刷新、保存同步、回读，沿用宿主保存的白名单', async () => {
+  const calls = [];
+  const inventory = { ok: true, enabled: true, only: ['cn:alpha', 'global:beta'], models: ROWS };
+  const app = boot(gatewayStates({ ...GATEWAY_BACKEND, gateway: 'wb2api' }), {
+    fetchImpl: async (path, options) => {
+      const body = options.body ? JSON.parse(options.body) : undefined;
+      calls.push({ path, method: options.method, body });
+      return { ok: true, json: async () => path.endsWith('/backend')
+        ? options.method === 'POST' ? { ok: true, state: 'switched' } : { ok: true, backend: { ...GATEWAY_BACKEND, gateway: 'hub' } }
+        : options.method === 'GET' ? inventory
+          : body.action === 'refresh' ? { ...inventory, sync: { state: 'deferred' } }
+            : { ok: true, sync: { state: 'updated', credential: 'kept' } } };
+    },
+  });
+  await button(collectByType(app.renderCard(), 'button'), 'workbuddy2api-hub').props.onClick();
+  assert.deepEqual(calls.filter((call) => call.method === 'POST').map((call) => call.body), [
+    { action: 'gateway', gateway: 'hub' }, { action: 'refresh', gateway: 'hub' }, { gateway: 'hub', enabled: true },
+  ]);
+  assert.equal(calls.at(-1).method, 'GET', '保存后回读最终目录');
+  assert.match(collectText(app.renderCard()).join('|'), /已切换到 workbuddy2api-hub，模型、地址和凭据已自动保存并同步/);
+});
+
+test('切换后的自动同步：关闭同步、空账号池和保存失败都有明确状态，不误报成功', async () => {
+  for (const [refreshed, saved, expected] of [
+    [{ ok: true, enabled: false }, undefined, 'disabled'],
+    [{ ok: false, state: 'backend-no-accounts' }, undefined, 'no-accounts'],
+    [{ ok: true, enabled: true }, { ok: false, reason: 'profile locked' }, 'failed'],
+    [{ ok: true, enabled: true }, { ok: true, sync: { state: 'failed', reason: '401' } }, 'failed'],
+    [{ ok: true, enabled: true }, { ok: true, sync: { state: 'updated', credential: 'failed' } }, 'credential-failed'],
+    [{ ok: true, enabled: true }, { ok: true, sync: { state: 'updated', credential: 'skipped' } }, 'credential-failed'],
+  ]) {
+    const bodies = [];
+    const { module } = boot([], { fetchImpl: async (_path, options) => {
+      const body = JSON.parse(options.body); bodies.push(body);
+      return { ok: true, json: async () => body.action === 'refresh' ? refreshed : saved };
+    } });
+    const result = await module.syncGatewayModels('wb2api');
+    assert.equal(result.state, expected);
+    assert.equal(bodies.length, saved ? 2 : 1, '关闭同步或账号池为空时不擅自保存启用');
+  }
 });
 
 test('模型区（hub）：账号池为空时显示本地化提示与重试，不列模型', () => {

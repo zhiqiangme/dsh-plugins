@@ -194,6 +194,42 @@ for (const enabled of [true, false]) {
   });
 }
 
+test('切换后自动刷新再保存：立即恢复地址和凭据，不改白名单和规则；再次切换后拒绝旧请求', async (t) => {
+  const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
+  t.after(fixture.stop);
+  const port = await fixture.ready;
+  const only = ['cn:alpha', 'global:beta'];
+  const models = { enabled: true, only, rules: { sort: 'name' } };
+  const resolved = configFor(port, models);
+  const editor = editorFor(models);
+  editor.entry('llm-pi-ai').options.config.providers.workbuddy.baseURL = 'http://127.0.0.1:60727/plugins/dsh-autostart-workbuddy/hub/v1/';
+  const credentials = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY: 'hub-key' } });
+  const ctx = fakeCtx({ configEditor: editor, credentials });
+  const resync = createModelResync({ resolved, logger: ctx.logger, env: {}, probe: async () => ({ ok: true, servable: true }), editor: () => editor, credentials: () => credentials });
+  registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: {}, resync });
+  const handler = ctx.routes.find((route) => route.path === MODELS_PATH).handler;
+  const post = async (body) => { const res = fakeRes(); await handler(fakeReq('POST', { body: JSON.stringify(body) }), res); return res; };
+  const refresh = await post({ action: 'refresh', gateway: 'wb2api' });
+  assert.equal(refresh.body.sync.state, 'deferred', '定时刷新保留两轮移除保护');
+  const saved = await post({ gateway: 'wb2api', enabled: true });
+  assert.equal(saved.body.sync.state, 'updated', saved.body.sync.reason);
+  const provider = editor.entry('llm-pi-ai').options.config.providers.workbuddy;
+  assert.equal(provider.baseURL, `http://127.0.0.1:${port}/v1/`);
+  assert.equal(provider.apiKeyEnv, 'WORKBUDDY_WB2API_KEY');
+  assert.equal(credentials.values[provider.apiKeyEnv], 'test-key');
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'hub-key');
+  assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models, models);
+  assert.deepEqual(provider.models.map((model) => model.id), only);
+
+  const writes = editor.edits.length, keyWrites = credentials.sets.length;
+  for (const body of [{ action: 'refresh', gateway: 'hub' }, { gateway: 'hub', enabled: true }]) {
+    const rejected = await post(body);
+    assert.equal(rejected.status, 409);
+  }
+  assert.equal(editor.edits.length, writes);
+  assert.equal(credentials.sets.length, keyWrites);
+});
+
 test('GET：返回后端全量模型，并按当前白名单标记勾选状态', async () => {
   const fixture = startFixture({ TEST_MODE: 'http-models' });
   const port = await fixture.ready;
