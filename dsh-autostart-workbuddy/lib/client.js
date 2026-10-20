@@ -1335,7 +1335,9 @@ window.__ModuleLoader__.load({
       const [filters, setFilters] = useState(undefined);
       const [hubDraft, setHubDraft] = useState(undefined);
       const [hubNotice, setHubNotice] = useState(undefined);
-      const sorted = useMemo(() => filterRows(rows, { ...meta.rules, ...filters }), [rows, meta.rules, filters]);
+      // 稳定排序让已勾选项置顶，组内保留筛选器指定的顺序；保存仍按原白名单规则排序。
+      const sorted = useMemo(() => filterRows(rows, { ...meta.rules, ...filters })
+        .sort((a, b) => Number(picked.has(b.id)) - Number(picked.has(a.id))), [rows, meta.rules, filters, picked]);
       const live = useMemo(() => ({}), []);
       live.current = { meta, rows, picked, savedPicked, saving, backendBusy, gatewaySwitch, phase };
       useEffect(() => {
