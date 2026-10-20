@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { resolvePluginConfig } from '../lib/config.js';
-import { describeModels, setHubMode } from '../lib/web.js';
+import { describeHubSettings, describeModels, setHubMode } from '../lib/web.js';
 import { syncModels } from '../lib/models.js';
 import { diagnose } from '../lib/diagnostics.js';
 import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
@@ -88,6 +88,63 @@ test('区域 Key 是可选覆盖：填了的区域改用专用凭据，Key 不�
   assert.equal(await chatRealm(gl, credentials), 'intl');
   assert.ok(!JSON.stringify(config()).includes('cn-secret'));
   assert.ok(!JSON.stringify(saved).includes('gl-secret'));
+  assert.deepEqual(saved.settings, { enabled: true, keys: { cn: 'saved', global: 'saved', follow: 'saved' } });
+});
+
+test('未勾选双区域时也保存表单里的三个 Key，重新读取能确认状态，留空不会删除', async (t) => {
+  const { resolved, editor, credentials, options, config } = await setup(t);
+  const saved = await setHubMode({ ...options, enabled: false, cnKey: 'cn-secret', globalKey: 'gl-secret', followKey: 'follow-secret' });
+  assert.equal(saved.ok, true);
+  assert.deepEqual(saved.settings, { enabled: false, keys: { cn: 'saved', global: 'saved', follow: 'saved' } });
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY_CN, 'cn-secret');
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY_GLOBAL, 'gl-secret');
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'follow-secret');
+  assert.equal(config().providers['workbuddy-hub-cn'], undefined, '保存 Key 不擅自开启固定分组');
+  assert.equal(resolved.models.hubDual, false);
+  assert.deepEqual(await describeHubSettings(options), saved.settings, '重新打开页面由凭据服务读取持久化状态');
+  assert.doesNotMatch(JSON.stringify({ saved, edits: editor.edits }), /cn-secret|gl-secret|follow-secret/);
+  const writes = credentials.sets.length;
+  const again = await setHubMode({ ...options, enabled: false, cnKey: '', globalKey: '', followKey: '' });
+  assert.equal(again.ok, true);
+  assert.deepEqual(again.settings, saved.settings);
+  assert.equal(credentials.sets.length, writes, '空输入保留已保存的值');
+});
+
+test('关闭双区域时保存单个区域 Key；绑定错误先拒绝，不写入其它表单值', async (t) => {
+  const { hub, editor, credentials, options } = await setup(t);
+  hub.wrongBinding = true;
+  const rejected = await setHubMode({ ...options, enabled: false, cnKey: 'cn-secret', globalKey: 'gl-secret' });
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.reason, /CN 区域 Key/);
+  assert.deepEqual(editor.edits, []);
+  assert.deepEqual(credentials.sets, []);
+  hub.wrongBinding = false;
+  assert.equal((await setHubMode({ ...options, enabled: false, cnKey: 'cn-secret' })).ok, true);
+  assert.deepEqual((await describeHubSettings(options)).keys, { cn: 'saved', global: 'missing', follow: 'saved' });
+});
+
+test('Key 状态区分存储、环境、缺失和读取失败，只返回状态', async (t) => {
+  const { options } = await setup(t);
+  assert.deepEqual((await describeHubSettings(options)).keys, { cn: 'missing', global: 'missing', follow: 'missing' });
+  const credentials = createFakeCredentials({ stored: { CUSTOM_KEY: 'custom-secret', WORKBUDDY_PROXY_KEY_CN: 'cn-secret' }, env: { WORKBUDDY_PROXY_KEY_GLOBAL: 'env-secret' } });
+  const resolved = { ...options.resolved, models: { ...options.resolved.models, apiKeyRef: 'CUSTOM_KEY' } };
+  const result = await describeHubSettings({ ...options, resolved, credentials });
+  assert.deepEqual(result.keys, { cn: 'saved', global: 'environment', follow: 'saved' });
+  assert.doesNotMatch(JSON.stringify(result), /secret|CUSTOM_KEY/);
+  const failed = await describeHubSettings({ ...options, credentials: { resolve: async () => { throw new Error('private-secret'); } } });
+  assert.deepEqual(failed.keys, { cn: 'unavailable', global: 'unavailable', follow: 'unavailable' });
+});
+
+test('设置落盘后同步抛错，仍确认保存成功，不把同步失败误报为保存失败', async (t) => {
+  const { editor, credentials, options } = await setup(t);
+  editor.onUpdate('dsh-autostart-workbuddy', () => {
+    credentials.resolve = async () => { throw new Error('private-secret'); };
+  });
+  const saved = await setHubMode({ ...options, enabled: false, followKey: 'follow-secret' });
+  assert.equal(saved.ok, true);
+  assert.equal(credentials.values.WORKBUDDY_PROXY_KEY, 'follow-secret');
+  assert.equal(saved.sync.state, 'failed');
+  assert.doesNotMatch(JSON.stringify(saved), /private-secret|follow-secret/);
 });
 
 test('网关 Key 在 HUB 里绑了区域时 X-Realm 无效：拒绝开启；只给被挡住的区域补 Key 即可', async (t) => {

@@ -113,6 +113,9 @@ window.__ModuleLoader__.load({
 .dsm-wb-filters input:not([type=checkbox]),.dsm-wb-filters select,.dsm-wb-gateway input[type=password]{font:inherit;font-size:12px;color:var(--dsw-alias-label-primary,#e6e6e6);background:var(--dsw-alias-bg-layer-2,#25262b);border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;padding:6px 8px;max-width:100%;box-sizing:border-box}
 .dsm-wb-filters label{font-size:12px;color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-wb-gateway input[type=password]{display:block;width:100%;margin:6px 0}
+.dsm-wb-key-field{display:block;margin-top:8px;font-size:12px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-wb-key-state{margin-left:8px;color:var(--dsw-alias-label-tertiary,#999)}
+.dsm-wb-key-state-saved{color:var(--dsw-alias-state-success-primary,#3fb950)}
 .dsm-wb-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:15px;font-weight:600;line-height:1.4}
 .dsm-wb-desc{margin:4px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
 .dsm-wb-panel{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
@@ -236,6 +239,10 @@ window.__ModuleLoader__.load({
       hubDual: 'CN / GL 同时使用', hubDualHint: '另加 WorkBuddy CN / GL 两个固定出口的分组，按 X-Realm 请求头选出口，沿用网关 Key；原 WorkBuddy 分组照旧跟随看板出口。只有网关 Key 在 HUB 里绑定了区域时，才需要另填区域 Key（只存 DSH 凭据库，留空沿用已保存的值）。',
       hubCnKey: 'CN 区域 Key（可选）', hubGlKey: 'GL 区域 Key（可选）', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存', hubBoth: 'CN + GL 固定分组，原分组跟随看板出口',
       hubFollowKey: '跟随出口的未绑定 Key（可选，供关闭双区域后使用）',
+      hubKeySaved: '已保存', hubKeyMissing: '未单独保存，使用网关 Key', hubKeyEnvironment: '已从环境配置', hubKeyUnavailable: '暂无法读取保存状态',
+      hubKeyKeep: '已保存；留空保留，输入新 Key 可替换', hubSaving: '正在校验并保存…',
+      hubSettingsSaved: '区域设置已保存。输入框留空会保留已保存的 Key。', hubKeysSaved: 'Key 已保存；为避免回显，输入框已清空，已保存的 Key 继续生效。',
+      hubSyncFailed: '设置和 Key 已保存，但模型同步未完成：{reason}', hubInventoryFailed: '设置已保存，模型列表暂时无法刷新，请稍后重试。',
       accountOverview: '账号概览：可用 {ready} / 总计 {total}', balanceOverview: '{realm} 剩余积分：{balance}；启用账号 {enabled}，有积分数据 {known}',
       balanceUnknown: '尚未获取', balanceUnsupported: '后端版本不支持', balanceUnavailable: '暂不可用或密钥无效', balanceHint: '积分来自 HUB 缓存，不发起对话、不刷新上游积分。', balanceUpdated: '积分快照：{time}',
       backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
@@ -373,6 +380,10 @@ window.__ModuleLoader__.load({
       hubDual: 'Use CN and GL together', hubDualHint: 'Adds fixed WorkBuddy CN / GL groups routed by the X-Realm header with the gateway key; the original WorkBuddy group keeps following the dashboard exit. Region keys are only needed when the gateway key is bound to a region in HUB (stored only in DSH credentials; blank keeps saved values).',
       hubCnKey: 'CN region key (optional)', hubGlKey: 'GL region key (optional)', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved', hubBoth: 'Fixed CN + GL groups; original group follows the dashboard exit',
       hubFollowKey: 'Unbound key for follow mode (optional)',
+      hubKeySaved: 'Saved', hubKeyMissing: 'No separate key; using gateway key', hubKeyEnvironment: 'Configured by environment', hubKeyUnavailable: 'Saved state unavailable',
+      hubKeyKeep: 'Saved; leave blank to keep, or enter a replacement', hubSaving: 'Validating and saving…',
+      hubSettingsSaved: 'Region settings saved. Blank inputs keep saved keys.', hubKeysSaved: 'Keys saved. Inputs were cleared to avoid displaying secrets; saved keys remain in use.',
+      hubSyncFailed: 'Settings and keys saved, but model sync did not finish: {reason}', hubInventoryFailed: 'Settings saved, but the model list could not be refreshed. Please retry later.',
       accountOverview: 'Accounts: {ready} ready / {total} total', balanceOverview: '{realm} remaining credits: {balance}; {enabled} enabled accounts, {known} with balance data',
       balanceUnknown: 'Not available yet', balanceUnsupported: 'Unsupported backend version', balanceUnavailable: 'Unavailable or invalid key', balanceHint: 'Reads cached HUB balances without chat requests or upstream refreshes.', balanceUpdated: 'Balance snapshot: {time}',
       backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
@@ -1295,6 +1306,7 @@ window.__ModuleLoader__.load({
       const [diagnostic, setDiagnostic] = useState(undefined);
       const [filters, setFilters] = useState(undefined);
       const [hubDraft, setHubDraft] = useState(undefined);
+      const [hubNotice, setHubNotice] = useState(undefined);
       const sorted = useMemo(() => filterRows(rows, { ...meta.rules, ...filters }), [rows, meta.rules, filters]);
       const live = useMemo(() => ({}), []);
       live.current = { meta, rows, picked, savedPicked, saving, backendBusy, gatewaySwitch, phase };
@@ -1339,25 +1351,43 @@ window.__ModuleLoader__.load({
       const dirty = !sameSet(picked, savedPicked) || meta.enabled !== meta.savedEnabled || JSON.stringify(meta.rules) !== JSON.stringify(meta.savedRules);
       const applyHubMode = async () => {
         setBackendBusy('hubMode');
+        setHubNotice(undefined);
         try {
-          const payload = await request(BACKEND_PATH, 'POST', { action: 'hubMode', enabled: hubDraft?.enabled ?? meta.hubDual ?? false, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, followKey: hubDraft?.followKey });
-          if (['failed', 'skipped'].includes(payload.sync?.state)) throw new Error(payload.sync.reason);
+          const payload = await request(BACKEND_PATH, 'POST', { action: 'hubMode', enabled: hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, followKey: hubDraft?.followKey });
+          if (!payload.ok) throw new Error(payload.reason || t('saveFailed'));
+          // 宿主确认保存后才清空敏感草稿；同步/回读失败不能再把已落盘的 Key 说成保存失败。
           setHubDraft(undefined);
-          const inventory = await request(MODELS_PATH, 'GET');
-          if (inventory.ok) {
-            const next = mergeLiveSnapshot(live.current, inventory);
+          setBackend((last) => ({ ...last, hubSettings: payload.settings }));
+          setMeta((last) => ({ ...last, hubDual: payload.enabled }));
+          const syncFailed = ['failed', 'skipped', 'not-ready'].includes(payload.sync?.state);
+          const hadKeys = ['cnKey', 'globalKey', 'followKey'].some((key) => hubDraft?.[key]?.trim());
+          setHubNotice(syncFailed
+            ? { kind: 'error', text: t('hubSyncFailed', { reason: payload.sync.reason || payload.sync.state }) }
+            : { kind: 'ok', text: t(hadKeys ? 'hubKeysSaved' : 'hubSettingsSaved') });
+          try {
+            const inventory = await request(MODELS_PATH, 'GET');
+            if (!inventory.ok) throw new Error('inventory unavailable');
+            const next = mergeLiveSnapshot({ ...live.current, meta: { ...live.current.meta, hubDual: payload.enabled } }, inventory);
             setRows(next.rows); setPicked(next.picked); setSavedPicked(next.savedPicked); setMeta(next.meta); setPhase('ready');
+          } catch {
+            if (!syncFailed) setHubNotice({ kind: 'error', text: `${t(hadKeys ? 'hubKeysSaved' : 'hubSettingsSaved')} ${t('hubInventoryFailed')}` });
           }
-          setNotice({ kind: 'ok', text: t('hubDualSaved') });
-        } catch (error) { setNotice({ kind: 'error', text: errorText(error) }); }
+        } catch (error) { setHubNotice({ kind: 'error', text: errorText(error) }); }
         finally { setBackendBusy(undefined); }
       };
       const body = [];
       if (backend?.gateway === 'hub') body.push(h('div', { key: 'hubMode', className: 'dsm-wb-gateway' },
-        h('label', { className: 'dsm-wb-sync' }, h('input', { type: 'checkbox', checked: hubDraft?.enabled ?? meta.hubDual ?? false, disabled: Boolean(saving || backendBusy), onChange: (e) => setHubDraft((last) => ({ ...last, enabled: e.target.checked })) }), t('hubDual')),
+        h('label', { className: 'dsm-wb-sync' }, h('input', { type: 'checkbox', checked: hubDraft?.enabled ?? backend.hubSettings?.enabled ?? meta.hubDual ?? false, disabled: Boolean(saving || backendBusy), onChange: (e) => { setHubDraft((last) => ({ ...last, enabled: e.target.checked })); setHubNotice(undefined); } }), t('hubDual')),
         h('p', { className: 'dsm-wb-hint' }, t('hubDualHint')),
-        ...[['cnKey', 'hubCnKey'], ['globalKey', 'hubGlKey'], ['followKey', 'hubFollowKey']].map(([key, label]) => h('input', { key, type: 'password', autoComplete: 'off', 'aria-label': t(label), placeholder: t(label), value: hubDraft?.[key] ?? '', disabled: Boolean(saving || backendBusy), onChange: (e) => setHubDraft((last) => ({ ...last, [key]: e.target.value })) })),
-        wbButton('applyHubMode', 'outline', t('hubApply'), applyHubMode, Boolean(saving || backendBusy))));
+        ...[['cnKey', 'hubCnKey', 'cn'], ['globalKey', 'hubGlKey', 'global'], ['followKey', 'hubFollowKey', 'follow']].map(([key, label, field]) => {
+          const state = backend.hubSettings?.keys?.[field];
+          const stateLabel = t({ saved: 'hubKeySaved', missing: 'hubKeyMissing', environment: 'hubKeyEnvironment' }[state] || 'hubKeyUnavailable');
+          return h('label', { key, className: 'dsm-wb-key-field' }, t(label),
+            h('span', { className: `dsm-wb-key-state${state === 'saved' ? ' dsm-wb-key-state-saved' : ''}` }, stateLabel),
+            h('input', { type: 'password', autoComplete: 'off', 'aria-label': t(label), placeholder: t(state === 'saved' ? 'hubKeyKeep' : label), value: hubDraft?.[key] ?? '', disabled: Boolean(saving || backendBusy), onChange: (e) => { setHubDraft((last) => ({ ...last, [key]: e.target.value })); setHubNotice(undefined); } }));
+        }),
+        wbButton('applyHubMode', 'outline', t(backendBusy === 'hubMode' ? 'hubSaving' : 'hubApply'), applyHubMode, Boolean(saving || backendBusy)),
+        hubNotice ? h('p', { key: 'hubNotice', role: hubNotice.kind === 'error' ? 'alert' : 'status', className: `dsm-wb-notice ${hubNotice.kind === 'error' ? 'dsm-wb-notice-error' : 'dsm-wb-notice-ok'}` }, hubNotice.text) : null));
       body.push(h('div', { key: 'diagnose', className: 'dsm-wb-toolbar dsm-wb-diagnostics' },
         wbButton('diagnose', 'outline', t(diagnostic?.busy ? 'diagnoseWorking' : 'diagnose'), runDiagnostic, diagnostic?.busy),
         diagnostic?.report ? wbButton('copyReport', 'outline', t(diagnostic.copied ? 'diagnoseCopied' : 'diagnoseCopy'), copyDiagnostic, false) : null));

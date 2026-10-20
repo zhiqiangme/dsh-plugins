@@ -253,6 +253,8 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'emptyFiltered', 'recoveryOff', 'recoveryExternal',
     'accountOverview', 'balanceOverview', 'balanceUnknown', 'balanceUnsupported', 'balanceUnavailable', 'balanceHint', 'balanceUpdated',
     'hubFollowKey',
+    'hubKeySaved', 'hubKeyMissing', 'hubKeyEnvironment', 'hubKeyUnavailable', 'hubKeyKeep', 'hubSaving',
+    'hubSettingsSaved', 'hubKeysSaved', 'hubSyncFailed', 'hubInventoryFailed',
     'hubDual', 'hubDualHint', 'hubCnKey', 'hubGlKey', 'hubApply', 'hubDualSaved', 'hubBoth',
     'modelSearch', 'regionAll', 'ruleFree', 'ruleVision', 'ruleMax', 'sortUpstream', 'sortName', 'sortCredits', 'ruleHint',
     'diagnose', 'diagnoseCopy', 'diagnoseCopied', 'diagnoseWorking',
@@ -816,6 +818,79 @@ test('卸载二次确认：未点开时不出现确认界面', () => {
 function gatewayStates(backend, gatewaySwitch, { confirming } = {}) {
   return [...backendStates(backend, { confirming }), ...Array(7).fill(undefined), undefined, gatewaySwitch];
 }
+
+function hubKeyForm(app) {
+  return collectByType(app.renderCard(), 'div').find((node) => node.props.key === 'hubMode');
+}
+
+test('区域 Key：重新打开仍显示各项保存状态，不回填密钥', () => {
+  const app = boot(gatewayStates({ gateway: 'hub', hubSettings: { enabled: true, keys: { cn: 'saved', global: 'missing', follow: 'environment' } } }));
+  const form = hubKeyForm(app);
+  const text = collectText(form).join('|');
+  assert.match(text, /CN 区域 Key（可选）\|已保存/);
+  assert.match(text, /GL 区域 Key（可选）\|未单独保存，使用网关 Key/);
+  assert.match(text, /已从环境配置/);
+  assert.equal(collectByType(form, 'input')[0].props.checked, true);
+  const passwords = collectByType(form, 'input').filter((node) => node.props.type === 'password');
+  assert.ok(passwords.every((node) => node.props.value === ''));
+  assert.match(passwords[0].props.placeholder, /已保存；留空保留/);
+});
+
+test('区域 Key：校验中有提示，成功后就近显示已保存并解释输入框清空', async () => {
+  let finish;
+  const posts = [];
+  const settings = { enabled: false, keys: { cn: 'saved', global: 'saved', follow: 'saved' } };
+  const app = boot(gatewayStates({ gateway: 'hub' }), { fetchImpl: async (_path, options) => {
+    if (options.method === 'POST') {
+      posts.push(JSON.parse(options.body));
+      return new Promise((done) => { finish = () => done({ ok: true, json: async () => ({ ok: true, enabled: false, settings, sync: { state: 'updated' } }) }); });
+    }
+    return { ok: true, json: async () => ({ ok: true, enabled: true, hubDual: false, models: ROWS, only: [] }) };
+  } });
+  const keys = ['cn-secret', 'gl-secret', 'follow-secret'];
+  collectByType(hubKeyForm(app), 'input').filter((node) => node.props.type === 'password').forEach((node, index) => node.props.onChange({ target: { value: keys[index] } }));
+  const pending = button(collectByType(hubKeyForm(app), 'button'), '应用区域模式').props.onClick();
+  assert.equal(button(collectByType(hubKeyForm(app), 'button'), '正在校验并保存…').props.disabled, true);
+  assert.ok(collectByType(hubKeyForm(app), 'input').filter((node) => node.props.type === 'password').every((node) => node.props.value));
+  finish();
+  await pending;
+  assert.deepEqual(posts, [{ action: 'hubMode', enabled: false, cnKey: keys[0], globalKey: keys[1], followKey: keys[2] }]);
+  const form = hubKeyForm(app);
+  assert.equal(collectByType(form, 'span').filter((node) => node.props.className.includes('dsm-wb-key-state-saved')).length, 3);
+  assert.ok(collectByType(form, 'input').filter((node) => node.props.type === 'password').every((node) => node.props.value === ''));
+  const notice = collectByType(form, 'p').find((node) => node.props.role === 'status');
+  assert.match(collectText(notice).join(''), /Key 已保存.*输入框已清空.*继续生效/);
+  assert.doesNotMatch(collectText(form).join(''), /cn-secret|gl-secret|follow-secret/);
+});
+
+test('区域 Key：保存被拒时就近显示错误且保留输入，不能显示成功', async () => {
+  const app = boot(gatewayStates({ gateway: 'hub' }), { fetchImpl: async () => ({ ok: false, json: async () => ({ ok: false, reason: 'CN 区域 Key 绑定错误' }) }) });
+  const input = collectByType(hubKeyForm(app), 'input').find((node) => node.props.type === 'password');
+  input.props.onChange({ target: { value: 'draft-secret' } });
+  await button(collectByType(hubKeyForm(app), 'button'), '应用区域模式').props.onClick();
+  const form = hubKeyForm(app);
+  assert.match(collectText(form).join(''), /CN 区域 Key 绑定错误/);
+  assert.doesNotMatch(collectText(form).join(''), /Key 已保存/);
+  assert.equal(collectByType(form, 'input').find((node) => node.props.type === 'password').props.value, 'draft-secret');
+  assert.ok(collectByType(form, 'p').some((node) => node.props.role === 'alert'));
+});
+
+test('区域 Key：保存后同步或回读失败，仍显示已保存状态并清空敏感草稿', async () => {
+  for (const syncFailed of [true, false]) {
+    const app = boot(gatewayStates({ gateway: 'hub', hubSettings: { enabled: true } }), { fetchImpl: async (_path, options) => {
+      if (options.method === 'GET') throw new Error('network error');
+      assert.equal(JSON.parse(options.body).enabled, true, '缺少模型快照时沿用后台模式');
+      return { ok: true, json: async () => ({ ok: true, enabled: true, settings: { enabled: true, keys: { cn: 'saved', global: 'missing', follow: 'saved' } }, sync: syncFailed ? { state: 'failed', reason: '同步超时' } : { state: 'updated' } }) };
+    } });
+    collectByType(hubKeyForm(app), 'input').find((node) => node.props.type === 'password').props.onChange({ target: { value: 'cn-secret' } });
+    await button(collectByType(hubKeyForm(app), 'button'), '应用区域模式').props.onClick();
+    const form = hubKeyForm(app);
+    const text = collectText(form).join('');
+    assert.match(text, syncFailed ? /已保存，但模型同步未完成：同步超时/ : /Key 已保存.*模型列表暂时无法刷新/);
+    assert.equal(collectByType(form, 'input').find((node) => node.props.type === 'password').props.value, '');
+    assert.equal(collectByType(form, 'input')[0].props.checked, true);
+  }
+});
 
 const GATEWAY_BACKEND = { exeExists: true, version: { tag: 'v1.7.14' }, history: [], gateways: ['wb2api', 'hub'] };
 

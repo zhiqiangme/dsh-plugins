@@ -357,6 +357,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
   const driver = gatewayDriver(resolved);
+  const hubSettings = resolved.gateway === 'hub' ? await describeHubSettings({ resolved, editor, credentials, env }) : undefined;
   // 面板地址由服务规格推出来（端口可被 profile 覆盖），浏览器半侧拿它渲染可点击链接。
   const panelUrl = `http://${resolved.spec?.host ?? '127.0.0.1'}:${resolved.spec?.port ?? 7863}${driver.panelPath}`;
   const snapshot = () => ({
@@ -367,6 +368,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
     autoUpdate: autoUpdateStatus(resolved),
     recovery: recovery?.status,
     modelStatus: resync?.status,
+    ...(hubSettings ? { hubSettings } : {}),
   });
 
   if (req.method === 'GET') {
@@ -513,16 +515,34 @@ export async function setAutoUpdate({ resolved, editor, enabled }) {
   return { ok: true, enabled };
 }
 
-/** 区域 Key 只写凭据库，profile 和面板快照只保存模式开关。 */
+/** 只回传凭据是否已配置，输入框不回填密钥；重新打开页面也能确认保存结果。 */
+export async function describeHubSettings({ resolved, editor, credentials, env = process.env }) {
+  const followRef = resolved.models.apiKeyRef || providerKeyRef(findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config, resolved.models.provider) || 'WORKBUDDY_PROXY_KEY';
+  const state = async (ref) => {
+    try {
+      if (typeof credentials?.resolve !== 'function') return env[ref] ? 'environment' : 'unavailable';
+      const result = await credentials.resolve(ref);
+      if (!(typeof result === 'string' ? result : result?.value)) return env[ref] ? 'environment' : 'missing';
+      return result?.source === 'env' ? 'environment' : 'saved';
+    } catch { return 'unavailable'; }
+  };
+  const [cn, global, follow] = await Promise.all([state(HUB_KEY_REFS.cn), state(HUB_KEY_REFS.intl), state(followRef)]);
+  return { enabled: resolved.models.hubDual === true, keys: { cn, global, follow } };
+}
+
+/** 区域 Key 只写凭据库，profile 和面板快照只保存模式开关与不含密钥的状态。 */
 export async function setHubMode({ resolved, editor, credentials, env = process.env, enabled, cnKey, globalKey, followKey }) {
   if (resolved.gateway !== 'hub' || typeof enabled !== 'boolean') return { ok: false, reason: '请在 HUB 网关下设置双区域模式' };
   const entry = findConfigEntry(editor, { id: PLUGIN_ID });
   if (!entry || typeof editor?.edit !== 'function') return { ok: false, reason: '宿主没有可编辑的插件配置' };
   try {
     const follow = typeof followKey === 'string' ? followKey.trim() : '';
+    const existing = await hubRegionKeys(credentials, env);
+    const typed = { cn: typeof cnKey === 'string' ? cnKey.trim() : '', intl: typeof globalKey === 'string' ? globalKey.trim() : '' };
+    const keys = { cn: typed.cn || existing.cn, intl: typed.intl || existing.intl };
     const keyRef = providerKeyRef(findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config, resolved.models.provider) || 'WORKBUDDY_PROXY_KEY';
+    if ((typed.cn || typed.intl || follow) && typeof credentials?.set !== 'function') return { ok: false, reason: '保存 Key 需要 DSH 凭据服务' };
     if (follow) {
-      if (typeof credentials?.set !== 'function') return { ok: false, reason: '保存 Key 需要 DSH 凭据服务' };
       if (env[keyRef] && env[keyRef] !== follow) return { ok: false, reason: `${keyRef} 来自只读环境变量` };
       const checked = await Promise.all(['cn', 'intl'].map((realm) => fetchModels({ baseURL: resolved.models.baseURL, apiKey: follow, realm, timeoutMs: resolved.models.timeoutMs })));
       if (checked.some((result, i) => !result.ok || ![i === 0 ? 'cn' : 'intl', ...(i === 1 ? ['global'] : [])].includes(result.realm))) return { ok: false, reason: '跟随出口的 Key 必须有效且不绑定区域，请在 HUB 设置页核对' };
@@ -536,22 +556,29 @@ export async function setHubMode({ resolved, editor, credentials, env = process.
       const conflict = dualProviderConflict(findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config, resolved.models.provider);
       if (conflict) return { ok: false, reason: `provider ${conflict} 已被占用，请先修改分组名` };
       // 区域 Key 是可选覆盖：留空的区域用网关 Key + X-Realm 头，HUB 里不必另建 Key。
-      const existing = await hubRegionKeys(credentials, env);
-      const typed = { cn: typeof cnKey === 'string' ? cnKey.trim() : '', intl: typeof globalKey === 'string' ? globalKey.trim() : '' };
-      const keys = { cn: typed.cn || existing.cn, intl: typed.intl || existing.intl };
-      if ((typed.cn || typed.intl) && typeof credentials?.set !== 'function') return { ok: false, reason: '保存区域 Key 需要 DSH 凭据服务' };
       const checked = await fetchHubRegions({ models: resolved.models, credentials, env, keys, sharedKey: follow || undefined });
       if (!checked.ok) return checked;
-      // 先检查所有只读环境引用，避免写完一个区域后才发现另一个不能修改。
-      for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (env[ref] && env[ref] !== keys[realm]) return { ok: false, reason: `${ref} 来自只读环境变量，请先在启动环境中修改` };
-      for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (keys[realm] !== existing[realm]) await credentials.set(ref, keys[realm]);
+    } else {
+      // 关闭双区域只改变路由；用户在表单里填的 Key 仍须校验并保存，不能随成功后的清空丢掉。
+      for (const [realm, key] of Object.entries(typed)) {
+        if (!key) continue;
+        const checked = await fetchModels({ baseURL: resolved.models.baseURL, apiKey: key, realm, timeoutMs: resolved.models.timeoutMs });
+        const label = realm === 'cn' ? 'CN' : 'GL';
+        if (!checked.ok) return { ok: false, reason: `${label} 区域 Key 校验失败，请核对 Key 和 HUB 状态` };
+        if (![realm, ...(realm === 'intl' ? ['global'] : [])].includes(checked.realm)) return { ok: false, reason: `${label} 区域 Key 没有走 ${label} 出口，请在 HUB 设置页核对区域绑定` };
+      }
     }
+    // 全部校验通过再写入，避免写完一个区域后才发现另一个是只读来源。
+    for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (typed[realm] && env[ref] && env[ref] !== keys[realm]) return { ok: false, reason: `${ref} 来自只读环境变量，请先在启动环境中修改` };
+    for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (typed[realm] && keys[realm] !== existing[realm]) await credentials.set(ref, keys[realm]);
     if (follow) await credentials.set(keyRef, follow);
     const keyPatch = follow ? { apiKeyRef: keyRef } : {};
     await editor.edit(entry, (current) => ({ ...plainObject(current), models: { ...plainObject(current?.models), ...keyPatch, hubDual: enabled } }));
     resolved.models = { ...resolved.models, ...keyPatch, hubDual: enabled };
-    const synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env });
-    return { ok: true, enabled, sync: { state: synced.state, reason: synced.reason, count: synced.entries?.length } };
+    let synced;
+    try { synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env }); }
+    catch { synced = { state: 'failed', reason: '模型同步失败，请稍后重试' }; }
+    return { ok: true, enabled, settings: await describeHubSettings({ resolved, editor, credentials, env }), sync: { state: synced.state, reason: synced.reason, count: synced.entries?.length } };
   } catch { return { ok: false, reason: '保存双区域设置失败，请检查凭据库和 profile 的写入权限' }; }
 }
 

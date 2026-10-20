@@ -579,7 +579,8 @@ test('后端路由（hub）：快照来自 hub 的目录，面板地址是 hub �
   const root = mkdtempSync(join(tmpdir(), 'wb-web-hub-'));
   const resolved = resolvePluginConfig({ gateway: 'hub', port: await freePort() }, { DSH_WORKBUDDY_BACKEND_ROOT: root, PATH: '' });
   const editor = editorFor();
-  const ctx = fakeCtx({ configEditor: editor });
+  const credentials = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY_CN: 'cn-secret', WORKBUDDY_PROXY_KEY: 'follow-secret' } });
+  const ctx = fakeCtx({ configEditor: editor, credentials });
   registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env });
   const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;
 
@@ -589,6 +590,12 @@ test('后端路由（hub）：快照来自 hub 的目录，面板地址是 hub �
   assert.equal(status.body.backend.exeExists, false, '没装 hub 时显示安装');
   assert.equal(status.body.backend.root, root);
   assert.match(status.body.backend.panelUrl, /:\d+\/$/);
+  assert.deepEqual(status.body.backend.hubSettings, { enabled: false, keys: { cn: 'saved', global: 'missing', follow: 'saved' } });
+  assert.doesNotMatch(JSON.stringify(status.body), /cn-secret|follow-secret/);
+  await credentials.set('WORKBUDDY_PROXY_KEY_GLOBAL', 'gl-secret');
+  const reloaded = fakeRes();
+  await handler(fakeReq('GET'), reloaded);
+  assert.equal(reloaded.body.backend.hubSettings.keys.global, 'saved', '状态每次从凭据库读取，刷新后不丢失');
 
   const switched = fakeRes();
   await handler(fakeReq('POST', { body: JSON.stringify({ action: 'gateway', gateway: 'wb2api' }) }), switched);
