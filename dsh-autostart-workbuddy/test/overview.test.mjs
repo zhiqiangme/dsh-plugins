@@ -5,18 +5,19 @@ import { resolvePluginConfig } from '../lib/config.js';
 import { createAccountOverview } from '../lib/overview.js';
 import { createFakeCredentials } from '../fixtures/fake-config-editor.mjs';
 
-async function setup(t, dual = false) {
+async function setup(t, dual = false, stored = { WORKBUDDY_PROXY_KEY_CN: 'key-cn', WORKBUDDY_PROXY_KEY_GLOBAL: 'key-gl' }) {
   const state = { hits: [], status: 200, balance: null };
   const server = createServer((req, res) => {
     state.hits.push(req.url);
-    const realm = req.headers.authorization === 'Bearer key-cn' ? 'cn' : 'intl';
+    // key-cn 绑定国内；其余 Key 未绑定，按 X-Realm 头选出口。
+    const realm = req.headers.authorization === 'Bearer key-cn' ? 'cn' : req.headers['x-realm'] || 'intl';
     res.writeHead(state.status, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ realm, balance: state.balance, accounts_enabled: 2, accounts_with_credit_data: state.balance === null ? 0 : 2, updated_at: 1_790_000_000, token: 'must-not-leak' }));
   });
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(done); }));
   const resolved = resolvePluginConfig({ gateway: 'hub', models: { hubDual: dual, baseURL: `http://127.0.0.1:${server.address().port}` } }, {});
-  const credentials = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY_CN: 'key-cn', WORKBUDDY_PROXY_KEY_GLOBAL: 'key-gl' } });
+  const credentials = createFakeCredentials({ stored });
   return { state, resolved, credentials, driver: { probe: async () => ({ ok: true, healthy: 1, total: 2 }) } };
 }
 
@@ -53,4 +54,11 @@ test('旧版不支持与鉴权失败给出明确状态，不伪造零余额', as
   const result = await createAccountOverview(x)();
   assert.equal(result.balances[0].state, 'unauthorized');
   assert.equal(result.balances[0].balance, null);
+});
+
+test('双区域没存区域 Key 时用网关 Key 加 X-Realm 头分别取两个区域的积分', async (t) => {
+  const x = await setup(t, true, {});
+  x.state.balance = 3;
+  const report = await createAccountOverview(x)();
+  assert.deepEqual(report.balances.map((row) => [row.realm, row.state]), [['cn', 'ready'], ['intl', 'ready']]);
 });

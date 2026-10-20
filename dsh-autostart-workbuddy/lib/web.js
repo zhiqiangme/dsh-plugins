@@ -32,6 +32,7 @@ import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js'
 import {
   creditsLabel,
   fetchModels,
+  dualProviderConflict,
   fetchHubRegions,
   hubRegionKeys,
   HUB_KEY_REFS,
@@ -532,15 +533,14 @@ export async function setHubMode({ resolved, editor, credentials, env = process.
       if (!check.ok) return { ok: false, reason: '当前跟随模式 Key 已失效，请填写一把不绑定区域的 Key 后再应用' };
     }
     if (enabled) {
-      const providers = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config?.providers ?? {};
-      for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) {
-        const name = `${resolved.models.provider}-hub-${realm === 'cn' ? 'cn' : 'global'}`;
-        if (providers[name] && (providers[name].apiKeyEnv !== ref || providers[name].api !== 'openai-completions')) return { ok: false, reason: `provider ${name} 已被占用，请先修改分组名` };
-      }
-      if (typeof credentials?.set !== 'function' || typeof credentials?.resolve !== 'function') return { ok: false, reason: '双区域模式需要 DSH 凭据服务' };
+      const conflict = dualProviderConflict(findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config, resolved.models.provider);
+      if (conflict) return { ok: false, reason: `provider ${conflict} 已被占用，请先修改分组名` };
+      // 区域 Key 是可选覆盖：留空的区域用网关 Key + X-Realm 头，HUB 里不必另建 Key。
       const existing = await hubRegionKeys(credentials, env);
-      const keys = { cn: typeof cnKey === 'string' && cnKey.trim() ? cnKey.trim() : existing.cn, intl: typeof globalKey === 'string' && globalKey.trim() ? globalKey.trim() : existing.intl };
-      const checked = await fetchHubRegions({ models: resolved.models, keys });
+      const typed = { cn: typeof cnKey === 'string' ? cnKey.trim() : '', intl: typeof globalKey === 'string' ? globalKey.trim() : '' };
+      const keys = { cn: typed.cn || existing.cn, intl: typed.intl || existing.intl };
+      if ((typed.cn || typed.intl) && typeof credentials?.set !== 'function') return { ok: false, reason: '保存区域 Key 需要 DSH 凭据服务' };
+      const checked = await fetchHubRegions({ models: resolved.models, credentials, env, keys, sharedKey: follow || undefined });
       if (!checked.ok) return checked;
       // 先检查所有只读环境引用，避免写完一个区域后才发现另一个不能修改。
       for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (env[ref] && env[ref] !== keys[realm]) return { ok: false, reason: `${ref} 来自只读环境变量，请先在启动环境中修改` };

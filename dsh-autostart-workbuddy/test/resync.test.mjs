@@ -50,11 +50,33 @@ test('双区域定时同步不被看板当前出口的空账号池挡住', async
   let calls = 0;
   const resync = createModelResync({ resolved, logger: memoryLogger(), editor: () => undefined, credentials: () => undefined,
     probe: async () => ({ ok: true, servable: false, realm: 'intl' }),
-    sync: async ({ models }) => { calls++; assert.equal(models.hubDual, true); return { state: 'unchanged', entries: [], realm: 'dual' }; },
+    sync: async ({ models }) => { calls++; assert.equal(models.hubDual, true); return { state: 'unchanged', entries: [], realm: 'intl' }; },
   });
   assert.equal((await resync.tick()).state, 'unchanged');
   assert.equal(calls, 1);
-  assert.equal(resync.status.realm, 'dual');
+  assert.equal(resync.status.realm, 'intl', '原分组仍按看板出口记录');
+  assert.equal(resync.status.dual, true);
+});
+
+test('双区域下原分组仍跟随看板出口：切换后立即同步，区域分组的移除确认不被跳过', async () => {
+  let realm = 'intl';
+  const calls = [];
+  const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, hubDual: true } }, { PATH: '' });
+  const resync = createModelResync({
+    resolved, logger: memoryLogger(), editor: () => undefined, credentials: () => undefined, realmPollMs: 5,
+    probe: async () => ({ ok: true, servable: true, realm }),
+    sync: async (options) => { calls.push({ realm, guarded: Boolean(options.removalGuard), regionGuarded: Boolean(options.regionGuard) }); return { state: 'unchanged', realm }; },
+  });
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  try {
+    resync.start();
+    await wait(40);
+    realm = 'cn';
+    await wait(40);
+    assert.deepEqual(calls, [{ realm: 'cn', guarded: false, regionGuarded: true }]);
+  } finally {
+    resync.stop();
+  }
 });
 
 test('上游下架的模型连续两轮缺席后从 DSH 移除，之后保持不变', async (t) => {

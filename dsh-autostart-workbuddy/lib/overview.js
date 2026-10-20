@@ -1,6 +1,6 @@
 /** 面板只读本地健康状态和 HUB 积分缓存，不触发上游刷新或对话。 */
 import { gatewayDriver } from './gateway.js';
-import { hubRegionKeys, resolveModelApiKey, modelsEndpoint } from './models.js';
+import { HUB_REALM_HEADER, hubRegionRoutes, resolveModelApiKey, modelsEndpoint } from './models.js';
 import { healthTarget } from './resync.js';
 
 const count = (value) => Number.isInteger(value) && value >= 0 ? value : null;
@@ -8,9 +8,11 @@ export function createAccountOverview({ resolved, credentials, env = process.env
   let cached, config, expires = 0, running;
   async function balance(realm, key) {
     try {
-      if (resolved.models.hubDual && !key) return { realm, state: 'missing-key', balance: null };
       const url = modelsEndpoint(resolved.models.baseURL).replace(/models$/, 'balance-summary');
-      const response = await fetch(url, { headers: key ? { authorization: `Bearer ${key}` } : {}, signal: AbortSignal.timeout(3000) });
+      const headers = key ? { authorization: `Bearer ${key}` } : {};
+      // 未绑定区域的 Key 靠这个头取指定区域的积分；绑定了区域的 Key 由 hub 按绑定处理。
+      if (realm !== 'current') headers[HUB_REALM_HEADER] = realm;
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(3000) });
       if (!response.ok) return { realm, state: response.status === 404 ? 'unsupported' : response.status === 401 || response.status === 403 ? 'unauthorized' : 'unavailable', balance: null };
       const payload = await response.json();
       if (realm !== 'current' && payload.realm !== realm && !(realm === 'intl' && payload.realm === 'global')) return { realm, state: 'wrong-region', balance: null };
@@ -26,8 +28,8 @@ export function createAccountOverview({ resolved, credentials, env = process.env
     let balances = [];
     if (resolved.gateway === 'hub') {
       if (resolved.models.hubDual) {
-        const keys = await hubRegionKeys(service, env);
-        balances = await Promise.all(['cn', 'intl'].map((realm) => balance(realm, keys[realm])));
+        const routes = await hubRegionRoutes({ models: resolved.models, credentials: service, env });
+        balances = await Promise.all(['cn', 'intl'].map((realm) => balance(realm, routes[realm].apiKey)));
       } else balances = [await balance('current', await resolveModelApiKey(resolved.models, env, service))];
     }
     return { at: new Date(now()).toISOString(), ok: health.ok, ready: count(health.healthy), total: count(health.total), realm: health.realm, balances };

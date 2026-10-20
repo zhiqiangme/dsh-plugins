@@ -38,7 +38,7 @@ export async function diagnose({ resolved, service, recovery, editor, credential
   checks.push({ id: 'models', ok: catalog.ok, detail: catalog.ok ? { count: catalog.models?.length ?? catalog.regions.reduce((n, region) => n + region.models.length, 0), realm: models.hubDual ? 'dual' : catalog.realm } : catalog.reason });
   const entry = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE });
   const ref = providerKeyRef(entry?.options?.config, models.provider);
-  if (!models.hubDual && ref && typeof credentials?.resolve === 'function') {
+  if (ref && typeof credentials?.resolve === 'function') {
     try {
       const value = await credentials.resolve(ref);
       const stored = typeof value === 'string' ? value : value?.value;

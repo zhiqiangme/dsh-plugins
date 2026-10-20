@@ -34,18 +34,22 @@
 | 程序 | 单个 `wb2api.exe`（Go） | 便携包整目录：脚本 + 自带的 CPython 运行时（约 33MB） |
 | 目录 | `wb2api/backend/`、`wb2api/data/` | `hub/backend/`、`hub/data/`（账号与用量） |
 | 版本身份 | exe 里的 Go `vcs.revision` | 包内 `release-manifest.json` 的 tag |
-| 模型 id | `cn:xxx` / `global:xxx`，两个出口同时列出 | 不带前缀，一次只列一个出口；国内/国际跟随 hub 看板顶部的出口开关，切换后 DSH 的模型列表自动跟着换 |
+| 模型 id | `cn:xxx` / `global:xxx`，两个出口同时列出 | 不带前缀，一次只列一个出口；国内/国际跟随 hub 看板顶部的出口开关，切换后 DSH 的模型列表自动跟着换；也可以开双区域同时用两组（见下） |
 | 管理面板 | `http://127.0.0.1:7863/panel`，用 `config.json` 的 `api_key` 进 | `http://127.0.0.1:7863/`，用面板密码进（默认 `admin`，登录后请改） |
 
 hub 是 wb2api 停更时的备选。
 
 ### HUB：CN 与 GL 同时使用
 
-默认仍跟随 HUB 看板的全局出口。要同时列出两组模型，先在 HUB 登录两种区域的账号，再在 HUB「设置」创建两把分别绑定国内、国际的 Key，填入插件卡片，勾选「CN / GL 同时使用」并应用。模型同步开关开启时，会生成 WorkBuddy CN 和 WorkBuddy GL 两个 provider，同名模型独立显示、请求按各自 Key 路由，不受全局出口切换影响。
+默认只有一个 workbuddy 分组，跟随 HUB 看板顶部的全局出口。要让两组模型同时可用，先在 HUB 登录两种区域的账号，再在插件卡片勾选「CN / GL 同时使用」并应用（需要打开模型同步开关）。DSH 里会多出 WorkBuddy CN、WorkBuddy GL 两个分组，同名模型分开显示，不随看板切换出口：
 
-Key 只保存在 DSH 凭据库的 `WORKBUDDY_PROXY_KEY_CN` / `WORKBUDDY_PROXY_KEY_GLOBAL`，profile 只记 `models.hubDual`。原 workbuddy 分组暂时清空模型并保留连接配置，关闭模式后恢复，自动创建的两个分组移除；其它 provider 不动。专用分组名为 `<provider>-hub-cn` / `<provider>-hub-global`，名称冲突时会拒绝覆盖。
+- **路由**：两个分组沿用 workbuddy 的网关 Key 和同一个凭据引用，llm-pi-ai 的 provider `headers` 里各写一个 `X-Realm: cn` / `X-Realm: intl`，hub 按这个头为每次请求选出口（模型清单的 `/v1/models` 也一样）。HUB 设置页不用另建 Key。
+- **原分组不动**：workbuddy 分组照旧跟随看板出口，已有会话、默认模型、子代理白名单里的 `workbuddy/<模型 id>` 引用都还能用。出口探测在双区域下照常运行，两个固定分组每轮一起同步。三个分组共用同一份按出口记的白名单（`cn:xxx` / `global:xxx`）。
+- **区域 Key（可选）**：hub 判断出口时，Key 在设置页绑定的区域优先于 `X-Realm` 头。如果网关 Key 在 HUB 里绑了区域，头就不起作用，开启时插件会核对两组应答的 `realm`，并拒绝开启。这时可以把那把 Key 改成「跟随面板切换」，或者给被挡住的区域填一把绑定了该区域的 Key。区域 Key 只存在 DSH 凭据库的 `WORKBUDDY_PROXY_KEY_CN` / `WORKBUDDY_PROXY_KEY_GLOBAL` 里，填了的区域改用它；留空就沿用已保存的值。
+- **分组名与关闭**：固定分组叫 `<provider>-hub-cn` / `<provider>-hub-global`，插件靠 `X-Realm` 头（或旧版写入的区域凭据引用）认出它们。名字被别的 provider 占用时，插件拒绝覆盖。关闭双区域后，只删除这两个分组，其它 provider 不动。profile 里只记一个 `models.hubDual`。
+- **从旧版升级**：旧版开启双区域时会清空 workbuddy 分组的模型。升级后第一次同步会把模型补回来，已有的两个分组补上 `X-Realm` 头，并保留各自的区域 Key。
 
-HUB 配置多 Key 后，启动参数里的旧 Key 可能不再有效。可同时填写一把不绑定区域的「跟随出口 Key」，它单独写入原 provider 对应的 DSH 凭据，profile 只保存 `models.apiKeyRef`，供关闭双区域后使用。Key 留空沿用已保存的值。启用时验证区域绑定，关闭时验证跟随 Key；校验不通过不会切换模式。
+HUB 配了多把 Key 之后，启动参数里的旧 Key 可能不再有效。这时可以另填一把不绑定区域的「跟随出口 Key」：它写进原 provider 对应的 DSH 凭据（两个固定分组也用它），profile 只保存 `models.apiKeyRef`。开启时核对两个区域，关闭时核对跟随 Key；核对不通过就不切换模式。
 
 - **切换**：宿主按"配置变更"重启本插件，停掉旧网关，再按新网关拉起（没装就提示去点「安装」）。卡片会等到新网关接管、模型区能答才刷新（最多 60 秒）。两种网关的程序和账号各存一份，切换不会覆盖对方的数据；但账号要在 hub 看板里另外登录或导入。
 - **端口与 provider**：两者都监听 7863，DSH 里 workbuddy provider 的 `baseURL` 不用改。
