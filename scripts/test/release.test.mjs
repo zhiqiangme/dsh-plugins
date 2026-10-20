@@ -245,7 +245,27 @@ test('发布顺序：先锁定 tag，再发 npm，核对成功后创建 Release'
   assert.equal(result.alreadyPublished, false);
   assert.deepEqual(context.calls, ['pack', 'tag', 'npm', 'release', 'cleanup']);
   assert.match(context.state.release.body, /dsh plugin --profile desktop add @zhiqiangme\/dsh-autostart-workbuddy@26\.10\.15/);
-  assert.equal(context.state.release.make_latest, 'true');
+  assert.equal(context.state.release.draft, true);
+  assert.equal(context.state.release.make_latest, 'false');
+  assert.equal(result.draft, true);
+});
+
+test('重跑保留已有 Release 状态，不自动发布草案或把正式版降回草案', async (t) => {
+  for (const draft of [true, false]) {
+    const context = publishing(t, { existing: true });
+    context.state.release = { draft, prerelease: false };
+    const result = await publishRelease(context.options, context.adapters);
+    assert.equal(result.draft, draft);
+    assert.deepEqual(context.calls, ['pack', 'cleanup']);
+    assert.equal(context.state.release.draft, draft);
+  }
+});
+
+test('已有预发布 Release 时停止，不擅自修改预发布状态', async (t) => {
+  const context = publishing(t, { existing: true });
+  context.state.release = { draft: false, prerelease: true };
+  await assert.rejects(publishRelease(context.options, context.adapters), /已有 prerelease/);
+  assert.deepEqual(context.calls, ['pack', 'cleanup']);
 });
 
 test('包列表缓存过期但精确版本已存在时，只补 Release，不再发 npm', async (t) => {
