@@ -1,6 +1,6 @@
 {
   "name": "@zhiqiangme/dsh-autostart-workbuddy",
-  "version": "26.10.21",
+  "version": "26.10.22",
   "description": "DSH 启动时默认拉起 WorkBuddy2API Hub（127.0.0.1:7863），可切换 wb2api；幂等、静默、退出时只停自己拉起的进程。",
   "keywords": [
     "dsh",
