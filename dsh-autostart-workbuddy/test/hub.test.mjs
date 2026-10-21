@@ -97,10 +97,13 @@ test('hubPaths：hub 在插件数据根下单独一个目录，账号与用量�
   assert.equal(paths.usage, join(root, 'hub', 'data', 'usage'));
 });
 
-test('gateway：非法值退回 wb2api，两种网关的操作集各自独立', () => {
+test('gateway：缺省及非法值退回 hub，显式 wb2api 仍可用', () => {
   assert.equal(normalizeGateway('hub'), 'hub');
-  assert.equal(normalizeGateway('HUB'), 'wb2api');
-  assert.equal(normalizeGateway(undefined), 'wb2api');
+  assert.equal(normalizeGateway('wb2api'), 'wb2api');
+  for (const value of [undefined, null, '', 'HUB', 'bad', 0, {}]) {
+    assert.equal(normalizeGateway(value), 'hub');
+  }
+  assert.equal(gatewayDriver().id, 'hub');
   assert.equal(gatewayDriver('hub').id, 'hub');
   assert.equal(gatewayDriver({ gateway: 'wb2api' }).panelPath, '/panel');
   assert.equal(gatewayDriver('hub').panelPath, '/');
@@ -322,8 +325,8 @@ test('resolvePluginConfig(gateway: hub)：python 跑 wb_proxy.py，数据目录�
   const off = resolvePluginConfig({ gateway: 'hub', cnChatBase: '' }, { ...hostEnv, WB_CN_CHAT_UPSTREAM: 'https://leak' });
   assert.equal(off.spec.env.WB_CN_CHAT_UPSTREAM, undefined);
 
-  // 默认仍是 wb2api，切换前后的配置解析互不影响。
-  const plain = resolvePluginConfig({}, hostEnv);
+  // 默认改成 hub 后，显式切回 wb2api 仍不继承 hub 的启动环境。
+  const plain = resolvePluginConfig({ gateway: 'wb2api' }, hostEnv);
   assert.equal(plain.gateway, 'wb2api');
   assert.equal(plain.spec.env.API_KEY, undefined);
 });

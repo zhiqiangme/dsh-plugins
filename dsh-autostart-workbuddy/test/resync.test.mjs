@@ -35,7 +35,7 @@ async function serve(t, backend) {
 async function setup(t, { probe = READY, credentials = createFakeCredentials() } = {}) {
   const backend = { models: [ALPHA, BETA], hits: 0 };
   const url = await serve(t, backend);
-  const resolved = resolvePluginConfig({ models: { enabled: true, apiKey: 'gw-key', baseURL: url } }, { PATH: '' });
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true, apiKey: 'gw-key', baseURL: url } }, { PATH: '' });
   const editor = createFakeConfigEditor(profileRows());
   assert.equal((await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} })).state, 'updated');
   backend.hits = 0;
@@ -188,7 +188,7 @@ for (const [label, health] of [['/healthz 不通', { ok: false, reason: '探测 
 
 test('同步开关关闭时不探测后端', async () => {
   let probed = 0;
-  const resolved = resolvePluginConfig({ models: { enabled: false } }, { PATH: '' });
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: false } }, { PATH: '' });
   const resync = createModelResync({
     resolved, logger: memoryLogger(), probe: async () => { probed += 1; return { ok: true, servable: true }; },
     editor: () => undefined, credentials: () => undefined,
@@ -200,7 +200,7 @@ test('同步开关关闭时不探测后端', async () => {
 test('上一轮未结束时再次触发不会并发同步', async () => {
   let calls = 0;
   let release;
-  const resolved = resolvePluginConfig({ models: { enabled: true } }, { PATH: '' });
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true } }, { PATH: '' });
   const resync = createModelResync({
     resolved, logger: memoryLogger(), probe: READY, editor: () => undefined, credentials: () => undefined,
     sync: () => { calls += 1; return new Promise((resolve) => { release = () => resolve({ state: 'unchanged' }); }); },
@@ -216,7 +216,7 @@ test('上一轮未结束时再次触发不会并发同步', async () => {
 test('定时器按间隔触发，stop 后不再触发', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let calls = 0;
-  const resolved = resolvePluginConfig({ models: { enabled: true, resyncIntervalMs: 60_000 } }, { PATH: '' });
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true, resyncIntervalMs: 60_000 } }, { PATH: '' });
   const resync = createModelResync({
     resolved, logger: memoryLogger(), probe: READY, editor: () => undefined, credentials: () => undefined,
     sync: async () => { calls += 1; return { state: 'unchanged' }; },
@@ -244,7 +244,7 @@ test('定时器按间隔触发，stop 后不再触发', async (t) => {
 test('间隔为 0 时 start 不排定时器', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let calls = 0;
-  const resolved = resolvePluginConfig({ models: { enabled: true, resyncIntervalMs: 0 } }, { PATH: '' });
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true, resyncIntervalMs: 0 } }, { PATH: '' });
   const resync = createModelResync({
     resolved, logger: memoryLogger(), probe: READY, editor: () => undefined, credentials: () => undefined,
     sync: async () => { calls += 1; return { state: 'unchanged' }; },
@@ -259,7 +259,7 @@ test('启动时面板正在同步，也会排上后续自动同步，失败后�
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let calls = 0;
   let release;
-  const resolved = resolvePluginConfig({ models: { enabled: true } }, { PATH: '' });
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true } }, { PATH: '' });
   const resync = createModelResync({
     resolved, logger: memoryLogger(), probe: READY, editor: () => undefined, credentials: () => undefined,
     sync: () => {
@@ -289,7 +289,7 @@ test('启动时面板正在同步，也会排上后续自动同步，失败后�
 });
 
 test('resyncIntervalMs：默认 1 分钟，0 关闭，过小抬到 1 分钟，非法值退回默认', () => {
-  const interval = (value) => resolvePluginConfig({ models: { resyncIntervalMs: value } }, { PATH: '' }).models.resyncIntervalMs;
+  const interval = (value) => resolvePluginConfig({ gateway: 'wb2api', models: { resyncIntervalMs: value } }, { PATH: '' }).models.resyncIntervalMs;
   assert.equal(interval(undefined), 60_000);
   assert.equal(interval(0), 0);
   assert.equal(interval(5_000), 60_000);
@@ -445,7 +445,7 @@ test('出口探测：几秒内发现切换并立即同步一次；同步没成�
 
   let wbProbes = 0;
   const wb = createModelResync({
-    resolved: resolvePluginConfig({ models: { enabled: true } }, { PATH: '' }), logger: memoryLogger(),
+    resolved: resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true } }, { PATH: '' }), logger: memoryLogger(),
     editor: () => undefined, credentials: () => undefined, realmPollMs: 5,
     probe: async () => { wbProbes += 1; return { ok: true, servable: true }; }, sync: async () => ({ state: 'unchanged' }),
   });

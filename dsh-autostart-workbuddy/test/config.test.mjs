@@ -8,21 +8,40 @@ import { join, resolve } from 'node:path';
 
 import { resolvePluginConfig, describeConfig } from '../lib/config.js';
 import { backendPaths } from '../lib/backend.js';
+import { hubPaths } from '../lib/hub.js';
 import { SERVICE_DEFAULTS } from '../lib/services.js';
 
 /** 固定一个后端根目录，让"默认路径"的断言与真实的 home 目录无关。 */
 const ENV = { PATH: '', DSH_WORKBUDDY_BACKEND_ROOT: 'C:\\tmp\\wb-root' };
 const PATHS = backendPaths(ENV);
+const HUB_PATHS = hubPaths(ENV);
 
-test('默认配置：启用、端口 7863、指向插件自管的 wb2api.exe', () => {
+test('新安装的默认配置：启用、端口 7863、使用 hub 及其独立账号目录', () => {
   const resolved = resolvePluginConfig({}, ENV);
   assert.equal(resolved.enabled, true);
   assert.equal(resolved.spec.key, 'workbuddy');
   assert.equal(resolved.spec.port, 7863);
   assert.equal(resolved.spec.host, '127.0.0.1');
+  assert.equal(resolved.gateway, 'hub');
+  assert.equal(resolved.spec.exe, HUB_PATHS.exe);
+  assert.equal(resolved.spec.cwd, HUB_PATHS.current);
+  assert.deepEqual(resolved.spec.args, [
+    HUB_PATHS.script, '--host', '127.0.0.1', '--port', '7863',
+    '--accounts-dir', HUB_PATHS.accounts, '--usage-dir', HUB_PATHS.usage,
+  ]);
+  assert.equal(resolved.models.panelConfig, '');
+  assert.equal(resolved.backend.kind, 'hub');
+  assert.equal(resolved.backend.keepVersions, 2);
+});
+
+test('已有配置显式指定 wb2api 时仍使用原程序、数据目录和启动参数', () => {
+  const resolved = resolvePluginConfig({ gateway: 'wb2api' }, ENV);
+  assert.equal(resolved.gateway, 'wb2api');
   assert.equal(resolved.spec.exe, PATHS.exe);
   assert.equal(resolved.spec.cwd, PATHS.current);
   assert.deepEqual(resolved.spec.args, ['-config', 'config.json']);
+  assert.equal(resolved.models.panelConfig, join(PATHS.current, 'config.json'));
+  assert.equal(resolved.backend.keepVersions, 3);
 });
 
 test('enabled:false 时解析结果直接标记为不启用', () => {
@@ -37,9 +56,9 @@ test('端口可覆盖，非法端口退回默认值', () => {
   assert.equal(resolvePluginConfig({ port: 0 }, { PATH: '' }).spec.port, 7863);
 });
 
-test('exe / args / cwd / title 可覆盖，非法类型退回默认值', () => {
+test('wb2api 的 exe / args / cwd / title 可覆盖，非法类型退回默认值', () => {
   const resolved = resolvePluginConfig(
-    { exe: 'C:\\tmp\\fake.exe', args: ['--x'], cwd: 'C:\\tmp', title: '假服务' },
+    { gateway: 'wb2api', exe: 'C:\\tmp\\fake.exe', args: ['--x'], cwd: 'C:\\tmp', title: '假服务' },
     { PATH: '' },
   );
   assert.equal(resolved.spec.exe, 'C:\\tmp\\fake.exe');
@@ -47,13 +66,13 @@ test('exe / args / cwd / title 可覆盖，非法类型退回默认值', () => {
   assert.equal(resolved.spec.cwd, resolve('C:\\tmp'));
   assert.equal(resolved.spec.title, '假服务');
 
-  const bad = resolvePluginConfig({ args: 'not-an-array', cwd: '   ' }, ENV);
+  const bad = resolvePluginConfig({ gateway: 'wb2api', args: 'not-an-array', cwd: '   ' }, ENV);
   assert.deepEqual(bad.spec.args, SERVICE_DEFAULTS.args);
   assert.equal(bad.spec.cwd, PATHS.current);
 });
 
 test('cwd 相对路径会被解析成绝对路径（子进程 cwd 不接受相对路径）', () => {
-  const resolved = resolvePluginConfig({ cwd: '.' }, { PATH: '' });
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', cwd: '.' }, { PATH: '' });
   assert.equal(resolved.spec.cwd, resolve('.'));
 });
 
@@ -86,17 +105,16 @@ test('models 段：默认关闭、默认三档、默认接口指向本机后端'
   assert.deepEqual(resolved.models.only, []);
   assert.equal(resolved.models.provider, 'workbuddy');
   assert.equal(resolved.models.baseURL, 'http://127.0.0.1:7863');
-  // 面板 config.json 默认就在 wb2api 的工作目录下。
-  assert.equal(resolved.models.panelConfig, join(PATHS.current, 'config.json'));
+  assert.equal(resolved.models.panelConfig, '', 'hub 从自身授权配置读取密钥');
 });
 
-test('backend 段：默认开启启动检查、保留 3 个版本，各字段可覆盖', () => {
+test('backend 段：默认开启启动检查、hub 保留 2 个版本，各字段可覆盖', () => {
   const resolved = resolvePluginConfig({}, ENV);
   assert.equal(resolved.backend.enabled, true);
   assert.equal(resolved.backend.checkOnStart, true);
-  assert.equal(resolved.backend.keepVersions, 3);
+  assert.equal(resolved.backend.keepVersions, 2);
   assert.equal(resolved.backend.apiBase, '');
-  assert.equal(resolved.backend.paths.exe, PATHS.exe);
+  assert.equal(resolved.backend.paths.exe, HUB_PATHS.exe);
 
   const custom = resolvePluginConfig(
     { backend: { checkOnStart: false, keepVersions: 5, checkTtlMs: 1000, apiBase: 'http://127.0.0.1:1' } },
@@ -124,9 +142,10 @@ test('backend 段：自动更新默认开启、冷却期 24 小时；冷却期�
   assert.equal(resolvePluginConfig({ backend: { autoUpdate: 'no' } }, ENV).backend.autoUpdate, true);
 });
 
-test('managedExe：没配 exe 时为 true（用自管目录），显式配了为 false', () => {
+test('managedExe：hub 始终使用自管程序，wb2api 可显式指定外部程序', () => {
   assert.equal(resolvePluginConfig({}, ENV).managedExe, true);
-  assert.equal(resolvePluginConfig({ exe: 'C:\\tmp\\x.exe' }, ENV).managedExe, false);
+  assert.equal(resolvePluginConfig({ exe: 'C:\\tmp\\x.exe' }, ENV).managedExe, true);
+  assert.equal(resolvePluginConfig({ gateway: 'wb2api', exe: 'C:\\tmp\\x.exe' }, ENV).managedExe, false);
   // 空白字符串不算显式配置
   assert.equal(resolvePluginConfig({ exe: '   ' }, ENV).managedExe, true);
 });
@@ -159,6 +178,7 @@ test('describeConfig 给出排障所需的概要', () => {
   const info = describeConfig(resolvePluginConfig({}, { PATH: '' }));
   assert.equal(info.key, 'workbuddy');
   assert.equal(info.endpoint, '127.0.0.1:7863');
-  assert.ok(info.exe.endsWith('wb2api.exe'));
+  assert.equal(info.gateway, 'hub');
+  assert.ok(info.exe.endsWith(join('python', 'python.exe')));
   assert.ok(info.logDir.endsWith(join('autostart-workbuddy', 'logs')));
 });

@@ -569,7 +569,7 @@ test('模型同步：勾选未变时可重试同步失败，保存期间禁用�
   assert.ok(collectByType(busy, 'input').every((node) => node.props.disabled === true));
   const toolbar = collectByType(busy, 'div').find((node) => node.props.className === 'dsm-wb-toolbar');
   assert.ok(collectByType(toolbar, 'button').every((node) => node.props.disabled === true));
-  for (const label of ['更新', '回滚', '卸载', 'workbuddy2api-hub']) {
+  for (const label of ['更新', '回滚', '卸载', 'workbuddy2api-hub（默认）']) {
     const operation = button(collectByType(busy, 'button'), label);
     assert.ok(operation, `${label} 按钮存在`);
     assert.equal(operation.props.disabled, true, `${label} 在保存期间禁用`);
@@ -898,8 +898,8 @@ const GATEWAY_BACKEND = { exeExists: true, version: { tag: 'v1.7.14' }, history:
 test('后端网关：两种网关各一个按钮，当前网关高亮且不可点，另一个可点', () => {
   const { renderCard } = boot(gatewayStates({ ...GATEWAY_BACKEND, gateway: 'wb2api' }));
   const buttons = collectByType(backendSection(renderCard()), 'button');
-  const wb2api = button(buttons, 'wb2api（默认）');
-  const hub = button(buttons, 'workbuddy2api-hub');
+  const wb2api = button(buttons, 'wb2api');
+  const hub = button(buttons, 'workbuddy2api-hub（默认）');
   assert.ok(wb2api && hub, '两种网关都应有按钮');
   assert.equal(wb2api.props.disabled, true);
   assert.match(wb2api.props.className, /dsm-wb-btn-primary/);
@@ -911,7 +911,7 @@ test('后端网关：两种网关各一个按钮，当前网关高亮且不可�
 test('后端网关：老宿主快照没有 gateways 字段时不显示切换', () => {
   const { cards, t } = boot(gatewayStates({ exeExists: true, version: {}, history: [] }));
   const labels = buttonLabels(backendSection(cards[0].component({ t, view: 'page' })));
-  assert.equal(labels.includes('workbuddy2api-hub'), false);
+  assert.equal(labels.includes('workbuddy2api-hub（默认）'), false);
 });
 
 test('后端网关（hub）：给出模型 id 与出口的说明；卸载确认用 hub 的文案；切换结果显示提示', () => {
@@ -924,7 +924,7 @@ test('后端网关（hub）：给出模型 id 与出口的说明；卸载确认�
   assert.ok(text.includes('hub 的账号凭证、设置与用量（hub/data/）会保留。'));
   assert.ok(text.includes('已切换到 workbuddy2api-hub'));
   const labels = buttonLabels(backendSection(renderCard()));
-  assert.ok(labels.includes('wb2api（默认）'), '可以切回 wb2api');
+  assert.ok(labels.includes('wb2api'), '可以切回 wb2api');
 });
 
 // ---- 插件自身更新区 ----
@@ -1121,7 +1121,7 @@ test('后端网关：选择区自成一块（有自己的容器），与「后�
   const section = backendSection(renderCard());
   const block = collectByType(section, 'div').find((node) => node.props.className === 'dsm-wb-gateway');
   assert.ok(block, '网关选择应包在 dsm-wb-gateway 里');
-  assert.ok(buttonLabels(block).includes('wb2api（默认）'));
+  assert.ok(buttonLabels(block).includes('wb2api'));
   assert.equal(buttonLabels(block).includes('检查更新'), false, '后端版本的按钮不能挤进网关块');
 });
 
@@ -1181,12 +1181,12 @@ test('后端切换按钮：等待就绪后自动刷新、保存同步、回读�
             : { ok: true, sync: { state: 'updated', credential: 'kept' } } };
     },
   });
-  await button(collectByType(app.renderCard(), 'button'), 'workbuddy2api-hub').props.onClick();
+  await button(collectByType(app.renderCard(), 'button'), 'workbuddy2api-hub（默认）').props.onClick();
   assert.deepEqual(calls.filter((call) => call.method === 'POST').map((call) => call.body), [
     { action: 'gateway', gateway: 'hub' }, { action: 'refresh', gateway: 'hub' }, { gateway: 'hub', enabled: true },
   ]);
   assert.equal(calls.at(-1).method, 'GET', '保存后回读最终目录');
-  assert.match(collectText(app.renderCard()).join('|'), /已切换到 workbuddy2api-hub，模型、地址和凭据已自动保存并同步/);
+  assert.match(collectText(app.renderCard()).join('|'), /已切换到 workbuddy2api-hub（默认），模型、地址和凭据已自动保存并同步/);
 });
 
 test('切换后的自动同步：关闭同步、空账号池和保存失败都有明确状态，不误报成功', async () => {

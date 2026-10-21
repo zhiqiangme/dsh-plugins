@@ -44,8 +44,8 @@ const logger = {
   error: (message) => console.error(message),
 };
 
-// 根目录可以用环境变量整体覆盖；其余按插件默认值。
-const resolved = resolvePluginConfig({}, process.env);
+// 此 CLI 只管理 wb2api；不能随插件默认网关改动而把 wb2api 操作指向 hub 的目录。
+const resolved = resolvePluginConfig({ gateway: 'wb2api' }, process.env);
 const backend = resolved.backend;
 const paths = backend.paths ?? backendPaths(process.env);
 const apiBase = backend.apiBase || undefined;

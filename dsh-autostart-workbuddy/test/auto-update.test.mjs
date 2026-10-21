@@ -99,7 +99,7 @@ function wb2apiSetup(apiBase, backend = {}) {
   mkdirSync(paths.current, { recursive: true });
   writeFileSync(paths.exe, fakeExe(OLD_REVISION));
   writeManifest(paths, { tag: 'v1.0.0', commit: OLD_REVISION, source: 'github-release' });
-  const resolved = resolvePluginConfig({ backend: { apiBase, ...backend } }, env);
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', backend: { apiBase, ...backend } }, env);
   return { root, paths, resolved };
 }
 
@@ -292,7 +292,7 @@ test('关掉自动更新 / 自配 exe：不检查；之前暂存的包在启动�
     release.stop();
   }
 
-  const custom = resolvePluginConfig({ exe: 'C:/elsewhere/wb2api.exe' }, { DSH_WORKBUDDY_BACKEND_ROOT: mkdtempSync(join(tmpdir(), 'wb-auto-')) });
+  const custom = resolvePluginConfig({ gateway: 'wb2api', exe: 'C:/elsewhere/wb2api.exe' }, { DSH_WORKBUDDY_BACKEND_ROOT: mkdtempSync(join(tmpdir(), 'wb-auto-')) });
   assert.equal(custom.backend.autoUpdate, true);
   const { updater: customUpdater } = updaterFor(custom, fakeService(1));
   assert.deepEqual(await customUpdater.tick(), { state: 'inactive', reason: 'custom-exe' });

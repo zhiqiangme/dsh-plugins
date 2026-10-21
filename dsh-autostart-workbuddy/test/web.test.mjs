@@ -80,7 +80,7 @@ function freePort() {
 /** 用插件真实的配置解析拼出 spec + models，避免测试里手搓配置结构。 */
 function configFor(port, models = {}) {
   return resolvePluginConfig(
-    { port, models: { enabled: true, only: ['cn:alpha'], apiKey: 'test-key', timeoutMs: 5_000, ...models } },
+    { gateway: 'wb2api', port, models: { enabled: true, only: ['cn:alpha'], apiKey: 'test-key', timeoutMs: 5_000, ...models } },
     { PATH: '' },
   );
 }
@@ -288,7 +288,7 @@ test('GET：后端不可达时返回 ok:false 与原因，而不是抛异常', a
 test('GET：后端没装且拉不到模型时给出"去点安装"状态；端口上有别的后端能答时照常显示', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wb-web-'));
   const env = { PATH: '', DSH_WORKBUDDY_BACKEND_ROOT: root };
-  const missing = resolvePluginConfig({ port: await freePort(), models: { enabled: true, apiKey: 'k', timeoutMs: 5_000 } }, env);
+  const missing = resolvePluginConfig({ gateway: 'wb2api', port: await freePort(), models: { enabled: true, apiKey: 'k', timeoutMs: 5_000 } }, env);
   assert.equal(missing.managedExe, true);
   const payload = await describeModels({ ...missing, editor: editorFor(), env });
   assert.equal(payload.ok, false);
@@ -296,12 +296,12 @@ test('GET：后端没装且拉不到模型时给出"去点安装"状态；端口
   assert.match(payload.reason, /安装/);
 
   // 自配 exe（外部后端）时不知道装没装，保留原始错误。
-  const external = resolvePluginConfig({ exe: join(root, 'nope.exe'), port: await freePort(), models: { apiKey: 'k' } }, env);
+  const external = resolvePluginConfig({ gateway: 'wb2api', exe: join(root, 'nope.exe'), port: await freePort(), models: { apiKey: 'k' } }, env);
   assert.equal((await describeModels({ ...external, env })).state, undefined);
 
   const fixture = startFixture({ TEST_MODE: 'http-models' });
   try {
-    const answering = resolvePluginConfig({ port: await fixture.ready, models: { enabled: true, apiKey: 'test-key' } }, env);
+    const answering = resolvePluginConfig({ gateway: 'wb2api', port: await fixture.ready, models: { enabled: true, apiKey: 'test-key' } }, env);
     assert.equal((await describeModels({ ...answering, env })).ok, true, 'exe 不在但端口能答时不误报未安装');
   } finally {
     fixture.stop();
@@ -375,7 +375,7 @@ test('POST：首次开启同步，即使白名单没变也会保存开关并补�
   for (const previousEnabled of [undefined, false]) {
     const models = { only: ['cn:alpha'], exclude: ['global:beta'], efforts: ['high'] };
     if (previousEnabled !== undefined) models.enabled = previousEnabled;
-    const resolved = resolvePluginConfig({ port, models: { ...models, apiKey: 'test-key' } }, { PATH: '' });
+    const resolved = resolvePluginConfig({ gateway: 'wb2api', port, models: { ...models, apiKey: 'test-key' } }, { PATH: '' });
     const editor = createFakeConfigEditor(profileRows({ models, withWorkbuddy: false }));
     const credentials = createFakeCredentials();
 
@@ -414,7 +414,7 @@ test('POST：关闭同步会保存开关，保留 provider 原清单且不请求
 
 test('POST：旧客户端只发送白名单时，保留关闭或未配置的同步开关', async () => {
   for (const models of [{ enabled: false, only: ['cn:alpha'] }, { only: ['cn:alpha'] }]) {
-    const resolved = resolvePluginConfig({ models }, { PATH: '' });
+    const resolved = resolvePluginConfig({ gateway: 'wb2api', models }, { PATH: '' });
     const editor = editorFor(models);
     const result = await applySelection({ resolved, editor, only: ['global:beta'] });
 
@@ -641,7 +641,7 @@ test('后端路由（hub）：快照来自 hub 的目录，面板地址是 hub �
 
 test('后端路由：自动更新开关写 backend.autoUpdate（保留 backend 其它字段），打开时立即查一轮；快照带自动更新状态', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wb-web-auto-'));
-  const resolved = resolvePluginConfig({ port: await freePort() }, { DSH_WORKBUDDY_BACKEND_ROOT: root, PATH: '' });
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', port: await freePort() }, { DSH_WORKBUDDY_BACKEND_ROOT: root, PATH: '' });
   const editor = createFakeConfigEditor([{ id: PLUGIN_ID, config: { backend: { keepVersions: 5 } } }]);
   const ctx = fakeCtx({ configEditor: editor });
   let ticks = 0;
@@ -805,7 +805,7 @@ test('面板路由：宿主未登录返回 401，text/plain 的 POST 返回 415'
 test('GET（hub）：账号池为空时不列模型（hub 的 /v1/models 照样返回内置目录，选了也调不通）', async () => {
   const fixture = startFixture({ TEST_MODE: 'http-models' });
   try {
-    const resolved = resolvePluginConfig({ port: await fixture.ready, models: { enabled: true, apiKey: 'test-key' } }, process.env);
+    const resolved = resolvePluginConfig({ gateway: 'wb2api', port: await fixture.ready, models: { enabled: true, apiKey: 'test-key' } }, process.env);
     const empty = async () => ({ ok: true, servable: false, healthy: 0, total: 2 });
     const payload = await describeModels({ ...resolved, env: process.env, gateway: 'hub', probe: empty });
     assert.equal(payload.ok, false);
@@ -834,7 +834,7 @@ test('GET（hub）：行 id 是带出口前缀的白名单键，老的裸 id 回
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
   const ready = async () => ({ ok: true, servable: true, healthy: 1, total: 1 });
   const describe = (only) => {
-    const resolved = resolvePluginConfig({ port: server.address().port, models: { enabled: true, apiKey: 'k', only } }, { PATH: '' });
+    const resolved = resolvePluginConfig({ gateway: 'wb2api', port: server.address().port, models: { enabled: true, apiKey: 'k', only } }, { PATH: '' });
     return describeModels({ ...resolved, env: {}, gateway: 'hub', probe: ready });
   };
 

@@ -1,14 +1,14 @@
 # @zhiqiangme/dsh-autostart-workbuddy
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件：DSH 启动时自动拉起
-**WorkBuddy Panel**（[workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel) 的 `wb2api.exe`），
+**WorkBuddy2API Hub**（[workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)），
 不用再手动启动它；还可以接管 DSH 里 workbuddy 的模型列表、在插件页管理后端版本。
-后端网关也可以换成 [workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)（见[后端网关](#后端网关)），二选一。
+后端网关也可以换成 [workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel) 的 `wb2api.exe`（见[后端网关](#后端网关)），二选一。
 
 | 服务 | 端点 | 作用 |
 | --- | --- | --- |
-| WorkBuddy Panel（`wb2api.exe`，默认） | `127.0.0.1:7863` | profile 里 `workbuddy` provider 的上游（`http://127.0.0.1:7863/v1/`） |
-| WorkBuddy2API Hub（可选） | `127.0.0.1:7863` | 同上；与 wb2api 用同一个端口，同一时刻只跑其中一个 |
+| WorkBuddy2API Hub（默认） | `127.0.0.1:7863` | profile 里 `workbuddy` provider 的上游（`http://127.0.0.1:7863/v1/`） |
+| WorkBuddy Panel（`wb2api.exe`，可选） | `127.0.0.1:7863` | 同上；与 hub 用同一个端口，同一时刻只跑其中一个 |
 
 同一仓库里还有 Tavily 联网搜索插件 [@zhiqiangme/dsh-tavily-search](https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-tavily-search)：两个插件各自独立开关，任何一个出问题都不影响另一个。
 
@@ -16,7 +16,7 @@
 
 - **随 DSH 启动**：插件加载后在后台拉起服务，不阻塞 DSH 启动。
 - **幂等**：启动前先探测端口，已在监听就跳过——重复启动只会端口冲突。
-- **静默**：不打开 WorkBuddy 管理面板浏览器窗口（需要时自行访问 `http://127.0.0.1:7863/panel/`）。
+- **静默**：不打开 WorkBuddy 管理面板浏览器窗口（hub 为 `http://127.0.0.1:7863/`，wb2api 为 `http://127.0.0.1:7863/panel/`）。
 - **失败不阻断**：起不来只写日志，DSH 本身照常可用；失败时会回收自己拉起的进程，不留僵尸进程。
 - **退出即停，但只停自己拉起的**：DSH 退出时结束本插件 spawn 的进程；DSH 启动前就已在运行的服务（手动起的、另一个 DSH 实例留下的）不受影响。
 - **崩溃自动恢复**：只恢复本插件成功启动后意外退出的进程，默认 5 分钟内最多尝试 3 次，按 1 / 2 / 4 秒退避；连续失败后暂停，可在卡片点「重试启动」。主动卸载、更新、关闭 DSH 不触发恢复，也不接管外部进程。`recovery.enabled: false` 可关闭；`maxAttempts`、`windowMs`、`delayMs`、`maxDelayMs` 可调整次数与间隔。
@@ -28,7 +28,7 @@
 
 插件可以托管两种 OpenAI 兼容网关，在插件卡片「后端版本」区最上面的「后端网关」里切换（写本插件的 `config.gateway`）：
 
-| | wb2api（默认） | workbuddy2api-hub |
+| | wb2api | workbuddy2api-hub（默认） |
 | --- | --- | --- |
 | 上游 | [linguo2625469/workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel) | [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) |
 | 程序 | 单个 `wb2api.exe`（Go） | 便携包整目录：脚本 + 自带的 CPython 运行时（约 33MB） |
@@ -37,7 +37,9 @@
 | 模型 id | `cn:xxx` / `global:xxx`，两个出口同时列出 | 不带前缀，一次只列一个出口；国内/国际跟随 hub 看板顶部的出口开关，切换后 DSH 的模型列表自动跟着换；也可以开双区域同时用两组（见下） |
 | 管理面板 | `http://127.0.0.1:7863/panel`，用 `config.json` 的 `api_key` 进 | `http://127.0.0.1:7863/`，用面板密码进（默认 `admin`，登录后请改） |
 
-hub 是 wb2api 停更时的备选。
+新安装且未指定 `gateway` 时默认使用 hub；已有配置显式指定 `gateway: wb2api` 时继续使用 wb2api。两种网关仍可在插件卡片中切换。
+
+账号授权分别保存在 `wb2api/data/auths/*.json` 与 `hub/data/accounts/*.json`。wb2api 的文件使用 `account` / `auth` 嵌套结构，hub 使用扁平结构，两者都含 `accessToken`、`refreshToken` 与 `expiresAt`。hub 看板的账号导入支持 wb2api 的嵌套格式，可通过导入沿用授权；切换网关本身不会自动迁移账号。不要直接将 wb2api 文件复制进 hub 账号目录，hub 启动时按自己的扁平格式加载。账号授权与 hub 管理面板的密码登录是两回事，浏览器的面板登录会话不会从 wb2api 继承。
 
 ### HUB：CN 与 GL 同时使用
 
@@ -202,13 +204,12 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 - id: dsh-autostart-workbuddy
   name: '@zhiqiangme/dsh-autostart-workbuddy'   # 包名以 @ 开头，YAML 里必须加引号
   config:
+    gateway: hub                # 默认值；需要旧网关时改为 wb2api
     enabled: true
     readinessTimeoutMs: 30000
     stopTimeoutMs: 5000
     port: 7863
-    # exe / cwd 默认指向插件自管的后端目录，通常不用写：
-    #   $DSH_HOME/autostart-workbuddy/wb2api/backend/current/{wb2api.exe,config.json}
-    args: ['-config', 'config.json']
+    # hub 的程序及启动参数由插件管理，使用 hub/backend/current/ 下自带的 Python。
     models:
       enabled: true
       only:                     # 留空 = 后端全部模型
@@ -217,23 +218,23 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
     backend:
       autoUpdate: true          # 自动更新后端（默认开）：后台下载，下次启动 DSH 时换上
       autoUpdateDelayHours: 24  # 发布满多少小时才自动装
-      keepVersions: 3           # 保留几个历史版本供回滚
+      keepVersions: 2           # 保留几个历史版本供回滚（wb2api 默认 3）
 ```
 
 | 字段 | 说明 |
 | --- | --- |
 | `enabled` | 总开关；`false` 时完全不拉起（默认 true） |
-| `title` | 日志里显示的服务名，默认 `WorkBuddy Panel` |
+| `title` | 日志里显示的服务名，hub 默认 `WorkBuddy2API Hub`，wb2api 默认 `WorkBuddy Panel` |
 | `host` / `port` | 就绪探测目标，默认 `127.0.0.1:7863` |
-| `exe` | 可执行文件，默认 `$DSH_HOME/autostart-workbuddy/wb2api/backend/current/wb2api.exe` |
-| `args` | 附加参数，默认 `['-config', 'config.json']` |
-| `cwd` | 子进程工作目录，默认 `$DSH_HOME/autostart-workbuddy/wb2api/backend/current` |
+| `exe` | 仅 wb2api 可覆盖，默认 `$DSH_HOME/autostart-workbuddy/wb2api/backend/current/wb2api.exe`；hub 使用自带的 `hub/backend/current/python/python.exe` |
+| `args` | 仅 wb2api 可覆盖，默认 `['-config', 'config.json']`；hub 固定运行 `wb_proxy.py` 并传入端口、账号与用量目录 |
+| `cwd` | 仅 wb2api 可覆盖，默认 `$DSH_HOME/autostart-workbuddy/wb2api/backend/current`；hub 固定使用 `hub/backend/current` |
 | `env` | 追加到子进程环境的键值对（不会改写 DSH 自己的环境） |
 | `logDir` | 日志目录，默认 `$DSH_HOME/autostart-workbuddy/logs` |
-| `logName` | 日志文件名前缀，默认 `wb2api` |
+| `logName` | 日志文件名前缀，hub 固定 `hub`，wb2api 默认 `wb2api` |
 | `readinessTimeoutMs` | 等待端口就绪的上限，默认 30000 |
 | `stopTimeoutMs` | 停止时等待退出的上限，默认 5000；超时后强制结束 |
-| `gateway` | 托管哪种网关：`wb2api`（默认）或 `hub`；非法值按 `wb2api` 处理。`hub` 时 `exe` / `cwd` / `args` 不生效 |
+| `gateway` | 托管哪种网关：`hub`（默认）或 `wb2api`；非法值按 `hub` 处理。`hub` 时 `exe` / `cwd` / `args` 不生效 |
 | `cnChatBase` | 国内版上游 base，默认 `https://www.workbuddy.cn`；空串 = 不管这一项。wb2api：拉起前写进 `config.json` 的 `cn.chat_base`；hub：经环境变量 `WB_CN_CHAT_UPSTREAM` 传入 |
 
 **为什么要写 `cn.chat_base`**：wb2api 内置的国内版上游 `copilot.tencent.com` 对海外出口（例如 Clash 全局模式 + TUN）
@@ -252,7 +253,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | `only` | 白名单，按列出顺序写；空 = 后端全部模型。hub 网关下写 `cn:xxx` / `global:xxx`，按当前出口生效 |
 | `exclude` | 黑名单，优先级高于 `only` |
 | `efforts` | 每个模型的思考档位，默认 `[low, high, max]`；填 `auto` 用上游声明的档位 |
-| `panelConfig` | 读网关密钥的面板配置，默认 `<cwd>/config.json` |
+| `panelConfig` | wb2api 读网关密钥的面板配置，默认 `<cwd>/config.json`；hub 不使用此字段 |
 | `apiKey` | 显式指定网关密钥；本机 wb2api 默认读自己的 `config.json`，HUB 沿用启动密钥或已保存的 HUB Key |
 | `apiKeyRef` | 自定义凭据引用；旧版 HUB 表单写入的共享引用会在切回本机 wb2api 时自动隔离 |
 | `hubApiKeyRef` | HUB 跟随出口 Key 的凭据引用，表单默认写入 `WORKBUDDY_HUB_KEY`，不影响 wb2api |
@@ -269,7 +270,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | `autoUpdateDelayHours` | 新版本发布满多少小时才自动装，默认 24；`0` = 不等 |
 | `checkOnStart` | `autoUpdate` 关掉时，DSH 启动时查一次上游 release 并写日志（**只提示**），默认 true |
 | `checkTtlMs` | 查询结果缓存时长，默认 6 小时（GitHub 匿名 API 只有 60 次/小时） |
-| `keepVersions` | 保留几个历史版本供回滚，默认 3（hub 默认 2：每个版本是整目录） |
+| `keepVersions` | 保留几个历史版本供回滚，hub 默认 2（每个版本是整目录），wb2api 默认 3 |
 | `apiBase` | 覆盖 GitHub API 基址（镜像 / 测试用），默认官方 `api.github.com` |
 
 ## 后端版本管理

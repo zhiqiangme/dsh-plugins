@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -40,6 +40,16 @@ const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.met
 
 const OLD_REVISION = 'a'.repeat(40);
 const NEW_COMMIT = 'f'.repeat(40);
+
+test('wb2api 专用 CLI 在默认网关为 hub 时仍读取 wb2api 目录', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wb-cli-'));
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../lib/backend-cli.js', import.meta.url))], {
+    env: { ...process.env, DSH_WORKBUDDY_BACKEND_ROOT: root }, encoding: 'utf8', timeout: 10_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes(join(root, 'wb2api', 'backend', 'current', 'wb2api.exe')));
+  assert.ok(!result.stdout.includes(join(root, 'hub')));
+});
 
 function startFixture(env = {}) {
   const child = spawn(process.execPath, [FIXTURE], {

@@ -99,7 +99,7 @@ function startFixture(env = {}) {
 /** 用插件真实的配置解析拼出 spec + models，避免测试里手搓配置结构。 */
 function configFor(port, models = {}) {
   return resolvePluginConfig(
-    { port, models: { enabled: true, apiKey: 'test-key', timeoutMs: 5_000, ...models } },
+    { gateway: 'wb2api', port, models: { enabled: true, apiKey: 'test-key', timeoutMs: 5_000, ...models } },
     { PATH: '' },
   );
 }

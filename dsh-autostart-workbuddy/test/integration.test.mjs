@@ -88,6 +88,7 @@ function fakeContext(services = {}, { removableHooks = true } = {}) {
 /** 托管一个假服务，端口随机，避免碰到真实的 7863。 */
 function fakeServiceConfig(port, extra = {}) {
   return {
+    gateway: 'wb2api',
     logDir: mkdtempSync(join(tmpdir(), 'autostart-wb-int-')),
     readinessTimeoutMs: 10_000,
     port,
@@ -114,7 +115,7 @@ test('插件导出 Cordis 契约：name / inject / apply', () => {
   assert.equal(typeof apply, 'function');
 });
 
-test('HUB 合并路由挂载后，保存模型规则仍可同步到同一分组，不丢失运行时转发地址', async (t) => {
+test('默认 HUB 合并路由挂载后，保存模型规则仍可同步到同一分组，不丢失运行时转发地址', async (t) => {
   const server = createHttpServer((req, res) => res.end(JSON.stringify({ realm: req.headers['x-realm'] || 'intl', data: [{ id: 'shared', name: 'Shared', credits: 'Free' }] })));
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(done); }));
@@ -124,7 +125,7 @@ test('HUB 合并路由挂载后，保存模型规则仍可同步到同一分组�
   const origin = `http://127.0.0.1:${server.address().port}`;
   const ctx = fakeContext({ configEditor: editor, credentials, webServer: { getOrigin: () => origin, register: (route) => { routes.push(route); return () => {}; } } });
   t.after(() => ctx.disposeAll());
-  const config = { gateway: 'hub', backend: { enabled: false, autoUpdate: false }, models: { enabled: true, hubDual: true, baseURL: origin } };
+  const config = { backend: { enabled: false, autoUpdate: false }, models: { enabled: true, hubDual: true, baseURL: origin } };
   apply(ctx, config);
   assert.ok(routes.some((route) => route.kind === 'prefix' && route.path === HUB_ROUTER_PATH));
   ctx.update({ ...config, models: { ...config.models, rules: { freeOnly: true } } });

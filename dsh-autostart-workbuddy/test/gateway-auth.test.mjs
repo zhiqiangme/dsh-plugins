@@ -61,7 +61,7 @@ test('HUB → wb2api → HUB 重启后凭据隔离：旧共享 Key 不污染 wb2
     assert.equal(credentials.values[GATEWAY_KEY_REFS.hub], 'hub-secret');
   }
   backend.wbKey = 'rotated-wb-secret'; savePanel();
-  const resolved = resolvePluginConfig({ port: server.address().port, models: rawModels }, {});
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', port: server.address().port, models: rawModels }, {});
   const rotated = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} });
   assert.equal(rotated.credential.state, 'replaced');
   assert.equal(credentials.values[GATEWAY_KEY_REFS.wb2api], backend.wbKey);
@@ -70,10 +70,10 @@ test('HUB → wb2api → HUB 重启后凭据隔离：旧共享 Key 不污染 wb2
 
 test('自定义 wb2api 凭据引用不被 HUB 专用引用覆盖；外部实例仍可显式用旧共享引用', async () => {
   const credentials = createFakeCredentials({ stored: { CUSTOM_WB_KEY: 'custom-wb', WORKBUDDY_PROXY_KEY: 'external-key' } });
-  const config = { models: { apiKeyRef: 'CUSTOM_WB_KEY', hubApiKeyRef: 'CUSTOM_HUB_KEY' } };
+  const config = { gateway: 'wb2api', models: { apiKeyRef: 'CUSTOM_WB_KEY', hubApiKeyRef: 'CUSTOM_HUB_KEY' } };
   const wb = resolvePluginConfig(config, {});
   assert.equal(wb.models.apiKeyRef, 'CUSTOM_WB_KEY');
   assert.equal(await resolveModelApiKey(wb.models, {}, credentials), 'custom-wb');
-  const external = resolvePluginConfig({ models: { apiKeyRef: 'WORKBUDDY_PROXY_KEY', baseURL: 'http://127.0.0.1:1' } }, {});
+  const external = resolvePluginConfig({ gateway: 'wb2api', models: { apiKeyRef: 'WORKBUDDY_PROXY_KEY', baseURL: 'http://127.0.0.1:1' } }, {});
   assert.equal(await resolveModelApiKey(external.models, {}, credentials), 'external-key');
 });

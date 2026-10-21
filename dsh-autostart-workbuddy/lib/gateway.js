@@ -1,9 +1,8 @@
 /**
  * 后端网关分发：插件可以托管两种 OpenAI 兼容网关，二选一（插件配置 `gateway`）。
  *
- *   - `wb2api`（默认）：linguo2625469/workbuddy2api-panel，单文件 Go 程序，见 backend.js；
- *   - `hub`：ardeyouxipianyi/workbuddy2api-hub，自带 Python 运行时的目录，见 hub.js。
- *     作为 wb2api 停更时的备选。
+ *   - `hub`（默认）：ardeyouxipianyi/workbuddy2api-hub，自带 Python 运行时的目录，见 hub.js；
+ *   - `wb2api`：linguo2625469/workbuddy2api-panel，单文件 Go 程序，见 backend.js。
  *
  * 两者监听同一个端口（默认 7863），同一时刻只跑一个；provider 的直连/双区域转发地址由模型同步维护。
  * 面板路由、启动检查与定时同步都只经这里拿"当前网关的那套操作"，不直接调 backend.js / hub.js。
@@ -35,11 +34,11 @@ import {
 } from './hub.js';
 
 export const GATEWAY_IDS = Object.freeze(['wb2api', 'hub']);
-export const DEFAULT_GATEWAY = 'wb2api';
+export const DEFAULT_GATEWAY = 'hub';
 
 /** 非法值一律退回默认网关：配置写错不该让插件起不来。 */
 export function normalizeGateway(value) {
-  return value === 'hub' ? 'hub' : DEFAULT_GATEWAY;
+  return GATEWAY_IDS.includes(value) ? value : DEFAULT_GATEWAY;
 }
 
 const WB2API = Object.freeze({
