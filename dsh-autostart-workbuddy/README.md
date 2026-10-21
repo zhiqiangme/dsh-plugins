@@ -39,7 +39,9 @@
 
 新安装且未指定 `gateway` 时默认使用 hub；已有配置显式指定 `gateway: wb2api` 时继续使用 wb2api。两种网关仍可在插件卡片中切换。
 
-账号授权分别保存在 `wb2api/data/auths/*.json` 与 `hub/data/accounts/*.json`。wb2api 的文件使用 `account` / `auth` 嵌套结构，hub 使用扁平结构，两者都含 `accessToken`、`refreshToken` 与 `expiresAt`。hub 看板的账号导入支持 wb2api 的嵌套格式，可通过导入沿用授权；切换网关本身不会自动迁移账号。不要直接将 wb2api 文件复制进 hub 账号目录，hub 启动时按自己的扁平格式加载。账号授权与 hub 管理面板的密码登录是两回事，浏览器的面板登录会话不会从 wb2api 继承。
+账号授权分别保存在 `wb2api/data/auths/*.json` 与 `hub/data/accounts/*.json`。首次由插件启动 hub 时，会自动读取 wb2api 授权（遵循其 `config.json` 的 `auth_dir`，缺省使用 `wb2api/data/auths/`），将 `account` / `auth` 嵌套结构转换为 hub 的扁平格式。hub 中已经存在的账号按 uid 跳过，保留后来登录的新令牌与设置。只迁移授权，之后两边各自维护文件及刷新令牌，不再自动同步；wb2api 原文件不会修改。
+
+导入在 hub 进程启动前完成，首次安装后拉起、切换网关后首次拉起均适用；端口上已有外部服务时不会改它的账号目录。成功扫描后在 `hub/data/wb2api-import.json` 记录一次性完成标记（不含令牌）；以后重启或更新不会重复导入，hub 中主动删除的账号也不会重新出现。没装过 wb2api 时暂不记完成；读取或写入失败会记脱敏警告，下次启动重试。损坏或不支持的单份授权跳过并提示数量，仍可在 hub 看板手动导入。账号授权与 hub 管理面板的密码登录是两回事，浏览器的面板登录会话不会从 wb2api 继承。
 
 ### HUB：CN 与 GL 同时使用
 

@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { backendPaths, purgeBackendData, stopForUpdate } from './backend.js';
+import { importWb2apiAccounts } from './hub-account-import.js';
 import { downloadAsset, fetchChecksums, fetchLatestRelease, pickWindowsAsset, verifyChecksum } from './release.js';
 import { isFile } from './services.js';
 import { extractZipEntry, extractZipTree } from './zip.js';
@@ -73,6 +74,7 @@ export function hubPaths(env = process.env) {
     state: join(root, 'installed.json'),
     releaseCache: join(root, 'cache', 'release.json'),
     apiKeyFile: join(root, 'data', 'plugin-api-key'),
+    accountsImportFile: join(root, 'data', 'wb2api-import.json'),
   };
 }
 
@@ -553,14 +555,23 @@ export function readHubApiKey({ explicit = '', env = process.env, wb2apiKey = ''
 }
 
 /**
- * hub 的启动钩子：没有可沿用的密钥时生成一个并存下，同时填进子进程环境与模型同步配置。
+ * hub 的启动钩子：首次拉起前导入 wb2api 授权；没有可沿用的密钥时生成一个并存下。
  * 不能让 hub 无密钥运行：hub 没设密钥时 /v1/* 对本机任何进程开放。
  */
 export function hubKeyHooks(resolved, logger, name = 'dsh-autostart-workbuddy') {
   return {
     beforeSpawn() {
-      if (resolved.spec?.env?.API_KEY) return;
       const paths = resolved.backend?.paths;
+      if (paths?.accountsImportFile && paths.plugin?.data) {
+        const result = importWb2apiAccounts(paths);
+        if (result.state === 'completed') {
+          logger.info(`[${name}] hub 首次授权导入：新增 ${result.imported}，保留已有 ${result.skipped}，无效 ${result.invalid}`);
+          if (result.invalid) logger.warn?.(`[${name}] 部分 wb2api 授权文件无效，已跳过；可修复后在 hub 看板手动导入`);
+        } else if (result.state === 'error') {
+          logger.warn?.(`[${name}] hub 首次授权导入未完成（${result.reason}），下次启动重试；已存在的 hub 账号保持不变`);
+        }
+      }
+      if (resolved.spec?.env?.API_KEY) return;
       if (!paths?.apiKeyFile) return;
       const key = `sk-${randomBytes(18).toString('base64url')}`;
       mkdirSync(paths.data, { recursive: true });
