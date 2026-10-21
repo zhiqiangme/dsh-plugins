@@ -789,7 +789,7 @@ window.__ModuleLoader__.load({
           }),
           t('autoUpdateLabel'),
         ),
-        h('p', { key: 'autoUpdateHint', className: 'dsm-wb-hint' }, t(auto.available === false ? 'autoUpdateUnavailable' : 'autoUpdateHint', { hours: auto.delayHours ?? 24 })),
+        h('p', { key: 'autoUpdateHint', className: 'dsm-wb-hint' }, t(auto.available === false ? 'autoUpdateUnavailable' : 'autoUpdateHint', { hours: auto.delayHours ?? 2 })),
       ];
       if (auto.enabled !== true || auto.available === false) return out;
 
@@ -815,7 +815,7 @@ window.__ModuleLoader__.load({
           drifted: 'autoUpdateDrifted',
           'unknown-local': 'autoUpdateUnknown',
         }[check.reason];
-        if (key) out.push(line('autoUpdateCheck', t(key, { tag: check.tag ?? '', hours: auto.delayHours ?? 24, time: localTime(check.readyAt) })));
+        if (key) out.push(line('autoUpdateCheck', t(key, { tag: check.tag ?? '', hours: auto.delayHours ?? 2, time: localTime(check.readyAt) })));
       }
       return out;
     }

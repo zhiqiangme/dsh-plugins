@@ -1222,7 +1222,7 @@ test('后端区：自动更新开关与状态行（待装 / 已自动更新 / �
   const toggled = [];
   const render = (auto, tag = 'v1.0.0', busy) => module.renderAutoUpdate(auto, tag, { busy, onToggle: (value) => toggled.push(value) }, t);
   const text = (nodes) => collectText(nodes).join('\n');
-  const base = { enabled: true, available: true, delayHours: 24, pending: null, failed: null, last: null, lastCheck: null };
+  const base = { enabled: true, available: true, delayHours: 2, pending: null, failed: null, last: null, lastCheck: null };
 
   assert.deepEqual(render(undefined), [], '老宿主的快照没有 autoUpdate 字段时什么都不显示');
 
@@ -1233,7 +1233,8 @@ test('后端区：自动更新开关与状态行（待装 / 已自动更新 / �
   box.props.onChange({ target: { checked: false } });
   assert.deepEqual(toggled, [false]);
   assert.match(text(idle), /自动更新后端/);
-  assert.match(text(idle), /发布满 24 小时/);
+  assert.match(text(idle), /发布满 2 小时/);
+  assert.match(text(render({ ...base, delayHours: undefined })), /发布满 2 小时/, '缺少等待时间时界面同样默认 2 小时');
 
   assert.match(text(render({ ...base, pending: { tag: 'v1.1.0' } })), /已下载 v1\.1\.0，下次启动 DSH 时自动安装/);
   const last = { from: 'v0.9.0', to: 'v1.0.0', at: '2026-10-19T00:00:00Z' };
@@ -1243,7 +1244,7 @@ test('后端区：自动更新开关与状态行（待装 / 已自动更新 / �
   assert.doesNotMatch(text(render({ ...base, failed: { tag: 'v1.0.0', reason: 'x' } })), /没成功/, '手动装上了失败过的版本就不再提');
   assert.match(
     text(render({ ...base, lastCheck: { state: 'skipped', reason: 'too-fresh', tag: 'v1.1.0', readyAt: '2026-10-20T00:00:00Z' } })),
-    /上游 v1\.1\.0 发布未满 24 小时/,
+    /上游 v1\.1\.0 发布未满 2 小时/,
   );
   assert.match(text(render({ ...base, lastCheck: { state: 'skipped', reason: 'rolled-back', tag: 'v1.1.0' } })), /你从 v1\.1\.0 回滚过/);
   assert.match(text(render({ ...base, lastCheck: { state: 'error', reason: 'fetch failed' } })), /上次自动检查更新失败：fetch failed/);

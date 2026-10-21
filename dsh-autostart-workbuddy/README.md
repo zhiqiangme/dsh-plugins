@@ -219,7 +219,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
         - global:deepseek-v4.1-flash
     backend:
       autoUpdate: true          # 自动更新后端（默认开）：后台下载，下次启动 DSH 时换上
-      autoUpdateDelayHours: 24  # 发布满多少小时才自动装
+      autoUpdateDelayHours: 2   # 发布满多少小时才自动装
       keepVersions: 2           # 保留几个历史版本供回滚（wb2api 默认 3）
 ```
 
@@ -269,7 +269,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | --- | --- |
 | `enabled` | 是否允许查更新 / 更新 / 回滚，默认 true |
 | `autoUpdate` | 自动更新后端，默认 **true**；只有显式 `false` 才关。规则见[自动更新](#自动更新)，插件卡片上有同一个开关（改了就地生效，不重启插件） |
-| `autoUpdateDelayHours` | 新版本发布满多少小时才自动装，默认 24；`0` = 不等 |
+| `autoUpdateDelayHours` | 新版本发布满多少小时才自动装，默认 2；`0` = 不等 |
 | `checkOnStart` | `autoUpdate` 关掉时，DSH 启动时查一次上游 release 并写日志（**只提示**），默认 true |
 | `checkTtlMs` | 查询结果缓存时长，默认 6 小时（GitHub 匿名 API 只有 60 次/小时） |
 | `keepVersions` | 保留几个历史版本供回滚，hub 默认 2（每个版本是整目录），wb2api 默认 3 |
@@ -337,7 +337,7 @@ vcs.time=2026-10-08T00:49:09Z
 什么样的版本会自动装（不满足的只写日志、卡片上说明原因；手动点「更新」不受这些限制）：
 
 - GitHub 的 `releases/latest`（本来就不含预发布），而且版本号比当前的新——不会降级；
-- 发布满 `autoUpdateDelayHours`（默认 24 小时）：上游有时一天连发几版，给它留出撤回或补丁的时间；
+- 发布满 `autoUpdateDelayHours`（默认 2 小时）：给上游留出短暂的撤回或补丁时间；
 - 当前版本认得出（有安装记录、tag 是 `x.y.z`），而且没被手动换过：你自己换上的程序不会被覆盖；
 - 你手动「回滚」过的那个版本不会再被自动装回去，更新的版本照常；
 - 自动安装失败过的版本（包校验不过，或换上后健康检查不过已退回）不再自动重试。下载时的网络错误不算，下一轮重试。

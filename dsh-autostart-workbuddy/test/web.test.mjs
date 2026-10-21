@@ -652,7 +652,7 @@ test('后端路由：自动更新开关写 backend.autoUpdate（保留 backend �
   const status = fakeRes();
   await handler(fakeReq('GET'), status);
   assert.deepEqual(status.body.backend.autoUpdate, {
-    enabled: true, available: true, delayHours: 24, pending: null, failed: null, last: null, lastCheck: null,
+    enabled: true, available: true, delayHours: 2, pending: null, failed: null, last: null, lastCheck: null,
   });
 
   const off = fakeRes();

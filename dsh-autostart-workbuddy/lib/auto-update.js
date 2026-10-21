@@ -12,7 +12,7 @@
  *
  * 自动安装的条件（evaluateCandidate；任何一条不满足都只记日志、不装。面板上手动「更新」不受这些限制）：
  *   - 只装 GitHub 的 releases/latest（本来就排除预发布），且版本号比当前的新——不做降级；
- *   - 发布满 autoUpdateDelayHours（默认 24h）：上游常一天连发几版，给它留出撤回 / 补丁的时间；
+ *   - 发布满 autoUpdateDelayHours（默认 2h）：给上游留出短暂的撤回 / 补丁时间；
  *   - 当前版本认得出、且没被手动换过（drifted）：用户自己换上的程序不替他覆盖；
  *   - 用户手动回滚过：刚退掉的那个版本不再自动装回去，更新的版本照常；
  *   - 自动安装失败过（校验不过，或换上后健康检查不过已回滚）的版本不再自动重试。
@@ -29,7 +29,7 @@ import { compareVersions } from './update.js';
 export const AUTO_UPDATE_FILE = 'auto-update.json';
 
 /** 默认的发布冷却期（小时）。 */
-export const DEFAULT_AUTO_UPDATE_DELAY_HOURS = 24;
+export const DEFAULT_AUTO_UPDATE_DELAY_HOURS = 2;
 
 /** 启动后等多久才做第一轮检查：让后端拉起与模型同步先跑完，别和它们抢网络。 */
 const FIRST_CHECK_DELAY_MS = 60_000;

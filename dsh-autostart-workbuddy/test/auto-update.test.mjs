@@ -25,7 +25,7 @@ const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.met
 
 const OLD_REVISION = 'a'.repeat(40);
 const NEW_COMMIT = 'f'.repeat(40);
-/** 夹具 http-release 的 published_at 是 2026-10-09，http-hub-release 是 2026-10-18；这里取两者都满 24 小时的时刻。 */
+/** 夹具 http-release 的 published_at 是 2026-10-09，http-hub-release 是 2026-10-18；这里取两者都已过冷却期的时刻。 */
 const NOW = Date.parse('2026-10-20T00:00:00Z');
 
 function startFixture(env = {}) {
@@ -130,10 +130,13 @@ test('evaluateCandidate：只认比当前新、发布满冷却期、没被回滚
   assert.equal(reason({ autoState: { failed: { tag: 'v1.8.0' } } }), 'failed-before');
   assert.equal(reason({ latest: { tag: 'v1.8.0' } }), 'no-publish-time');
 
-  const fresh = evaluateCandidate({ latest, local, now: Date.parse('2026-10-18T06:00:00Z') });
+  const readyAt = Date.parse('2026-10-18T02:00:00Z');
+  const fresh = evaluateCandidate({ latest, local, now: readyAt - 1 });
   assert.equal(fresh.reason, 'too-fresh');
-  assert.equal(fresh.readyAt, Date.parse('2026-10-19T00:00:00Z'));
-  assert.deepEqual(evaluateCandidate({ latest, local, now: Date.parse('2026-10-18T06:00:00Z'), delayHours: 0 }), { eligible: true }, '冷却期可以设成 0');
+  assert.equal(fresh.readyAt, readyAt);
+  assert.deepEqual(evaluateCandidate({ latest, local, now: readyAt }), { eligible: true }, '发布刚满 2 小时即允许下载');
+  assert.equal(evaluateCandidate({ latest, local, now: readyAt, delayHours: 24 }).reason, 'too-fresh', '保留显式配置的等待时间');
+  assert.deepEqual(evaluateCandidate({ latest, local, now: readyAt - 1, delayHours: 0 }), { eligible: true }, '冷却期可以设成 0');
 });
 
 test('wb2api：后台只下载暂存不动 current/，下次启动先换上；回滚过的版本不再自动装回去', async () => {
@@ -210,14 +213,14 @@ test('冷却期内不下载，只记下什么时候再来', async () => {
   const release = startFixture({ TEST_MODE: 'http-release' });
   const apiBase = `http://127.0.0.1:${await release.ready}`;
   const { paths, resolved } = wb2apiSetup(apiBase);
-  const { updater } = updaterFor(resolved, fakeService(1), { now: () => Date.parse('2026-10-09T06:00:00Z') });
+  const { updater } = updaterFor(resolved, fakeService(1), { now: () => Date.parse('2026-10-09T01:00:00Z') });
   try {
     const result = await updater.tick();
     assert.equal(result.state, 'skipped');
     assert.equal(result.reason, 'too-fresh');
     const state = readAutoState(paths);
     assert.equal(state.pending, null);
-    assert.equal(state.lastCheck.readyAt, '2026-10-10T00:00:00.000Z');
+    assert.equal(state.lastCheck.readyAt, '2026-10-09T02:00:00.000Z');
     assert.equal(readBuildInfo(paths.exe).revision, OLD_REVISION);
   } finally {
     release.stop();
