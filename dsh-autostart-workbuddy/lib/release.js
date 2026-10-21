@@ -45,18 +45,39 @@ function requestHeaders(env) {
 /** 超时与插件关闭任一发生都取消请求，包体读取也沿用同一个信号。 */
 const requestSignal = (signal, timeoutMs) => signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
 
+/** fetch 的 message 常只有 terminated / fetch failed；底层 socket 错误与错误码在 cause 里。 */
+export function formatError(error) {
+  const parts = [];
+  // 异常链可能有循环或包含大量连接失败，最多展开 10 个节点，避免面板被错误信息撑满。
+  const seen = new Set();
+  function visit(value) {
+    if (value == null || seen.has(value) || seen.size >= 10) return;
+    seen.add(value);
+    const message = value instanceof Error ? value.message : String(value);
+    const detail = value.code ? `${value.code}: ${message}` : message;
+    // 网络层的包装错误已经包含原因时，不再把同一段重复展示。
+    if (detail && !parts.some((part) => part.includes(detail))) parts.push(detail);
+    if (seen.size < 10) {
+      visit(value.cause);
+      if (value instanceof AggregateError) value.errors.forEach(visit);
+    }
+  }
+  visit(error);
+  return parts.join(' ← ');
+}
+
 async function getJson(url, { env, timeoutMs = 20_000, signal } = {}) {
-  let response;
   try {
-    response = await fetch(url, { headers: requestHeaders(env), signal: requestSignal(signal, timeoutMs) });
+    const response = await fetch(url, { headers: requestHeaders(env), signal: requestSignal(signal, timeoutMs) });
+    if (!response.ok) {
+      const hint = response.status === 403 || response.status === 429 ? '（可能是 GitHub API 限流，配置 GITHUB_TOKEN 可提高额度）' : '';
+      throw new Error(`返回 ${response.status}${hint}`);
+    }
+    // await 必须留在 try 内：响应头成功后，JSON 内容仍可能传到一半就断开。
+    return await response.json();
   } catch (error) {
-    throw new Error(`请求 ${url} 失败：${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`请求 ${url} 失败：${formatError(error)}`, { cause: error });
   }
-  if (!response.ok) {
-    const hint = response.status === 403 || response.status === 429 ? '（可能是 GitHub API 限流，配置 GITHUB_TOKEN 可提高额度）' : '';
-    throw new Error(`${url} 返回 ${response.status}${hint}`);
-  }
-  return response.json();
 }
 
 /**
@@ -125,30 +146,30 @@ export function parseChecksums(text) {
 
 /** 下载资产到内存；进度通过 onProgress(已下载字节, 总字节) 回调。 */
 export async function downloadAsset(asset, { env, timeoutMs = 120_000, onProgress, signal } = {}) {
-  let response;
-  try {
-    response = await fetch(asset.url, { headers: requestHeaders(env), signal: requestSignal(signal, timeoutMs) });
-  } catch (error) {
-    throw new Error(`下载 ${asset.name} 失败：${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (!response.ok) throw new Error(`下载 ${asset.name} 返回 ${response.status}`);
-
-  const total = Number(response.headers.get('content-length')) || asset.size || 0;
-  const chunks = [];
   let received = 0;
-  if (response.body) {
-    for await (const chunk of response.body) {
-      chunks.push(Buffer.from(chunk));
-      received += chunk.length;
+  let total = asset.size || 0;
+  try {
+    const response = await fetch(asset.url, { headers: requestHeaders(env), signal: requestSignal(signal, timeoutMs) });
+    if (!response.ok) throw new Error(`返回 ${response.status}`);
+
+    total = Number(response.headers.get('content-length')) || total;
+    const chunks = [];
+    if (response.body) {
+      for await (const chunk of response.body) {
+        chunks.push(Buffer.from(chunk));
+        received += chunk.length;
+        onProgress?.(received, total);
+      }
+    } else {
+      const buffer = Buffer.from(await response.arrayBuffer());
+      received = buffer.length;
       onProgress?.(received, total);
+      chunks.push(buffer);
     }
-  } else {
-    const buffer = Buffer.from(await response.arrayBuffer());
-    received = buffer.length;
-    onProgress?.(received, total);
-    chunks.push(buffer);
+    return Buffer.concat(chunks);
+  } catch (error) {
+    throw new Error(`下载 ${asset.name} 失败（已读取 ${received}/${total || '?'} 字节）：${formatError(error)}`, { cause: error });
   }
-  return Buffer.concat(chunks);
 }
 
 /**
@@ -158,9 +179,13 @@ export async function downloadAsset(asset, { env, timeoutMs = 120_000, onProgres
 export async function fetchChecksums(release, { env, apiBase = DEFAULT_API_BASE, timeoutMs, names = [CHECKSUMS_NAME], signal } = {}) {
   const asset = names.map((name) => (release.assets ?? []).find((item) => item.name === name)).find(Boolean);
   if (!asset) return new Map();
-  const response = await fetch(asset.url, { headers: requestHeaders(env), signal: requestSignal(signal, timeoutMs ?? 30_000) });
-  if (!response.ok) throw new Error(`下载 ${asset.name} 返回 ${response.status}`);
-  return parseChecksums(await response.text());
+  try {
+    const response = await fetch(asset.url, { headers: requestHeaders(env), signal: requestSignal(signal, timeoutMs ?? 30_000) });
+    if (!response.ok) throw new Error(`返回 ${response.status}`);
+    return parseChecksums(await response.text());
+  } catch (error) {
+    throw new Error(`下载校验文件 ${asset.name} 失败：${formatError(error)}`, { cause: error });
+  }
 }
 
 /**

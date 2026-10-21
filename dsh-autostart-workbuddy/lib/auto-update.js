@@ -24,6 +24,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from 'node:path';
 
 import { gatewayDriver, withBackendLock } from './gateway.js';
+import { DEFAULT_CHECK_TTL_MS } from './backend.js';
+import { formatError } from './release.js';
 import { compareVersions } from './update.js';
 
 export const AUTO_UPDATE_FILE = 'auto-update.json';
@@ -33,6 +35,9 @@ export const DEFAULT_AUTO_UPDATE_DELAY_HOURS = 2;
 
 /** 启动后等多久才做第一轮检查：让后端拉起与模型同步先跑完，别和它们抢网络。 */
 const FIRST_CHECK_DELAY_MS = 60_000;
+
+/** 网络故障不该再等六小时；逐步退避，避免网络长期不通时频繁请求 GitHub。 */
+const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000];
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -78,6 +83,29 @@ function removeStaged(staged) {
   } catch {
     /* 删不掉就留着：下次准备同一版本时会先清掉 */
   }
+}
+
+/** 手动更新后，已不比当前新或已经丢失的暂存包不能继续显示为待安装。 */
+function dropStalePending(paths, state, local) {
+  const pending = state.pending;
+  if (!pending) return state;
+  const order = compareVersions(pending.tag, local?.tag);
+  if ((Number.isNaN(order) || order > 0) && existsSync(pending.staged?.path ?? '')) return state;
+  removeStaged(pending.staged);
+  const next = { ...state, pending: null };
+  writeAutoState(paths, next);
+  return next;
+}
+
+/** 手动检查 / 安装成功后同步自动更新状态，不联网，也不把手动安装记成自动安装。 */
+export function recordUpdateCheck(paths, { local, latest }, now = Date.now()) {
+  const state = dropStalePending(paths, readAutoState(paths), local);
+  const upToDate = compareVersions(latest?.tag, local?.tag) <= 0;
+  writeAutoState(paths, {
+    ...state,
+    failed: state.failed?.tag === local?.tag ? null : state.failed,
+    lastCheck: { at: new Date(now).toISOString(), state: upToDate ? 'skipped' : 'checked', reason: upToDate ? 'up-to-date' : null, tag: latest?.tag ?? null },
+  });
 }
 
 /**
@@ -175,6 +203,8 @@ export function createAutoUpdater(options) {
   let timer;
   let running;
   let stopped = false;
+  let started = false;
+  let failures = 0;
   // 同一句话只记一次：冷却期内每轮都会得到同样的结论，不能每 6 小时刷一条。
   let lastNote;
 
@@ -196,20 +226,6 @@ export function createAutoUpdater(options) {
     return undefined;
   }
 
-  /** 暂存的版本已不比当前新（用户手动更新过）或已不在了：清掉，免得下次启动拿它去换。 */
-  function dropStalePending(state, local) {
-    const pending = state.pending;
-    if (!pending) return state;
-    const order = compareVersions(pending.tag, local?.tag);
-    if (Number.isNaN(order) || order > 0) {
-      if (existsSync(pending.staged?.path ?? '')) return state;
-    }
-    removeStaged(pending.staged);
-    const next = { ...state, pending: null };
-    writeAutoState(paths, next);
-    return next;
-  }
-
   async function runOnce() {
     if (stopped) return { state: 'inactive', reason: 'stopped' };
     const inactive = inactiveReason();
@@ -217,13 +233,13 @@ export function createAutoUpdater(options) {
 
     const check = await driver.check({ paths, env, apiBase: resolved.backend.apiBase || undefined, ttlMs: resolved.backend.checkTtlMs, signal: controller.signal });
     controller.signal.throwIfAborted();
-    let state = dropStalePending(readAutoState(paths), check.local);
+    let state = dropStalePending(paths, readAutoState(paths), check.local);
     const verdict = evaluateCandidate({ latest: check.latest, local: check.local, autoState: state, delayHours: delayHours(), now: now() });
     const checkedAt = new Date(now()).toISOString();
     if (!verdict.eligible) {
       writeAutoState(paths, { ...state, lastCheck: { at: checkedAt, state: 'skipped', reason: verdict.reason, tag: verdict.tag ?? null, readyAt: verdict.readyAt ? new Date(verdict.readyAt).toISOString() : null } });
       note('info', skipText(verdict, delayHours()));
-      return { state: 'skipped', reason: verdict.reason, latest: check.latest };
+      return { state: 'skipped', reason: verdict.reason, latest: check.latest, readyAt: verdict.readyAt };
     }
     if (state.pending?.tag === check.latest.tag) return { state: 'pending', latest: check.latest };
 
@@ -240,7 +256,10 @@ export function createAutoUpdater(options) {
     if (prepared.state === 'cancelled') return { state: 'cancelled' };
     // 下载期间用户可能手动更新过：重新读一次，别把别人写下的结果盖掉。
     state = readAutoState(paths);
-    if (prepared.state === 'up-to-date') return { state: 'skipped', reason: 'up-to-date', latest: check.latest };
+    if (prepared.state === 'up-to-date') {
+      recordUpdateCheck(paths, { local: driver.describe(paths).version, latest: check.latest }, now());
+      return { state: 'skipped', reason: 'up-to-date', latest: check.latest };
+    }
     if (!prepared.ok) {
       const failed = { tag: check.latest.tag, state: prepared.state, reason: prepared.reason ?? '', at: checkedAt };
       writeAutoState(paths, { ...state, failed: PERMANENT_FAILURES.has(prepared.state) ? failed : state.failed, lastCheck: { at: checkedAt, state: 'failed', reason: prepared.state, tag: check.latest.tag } });
@@ -269,10 +288,26 @@ export function createAutoUpdater(options) {
       .catch((error) => {
         if (controller.signal.aborted) return { state: 'cancelled' };
         // 多半是网络（GitHub 不通、下载超时）：不记成版本失败，下一轮照常重试。
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = formatError(error);
         writeAutoState(paths, { ...readAutoState(paths), lastCheck: { at: new Date(now()).toISOString(), state: 'error', reason, tag: null } });
         note('warn', `自动检查后端更新失败：${reason}`);
         return { state: 'error', reason };
+      })
+      .then((result) => {
+        const retry = result.state === 'error' || (result.state === 'failed' && !PERMANENT_FAILURES.has(result.reason));
+        failures = retry ? failures + 1 : 0;
+        const interval = resolved.backend?.checkTtlMs ?? DEFAULT_CHECK_TTL_MS;
+        let delay = interval;
+        if (retry) delay = Math.min(interval, RETRY_DELAYS_MS[Math.min(failures - 1, RETRY_DELAYS_MS.length - 1)]);
+        else if (result.state === 'busy') delay = Math.min(interval, RETRY_DELAYS_MS[0]);
+        else if (result.reason === 'too-fresh') delay = Math.min(interval, Math.max(1000, result.readyAt - now()));
+        // 手动触发的 tick 也要重排：旧的六小时定时器不能挡住这次失败后的快速重试。
+        if (started && !stopped) {
+          if (timer) clearTimeout(timer);
+          timer = undefined;
+          schedule(delay);
+        }
+        return result;
       })
       .finally(() => {
         running = undefined;
@@ -284,7 +319,7 @@ export function createAutoUpdater(options) {
     if (stopped || timer) return;
     timer = setTimeout(() => {
       timer = undefined;
-      tick().then(() => schedule(resolved.backend?.checkTtlMs));
+      tick();
     }, delay);
     // 不让这个定时器拖住进程退出。
     timer.unref?.();
@@ -340,7 +375,13 @@ export function createAutoUpdater(options) {
     const at = new Date(now()).toISOString();
     state = readAutoState(paths);
     if (result.ok) {
-      writeAutoState(paths, { ...state, pending: null, last: { from: local?.tag ?? null, to: pending.tag, at } });
+      writeAutoState(paths, {
+        ...state,
+        pending: null,
+        failed: state.failed?.tag === pending.tag ? null : state.failed,
+        last: { from: local?.tag ?? null, to: pending.tag, at },
+        lastCheck: { at, state: 'skipped', reason: 'up-to-date', tag: pending.tag },
+      });
       logger.info(`[${name}] 后端已自动更新到 ${pending.tag}；有问题可在插件页「回滚」到 ${local?.tag ?? '上一版本'}`);
     } else if (result.state === 'not-owned') {
       // 端口上是别人起的后端：这次换不了，包留着下次启动再试。
@@ -364,9 +405,11 @@ export function createAutoUpdater(options) {
   return {
     tick,
     applyPending,
-    /** 启动流程落地后调用：等 firstDelayMs 做第一轮，之后按 checkTtlMs 的间隔。 */
+    /** 启动流程落地后调用：第一轮延迟，之后成功走正常周期，网络失败短间隔退避。 */
     start() {
-      schedule(firstDelayMs);
+      if (started || stopped) return;
+      started = true;
+      if (!running) schedule(firstDelayMs);
     },
     stop() {
       stopped = true;

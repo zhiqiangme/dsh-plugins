@@ -23,7 +23,7 @@
 
 import { isDeepStrictEqual } from 'node:util';
 
-import { autoUpdateStatus } from './auto-update.js';
+import { autoUpdateStatus, recordUpdateCheck } from './auto-update.js';
 import { diagnose } from './diagnostics.js';
 import { createAccountOverview } from './overview.js';
 import { createHubRouter } from './hub-router.js';
@@ -392,6 +392,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
         ttlMs: resolved.backend.checkTtlMs,
         force: true,
       });
+      recordUpdateCheck(paths, { ...check, local: driver.describe(paths).version });
       json(res, 200, { ok: true, backend: snapshot(), check });
     } catch (error) {
       // 查不到更新不是错误：面板照常显示本地版本，把原因放在 check.error 里
@@ -448,6 +449,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
       ttlMs: resolved.backend?.checkTtlMs,
       force: true,
     });
+    recordUpdateCheck(paths, { ...check, local: driver.describe(paths).version });
     json(res, 200, { ok: true, check, backend: snapshot() });
     return;
   }
@@ -492,6 +494,9 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
     return;
   }
   const result = locked.value;
+  if (result.ok && (action === 'install' || action === 'update')) {
+    recordUpdateCheck(paths, { local: driver.describe(paths).version, latest: result.latest });
+  }
   json(res, result.ok ? 200 : 400, { ...result, backend: snapshot() });
 }
 

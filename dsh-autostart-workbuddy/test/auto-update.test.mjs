@@ -161,6 +161,8 @@ test('wb2api：后台只下载暂存不动 current/，下次启动先换上；�
     release.stop();
     assert.equal((await updater.tick()).state, 'pending');
 
+    // 暂存后曾发生另一轮网络错误：安装成功时也必须刷新这个旧错误。
+    writeFileSync(join(paths.cache, 'auto-update.json'), JSON.stringify({ ...readAutoState(paths), lastCheck: { state: 'error', reason: 'terminated' } }));
     // 下次启动：先换上，再由 index.js 照常 ensureRunning。
     const applied = await updater.applyPending();
     assert.equal(applied.ok, true, JSON.stringify(applied));
@@ -172,6 +174,7 @@ test('wb2api：后台只下载暂存不动 current/，下次启动先换上；�
     assert.equal(state.pending, null);
     assert.equal(state.last.from, 'v1.0.0');
     assert.equal(state.last.to, 'v9.9.9');
+    assert.equal(state.lastCheck.reason, 'up-to-date');
     assert.equal(await updater.applyPending(), undefined, '换完就没有待装的了');
 
     // 用户觉得新版本不好，手动回滚：之后的检查跳过 v9.9.9，不会又被自动装回去。
@@ -529,4 +532,134 @@ test('定时：start 后等 firstDelayMs 才查第一轮，stop 之后不再查'
   const seen = checks;
   await new Promise((done) => setTimeout(done, 80));
   assert.equal(checks, seen, 'stop 之后不再排下一轮');
+});
+
+test('网络失败按 1、5、15、30 分钟退避，成功后恢复六小时周期并重置退避', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { paths, resolved } = wb2apiSetup('http://127.0.0.1:1');
+  let checks = 0;
+  let fail = true;
+  const driver = {
+    describe: () => ({ exeExists: true }),
+    check: async () => {
+      checks += 1;
+      if (fail) throw new TypeError('terminated', { cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }) });
+      return { local: { tag: 'v1.0.0' }, latest: { tag: 'v1.0.0' } };
+    },
+  };
+  const { updater } = updaterFor(resolved, fakeService(1), { driver, firstDelayMs: 20 });
+  t.after(() => updater.stop());
+  const advance = async (ms) => { t.mock.timers.tick(ms); await new Promise((done) => setImmediate(done)); };
+  updater.start();
+  updater.start();
+  await advance(20);
+  assert.equal(checks, 1);
+  assert.match(readAutoState(paths).lastCheck.reason, /terminated.*UND_ERR_SOCKET.*other side closed/);
+  assert.equal(readAutoState(paths).failed, null, '网络失败不能永久封禁这个版本');
+  for (const delay of [60_000, 300_000, 900_000, 1_800_000, 1_800_000]) {
+    const seen = checks;
+    await advance(delay - 1);
+    assert.equal(checks, seen);
+    await advance(1);
+    assert.equal(checks, seen + 1);
+  }
+  fail = false;
+  await advance(1_800_000);
+  assert.equal(readAutoState(paths).lastCheck.reason, 'up-to-date');
+  const seen = checks;
+  await advance(resolved.backend.checkTtlMs - 1);
+  assert.equal(checks, seen);
+  fail = true;
+  await advance(1);
+  assert.equal(checks, seen + 1);
+  await advance(60_000);
+  assert.equal(checks, seen + 2, '成功后的下一次故障从一分钟退避重新开始');
+  await updater.stop();
+  await advance(resolved.backend.checkTtlMs);
+  assert.equal(checks, seen + 2, 'stop 会取消故障重试');
+});
+
+test('手动 tick 失败会替换已排好的六小时定时器，且不生成两条定时链', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { resolved } = wb2apiSetup('http://127.0.0.1:1');
+  let checks = 0;
+  const driver = {
+    describe: () => ({ exeExists: true }),
+    check: async () => {
+      if (++checks === 2) throw new Error('temporary connection failure');
+      return { local: { tag: 'v1.0.0' }, latest: { tag: 'v1.0.0' } };
+    },
+  };
+  const { updater } = updaterFor(resolved, fakeService(1), { driver, firstDelayMs: 0 });
+  t.after(() => updater.stop());
+  const advance = async (ms) => { t.mock.timers.tick(ms); await new Promise((done) => setImmediate(done)); };
+  updater.start();
+  await advance(0);
+  assert.equal(checks, 1);
+  assert.equal((await updater.tick()).state, 'error');
+  await advance(60_000);
+  assert.equal(checks, 3);
+  await advance(resolved.backend.checkTtlMs - 1);
+  assert.equal(checks, 3);
+  await advance(1);
+  assert.equal(checks, 4);
+});
+
+test('冷却期结束就准备更新，永久校验失败仍不会快速重试', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { paths, resolved } = wb2apiSetup('http://127.0.0.1:1');
+  let time = NOW;
+  let checks = 0;
+  let downloads = 0;
+  const latest = { tag: 'v2.0.0', publishedAt: new Date(NOW - 3_600_000).toISOString() };
+  const driver = {
+    describe: () => ({ exeExists: true }),
+    check: async () => { checks += 1; return { local: { tag: 'v1.0.0' }, latest }; },
+    prepare: async () => { downloads += 1; return { ok: false, state: 'verify-failed', reason: 'bad checksum' }; },
+  };
+  const { updater } = updaterFor(resolved, fakeService(1), { driver, firstDelayMs: 0, now: () => time });
+  t.after(() => updater.stop());
+  const advance = async (ms) => { time += ms; t.mock.timers.tick(ms); await new Promise((done) => setImmediate(done)); };
+  updater.start();
+  await advance(0);
+  assert.equal(readAutoState(paths).lastCheck.reason, 'too-fresh');
+  await advance(3_600_000 - 1);
+  assert.equal(checks, 1);
+  await advance(1);
+  assert.equal(downloads, 1);
+  assert.equal(readAutoState(paths).failed.state, 'verify-failed');
+  await advance(resolved.backend.checkTtlMs - 1);
+  assert.equal(checks, 2, '包校验失败不进入网络故障的快速重试');
+  await advance(1);
+  assert.equal(checks, 3);
+  assert.equal(downloads, 1, '失败过的版本仍不会再下载');
+});
+
+test('更新锁占用只推迟一分钟，不再错过整个六小时周期', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { paths, resolved } = wb2apiSetup('http://127.0.0.1:1');
+  const latest = { tag: 'v2.0.0', publishedAt: '2026-01-01T00:00:00Z' };
+  let downloads = 0;
+  const driver = {
+    describe: () => ({ exeExists: true }),
+    check: async () => ({ local: { tag: 'v1.0.0' }, latest }),
+    prepare: async () => {
+      downloads += 1;
+      return { ok: true, state: 'prepared', latest, staged: { path: join(paths.cache, 'staged.exe') } };
+    },
+  };
+  const { updater } = updaterFor(resolved, fakeService(1), { driver, firstDelayMs: 0 });
+  let releaseLock;
+  const held = withBackendLock('update', () => new Promise((done) => { releaseLock = done; }));
+  t.after(async () => { releaseLock(); await held; await updater.stop(); });
+  updater.start();
+  t.mock.timers.tick(0);
+  await new Promise((done) => setImmediate(done));
+  assert.equal(downloads, 0);
+  releaseLock();
+  await held;
+  t.mock.timers.tick(60_000);
+  await new Promise((done) => setImmediate(done));
+  assert.equal(downloads, 1);
+  assert.equal(readAutoState(paths).pending.tag, latest.tag);
 });

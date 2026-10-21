@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { resolvePluginConfig } from '../lib/config.js';
 import { withBackendLock } from '../lib/gateway.js';
 import { createModelResync } from '../lib/resync.js';
+import { readAutoState } from '../lib/auto-update.js';
+import { writeManifest } from '../lib/backend.js';
 import {
   BACKEND_NO_ACCOUNTS,
   BACKEND_NOT_INSTALLED,
@@ -35,6 +37,39 @@ import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../f
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.meta.url));
 const PLUGIN_ID = 'dsh-autostart-workbuddy';
+
+function managedBackendConfig(gateway, port, apiBase, installed = true) {
+  const root = mkdtempSync(join(tmpdir(), 'wb-web-update-'));
+  const env = { DSH_WORKBUDDY_BACKEND_ROOT: root };
+  const resolved = resolvePluginConfig({ gateway, port, backend: { apiBase } }, env);
+  const paths = resolved.backend.paths;
+  mkdirSync(paths.cache, { recursive: true });
+  if (installed) {
+    mkdirSync(paths.current, { recursive: true });
+    if (gateway === 'hub') {
+      mkdirSync(join(paths.current, 'python'), { recursive: true });
+      writeFileSync(paths.exe, 'MZ');
+      writeFileSync(paths.script, '# old hub');
+      writeFileSync(paths.manifest, JSON.stringify({ tag: 'v1.0.0' }));
+      writeFileSync(paths.state, JSON.stringify({ tag: 'v1.0.0', source: 'github-release' }));
+    } else {
+      const commit = 'a'.repeat(40);
+      writeFileSync(paths.exe, `MZ fake\nvcs.revision=${commit}\nvcs.modified=false\n`);
+      writeManifest(paths, { tag: 'v1.0.0', commit, source: 'github-release' });
+    }
+  }
+  const tag = 'v9.9.9';
+  const staged = join(paths.cache, 'old-staged');
+  writeFileSync(staged, 'previously downloaded');
+  const state = {
+    pending: { tag, staged: { path: staged } },
+    failed: { tag, state: 'health-failed', reason: 'old failure' },
+    last: null,
+    lastCheck: { at: '2026-10-21T10:47:02.486Z', state: 'error', reason: 'terminated', tag: null },
+  };
+  writeFileSync(join(paths.cache, 'auto-update.json'), JSON.stringify(state));
+  return { resolved, env, paths, tag, staged, state };
+}
 
 /** 起一个假后端；端口由子进程打印，避免抢占竞态。 */
 function startFixture(env = {}) {
@@ -672,6 +707,72 @@ test('后端路由：自动更新开关写 backend.autoUpdate（保留 backend �
   await handler(fakeReq('POST', { body: JSON.stringify({ action: 'autoUpdate', enabled: 'yes' }) }), bad);
   assert.equal(bad.status, 400);
   assert.equal(editor.edits.length, 2, '非法值不写配置');
+});
+
+for (const gateway of ['wb2api', 'hub']) {
+  for (const action of ['install', 'update']) {
+    test(`${gateway} 手动 ${action} 成功：立即刷新旧检查错误并清理已安装版本的失败和暂存记录`, async (t) => {
+      const release = startFixture({ TEST_MODE: gateway === 'hub' ? 'http-hub-release' : 'http-release' });
+      const health = startFixture({ TEST_MODE: gateway === 'hub' ? 'http-hub-health' : 'http-health' });
+      t.after(() => { release.stop(); health.stop(); });
+      const port = await health.ready;
+      const x = managedBackendConfig(gateway, port, `http://127.0.0.1:${await release.ready}`, action === 'update');
+      const service = { port, spec: { host: '127.0.0.1' }, stop: async () => ({ stopped: true }), ensureRunning: async () => ({ state: 'started' }) };
+      const ctx = fakeCtx();
+      registerPanelRoutes(ctx, { logger: ctx.logger, ...x, service });
+      const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;
+      const res = fakeRes();
+      await handler(fakeReq('POST', { body: JSON.stringify({ action }) }), res);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.backend.version.tag, x.tag);
+      assert.equal(res.body.backend.version.source, 'github-release', '手动安装不冒充自动安装');
+      const state = readAutoState(x.paths);
+      assert.equal(state.lastCheck.state, 'skipped');
+      assert.equal(state.lastCheck.reason, 'up-to-date');
+      assert.equal(state.lastCheck.tag, x.tag);
+      assert.equal(state.pending, null);
+      assert.equal(state.failed, null);
+      assert.equal(state.last, null);
+      assert.equal(existsSync(x.staged), false);
+      assert.deepEqual(res.body.backend.autoUpdate.lastCheck, state.lastCheck, '本次响应就能移除旧提示，不等后台下一轮');
+    });
+  }
+
+  for (const method of ['GET', 'POST']) {
+    test(`${gateway} 手动 ${method} 检查成功：清除旧网络错误，保留尚未安装的暂存包与永久失败记录`, async (t) => {
+      const release = startFixture({ TEST_MODE: gateway === 'hub' ? 'http-hub-release' : 'http-release' });
+      t.after(() => release.stop());
+      const x = managedBackendConfig(gateway, await freePort(), `http://127.0.0.1:${await release.ready}`);
+      const ctx = fakeCtx();
+      registerPanelRoutes(ctx, { logger: ctx.logger, ...x });
+      const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;
+      const res = fakeRes();
+      await handler(fakeReq(method, { url: `${BACKEND_PATH}?check=1`, ...(method === 'POST' ? { body: JSON.stringify({ action: 'check' }) } : {}) }), res);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.check.updateAvailable, true);
+      const state = readAutoState(x.paths);
+      assert.equal(state.lastCheck.state, 'checked');
+      assert.equal(state.lastCheck.reason, null);
+      assert.equal(state.lastCheck.tag, x.tag);
+      assert.deepEqual(state.failed, x.state.failed, '仅检查成功不能取消安装失败的版本保护');
+      assert.deepEqual(state.pending, x.state.pending);
+      assert.equal(existsSync(x.staged), true);
+    });
+  }
+}
+
+test('手动更新校验失败不能清掉原有自动更新错误与保护记录', async (t) => {
+  const release = startFixture({ TEST_MODE: 'http-release', TEST_RELEASE_BAD_CHECKSUM: '1' });
+  t.after(() => release.stop());
+  const x = managedBackendConfig('wb2api', await freePort(), `http://127.0.0.1:${await release.ready}`);
+  const ctx = fakeCtx();
+  registerPanelRoutes(ctx, { logger: ctx.logger, ...x });
+  const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;
+  const res = fakeRes();
+  await handler(fakeReq('POST', { body: JSON.stringify({ action: 'update' }) }), res);
+  assert.equal(res.status, 400);
+  assert.equal(res.body.state, 'verify-failed');
+  assert.deepEqual(readAutoState(x.paths), x.state);
 });
 
 test('后端路由：后台自动下载占着锁时，手动更新 409 并说明原因；切换网关不用等它', async () => {
