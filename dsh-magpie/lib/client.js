@@ -14,8 +14,8 @@ window.__ModuleLoader__.load({
       keySaved: '已保存 Key', keyEmpty: '使用本机标识', keyReadonly: 'Key 由环境变量提供，只读',
       check: '检查连接', connected: '已连接 Magpie {version}', catalog: '从 Magpie 同步',
       mirrored: '已按 Magpie 当前目录覆盖保存，DSH 分组现有 {count} 个模型。',
-      sync: '同步所选模型到 DSH', syncHint: '关闭同步或取消全部勾选，保存后移除“Magpie · DSH”分组。',
-      native: '当前还有 Magpie 原生分组。这里保存到独立的“Magpie · DSH”分组，原分组仍可使用。',
+      sync: '同步所选模型到 DSH', syncHint: '关闭同步或取消全部勾选，保存后移除“Magpie”分组。',
+      native: '当前还有 Magpie 原生分组。这里保存到独立的“Magpie”分组（ID 为 dsh-magpie），原分组仍可使用。',
       count: '{selected} / {total} 个模型已勾选', search: '搜索名称或 ID', add: '手动添加模型',
       sortModel: '按模型排序', sortProvider: '按供应商排序',
       sortModelHint: '对当前搜索结果按模型名称升序排列', sortProviderHint: '对当前搜索结果按供应商简称、模型名称升序排列',
@@ -24,7 +24,7 @@ window.__ModuleLoader__.load({
       selected: '同步此模型', drag: '拖动调整 {name} 的顺序', remove: '删除', details: '能力与参数',
       expand: '展开 {name} 的详细配置', collapse: '收起 {name} 的详细配置', newModel: '新模型',
       context: '上下文窗口', output: '最大输出 token', vision: '支持图片输入', efforts: '思考档位（逗号分隔）',
-      effortHint: '留空表示不声明思考档位', unspecified: '不指定', save: '保存并同步', saving: '处理中…',
+      effortHint: '可用 off、minimal、low、medium、high、xhigh、max；留空表示不声明', unspecified: '不指定', save: '保存并同步', saving: '处理中…',
       saved: '已保存，DSH 分组现有 {count} 个模型。', saveFailed: '清单已保存，同步未完成：{reason}',
       readOnly: '宿主配置服务尚未就绪，暂时无法保存。', unsaved: '有未保存的更改', savedState: '已保存',
       invalidJson: '服务返回了无效响应',
@@ -59,8 +59,8 @@ window.__ModuleLoader__.load({
       keySaved: 'Key saved', keyEmpty: 'Using local identity', keyReadonly: 'The environment supplies a read-only key',
       check: 'Check connection', connected: 'Connected to Magpie {version}', catalog: 'Sync from Magpie',
       mirrored: 'Replaced and saved the list from Magpie. The DSH group now has {count} models.',
-      sync: 'Sync selected models to DSH', syncHint: 'Turning sync off or deselecting all models removes the “Magpie · DSH” group when saved.',
-      native: 'Magpie native groups are also configured. This list uses its own “Magpie · DSH” group; existing groups remain available.',
+      sync: 'Sync selected models to DSH', syncHint: 'Turning sync off or deselecting all models removes the “Magpie” group when saved.',
+      native: 'Magpie native groups are also configured. This list uses its own “Magpie” group (ID dsh-magpie); existing groups remain available.',
       count: '{selected} / {total} models selected', search: 'Search names or IDs', add: 'Add a model',
       sortModel: 'Sort by model', sortProvider: 'Sort by provider',
       sortModelHint: 'Sort matching models by name, ascending', sortProviderHint: 'Sort matching models by short provider name, then model name, ascending',
@@ -69,7 +69,7 @@ window.__ModuleLoader__.load({
       selected: 'Sync this model', drag: 'Drag to reorder {name}', remove: 'Delete', details: 'Capabilities and limits',
       expand: 'Expand details for {name}', collapse: 'Collapse details for {name}', newModel: 'New model',
       context: 'Context window', output: 'Max output tokens', vision: 'Image input', efforts: 'Reasoning levels (comma-separated)',
-      effortHint: 'Leave blank to declare no reasoning levels', unspecified: 'Unspecified', save: 'Save and sync', saving: 'Working…',
+      effortHint: 'Use off, minimal, low, medium, high, xhigh or max; leave blank to declare none', unspecified: 'Unspecified', save: 'Save and sync', saving: 'Working…',
       saved: 'Saved. The DSH group now has {count} models.', saveFailed: 'List saved; sync incomplete: {reason}',
       readOnly: 'Host configuration services are not ready. Saving is unavailable.', unsaved: 'Unsaved edits', savedState: 'Saved',
       invalidJson: 'The server returned an invalid response',
@@ -138,7 +138,8 @@ window.__ModuleLoader__.load({
 
     async function request(body) {
       const res = await fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { cache: 'no-store' });
-      const value = await res.json();
+      // 路由未注册时宿主返回 HTML；交给调用处换成可读的文案，而不是显示 JSON 解析错误。
+      const value = await res.json().catch(() => { throw Object.assign(new Error(`HTTP ${res.status}`), { code: 'INVALID_JSON' }); });
       if (!res.ok || !value.ok) throw new Error(value.reason || `HTTP ${res.status}`);
       return value;
     }
@@ -557,9 +558,10 @@ window.__ModuleLoader__.load({
       const dragSource = useRef(null);
       const updater = useUpdater(t);
       const busy = modelBusy || updater.model.busy || isActiveOperation(updater.model.operation);
+      const failure = (error) => ({ error: true, text: error?.code === 'INVALID_JSON' ? `${t('invalidJson')}（${error.message}）` : error.message });
       useEffect(() => {
         let active = true;
-        request().then((value) => { if (active) setView(value); }).catch((error) => { if (active) setNotice({ error: true, text: error.message }); });
+        request().then((value) => { if (active) setView(value); }).catch((error) => { if (active) setNotice(failure(error)); });
         return () => { active = false; };
       }, []);
       const operation = view?.backend?.operation;
@@ -570,14 +572,14 @@ window.__ModuleLoader__.load({
           if (fetching) return;
           fetching = true;
           try { const result = await request({ action: 'backend-status', magpiePath: operation.path }); if (active) setView((old) => ({ ...old, backend: result.backend })); }
-          catch (error) { if (active) setNotice({ error: true, text: error.message }); }
+          catch (error) { if (active) setNotice(failure(error)); }
           finally { fetching = false; }
         }, 1000);
         return () => { active = false; clearInterval(timer); };
       }, [operation?.id, operation?.running]);
       const perform = async (run) => {
         setBusy(true); setNotice(null);
-        try { await run(); } catch (error) { setNotice({ error: true, text: error.message }); }
+        try { await run(); } catch (error) { setNotice(failure(error)); }
         finally { setBusy(false); }
       };
       const reload = () => perform(async () => { setView(await request()); setDirty(false); setKey(''); setExpanded(new Set()); });
@@ -710,7 +712,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'fields' },
             field(t('context'), row.contextWindow, (contextWindow) => updateRow(index, { contextWindow }), { type: 'number', min: 1, placeholder: t('unspecified') }),
             field(t('output'), row.maxTokens, (maxTokens) => updateRow(index, { maxTokens }), { type: 'number', min: 1, placeholder: t('unspecified') }),
-            field(t('efforts'), row.effortText ?? row.reasoningEfforts.join(', '), (value) => updateRow(index, { effortText: value, reasoningEfforts: value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) }), { placeholder: t('effortHint') }),
+            field(t('efforts'), row.effortText ?? row.reasoningEfforts.join(', '), (value) => updateRow(index, { effortText: value, reasoningEfforts: value.split(/[,，]/).map((s) => s.trim().toLowerCase()).filter(Boolean) }), { placeholder: t('effortHint') }),
             h('label', null, h('input', { type: 'checkbox', disabled: busy, checked: row.input.includes('image'), onChange: (e) => updateRow(index, { input: e.target.checked ? ['text', 'image'] : ['text'] }) }), t('vision'))))))),
         notice ? h('p', { className: `notice section${notice.error ? ' error' : ''}`, role: notice.error ? 'alert' : 'status' }, notice.text) : null,
         !view.editable ? h('p', { className: 'error' }, t('readOnly')) : null,

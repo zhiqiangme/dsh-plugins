@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { gatewayURL, isLocal, KEY_REF, object, PROVIDER_ID, normalizeModel } from './config.js';
+import { gatewayURL, isLocal, KEY_REF, LOCAL_KEY, object, PROVIDER_ID, REASONING_LEVELS, normalizeModel } from './config.js';
 import { displayModelName } from './names.js';
 
 export const LLM_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
@@ -10,8 +10,10 @@ export function findEntry(editor, name, id) {
 export async function credential(credentials, env, baseURL, explicit) {
   if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
   if (env[KEY_REF]?.trim()) return env[KEY_REF].trim();
-  const hit = await credentials?.resolve?.(KEY_REF);
-  return hit?.value?.trim() || (isLocal(baseURL) ? 'magpie-dsh' : '');
+  const saved = (await credentials?.resolve?.(KEY_REF))?.value?.trim();
+  // 本机占位标识不能当作远程 Magpie 的 Key 发出去，否则“需要有效 Key”的拦截永远不会触发。
+  if (saved && (saved !== LOCAL_KEY || isLocal(baseURL))) return saved;
+  return isLocal(baseURL) ? LOCAL_KEY : '';
 }
 
 export async function requestGateway(baseURL, path, key, fetchImpl = fetch) {
@@ -36,11 +38,15 @@ export function catalogModels(payload) {
     const contextWindow = Number(m.context_window ?? m.context_length) || undefined;
     const output = Number(m.max_output_tokens ?? m.max_output) || undefined;
     const efforts = m.supported_reasoning_levels ?? m.reasoning_levels ?? [];
+    // 上游可能有 DSH 不认识的档位（如 Codex 的 none）；只保留宿主接受的档位，剩下只有 off 时视为不声明。
+    const levels = m.reasoning === true && Array.isArray(efforts)
+      ? efforts.map((e) => typeof e === 'string' ? e.toLowerCase() : e?.effort?.toLowerCase?.()).filter((e) => REASONING_LEVELS.includes(e)) : [];
     return normalizeModel({
       id: m.id, name: m.display_name || m.name || m.id, enabled: true,
-      contextWindow, maxTokens: output,
+      // 上游把输出上限标成等于上下文时只省略这一项，不让单个模型拖垮整次全量同步。
+      contextWindow, maxTokens: contextWindow && output >= contextWindow ? undefined : output,
       input: m.modalities?.input?.includes('image') ? ['text', 'image'] : ['text'],
-      reasoningEfforts: m.reasoning === true && Array.isArray(efforts) ? efforts.map((e) => typeof e === 'string' ? e : e?.effort).filter(Boolean) : [],
+      reasoningEfforts: levels.some((e) => e !== 'off') ? levels : [],
     });
   }).filter((m) => !seen.has(m.id) && seen.add(m.id));
 }
@@ -63,7 +69,7 @@ export function withProvider(current, config) {
   else {
     const { reasoning: _reasoning, ...kept } = object(previous);
     providers[PROVIDER_ID] = {
-      ...kept, displayName: 'Magpie · DSH', apiKeyEnv: KEY_REF,
+      ...kept, displayName: 'Magpie', apiKeyEnv: KEY_REF,
       baseURL: `${config.baseURL}${config.api === 'anthropic-messages' ? '' : '/v1/'}`,
       api: config.api, models: entries,
       ...(previous?.reasoning && entries.every((m) => m.reasoningEfforts?.[previous.reasoning]) ? { reasoning: previous.reasoning } : {}),

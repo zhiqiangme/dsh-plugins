@@ -1,4 +1,4 @@
-import { KEY_REF, PACKAGE_NAME, PLUGIN_ID, object, resolveConfig, revision } from './config.js';
+import { KEY_REF, LOCAL_KEY, PACKAGE_NAME, PLUGIN_ID, object, resolveConfig, revision } from './config.js';
 import { credential, findEntry, catalogModels, requestGateway, syncModels } from './models.js';
 import { PROVIDER_NAMES } from './names.js';
 import { MagpieBackend } from './backend.js';
@@ -41,7 +41,7 @@ export class ModelManager {
     return {
       ok: true, config, revision: revision(config), lastSync: this.lastSync, providerNames: PROVIDER_NAMES,
       backend: await this.backend.describe(config.magpiePath),
-      keyConfigured: Boolean(this.env[KEY_REF] || saved?.value),
+      keyConfigured: Boolean(this.env[KEY_REF] || (saved?.value && saved.value !== LOCAL_KEY)),
       keyWritable: !this.env[KEY_REF] && (await this.credentials?.describe?.(KEY_REF))?.writable !== false,
       editable: Boolean(findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID)),
       nativeProviders: Object.keys(object(llm?.options.config?.providers)).filter((id) => ['magpie', 'magpie-responses', 'magpie-anthropic'].includes(id)),

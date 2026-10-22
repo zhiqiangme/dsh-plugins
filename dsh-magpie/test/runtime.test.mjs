@@ -4,6 +4,10 @@ import { ModelManager } from '../lib/runtime.js';
 import { KEY_REF, PROVIDER_ID } from '../lib/config.js';
 import { apply } from '../lib/index.js';
 import { fakeHost } from '../fixtures/host.mjs';
+import { MagpieBackend } from '../lib/backend.js';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const config = { syncEnabled: true, models: [{ id: 'manual/unlisted', name: '自己的目录' }] };
 function setup(options) {
@@ -101,7 +105,7 @@ test('合法空目录清空清单并移除 DSH 分组；异常目录及网络失
   const saved = await host.manager.handle({ action: 'save', revision: (await host.manager.describe()).revision, config });
   const previous = structuredClone([host.own.options.config, host.llm.options.config, [...host.keys]]);
   const edits = host.edits.length;
-  for (const payload of [{ wrong: [] }, { data: [{ id: 'valid' }, null] }, { data: [{ id: '' }] }, { data: [{ id: 'invalid-limit', context_window: 10, max_output_tokens: 10 }] }, { data: Array.from({ length: 513 }, (_, i) => ({ id: `x${i}` })) }]) {
+  for (const payload of [{ wrong: [] }, { data: [{ id: 'valid' }, null] }, { data: [{ id: '' }] }, { data: [{ id: 'invalid-limit', context_window: 10.5 }] }, { data: Array.from({ length: 513 }, (_, i) => ({ id: `x${i}` })) }]) {
     host.manager.fetch = async (url) => ({ ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie' } : payload });
     await assert.rejects(host.manager.handle({ action: 'sync-catalog', revision: saved.revision, config: saved.config }));
     assert.deepEqual([host.own.options.config, host.llm.options.config, [...host.keys]], previous);
@@ -168,4 +172,20 @@ test('关闭后的 manager 不再接受配置写入', async () => {
   const host = setup();
   host.manager.disposed = true;
   await assert.rejects(host.manager.handle({ action: 'save', revision: (await host.manager.describe()).revision, config }), /关闭/);
+});
+
+test('保存的程序路径是目录时保存成功、卡片仍可读取；本机占位标识不算已保存 Key', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-magpie-runtime-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const folder = join(root, 'folder.exe');
+  mkdirSync(folder);
+  const host = setup({ backend: new MagpieBackend({ env: { DSH_MAGPIE_BACKEND_ROOT: root }, platform: 'win32', arch: 'x64', probe: async () => '0.1.0', isRunning: async () => false }) });
+  const view = await host.manager.describe();
+  const saved = await host.manager.handle({ action: 'save', revision: view.revision, config: { ...config, magpiePath: folder } });
+  assert.equal(saved.saved, true);
+  assert.match(saved.backend.reason, /普通文件/);
+  const reloaded = await host.manager.describe();
+  assert.equal(reloaded.config.magpiePath, folder);
+  assert.equal(host.keys.get(KEY_REF), 'magpie-dsh');
+  assert.equal(reloaded.keyConfigured, false);
 });

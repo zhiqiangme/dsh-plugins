@@ -6,8 +6,12 @@ export const PACKAGE_NAME = '@zhiqiangme/dsh-magpie';
 // Magpie 原生只维护 magpie、magpie-responses、magpie-anthropic；独立 ID 避免白名单被它回写。
 export const PROVIDER_ID = 'dsh-magpie';
 export const KEY_REF = 'DSH_MAGPIE_API_KEY';
+// Magpie 官方约定的本机应用标识；llm-pi-ai 需要凭据有值，所以本机时会写进凭据，但它不是用户保存的 Key。
+export const LOCAL_KEY = 'magpie-dsh';
 export const APIS = ['openai-completions', 'openai-responses', 'anthropic-messages'];
 export const DEFAULT_URL = 'http://127.0.0.1:3425';
+// llm-pi-ai 的 reasoningEfforts 只接受这些键；其它值会让整个 provider 配置校验失败。
+export const REASONING_LEVELS = Object.freeze(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 export const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 
 export function gatewayURL(value = DEFAULT_URL) {
@@ -51,9 +55,11 @@ export function normalizeModel(raw) {
     throw new Error('输入能力必须包含 text，可选 image');
   }
   const efforts = row.reasoningEfforts ?? [];
-  if (!Array.isArray(efforts) || efforts.some((x) => typeof x !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(x))) {
-    throw new Error('思考档位必须是英文名称列表，例如 low、high、max');
+  if (!Array.isArray(efforts) || efforts.some((x) => !REASONING_LEVELS.includes(x))) {
+    throw new Error(`思考档位只能使用 ${REASONING_LEVELS.join('、')}`);
   }
+  // llm-pi-ai 拒绝只声明 off 的模型；不支持思考时应留空。
+  if (efforts.length && efforts.every((x) => x === 'off')) throw new Error('思考档位不能只有 off，不支持思考请留空');
   return {
     id, name, enabled: row.enabled !== false,
     ...(contextWindow ? { contextWindow } : {}), ...(maxTokens ? { maxTokens } : {}),

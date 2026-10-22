@@ -42,7 +42,9 @@ test('Magpie 全量目录保留上游限额、能力和顺序，全部勾选并�
   assert.throws(() => catalogModels({ invalid: [] }), /格式无效/);
   assert.throws(() => catalogModels({ data: [{ id: 'valid' }, null] }), /无效条目/);
   assert.throws(() => catalogModels({ data: [{ id: '' }] }), /模型 ID/);
-  assert.throws(() => catalogModels({ data: [{ id: 'x', context_window: 10, max_output_tokens: 10 }] }), /最大输出/);
+  // 上游输出上限不小于上下文时只省略该项，其余字段照常导入。
+  assert.deepEqual(catalogModels({ data: [{ id: 'x', context_window: 10, max_output_tokens: 10 }] })[0].contextWindow, 10);
+  assert.equal('maxTokens' in catalogModels({ data: [{ id: 'x', context_window: 10, max_output_tokens: 10 }] })[0], false);
   assert.deepEqual(catalogModels({ data: [] }), []);
 });
 
@@ -81,6 +83,22 @@ test('离线同步手工清单：保存本机标识到凭据库，配置中仅�
   assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].name, '手工名称');
   assert.equal((await syncModels(config, { editor: host.editor, credentials: host.services.credentials, env: {} })).state, 'unchanged');
   assert.equal(host.edits.length, 1);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].displayName, 'Magpie');
+  // 本机占位标识留在凭据库，但切到远程时不能当作 Key 发出去。
+  await assert.rejects(syncModels(manual({ baseURL: 'https://gateway.example' }), { editor: host.editor, credentials: host.services.credentials, env: {} }), /远程/);
+});
+
+test('思考档位只接受 llm-pi-ai 支持的级别；目录导入丢弃未知档位', () => {
+  assert.throws(() => manual({ models: [{ id: 'x', reasoningEfforts: ['none', 'low'] }] }), /思考档位只能使用/);
+  assert.throws(() => manual({ models: [{ id: 'x', reasoningEfforts: ['High'] }] }), /思考档位只能使用/);
+  assert.throws(() => manual({ models: [{ id: 'x', reasoningEfforts: ['off'] }] }), /不能只有 off/);
+  assert.deepEqual(manual({ models: [{ id: 'x', reasoningEfforts: ['off', 'xhigh'] }] }).models[0].reasoningEfforts, ['off', 'xhigh']);
+  const rows = catalogModels({ data: [
+    { id: 'codex/a', reasoning: true, supported_reasoning_levels: [{ effort: 'none' }, { effort: 'Low' }, { effort: 'xhigh' }] },
+    { id: 'codex/b', reasoning: true, supported_reasoning_levels: ['none', 'off', 'auto'] },
+  ] });
+  assert.deepEqual(rows[0].reasoningEfforts, ['low', 'xhigh']);
+  assert.deepEqual(rows[1].reasoningEfforts, [], '只剩 off 时视为不声明思考');
 });
 
 test('锁内合并保留并行添加的其它 provider', async () => {
