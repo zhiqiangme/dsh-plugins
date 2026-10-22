@@ -55,6 +55,13 @@ test('退出联动开关默认关闭，保存持久化且重新载入保留，�
   assert.equal(calls[0].config.closeOnExit, true);
   assert.equal(toggle().props.checked, true);
   assert.equal(resolveConfig(saved.config).closeOnExit, true);
+  // 开机启动默认勾选，取消后随保存写入。
+  const autoStart = () => nodes(client.render(), (n) => n.type === 'label' && n.children.includes('启动 DSH 时自动打开 Magpie'))[0].children[0];
+  assert.equal(autoStart().props.checked, true);
+  autoStart().props.onChange({ target: { checked: false } });
+  await button(client.render(), '保存并同步').props.onClick();
+  assert.equal(calls[1].config.autoStart, false);
+  assert.equal(resolveConfig(saved.config).autoStart, false);
 });
 
 test('添加、编辑、调整顺序、取消勾选、删除通过卡片实际事件更新待保存清单', () => {

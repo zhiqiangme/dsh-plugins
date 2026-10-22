@@ -2,12 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
 import { spawn } from 'node:child_process';
-import { copyFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fakeHost } from '../fixtures/host.mjs';
 import { resolveConfig } from '../lib/config.js';
-import { closeMagpieSync, registerExitClose } from '../lib/lifecycle.js';
+import { autoStartMagpie, closeMagpieSync, registerAutoStart, registerExitClose } from '../lib/lifecycle.js';
+import { backendFixture } from '../fixtures/backend.mjs';
 
 test('关闭联动默认关闭，布尔校验严格，不支持平台不执行进程命令', () => {
   assert.equal(resolveConfig().closeOnExit, false);
@@ -94,3 +95,54 @@ test('真实 Windows 进程：网关识别只结束该实例，完整路径不�
   assert.deepEqual(closeMagpieSync(resolveConfig({ closeOnExit: true, magpiePath: join(root, 'two', 'magpie.exe') })).map((p) => p.pid), [other.child.pid]);
   await secondExit;
 });
+
+// 开机启动用的 manager 替身：程序与进程检测全部注入，不探测真实主目录、不启动真实进程。
+function startupManager(t, config = {}, backendOptions = {}) {
+  const fixture = backendFixture(t, backendOptions);
+  const manager = { config: resolveConfig(config), backend: fixture.backend, disposed: false };
+  return { manager, ...fixture };
+}
+const refused = async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) }); };
+
+test('开机启动默认开启；本机未运行 Magpie 时启动已下载的程序', async (t) => {
+  assert.equal(resolveConfig().autoStart, true);
+  assert.throws(() => resolveConfig({ autoStart: 'yes' }), /必须是布尔/);
+  const { manager, backend, launches } = startupManager(t);
+  writeMagpie(backend.paths.exe);
+  const result = await autoStartMagpie(manager, { platform: 'win32', fetchImpl: refused, findRunning: async () => false });
+  assert.equal(result.state, 'started');
+  assert.deepEqual(launches, [backend.paths.exe]);
+});
+
+test('已有 Magpie 在运行、端口被占用、远程地址、关闭开关或未下载时不启动', async (t) => {
+  const { manager, backend, launches } = startupManager(t);
+  const opts = { platform: 'win32', fetchImpl: refused, findRunning: async () => false };
+  assert.equal((await autoStartMagpie(manager, opts)).state, 'not-installed');
+  writeMagpie(backend.paths.exe);
+  assert.equal((await autoStartMagpie(manager, { ...opts, findRunning: async () => true })).state, 'running');
+  assert.equal((await autoStartMagpie(manager, { ...opts, fetchImpl: async () => ({ ok: true }) })).state, 'running');
+  assert.equal((await autoStartMagpie(manager, { ...opts, fetchImpl: async () => { throw new DOMException('timeout', 'TimeoutError'); } })).state, 'running', '无法确定时不重复启动');
+  assert.equal((await autoStartMagpie(manager, { ...opts, platform: 'linux' })).state, 'disabled');
+  manager.config = resolveConfig({ autoStart: false });
+  assert.equal((await autoStartMagpie(manager, opts)).state, 'disabled');
+  manager.config = resolveConfig({ baseURL: 'https://remote.example' });
+  assert.equal((await autoStartMagpie(manager, opts)).state, 'disabled');
+  manager.config = resolveConfig();
+  backend.pending = Promise.resolve();
+  assert.equal((await autoStartMagpie(manager, opts)).state, 'busy');
+  assert.deepEqual(launches, []);
+});
+
+test('程序无法验证为 Magpie 时不启动并记录警告；启动异常只记录不抛出', async (t) => {
+  const { manager, backend, launches } = startupManager(t);
+  mkdirSync(join(backend.paths.exe, '..'), { recursive: true });
+  writeFileSync(backend.paths.exe, 'not magpie');
+  assert.equal((await autoStartMagpie(manager, { platform: 'win32', fetchImpl: refused, findRunning: async () => false })).state, 'unverified');
+  assert.deepEqual(launches, []);
+  const warnings = [];
+  registerAutoStart({ logger: { info() {}, warn: (m) => warnings.push(m) } }, manager, { start: async () => { throw new Error('boom'); } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(warnings[0], /boom/);
+});
+
+function writeMagpie(path, version = '0.1.1') { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, `magpie ${version}`); }

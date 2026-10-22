@@ -72,7 +72,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 - 卸载不删 `cordis.patch.yml` 里的配置，也不删各插件自管的后端数据（如 `~/.dsh/autostart-workbuddy`、`~/.dsh/autostart-opencode2api`）。
   workbuddy 与 opencode2api 的卡片有「清除后端数据」按钮，卸载前点一下即可删掉各自的数据目录；
   tavily-search 的卡片有「清除插件数据」，删掉保存的 API Key 并把网页搜索接口恢复默认。
-- Magpie 可在卡片下载、升级 Windows 程序，默认独立目录并支持指定已有 exe，下载或升级完成后自动启动，不托管其进程。可离线手工编辑；点击「从 Magpie 同步」会全量覆盖当前清单，移除上游已关闭或删除的条目，并立即保存、更新 DSH。模型写入 DSH 的 **Magpie** 分组（provider ID `dsh-magpie`）。下载中断会自动续传，再次点击也从已下载部分继续。卸载前需要移除该分组时，先在卡片关闭同步并保存。
+- Magpie 可在卡片下载、升级 Windows 程序，默认独立目录并支持指定已有 exe，下载或升级完成后自动启动，DSH 启动时若本机没有 Magpie 在运行也会自动打开（可在卡片关闭），不托管其进程。可离线手工编辑；点击「从 Magpie 同步」会全量覆盖当前清单，移除上游已关闭或删除的条目，并立即保存、更新 DSH。模型写入 DSH 的 **Magpie** 分组（provider ID `dsh-magpie`）。下载中断会自动续传，再次点击也从已下载部分继续。卸载前需要移除该分组时，先在卡片关闭同步并保存。
 - Magpie 是新增包，npm 首次发布前请使用上述源码安装命令。
 
 ## 版本号

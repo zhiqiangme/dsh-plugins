@@ -45,6 +45,16 @@ export function launchDetached(path) {
     child.once('spawn', () => { child.unref(); resolve(child.pid); });
   });
 }
+/**
+ * 本机是否已有任何 Magpie 在运行：目标路径本身，或文件名为 magpie.exe / 官方 Windows 产物名的进程
+ * （用户自己另装的 Magpie 也算），避免开机时再拉起第二个实例抢端口。
+ */
+export async function anyMagpieRunning(path) {
+  const script = "$ErrorActionPreference='Stop'; $target=[IO.Path]::GetFullPath($env:DSH_MAGPIE_PROBE_TARGET); @(Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq $target) -or ($_.Name -match '^magpie(?:-windows-(?:amd64|arm64))?\\.exe$') } | Select-Object -ExpandProperty ProcessId) | ConvertTo-Json -Compress";
+  const { stdout } = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024, env: { ...process.env, DSH_MAGPIE_PROBE_TARGET: path } });
+  const found = stdout.trim() ? JSON.parse(stdout.trim()) : [];
+  return Array.isArray(found) ? found.length > 0 : Number.isSafeInteger(found) && found > 0;
+}
 async function runningWindows(path) {
   // 路径经环境传入固定脚本，不能把用户输入拼进 PowerShell 命令。
   const script = "$ErrorActionPreference='Stop'; $target=[IO.Path]::GetFullPath($env:DSH_MAGPIE_PROBE_TARGET); $name=[IO.Path]::GetFileName($target); @(Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq $target) -or (!$_.ExecutablePath -and $_.Name -eq $name) } | Select-Object -ExpandProperty ProcessId) | ConvertTo-Json -Compress";

@@ -1,6 +1,45 @@
 import { spawnSync } from 'node:child_process';
-import { backendPaths, targetPath } from './backend.js';
+import { anyMagpieRunning, backendPaths, targetPath } from './backend.js';
 import { isLocal } from './config.js';
+
+// 端口探测只用于判断“已有服务在听”，2 秒足够本机回应。
+const PORT_TIMEOUT = 2_000;
+
+/** 本机 Magpie 端口是否已被占用；连接被拒绝视为空闲，超时等无法确定的情况按占用处理，宁可不启动也不重复启动。 */
+async function portBusy(baseURL, fetchImpl) {
+  try {
+    await fetchImpl(`${baseURL}/api/hello`, { signal: AbortSignal.timeout(PORT_TIMEOUT), redirect: 'manual' });
+    return true;
+  } catch (error) {
+    const codes = [error?.code, error?.cause?.code, ...(error?.cause?.errors ?? []).map((e) => e?.code)];
+    return !codes.includes('ECONNREFUSED');
+  }
+}
+
+/**
+ * DSH 启动、插件激活时，若本机没有 Magpie 在运行，启动程序路径中的 Magpie。
+ * 只处理本机地址，且程序必须能验证为 Magpie；远程地址、未下载或正在下载升级时不动。
+ */
+export async function autoStartMagpie(manager, { platform = process.platform, fetchImpl = manager.fetch, findRunning = anyMagpieRunning } = {}) {
+  const config = manager.config, backend = manager.backend;
+  if (!config.autoStart || platform !== 'win32' || !isLocal(config.baseURL)) return { state: 'disabled' };
+  if (backend.pending) return { state: 'busy' };
+  const path = targetPath(config.magpiePath, backend.paths);
+  const local = await backend.local(path);
+  if (!local.installed) return { state: 'not-installed', path };
+  if (!local.version) return { state: 'unverified', path, reason: local.reason };
+  if (await portBusy(config.baseURL, fetchImpl) || await findRunning(path)) return { state: 'running', path };
+  if (manager.disposed || backend.pending) return { state: 'busy' };
+  return { state: 'started', path, pid: await backend.launch(path) };
+}
+
+export function registerAutoStart(ctx, manager, { start = autoStartMagpie } = {}) {
+  const logger = ctx.logger ?? console;
+  start(manager).then((result) => {
+    if (result.state === 'started') logger.info(`[dsh-magpie] 本机未运行 Magpie，已启动 ${result.path}（PID ${result.pid}）`);
+    else if (result.state === 'unverified') logger.warn(`[dsh-magpie] ${result.path} 未能验证为 Magpie，未自动启动：${result.reason ?? ''}`);
+  }, (error) => logger.warn(`[dsh-magpie] 自动启动 Magpie 失败：${error.message}`));
+}
 
 // exit 阶段不允许异步等待。固定脚本通过环境变量接收路径和端口，不拼接用户输入。
 const CLOSE_SCRIPT = String.raw`

@@ -151,10 +151,12 @@ test('保存完整配置、非法模型和缺少版本都须拒绝', async () =>
 });
 
 test('插件入口立即返回，等待宿主服务，释放路由，配置热更新不重启', async () => {
-  const host = fakeHost(config);
+  // 关掉开机启动：真实 apply 会探测用户主目录下的 Magpie，测试不能启动真实程序。
+  const quiet = { ...config, autoStart: false };
+  const host = fakeHost(quiet);
   const pending = [];
   host.ctx.inject = (names, run) => pending.push({ names, run });
-  assert.equal(apply(host.ctx, config), undefined);
+  assert.equal(apply(host.ctx, quiet), undefined);
   assert.equal(host.routes.length, 0);
   await pending.find((p) => p.names.includes('webServer')).run(host.ctx);
   await pending.find((p) => p.names.includes('configEditor')).run();
