@@ -4,7 +4,7 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react');
     const h = React.createElement;
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useCallback } = React;
     const namespace = 'settings.dsh-magpie';
     const path = '/plugins/dsh-magpie/models';
     const zh = {
@@ -35,6 +35,20 @@ window.__ModuleLoader__.load({
       backendChecking: '正在检查版本…', backendDownloading: '正在下载…', backendVerifying: '正在校验程序…', backendInstalling: '正在替换程序…',
       backendInstalled: 'Magpie {version} 已下载，请从程序路径启动。', backendUpdated: '已升级到 Magpie {version}，可以重新启动 Magpie。',
       backendProgress: '已下载 {received} / {total} MiB', backendFailed: '操作失败：{reason}',
+      updateTitle: '插件更新', updateChecking: '正在检查更新…', updateCheck: '检查更新',
+      updateCheckFailed: '检查更新失败：{reason}', updateCurrent: '当前运行版本：', updateLatestVersion: 'npm 最新版本：',
+      updateUpToDate: '已是最新', updateAvailable: '有新版本', updatePendingRestart: '等待重启', updatePendingRefresh: '等待刷新',
+      updateNow: '更新到 v{version}', updateNoMarket: '安装 DSH 插件市场（dshmarket）后可在此更新插件。',
+      updateLinked: '本插件从本地目录（file:）安装，请在源码目录更新后重新运行 install-plugins.cmd；从 npm 安装后可在此一键更新。',
+      updateManaged: '本插件由 DSH 桌面端统一管理，请通过宿主管理插件版本。',
+      updateRunning: '正在更新…', updateProgress: '正在更新… {percent}%', updateStartFailed: '没能开始更新：{reason}',
+      updateSucceeded: '已更新到 v{version}。', updateRestartHint: '重启 DSH 后生效。', updateRefreshHint: '刷新页面后生效。',
+      updateMismatch: '实际安装版本 v{installed} 低于预期的 v{target}，请重新检查后再更新。',
+      updateFailed: '更新失败：{reason}', updateTooFresh: '新版本尚在 pnpm 发布冷却期内，可以稍后重试，或强制更新。',
+      updateForce: '强制更新', updateCancelled: '更新已取消。', updateRolledBack: '更新已回滚，插件保持在 v{version}。',
+      updateLost: '上次更新任务已结束或 DSH 已重启，请以当前版本为准。',
+      updateSaveFirst: '请先保存或放弃模型更改，再更新插件。', updateWait: '请等待当前操作完成后再更新插件。',
+      restartNow: '立即重启 DSH', restarting: '正在重启 DSH…', restartFailed: '未能确认重启：{reason}',
     };
     const en = {
       title: 'Magpie models', description: 'Edit manually, or sync from Magpie to replace the entire list, save it and update DSH immediately.',
@@ -64,7 +78,40 @@ window.__ModuleLoader__.load({
       backendChecking: 'Checking version…', backendDownloading: 'Downloading…', backendVerifying: 'Verifying executable…', backendInstalling: 'Replacing executable…',
       backendInstalled: 'Magpie {version} downloaded. Launch it from the executable path.', backendUpdated: 'Updated to Magpie {version}. You can restart Magpie.',
       backendProgress: 'Downloaded {received} / {total} MiB', backendFailed: 'Operation failed: {reason}',
+      updateTitle: 'Plugin update', updateChecking: 'Checking for updates…', updateCheck: 'Check for updates',
+      updateCheckFailed: 'Update check failed: {reason}', updateCurrent: 'Running version: ', updateLatestVersion: 'Latest on npm: ',
+      updateUpToDate: 'Up to date', updateAvailable: 'Update available', updatePendingRestart: 'Restart pending', updatePendingRefresh: 'Reload pending',
+      updateNow: 'Update to v{version}', updateNoMarket: 'Install the DSH plugin market (dshmarket) to update here.',
+      updateLinked: 'This plugin was installed from a local directory (file:). Update its checkout and run install-plugins.cmd again, or install from npm for one-click updates.',
+      updateManaged: 'DSH Desktop manages this plugin. Use the host to manage its version.',
+      updateRunning: 'Updating…', updateProgress: 'Updating… {percent}%', updateStartFailed: 'Could not start the update: {reason}',
+      updateSucceeded: 'Updated to v{version}.', updateRestartHint: 'Restart DSH to apply it.', updateRefreshHint: 'Reload the page to apply it.',
+      updateMismatch: 'Installed v{installed} is below the expected v{target}. Check again before updating.',
+      updateFailed: 'Update failed: {reason}', updateTooFresh: 'The new version is inside pnpm’s release cool-down. Retry later or force the update.',
+      updateForce: 'Force update', updateCancelled: 'Update cancelled.', updateRolledBack: 'Update rolled back; the plugin stays at v{version}.',
+      updateLost: 'The previous update task ended or DSH restarted. Use the current version shown here.',
+      updateSaveFirst: 'Save or discard model edits before updating the plugin.', updateWait: 'Wait for the current operation before updating the plugin.',
+      restartNow: 'Restart DSH now', restarting: 'Restarting DSH…', restartFailed: 'Could not confirm restart: {reason}',
     };
+    // 沿用 WB 的 dshmarket 公开 API v1；插件独立发布，保持包内实现，不依赖 WB 安装。
+    const PACKAGE_NAME = '@zhiqiangme/dsh-magpie';
+    const VERSION_PATH = '/plugins/dsh-magpie/version';
+    const MARKET_CAPABILITIES_PATH = '/dsh-market/api/v1/capabilities';
+    const MARKET_SCHEMA = 'dsh-market/update-api/v1';
+    const MARKET_DEFAULT_ENDPOINTS = {
+      updates: '/dsh-market/api/v1/updates', operations: '/dsh-market/api/v1/operations', restart: '/dsh-market/api/v1/restart',
+    };
+    const POLL_MS = 1000;
+    // 自身更新可能重新挂载卡片；记录任务以便恢复进度，bootId 防止串到宿主重启前的任务。
+    const OPERATION_STORAGE_KEY = 'dsh-magpie:update-operation';
+    const FORCEABLE_FAILURES = new Set(['RELEASE_TOO_FRESH', 'VERSION_UNCHANGED']);
+
+    async function versionRequest(url) {
+      const response = await fetch(url, { cache: 'no-store' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.reason || `HTTP ${response.status}`);
+      return payload;
+    }
     const CSS = `
       .dsm-mp{color:var(--dsw-alias-label-primary,#202635);border:1px solid var(--dsw-alias-border-l2,#dce1eb);border-radius:12px;padding:20px;background:var(--dsw-alias-bg-layer-2,#fff);font-size:13px;line-height:1.6;box-sizing:border-box;min-width:0}
       .dsm-mp *{box-sizing:border-box}.dsm-mp h3{font-size:17px;margin:0}.dsm-mp p{margin:6px 0 12px}.dsm-mp .muted{color:var(--dsw-alias-label-secondary,#657084)}
@@ -81,6 +128,7 @@ window.__ModuleLoader__.load({
       .dsm-mp summary{cursor:pointer}.dsm-mp details>summary{color:var(--dsw-alias-label-secondary,#657084)}.dsm-mp .notice{padding:10px 12px;border-radius:6px;background:var(--dsw-alias-bg-layer-3,#f2f5fb);overflow-wrap:anywhere}.dsm-mp .error{color:var(--dsw-alias-state-error-primary,#b93645)}
       .dsm-mp .search{flex:1;min-width:160px}.dsm-mp .foot{margin-top:16px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2,#dce1eb)}
       .dsm-mp .backend .bar{margin-top:10px}.dsm-mp .backend-path,.dsm-mp .backend .error{overflow-wrap:anywhere}.dsm-mp .backend progress{display:block;width:100%;height:8px;margin-top:10px;accent-color:var(--dsw-alias-label-primary,#202635)}
+      .dsm-mp .plugin-update{margin-top:20px;padding-top:16px;border-top:1px solid var(--dsw-alias-border-l2,#dce1eb)}.dsm-mp .plugin-update p{overflow-wrap:anywhere}.dsm-mp .plugin-update-title{font-weight:600}
       @media(max-width:600px){.dsm-mp{padding:14px}.dsm-mp .fields{grid-template-columns:minmax(0,1fr)}.dsm-mp .search{flex-basis:100%}.dsm-mp .model-badges{display:none}.dsm-mp .model-select{flex:1}.dsm-mp .model-actions{margin-left:auto}}
     `;
 
@@ -131,16 +179,380 @@ window.__ModuleLoader__.load({
         : compare(a.name, b.name) || compare(a.supplier, b.supplier) || a.index - b.index).map(({ index }) => index);
     }
 
+    function errorText(error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+
+    function updateButton(key, kind, label, onClick, disabled) {
+      return h('button', { key, type: 'button', className: kind === 'primary' || kind === 'danger' ? kind : '', disabled, onClick }, label);
+    }
+
+    function updateNotice(key, value) {
+      if (!value) return null;
+      return h(
+        'p',
+        { key, className: `notice${value.kind === 'error' ? ' error' : ''}` },
+        value.text,
+      );
+    }
+
+    /**
+     * 调 dshmarket 的 v1 API。与 request() 分开：市场的失败体是 `{ error, failure }` 而不是 `{ reason }`，
+     * 409 / 404 这类状态码本身就是要展示的结果，所以这里不抛，原样交回状态码与响应体。
+     */
+    async function marketRequest(path, method, body) {
+      const response = await fetch(path, {
+        method,
+        headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      let payload;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = undefined;
+      }
+      return { status: response.status, body: payload };
+    }
+
+    /**
+     * dshmarket 只一键更新从 npm / git 装的插件。file:/link: 的本地目录安装（source 'linked'）它会直接拒绝
+     * （"locally linked plugins update from their checkout"），桌面端自带的 generation 安装也只报版本、不给更新。
+     * 所以先问一次本插件的安装来源，免得按钮点下去才失败。问不到（市场报错、网络抖动）时不拦着，
+     * 真点了失败也还有失败提示兜底。
+     */
+    const MARKET_UNMANAGED_SOURCES = new Set(['linked', 'generation']);
+
+    async function installSourceOf(updatesPath) {
+      try {
+        const result = await marketRequest(`${updatesPath}?name=${encodeURIComponent(PACKAGE_NAME)}`, 'GET');
+        const source = result.status === 200 ? result.body?.package?.source : undefined;
+        if (typeof source !== 'string') return {};
+        return { source, updatable: !MARKET_UNMANAGED_SOURCES.has(source) };
+      } catch {
+        return {};
+      }
+    }
+
+    /** 市场失败体 → 一句可展示的原因。 */
+    function marketReason(result) {
+      return result.body?.failure?.message ?? result.body?.error ?? `HTTP ${result.status}`;
+    }
+
+    /** sessionStorage 读写都可能抛（隐私模式、存储被禁），失败就当没有记录。 */
+    function readStoredOperation() {
+      try {
+        const value = JSON.parse(window.sessionStorage.getItem(OPERATION_STORAGE_KEY) ?? 'null');
+        return typeof value?.operationId === 'string' ? value : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+
+    function storeOperation(value) {
+      try {
+        if (value) window.sessionStorage.setItem(OPERATION_STORAGE_KEY, JSON.stringify(value));
+        else window.sessionStorage.removeItem(OPERATION_STORAGE_KEY);
+      } catch {
+        /* 存不下只是少了"重挂后接着轮询"，不影响本次更新 */
+      }
+    }
+
+    /** `x.y.z` 数字段比较（与 lib/update.js 同口径的简化版，用来核对实际安装版本与目标/最新版本）。 */
+    function versionBelow(installed, target) {
+      const parse = (value) => /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(value ?? ''))?.slice(1, 4).map(Number);
+      const left = parse(installed);
+      const right = parse(target);
+      if (!left || !right) return String(installed ?? '') !== String(target ?? '');
+      for (let index = 0; index < 3; index += 1) {
+        if (left[index] !== right[index]) return left[index] < right[index];
+      }
+      return false;
+    }
+
+    function isActiveOperation(operation) {
+      return operation?.state === 'queued' || operation?.state === 'running';
+    }
+
+    function renderUpdateSection(update, actions, t) {
+      const version = update.version ?? { phase: 'loading' };
+      const market = update.market ?? { phase: 'loading' };
+      const operation = update.operation;
+      const running = Boolean(update.busy) || isActiveOperation(operation);
+      const ready = version.phase === 'ready';
+
+      // 当前运行版本要等重启/刷新才换；仅当实际安装版本覆盖当前查到的最新版时，
+      // 才用成功结果覆盖徽章。镜像落后或再查到更高版本时，仍需提供更新入口。
+      let expected = update.target;
+      if (operation?.beforeVersion && (!expected || versionBelow(expected, operation.beforeVersion))) expected = operation.beforeVersion;
+      const mismatch = operation?.state === 'succeeded' && expected && versionBelow(operation.installedVersion, expected);
+      const latestInstalled = operation?.state === 'succeeded' && !mismatch && !versionBelow(operation.installedVersion, version.latestVersion);
+      const head = [h('span', { key: 'title', className: 'plugin-update-title' }, t('updateTitle'))];
+      if (ready) {
+        const badge = latestInstalled
+          ? operation.outcome?.restartRequired
+            ? { tone: 'new', text: t('updatePendingRestart') }
+            : operation.outcome?.refreshRequired
+              ? { tone: 'new', text: t('updatePendingRefresh') }
+              : { tone: 'ok', text: t('updateUpToDate') }
+          : version.updateAvailable
+            ? { tone: 'new', text: t('updateAvailable') }
+            : { tone: 'ok', text: t('updateUpToDate') };
+        head.push(h('span', { key: 'badge', className: 'badge' }, badge.text));
+      }
+      head.push(updateButton('check', 'outline', t('updateCheck'), actions.checkUpdate, version.phase === 'loading' || running));
+      // 只隐藏已安装版本覆盖的更新，避免重复安装，同时允许补齐或继续升级。
+      if (ready && !latestInstalled && version.updateAvailable && market.phase === 'ready' && market.updatable !== false) {
+        head.push(
+          updateButton('update', 'primary', running ? t('updateRunning') : t('updateNow', { version: version.latestVersion }), () => actions.startUpdate(false), running || update.blocked),
+        );
+      }
+
+      const section = [h('div', { key: 'head', className: 'bar' }, head)];
+      if (update.blocked && !running) section.push(h('p', { key: 'blocked', className: 'muted' }, update.blockedHint));
+      if (version.phase === 'loading') {
+        section.push(h('p', { key: 'checking', className: 'muted' }, t('updateChecking')));
+      } else if (version.phase === 'error') {
+        section.push(updateNotice('checkError', { kind: 'error', text: t('updateCheckFailed', { reason: version.reason }) }));
+      }
+      if (version.currentVersion) {
+        section.push(
+          h(
+            'p',
+            { key: 'versions', className: 'muted' },
+            t('updateCurrent'),
+            h('strong', null, `v${version.currentVersion}`),
+            ready ? '  ·  ' : null,
+            ready ? t('updateLatestVersion') : null,
+            ready ? h('strong', null, `v${version.latestVersion}`) : null,
+          ),
+        );
+      }
+      if (ready && version.updateAvailable && market.phase === 'absent' && !operation) {
+        section.push(h('p', { key: 'noMarket', className: 'muted' }, t('updateNoMarket')));
+      }
+      if (ready && version.updateAvailable && market.phase === 'ready' && market.updatable === false && !operation) {
+        section.push(h('p', { key: 'unmanaged', className: 'muted' }, t(market.source === 'linked' ? 'updateLinked' : 'updateManaged')));
+      }
+
+      if (isActiveOperation(operation)) {
+        const percent = operation.progress?.percent;
+        section.push(
+          h('p', { key: 'progress', className: 'muted' }, typeof percent === 'number' ? t('updateProgress', { percent }) : t('updateRunning')),
+        );
+        if (operation.progress?.detail) section.push(h('p', { key: 'detail', className: 'muted' }, operation.progress.detail));
+      } else if (operation?.state === 'succeeded') {
+        const parts = [t('updateSucceeded', { version: operation.installedVersion })];
+        if (operation.outcome?.restartRequired) parts.push(t('updateRestartHint'));
+        else if (operation.outcome?.refreshRequired) parts.push(t('updateRefreshHint'));
+        section.push(updateNotice('done', { kind: 'ok', text: parts.join(' ') }));
+        // 文档要求客户端自己再核对一次：市场回报成功，不等于装上的就是卡片上答应的那个版本
+        if (mismatch) {
+          section.push(updateNotice('mismatch', { kind: 'error', text: t('updateMismatch', { installed: operation.installedVersion, target: expected }) }));
+        }
+        if (operation.outcome?.restartRequired && market.restartSupported) {
+          const restartBusy = update.restart?.phase === 'busy' || update.restart?.phase === 'done';
+          section.push(
+            h(
+              'div',
+              { key: 'restart', className: 'bar' },
+              updateButton('restart', 'primary', restartBusy ? t('restarting') : t('restartNow'), actions.restart, restartBusy || update.blocked || Boolean(mismatch)),
+            ),
+          );
+        }
+      } else if (operation?.state === 'failed') {
+        const code = operation.failure?.code;
+        const reason = code === 'RELEASE_TOO_FRESH' ? t('updateTooFresh') : t('updateFailed', { reason: operation.failure?.message ?? code ?? '' });
+        section.push(updateNotice('failed', { kind: 'error', text: reason }));
+        if (FORCEABLE_FAILURES.has(code) && market.phase === 'ready' && market.updatable !== false) {
+          section.push(
+            h('div', { key: 'force', className: 'bar' }, updateButton('force', 'danger', t('updateForce'), () => actions.startUpdate(true), running || update.blocked)),
+          );
+        }
+      } else if (operation?.state === 'cancelled') {
+        section.push(updateNotice('cancelled', { kind: 'error', text: t('updateCancelled') }));
+      } else if (operation?.state === 'rolled-back') {
+        section.push(updateNotice('rolledBack', { kind: 'error', text: t('updateRolledBack', { version: operation.installedVersion }) }));
+      }
+      if (update.restart?.phase === 'error') {
+        section.push(updateNotice('restartError', { kind: 'error', text: t('restartFailed', { reason: update.restart.reason }) }));
+      }
+      section.push(updateNotice('updateNotice', update.notice));
+      return section;
+    }
+
+    /**
+     * 「插件更新」区块的状态与动作：版本检查走本插件的宿主路由，更新与重启交给 dshmarket，
+     * 本插件不碰 pnpm，也不自己改 profile。
+     * 读状态处都带 `?.`：测试替身按调用顺序喂 useState，这几个状态在那里可能是 undefined。
+     */
+    function useUpdater(t) {
+      const [version, setVersion] = useState({ phase: 'loading' });
+      const [market, setMarket] = useState({ phase: 'loading' });
+      const [operation, setOperation] = useState(undefined);
+      const [target, setTarget] = useState(undefined);
+      const [busy, setBusy] = useState(false);
+      const [notice, setNotice] = useState(undefined);
+      const [restart, setRestart] = useState(undefined);
+
+      const loadVersion = useCallback(async (force) => {
+        // 保留上一次的版本号：重新检查时"当前运行版本"那一行不闪
+        setVersion((previous) => ({ ...previous, phase: 'loading' }));
+        try {
+          const payload = await versionRequest(force ? `${VERSION_PATH}?force=1` : VERSION_PATH);
+          setVersion(
+            payload.ok
+              ? { phase: 'ready', ...payload }
+              : { phase: 'error', currentVersion: payload.currentVersion, reason: payload.reason },
+          );
+        } catch (error) {
+          setVersion((previous) => ({ phase: 'error', currentVersion: previous?.currentVersion, reason: errorText(error) }));
+        }
+      }, []);
+
+      const probeMarket = useCallback(async () => {
+        try {
+          const result = await marketRequest(MARKET_CAPABILITIES_PATH, 'GET');
+          const body = result.body;
+          // 没装 dshmarket 时这条路径由宿主答 404（多半不是 JSON），schema 对不上同样当作不存在
+          if (result.status !== 200 || body?.schema !== MARKET_SCHEMA || body.features?.update !== true) {
+            setMarket({ phase: 'absent' });
+            return;
+          }
+          const ready = {
+            phase: 'ready',
+            bootId: typeof body.bootId === 'string' ? body.bootId : undefined,
+            // 桌面版的重启归桌面壳管，市场会答 supported:false，此时不显示重启按钮
+            restartSupported: body.restart?.supported === true,
+            endpoints: { ...MARKET_DEFAULT_ENDPOINTS, ...body.endpoints },
+          };
+          Object.assign(ready, await installSourceOf(ready.endpoints.updates));
+          setMarket(ready);
+          // 卡片被卸下再挂上（例如本插件被热重载）时接着轮询原来的任务。
+          // 任务 id 以市场进程的 bootId 开头：对不上说明 DSH 已重启，旧记录直接丢弃
+          const stored = readStoredOperation();
+          if (stored && ready.bootId && !stored.operationId.startsWith(`${ready.bootId}-`)) {
+            storeOperation(undefined);
+          } else if (stored) {
+            setTarget(stored.target);
+            setOperation((current) => current ?? { operationId: stored.operationId, state: 'running' });
+          }
+        } catch {
+          setMarket({ phase: 'absent' });
+        }
+      }, []);
+
+      useEffect(() => {
+        loadVersion(false);
+        probeMarket();
+      }, [loadVersion, probeMarket]);
+
+      // 轮询进行中的任务。用 setTimeout 链而不是 setInterval：慢响应时不会叠出并发请求
+      const operationId = operation?.operationId;
+      const active = isActiveOperation(operation);
+      const operationsPath = market?.endpoints?.operations;
+      useEffect(() => {
+        if (!operationId || !active || !operationsPath) return undefined;
+        let stopped = false;
+        let timer;
+        const tick = async () => {
+          let result;
+          try {
+            result = await marketRequest(`${operationsPath}?operationId=${encodeURIComponent(operationId)}`, 'GET');
+          } catch {
+            result = undefined; // 网络抖动或宿主正在重载：下一拍再问
+          }
+          if (stopped) return;
+          if (result?.status === 404) {
+            // 任务记录只活在市场当前进程里，查不到说明进程已经换过
+            storeOperation(undefined);
+            setOperation(undefined);
+            setNotice({ kind: 'ok', text: t('updateLost') });
+            return;
+          }
+          const next = result?.body?.operation;
+          if (next && typeof next.state === 'string') {
+            setOperation(next);
+            if (!isActiveOperation(next)) {
+              storeOperation(undefined);
+              return;
+            }
+          }
+          timer = setTimeout(tick, POLL_MS);
+        };
+        timer = setTimeout(tick, POLL_MS);
+        return () => {
+          stopped = true;
+          clearTimeout(timer);
+        };
+      }, [operationId, active, operationsPath, t]);
+
+      const startUpdate = useCallback(
+        async (force) => {
+          const path = market?.endpoints?.updates;
+          if (!path) return;
+          const goal = version?.latestVersion;
+          setBusy(true);
+          setNotice(undefined);
+          setRestart(undefined);
+          setOperation(undefined);
+          try {
+            // force 只在市场报了发布冷却期 / 版本未变之后由用户显式选择（文档的约定）
+            const result = await marketRequest(path, 'POST', force ? { packageName: PACKAGE_NAME, force: true } : { packageName: PACKAGE_NAME });
+            const next = result.body?.operation;
+            if (result.status === 202 && typeof next?.operationId === 'string') {
+              setTarget(goal);
+              setOperation(next);
+              storeOperation({ operationId: next.operationId, target: goal });
+            } else {
+              setNotice({ kind: 'error', text: t('updateStartFailed', { reason: marketReason(result) }) });
+            }
+          } catch (error) {
+            setNotice({ kind: 'error', text: t('updateStartFailed', { reason: errorText(error) }) });
+          } finally {
+            setBusy(false);
+          }
+        },
+        [market?.endpoints, version?.latestVersion, t],
+      );
+
+      const restartHost = useCallback(async () => {
+        const path = market?.endpoints?.restart;
+        if (!path) return;
+        setRestart({ phase: 'busy' });
+        try {
+          const result = await marketRequest(path, 'POST', {});
+          setRestart(result.status >= 200 && result.status < 300 ? { phase: 'done' } : { phase: 'error', reason: marketReason(result) });
+        } catch (error) {
+          setRestart({ phase: 'error', reason: errorText(error) });
+        }
+      }, [market?.endpoints]);
+
+      return {
+        model: { version, market, operation, target, busy, notice, restart },
+        actions: {
+          checkUpdate: async () => {
+            setNotice(undefined);
+            await Promise.all([loadVersion(true), market?.phase !== 'ready' ? probeMarket() : undefined]);
+          },
+          startUpdate,
+          restart: restartHost,
+        },
+      };
+    }
+
     function ModelsCard({ t }) {
       const [view, setView] = useState(null);
       const [dirty, setDirty] = useState(false);
-      const [busy, setBusy] = useState(false);
+      const [modelBusy, setBusy] = useState(false);
       const [notice, setNotice] = useState(null);
       const [key, setKey] = useState('');
       const [search, setSearch] = useState('');
       const [expanded, setExpanded] = useState(new Set());
       const [drag, setDrag] = useState(null);
       const dragSource = useRef(null);
+      const updater = useUpdater(t);
+      const busy = modelBusy || updater.model.busy || isActiveOperation(updater.model.operation);
       useEffect(() => {
         let active = true;
         request().then((value) => { if (active) setView(value); }).catch((error) => { if (active) setNotice({ error: true, text: error.message }); });
@@ -295,6 +707,10 @@ window.__ModuleLoader__.load({
         notice ? h('p', { className: `notice section${notice.error ? ' error' : ''}`, role: notice.error ? 'alert' : 'status' }, notice.text) : null,
         !view.editable ? h('p', { className: 'error' }, t('readOnly')) : null,
         h('div', { className: 'bar foot spread' }, button(t(dirty ? 'discard' : 'reload'), reload), button(t(busy ? 'saving' : 'save'), save, { className: 'primary', disabled: busy || !view.editable })),
+        h('section', { className: 'plugin-update', 'aria-label': t('updateTitle') }, renderUpdateSection({ ...updater.model,
+          blocked: dirty || modelBusy || operation?.running,
+          blockedHint: dirty ? t('updateSaveFirst') : t('updateWait'),
+        }, updater.actions, t)),
       );
     }
 
@@ -308,6 +724,6 @@ window.__ModuleLoader__.load({
         ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, locale: namespace, inject: () => ({ t }) }, ModelsCard));
       }
     }
-    return { name: 'dsh-magpie-client', inject: ['slots', 'locale'], apply, ModelsCard, moveModel, displayModelName, sortModelIndexes, zh, en };
+    return { name: 'dsh-magpie-client', inject: ['slots', 'locale'], apply, ModelsCard, moveModel, displayModelName, sortModelIndexes, renderUpdateSection, zh, en };
   },
 });

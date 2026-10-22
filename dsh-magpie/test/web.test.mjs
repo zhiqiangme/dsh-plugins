@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
-import { handlerFor, rejection } from '../lib/web.js';
+import { handlerFor, rejection, versionHandlerFor, registerPanel, MODELS_PATH, VERSION_PATH } from '../lib/web.js';
 import { ModelManager } from '../lib/runtime.js';
 import { fakeHost } from '../fixtures/host.mjs';
 import { backendFixture, finish } from '../fixtures/backend.mjs';
@@ -43,6 +43,41 @@ test('拒绝跨源与远程请求，优先沿用宿主会话校验', async () =>
 test('保存冲突经 HTTP 状态 409 返回', async () => {
   const result = await call('POST', { action: 'save', revision: 'stale', config: {} });
   assert.equal(result.status, 409);
+});
+
+test('独立版本接口沿用宿主会话，仅 GET 触发检查，force 参数透传且失败仍返回运行版本', async () => {
+  const host = fakeHost(), checks = [];
+  const handler = versionHandlerFor(host.ctx, async (options) => {
+    checks.push(options);
+    return { ok: false, currentVersion: '26.10.22', reason: 'registry unavailable' };
+  });
+  async function request(method = 'GET', url = VERSION_PATH, headers = {}) {
+    const result = {};
+    const req = { method, url, headers: { host: 'localhost', ...headers }, socket: { remoteAddress: '127.0.0.1' } };
+    await handler(req, { writeHead: (status, h) => Object.assign(result, { status, headers: h }), end: (data) => { result.body = JSON.parse(data); } });
+    return result;
+  }
+  assert.equal((await request('POST')).status, 405);
+  assert.equal((await request('GET', VERSION_PATH, { origin: 'https://attacker.example' })).status, 403);
+  host.services.connection = { requestRejection: () => 401 };
+  assert.equal((await request()).status, 401);
+  assert.equal(checks.length, 0);
+  delete host.services.connection;
+  const failed = await request();
+  assert.equal(failed.status, 200);
+  assert.equal(failed.body.currentVersion, '26.10.22');
+  assert.equal(failed.headers['cache-control'], 'no-store');
+  await request('GET', `${VERSION_PATH}?force=1`);
+  assert.deepEqual(checks, [{ force: false }, { force: true }]);
+  assert.deepEqual(host.edits, []);
+});
+
+test('模型与版本路由同时注册且随插件卸载清理，注册不会联网', async () => {
+  const host = fakeHost();
+  registerPanel(host.ctx, {}, { checkVersion: () => { throw new Error('注册不应检查版本'); } });
+  assert.deepEqual(host.routes.map((route) => route.path), [MODELS_PATH, VERSION_PATH]);
+  await host.ctx.dispose();
+  assert.deepEqual(host.routes, []);
 });
 
 test('真实 HTTP 假网关：检查身份、带标识拉目录，服务异常不更改清单', async (t) => {

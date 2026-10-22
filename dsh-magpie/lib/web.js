@@ -1,6 +1,8 @@
 import { hostService } from './runtime.js';
+import { createVersionChecker } from './update.js';
 
 export const MODELS_PATH = '/plugins/dsh-magpie/models';
+export const VERSION_PATH = '/plugins/dsh-magpie/version';
 const BODY_LIMIT = 512 * 1024;
 const local = (address = '') => address === '::1' || /^127\./.test(address.replace(/^::ffff:/, ''));
 
@@ -48,11 +50,27 @@ export function handlerFor(ctx, manager) {
   };
 }
 
-export function registerPanel(ctx, manager) {
+/** 版本检查与模型路由共用宿主会话校验；失败保留当前运行版本，不写配置或启动更新。 */
+export function versionHandlerFor(ctx, checkVersion = createVersionChecker()) {
+  return async (req, res) => {
+    try {
+      const denied = rejection(req, hostService(ctx, 'connection'));
+      if (denied !== undefined) return json(res, denied, { ok: false, reason: '请求来源或会话未获授权' });
+      if (req.method !== 'GET') return json(res, 405, { ok: false, reason: 'method not allowed' });
+      const force = new URL(req.url ?? VERSION_PATH, 'http://localhost').searchParams.get('force') === '1';
+      return json(res, 200, await checkVersion({ force }));
+    } catch (error) {
+      return json(res, 400, { ok: false, reason: error.message });
+    }
+  };
+}
+
+export function registerPanel(ctx, manager, { checkVersion = createVersionChecker() } = {}) {
   const mount = (scoped) => {
     const server = hostService(scoped ?? ctx, 'webServer', (value) => typeof value?.register === 'function');
     if (!server) return;
     ctx.effect(() => server.register({ kind: 'exact', path: MODELS_PATH, handler: handlerFor(ctx, manager) }), 'dsh-magpie: routes');
+    ctx.effect(() => server.register({ kind: 'exact', path: VERSION_PATH, handler: versionHandlerFor(ctx, checkVersion) }), 'dsh-magpie: version route');
   };
   if (typeof ctx.inject === 'function') ctx.inject(['webServer'], mount);
   else mount(ctx);

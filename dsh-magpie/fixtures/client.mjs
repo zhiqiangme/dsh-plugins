@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-export function clientHarness(initial, fetchImpl = async () => { throw new Error('unexpected fetch'); }) {
+export function clientHarness(initial, fetchImpl = async () => { throw new Error('unexpected fetch'); }, { sessionStorage } = {}) {
   let registration, index = 0;
   const styleTags = [], states = [initial, false, false, null, '', ''], cards = [], dictionaries = [];
   const React = {
@@ -8,8 +8,9 @@ export function clientHarness(initial, fetchImpl = async () => { throw new Error
     useState: (fallback) => { const i = index++; if (!(i in states)) states[i] = fallback; return [states[i], (value) => { states[i] = typeof value === 'function' ? value(states[i]) : value; }]; },
     useRef: (fallback) => { const i = index++; if (!(i in states)) states[i] = { current: fallback }; return states[i]; },
     useEffect() {},
+    useCallback: (callback) => callback,
   };
-  const window = { __ModuleLoader__: { load: (value) => { registration = value; } } };
+  const window = { sessionStorage, __ModuleLoader__: { load: (value) => { registration = value; } } };
   const document = { querySelector: () => null, createElement: () => ({ dataset: {} }), head: { appendChild: (node) => styleTags.push(node) } };
   new Function('window', 'document', 'fetch', readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'))(window, document, fetchImpl);
   const module = registration.factory((id) => { if (id === 'react') return React; throw new Error(`Unexpected dependency ${id}`); });

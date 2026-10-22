@@ -154,7 +154,7 @@ test('插件入口立即返回，等待宿主服务，释放路由，配置热�
   assert.equal(host.routes.length, 0);
   await pending.find((p) => p.names.includes('webServer')).run(host.ctx);
   await pending.find((p) => p.names.includes('configEditor')).run();
-  assert.equal(host.routes.length, 1);
+  assert.equal(host.routes.length, 2);
   assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].id, 'manual/unlisted');
   await host.editor.edit(host.own, (raw) => ({ ...raw, syncEnabled: false }));
   await new Promise((resolve) => setImmediate(resolve));
