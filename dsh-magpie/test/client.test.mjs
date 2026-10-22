@@ -86,3 +86,41 @@ test('Key 为只读或配置服务未就绪时相应控件禁用', () => {
   assert.equal(field(client.render(), '网关 Key').props.disabled, true);
   assert.equal(button(client.render(), '保存并同步').props.disabled, true);
 });
+
+test('紧凑行的勾选框位于显示名称左侧，下拉按钮控制原位详情，开关不改变模型选择', () => {
+  const client = clientHarness(view({ models: [{ id: 'a', name: 'Step-5-Preview' }, { id: 'b', name: 'Next' }] }));
+  const row = nodes(client.render(), (n) => n.props.className === 'model-header')[0];
+  assert.equal(row.children[0].type, 'label');
+  assert.equal(row.children[0].children[0].props.type, 'checkbox');
+  assert.equal(row.children[0].children[1].children[0], 'Step-5-Preview');
+  assert.equal(row.children[1].props.className, 'model-toggle');
+  assert.equal(row.children[1].props['aria-expanded'], false);
+  row.children[1].props.onClick();
+  let bodies = nodes(client.render(), (n) => n.props.className === 'model-details');
+  assert.equal(bodies[0].props.hidden, false);
+  assert.equal(bodies[1].props.hidden, true);
+  assert.equal(client.states[1], false, '展开不产生未保存改动');
+  nodes(client.render(), (n) => n.props.className === 'model-toggle')[0].props.onClick();
+  bodies = nodes(client.render(), (n) => n.props.className === 'model-details');
+  assert.equal(bodies[0].props.hidden, true);
+  assert.equal(client.states[0].config.models[0].enabled, true);
+});
+
+test('新增模型直接展开，移动或删除后展开状态跟随同一个模型', () => {
+  const client = clientHarness(view({ models: [{ id: 'a' }] }));
+  button(client.render(), '手动添加模型').props.onClick();
+  assert.deepEqual([...client.states[6]], [1]);
+  const up = nodes(client.render(), (n) => n.type === 'button' && n.props['aria-label'] === '上移')[1];
+  up.props.onClick();
+  assert.deepEqual([...client.states[6]], [0]);
+  button(client.render(), '删除').props.onClick();
+  assert.deepEqual([...client.states[6]], []);
+});
+
+test('筛选后的批量勾选只影响可见模型', () => {
+  const client = clientHarness(view({ models: [{ id: 'visible/a' }, { id: 'other/b' }] }));
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'visible' } });
+  button(client.render(), '取消全选').props.onClick();
+  assert.equal(client.states[0].config.models[0].enabled, false);
+  assert.equal(client.states[0].config.models[1].enabled, true);
+});

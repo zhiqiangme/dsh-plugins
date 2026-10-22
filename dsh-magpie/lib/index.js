@@ -1,6 +1,7 @@
 import { PLUGIN_ID, resolveConfig } from './config.js';
 import { ModelManager } from './runtime.js';
 import { registerPanel } from './web.js';
+import { registerHighestReasoning } from './reasoning.js';
 
 export const name = PLUGIN_ID;
 export const inject = [];
@@ -11,6 +12,7 @@ export function apply(ctx, config) {
   try { manager = new ModelManager(ctx, config); }
   catch (error) { (ctx.logger ?? console).error(`[${name}] 配置无效：${error.message}`); return; }
   registerPanel(ctx, manager);
+  registerHighestReasoning(ctx);
   const sync = () => manager.enqueue(() => manager.sync()).catch((error) => (ctx.logger ?? console).warn(`[${name}] ${error.message}`));
   // 保存表单只热更新解析结果，不注销路由或打断同步请求。
   const off = ctx.on?.('internal/update', (raw, _noSave, _next) => {
