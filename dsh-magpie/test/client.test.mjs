@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
 import { resolveConfig } from '../lib/config.js';
 import { PROVIDER_NAMES } from '../lib/names.js';
 import { clientHarness, button, field, nodes } from '../fixtures/client.mjs';
@@ -345,4 +346,41 @@ test('已排好时不产生未保存状态，处理期间或不足两个匹配�
   nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'Alpha' } });
   assert.equal(button(client.render(), '按模型排序').props.disabled, true);
   assert.equal(button(client.render(), '按供应商排序').props.disabled, true);
+});
+
+test('程序更新请求仅携带目标路径，保留模型草稿、勾选和版本，路径由普通保存持久化', async () => {
+  const requests = [];
+  const customPath = resolve('portable', 'Magpie.exe');
+  const backend = { supported: true, installed: false, version: null, path: resolve('magpie.exe'), defaultPath: resolve('magpie.exe') };
+  const client = clientHarness({ ...view({ models: [{ id: 'draft', enabled: false }] }), backend }, async (_url, options) => {
+    const body = JSON.parse(options.body); requests.push(body);
+    if (body.action === 'save') return response({ ...view(body.config), backend, sync: { ok: true, count: 0 } });
+    return response({ ok: true, backend: { ...backend, latest: { version: '0.1.2' }, operation: body.action === 'backend-install' ? { id: 'job', phase: 'downloading', path: backend.path, running: true, received: 5, total: 10 } : null } });
+  });
+  field(client.render(), '显示名称').props.onChange({ target: { value: '尚未保存' } });
+  field(client.render(), 'Magpie 程序路径').props.onChange({ target: { value: customPath } });
+  await button(client.render(), '检查更新').props.onClick();
+  assert.deepEqual(requests[0], { action: 'backend-check', magpiePath: customPath });
+  assert.equal(client.states[0].config.models[0].name, '尚未保存');
+  assert.equal(client.states[0].config.models[0].enabled, false);
+  assert.equal(client.states[1], true);
+  await button(client.render(), '保存并同步').props.onClick();
+  assert.equal(requests[1].config.magpiePath, customPath);
+  assert.equal(client.states[1], false);
+  await button(client.render(), '下载 Magpie').props.onClick();
+  assert.equal(requests[2].action, 'backend-install');
+  assert.equal(field(client.render(), 'Magpie 程序路径').props.disabled, true);
+  assert.equal(button(client.render(), '检查更新').props.disabled, true);
+  assert.equal(nodes(client.render(), (n) => n.type === 'progress')[0].props.value, 5);
+});
+
+test('已安装程序显示升级，最新版本和不支持的平台禁用入口，失败原因可见', () => {
+  const client = clientHarness({ ...view(), backend: { supported: true, installed: true, version: '0.1.1', latest: { version: '0.1.2' }, updateAvailable: true } });
+  assert.equal(button(client.render(), '升级 Magpie').props.disabled, false);
+  client.states[0].backend.updateAvailable = false;
+  assert.equal(button(client.render(), '升级 Magpie').props.disabled, true);
+  client.states[0].backend.supported = false;
+  assert.equal(button(client.render(), '检查更新').props.disabled, true);
+  client.states[0].backend.operation = { phase: 'failed', running: false, reason: '请先退出 Magpie' };
+  assert.ok(nodes(client.render(), (n) => n.props.role === 'alert').some((n) => n.children.some((text) => typeof text === 'string' && text.includes('请先退出'))));
 });

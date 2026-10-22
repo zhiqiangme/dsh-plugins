@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 
 export const PLUGIN_ID = 'dsh-magpie';
 export const PACKAGE_NAME = '@zhiqiangme/dsh-magpie';
@@ -69,7 +70,9 @@ export function resolveConfig(raw = {}) {
   if (!Array.isArray(value.models ?? []) || (value.models ?? []).length > 512) throw new Error('模型清单必须是数组，最多 512 项');
   const models = (value.models ?? []).map(normalizeModel);
   if (new Set(models.map((x) => x.id)).size !== models.length) throw new Error('模型 ID 不能重复');
-  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled === true, models };
+  const magpiePath = value.magpiePath === undefined || value.magpiePath === '' ? '' : text(value.magpiePath, 'Magpie 程序路径', 1024);
+  if (magpiePath && (!isAbsolute(magpiePath) || !/\.exe$/i.test(magpiePath))) throw new Error('Magpie 程序路径必须是 exe 文件的绝对路径');
+  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled === true, models, ...(magpiePath ? { magpiePath } : {}) };
 }
 
 export function revision(config) {

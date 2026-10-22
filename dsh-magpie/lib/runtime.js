@@ -1,6 +1,7 @@
 import { KEY_REF, PACKAGE_NAME, PLUGIN_ID, object, resolveConfig, revision } from './config.js';
 import { credential, findEntry, catalogModels, requestGateway, syncModels } from './models.js';
 import { PROVIDER_NAMES } from './names.js';
+import { MagpieBackend } from './backend.js';
 
 export function hostService(ctx, name, usable = (value) => value !== undefined) {
   const candidates = [];
@@ -10,11 +11,12 @@ export function hostService(ctx, name, usable = (value) => value !== undefined) 
 }
 
 export class ModelManager {
-  constructor(ctx, raw, { env = process.env, fetchImpl = fetch } = {}) {
+  constructor(ctx, raw, { env = process.env, fetchImpl = fetch, backend } = {}) {
     this.ctx = ctx;
     this.config = resolveConfig(raw);
     this.env = env;
     this.fetch = fetchImpl;
+    this.backend = backend ?? new MagpieBackend({ env });
     this.pending = Promise.resolve();
     this.disposed = false;
   }
@@ -38,6 +40,7 @@ export class ModelManager {
     const llm = findEntry(this.editor, '@deepseek-ai/dsh-llm-pi-ai');
     return {
       ok: true, config, revision: revision(config), lastSync: this.lastSync, providerNames: PROVIDER_NAMES,
+      backend: await this.backend.describe(config.magpiePath),
       keyConfigured: Boolean(this.env[KEY_REF] || saved?.value),
       keyWritable: !this.env[KEY_REF] && (await this.credentials?.describe?.(KEY_REF))?.writable !== false,
       editable: Boolean(findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID)),
@@ -60,6 +63,12 @@ export class ModelManager {
     }
   }
   async handle(body) {
+    if (['backend-status', 'backend-check', 'backend-install'].includes(body.action)) {
+      const path = body.magpiePath ?? this.current().magpiePath;
+      if (body.action === 'backend-check') await this.backend.check(path);
+      if (body.action === 'backend-install') this.backend.install(path);
+      return { ok: true, backend: await this.backend.describe(path) };
+    }
     if (body.action === 'check') {
       const config = resolveConfig({ ...this.current(), baseURL: body.baseURL ?? this.current().baseURL });
       const key = await credential(this.credentials, this.env, config.baseURL, body.apiKey);

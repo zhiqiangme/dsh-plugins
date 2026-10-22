@@ -1,7 +1,7 @@
 {
   "name": "@zhiqiangme/dsh-magpie",
   "version": "26.10.22",
-  "description": "在 DSH 中管理 Magpie 模型列表，支持手工编辑、拖动排序和从 Magpie 全量同步。",
+  "description": "在 DSH 中管理 Magpie 模型列表，支持编辑排序、全量同步，以及 Magpie 程序下载升级。",
   "keywords": ["dsh", "dsh-plugin", "magpie"],
   "author": "zhiqiangme",
   "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-magpie#readme",

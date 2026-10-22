@@ -28,6 +28,13 @@ window.__ModuleLoader__.load({
       saved: '已保存，DSH 分组现有 {count} 个模型。', saveFailed: '清单已保存，同步未完成：{reason}',
       readOnly: '宿主配置服务尚未就绪，暂时无法保存。', unsaved: '有未保存的更改', savedState: '已保存',
       invalidJson: '服务返回了无效响应',
+      backendTitle: 'Magpie 下载与升级', backendMissing: '尚未下载', backendUnknown: '版本未识别',
+      backendPath: 'Magpie 程序路径', backendPathHint: '留空使用插件独立目录；也可填写已有 Magpie 的 exe 绝对路径。更改路径后点击保存并同步保存配置。',
+      backendDefault: '留空使用插件独立目录', backendCheck: '检查更新', backendDownload: '下载 Magpie', backendUpgrade: '升级 Magpie',
+      backendLatest: '最新版本：{version}', backendCurrent: '当前版本：{version}', backendUpToDate: '已是最新版本或更新',
+      backendChecking: '正在检查版本…', backendDownloading: '正在下载…', backendVerifying: '正在校验程序…', backendInstalling: '正在替换程序…',
+      backendInstalled: 'Magpie {version} 已下载，请从程序路径启动。', backendUpdated: '已升级到 Magpie {version}，可以重新启动 Magpie。',
+      backendProgress: '已下载 {received} / {total} MiB', backendFailed: '操作失败：{reason}',
     };
     const en = {
       title: 'Magpie models', description: 'Edit manually, or sync from Magpie to replace the entire list, save it and update DSH immediately.',
@@ -50,6 +57,13 @@ window.__ModuleLoader__.load({
       saved: 'Saved. The DSH group now has {count} models.', saveFailed: 'List saved; sync incomplete: {reason}',
       readOnly: 'Host configuration services are not ready. Saving is unavailable.', unsaved: 'Unsaved edits', savedState: 'Saved',
       invalidJson: 'The server returned an invalid response',
+      backendTitle: 'Download and update Magpie', backendMissing: 'Not downloaded', backendUnknown: 'Unrecognized version',
+      backendPath: 'Magpie executable path', backendPathHint: 'Leave blank for the plugin directory, or enter an existing Magpie exe absolute path. Save and sync to keep path changes.',
+      backendDefault: 'Leave blank for the plugin directory', backendCheck: 'Check for updates', backendDownload: 'Download Magpie', backendUpgrade: 'Update Magpie',
+      backendLatest: 'Latest: {version}', backendCurrent: 'Current: {version}', backendUpToDate: 'Up to date or newer',
+      backendChecking: 'Checking version…', backendDownloading: 'Downloading…', backendVerifying: 'Verifying executable…', backendInstalling: 'Replacing executable…',
+      backendInstalled: 'Magpie {version} downloaded. Launch it from the executable path.', backendUpdated: 'Updated to Magpie {version}. You can restart Magpie.',
+      backendProgress: 'Downloaded {received} / {total} MiB', backendFailed: 'Operation failed: {reason}',
     };
     const CSS = `
       .dsm-mp{color:var(--dsw-alias-label-primary,#202635);border:1px solid var(--dsw-alias-border-l2,#dce1eb);border-radius:12px;padding:20px;background:var(--dsw-alias-bg-layer-2,#fff);font-size:13px;line-height:1.6;box-sizing:border-box;min-width:0}
@@ -66,6 +80,7 @@ window.__ModuleLoader__.load({
       .dsm-mp .model-actions{display:flex;gap:4px;flex:none;margin-left:auto}.dsm-mp .model-badges+.model-actions{margin-left:4px}.dsm-mp .model-actions button{padding:3px 7px;background:transparent}.dsm-mp .model-details{padding:0 12px 12px;min-width:0}.dsm-mp .model-details[hidden]{display:none}
       .dsm-mp summary{cursor:pointer}.dsm-mp details>summary{color:var(--dsw-alias-label-secondary,#657084)}.dsm-mp .notice{padding:10px 12px;border-radius:6px;background:var(--dsw-alias-bg-layer-3,#f2f5fb);overflow-wrap:anywhere}.dsm-mp .error{color:var(--dsw-alias-state-error-primary,#b93645)}
       .dsm-mp .search{flex:1;min-width:160px}.dsm-mp .foot{margin-top:16px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2,#dce1eb)}
+      .dsm-mp .backend .bar{margin-top:10px}.dsm-mp .backend-path,.dsm-mp .backend .error{overflow-wrap:anywhere}.dsm-mp .backend progress{display:block;width:100%;height:8px;margin-top:10px;accent-color:var(--dsw-alias-label-primary,#202635)}
       @media(max-width:600px){.dsm-mp{padding:14px}.dsm-mp .fields{grid-template-columns:minmax(0,1fr)}.dsm-mp .search{flex-basis:100%}.dsm-mp .model-badges{display:none}.dsm-mp .model-select{flex:1}.dsm-mp .model-actions{margin-left:auto}}
     `;
 
@@ -127,6 +142,19 @@ window.__ModuleLoader__.load({
         request().then((value) => { if (active) setView(value); }).catch((error) => { if (active) setNotice({ error: true, text: error.message }); });
         return () => { active = false; };
       }, []);
+      const operation = view?.backend?.operation;
+      useEffect(() => {
+        if (!operation?.running) return;
+        let active = true, fetching = false;
+        const timer = setInterval(async () => {
+          if (fetching) return;
+          fetching = true;
+          try { const result = await request({ action: 'backend-status', magpiePath: operation.path }); if (active) setView((old) => ({ ...old, backend: result.backend })); }
+          catch (error) { if (active) setNotice({ error: true, text: error.message }); }
+          finally { fetching = false; }
+        }, 1000);
+        return () => { active = false; clearInterval(timer); };
+      }, [operation?.id, operation?.running]);
       const perform = async (run) => {
         setBusy(true); setNotice(null);
         try { await run(); } catch (error) { setNotice({ error: true, text: error.message }); }
@@ -141,6 +169,14 @@ window.__ModuleLoader__.load({
       const labelFor = (row) => displayModelName(row, view.providerNames) || t('newModel');
       const updateRow = (index, patch) => update({ models: rows.map((row, i) => i === index ? { ...row, ...patch } : row) });
       const field = (label, value, change, options = {}) => h('label', { className: 'field' }, label, h('input', { value: value ?? '', disabled: busy, onChange: (e) => change(e.target.value), ...options }));
+      const backend = view.backend;
+      const backendAction = (action) => perform(async () => {
+        const result = await request({ action, magpiePath: config.magpiePath || '' });
+        // 程序操作不保存或覆盖模型草稿；程序路径仍由原有保存流程持久化。
+        setView((old) => ({ ...old, backend: result.backend }));
+      });
+      const backendPhase = operation ? ({ checking: t('backendChecking'), downloading: t('backendDownloading'), verifying: t('backendVerifying'), installing: t('backendInstalling'),
+        installed: t('backendInstalled', { version: operation.version }), updated: t('backendUpdated', { version: operation.version }), 'up-to-date': t('backendUpToDate'), failed: t('backendFailed', { reason: operation.reason }) })[operation.phase] : '';
       const syncCatalog = () => perform(async () => {
         const result = await request({ action: 'sync-catalog', config, revision: view.revision, apiKey: key || undefined });
         setView(result); setDirty(false); setKey(''); setSearch(''); setExpanded(new Set());
@@ -194,6 +230,21 @@ window.__ModuleLoader__.load({
         h('div', { className: 'bar spread' }, h('h3', null, t('title')), h('span', { className: 'muted' }, t(dirty ? 'unsaved' : 'savedState'))),
         h('p', { className: 'muted' }, t('description')),
         view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
+        h('details', { className: 'section backend' }, h('summary', null, t('backendTitle'), ' · ', backend?.version || t(backend?.installed ? 'backendUnknown' : 'backendMissing')),
+          h('div', { className: 'fields' }, field(t('backendPath'), config.magpiePath, (magpiePath) => {
+            update({ magpiePath }); setView((old) => ({ ...old, backend: { ...old.backend, installed: false, version: null, reason: null } }));
+          }, { placeholder: backend?.defaultPath || t('backendDefault'), disabled: busy || operation?.running })),
+          h('p', { className: 'muted' }, t('backendPathHint')),
+          backend?.path ? h('p', { className: 'muted backend-path' }, backend.path) : null,
+          h('div', { className: 'bar' },
+            button(t('backendCheck'), () => backendAction('backend-check'), { disabled: busy || operation?.running || backend?.supported === false }),
+            button(t(backend?.installed ? 'backendUpgrade' : 'backendDownload'), () => backendAction('backend-install'), { disabled: busy || operation?.running || backend?.supported === false || (backend?.installed && (!backend.version || (backend.latest && !backend.updateAvailable))) }),
+            backend?.version ? h('span', { className: 'muted' }, t('backendCurrent', { version: backend.version })) : null,
+            backend?.latest ? h('span', { className: 'muted' }, t('backendLatest', { version: backend.latest.version })) : null),
+          backend?.reason ? h('p', { className: 'error', role: 'alert' }, backend.reason) : null,
+          backendPhase ? h('p', { className: operation.phase === 'failed' ? 'error' : 'muted', role: operation.phase === 'failed' ? 'alert' : 'status' }, backendPhase) : null,
+          operation?.running ? h('progress', { value: operation.received, max: operation.total || 1, 'aria-label': t('backendDownloading') }) : null,
+          operation?.running && operation.total ? h('p', { className: 'muted' }, t('backendProgress', { received: (operation.received / 1048576).toFixed(1), total: (operation.total / 1048576).toFixed(1) })) : null),
         h('details', { className: 'section' }, h('summary', null, t('connection')),
           h('div', { className: 'fields' },
             field(t('url'), config.baseURL, (baseURL) => update({ baseURL }), { type: 'url', placeholder: 'http://127.0.0.1:3425' }),

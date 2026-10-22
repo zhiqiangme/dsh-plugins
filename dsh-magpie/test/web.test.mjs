@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import { handlerFor, rejection } from '../lib/web.js';
 import { ModelManager } from '../lib/runtime.js';
 import { fakeHost } from '../fixtures/host.mjs';
+import { backendFixture, finish } from '../fixtures/backend.mjs';
 
 async function call(method = 'GET', body, headers = {}, manager) {
   const host = fakeHost();
@@ -76,4 +77,28 @@ test('真实 HTTP 假网关：检查身份、带标识拉目录，服务异常�
   assert.equal(failed.body.reason.includes('upstream-secret'), false);
   assert.deepEqual([host.own.options.config, host.llm.options.config], before);
   assert.equal(host.edits.length, edits);
+});
+
+test('程序管理沿用会话与 JSON 校验，检查不改模型，安装异步返回，状态可查询', async (t) => {
+  const { backend } = backendFixture(t);
+  const host = fakeHost({ models: [{ id: 'manual', name: 'keep' }] });
+  const manager = new ModelManager(host.ctx, {}, { env: {}, backend });
+  const before = structuredClone(host.own.options.config);
+  const denied = await call('POST', { action: 'backend-install' }, { origin: 'https://evil.example' }, manager);
+  assert.equal(denied.status, 403);
+  assert.equal(backend.operation, null);
+  assert.equal((await call('POST', '{}', { 'content-type': 'text/plain' }, manager)).status, 415);
+  assert.equal((await call('POST', { action: 'backend-check', magpiePath: 'relative.exe' }, {}, manager)).status, 400);
+  const checked = await call('POST', { action: 'backend-check' }, {}, manager);
+  assert.equal(checked.body.backend.latest.version, '0.1.2');
+  assert.deepEqual(host.own.options.config, before);
+  const accepted = await call('POST', { action: 'backend-install' }, {}, manager);
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.backend.operation.running, true);
+  await finish(backend);
+  const status = await call('POST', { action: 'backend-status' }, {}, manager);
+  assert.equal(status.body.backend.version, '0.1.2');
+  assert.equal(status.body.backend.operation.phase, 'installed');
+  assert.deepEqual(host.own.options.config, before);
+  assert.deepEqual(host.edits, []);
 });

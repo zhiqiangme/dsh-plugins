@@ -22,5 +22,5 @@ export function apply(ctx, config) {
   });
   if (typeof ctx.inject === 'function') ctx.inject(['configEditor', 'credentials'], sync);
   else sync();
-  ctx.effect(() => async () => { manager.disposed = true; if (typeof off === 'function') off(); await manager.pending; }, `${name}: lifecycle`);
+  ctx.effect(() => async () => { manager.disposed = true; if (typeof off === 'function') off(); await manager.backend.dispose(); await manager.pending; }, `${name}: lifecycle`);
 }

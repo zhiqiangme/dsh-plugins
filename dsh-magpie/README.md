@@ -2,7 +2,7 @@
 
 在 DSH「插件」页独立管理经 Magpie 调用的模型。模型清单、名称、勾选、顺序、上下文、输出限额、图片输入和思考档位都由本插件保存。
 
-Magpie 网关需自行运行。首版以模型列表管理为主，不安装、更新或托管 Magpie 进程；也不迁移或卸载旧 OpenCode 插件。
+可在卡片下载或升级 Windows 版 Magpie，下载后自行启动网关。插件不托管 Magpie 进程，也不迁移或卸载旧 OpenCode 插件。
 
 ## 安装
 
@@ -19,6 +19,15 @@ dsh plugin --profile desktop add "file:<仓库绝对路径>\dsh-magpie"
 ```
 
 npm 发布后可用 `dsh plugin --profile desktop add @zhiqiangme/dsh-magpie`。源码依赖是拷贝，更新源码后请重新运行安装脚本。
+
+## 下载与升级 Magpie
+
+展开「Magpie 下载与升级」，点击「检查更新」或「下载 Magpie」。已安装时显示当前版本和「升级 Magpie」；下载期间显示进度，完成后从显示的程序路径启动 Magpie。升级前完全退出目标 Magpie（包括托盘），再点击升级；不会自动中断会话或重启应用。
+
+- 默认安装到 `<DSH_HOME>/magpie/backend/current/magpie.exe`，未指定 `DSH_HOME` 时使用 `~/.dsh`。`Magpie 程序路径` 可填写已有 exe 的绝对路径，留空恢复独立目录；通过「保存并同步」保存路径偏好。程序操作立即作用于填写的路径，但不会保存或覆盖模型草稿。
+- 使用官方 [`yetone/magpie-releases`](https://github.com/yetone/magpie-releases/releases) 的最新正式版，选择完整 GUI 产物 `magpie-windows-amd64.exe` / `magpie-windows-arm64.exe`。使用 GitHub 提供的 SHA-256 digest，缺少时读取同一 Release 的 `SHA256SUMS`；无有效校验值则拒绝安装。`GITHUB_TOKEN` / `GH_TOKEN` 可提高版本查询额度，界面不返回 token。
+- 下载、校验与暂存版本验证通过后才替换；升级后再次验证，失败自动恢复旧文件。旧版备份放在 `<DSH_HOME>/magpie/backend/versions`，每个目标保留最近三次成功升级的备份。并发安装通过操作锁保护，插件关闭取消下载。Magpie 自己的账号、插件和设置目录不会迁移或清理。
+- 下载升级目前支持 Windows x64 / ARM64；其他平台的模型管理照常使用。检查更新由按钮触发，不在后台自动下载升级。开发和测试可用 `DSH_MAGPIE_BACKEND_ROOT` 单独指定程序管理根目录。
 
 ## 模型管理
 
