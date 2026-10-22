@@ -1,6 +1,6 @@
 import { KEY_REF, LOCAL_KEY, PACKAGE_NAME, PLUGIN_ID, object, resolveConfig, revision } from './config.js';
 import { credential, findEntry, catalogModels, requestGateway, syncModels } from './models.js';
-import { PROVIDER_NAMES, sortModelIndexes } from './names.js';
+import { PROVIDER_NAMES, keepOrderIndexes, sortModelIndexes } from './names.js';
 import { MagpieBackend } from './backend.js';
 
 export function hostService(ctx, name, usable = (value) => value !== undefined) {
@@ -96,8 +96,12 @@ export class ModelManager {
         const hello = await requestGateway(config.baseURL, '/api/hello', gatewayKey, this.fetch);
         if (hello?.name !== 'magpie') throw new Error('该地址没有返回 Magpie 身份信息');
         const catalog = catalogModels(await requestGateway(config.baseURL, '/v1/models', gatewayKey, this.fetch));
-        // 上游目录顺序不稳定；同步后直接按模型名称排好再保存，与卡片「按模型排序」一致。
-        config = resolveConfig({ ...config, models: sortModelIndexes(catalog, 'model').map((index) => catalog[index]) });
+        // 上游目录顺序不稳定；默认按模型名称排好再保存，与卡片「按模型排序」一致。
+        // 用户手动排过序时保留卡片上的现有顺序，新模型接在末尾。
+        const order = config.manualOrder
+          ? keepOrderIndexes(catalog, (Array.isArray(body.config.models) ? body.config.models : []).map((m) => m?.id))
+          : sortModelIndexes(catalog, 'model');
+        config = resolveConfig({ ...config, models: order.map((index) => catalog[index]) });
       }
       // 在宿主锁内核对版本，旧页面不能覆盖其它页面刚保存的模型清单。
       await this.editor.edit(entry, (raw) => {

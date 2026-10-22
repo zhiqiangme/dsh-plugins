@@ -49,3 +49,16 @@ export function sortModelIndexes(rows, mode = 'model', providers = PROVIDER_NAME
     ? compare(a.supplier, b.supplier) || compare(a.name, b.name) || a.index - b.index
     : compare(a.name, b.name) || compare(a.supplier, b.supplier) || a.index - b.index).map(({ index }) => index);
 }
+
+/**
+ * 用户手动排过序时，全量同步保留原有顺序：已在清单中的模型按原位置排列，
+ * 新出现的模型按模型名称排序后接在末尾。返回 rows 下标的新顺序。
+ */
+export function keepOrderIndexes(rows, previousIds, providers = PROVIDER_NAMES) {
+  const position = new Map();
+  previousIds.forEach((id, index) => { if (typeof id === 'string' && !position.has(id.trim())) position.set(id.trim(), index); });
+  const indexes = rows.map((_row, index) => index);
+  const known = indexes.filter((i) => position.has(rows[i].id)).sort((a, b) => position.get(rows[a].id) - position.get(rows[b].id));
+  const fresh = indexes.filter((i) => !position.has(rows[i].id));
+  return [...known, ...sortModelIndexes(fresh.map((i) => rows[i]), 'model', providers).map((j) => fresh[j])];
+}

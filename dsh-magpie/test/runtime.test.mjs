@@ -192,3 +192,16 @@ test('保存的程序路径是目录时保存成功、卡片仍可读取；本�
   assert.equal(host.keys.get(KEY_REF), 'magpie-dsh');
   assert.equal(reloaded.keyConfigured, false);
 });
+
+test('手动排过序时，全量同步保留卡片上的顺序，新模型按名称接在末尾，标记保留', async () => {
+  const catalog = { data: [{ id: 'p/zeta', display_name: 'Zeta' }, { id: 'p/new-b', display_name: 'New B' }, { id: 'p/alpha', display_name: 'Alpha' }, { id: 'p/new-a', display_name: 'New A' }] };
+  const host = setup({ fetchImpl: async (url) => ({ ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie' } : catalog }) });
+  const initial = await host.manager.describe();
+  // 卡片草稿里 Zeta 被拖到 Alpha 前；已删除的 gone 不会被带回。
+  const draft = { ...initial.config, manualOrder: true, models: [{ id: 'p/zeta' }, { id: 'p/gone' }, { id: 'p/alpha' }] };
+  const result = await host.manager.handle({ action: 'sync-catalog', revision: initial.revision, config: draft });
+  assert.deepEqual(result.config.models.map((m) => m.id), ['p/zeta', 'p/alpha', 'p/new-a', 'p/new-b']);
+  assert.equal(result.config.manualOrder, true);
+  const automatic = await host.manager.handle({ action: 'sync-catalog', revision: result.revision, config: { ...result.config, manualOrder: false } });
+  assert.deepEqual(automatic.config.models.map((m) => m.id), ['p/alpha', 'p/new-a', 'p/new-b', 'p/zeta']);
+});

@@ -437,3 +437,36 @@ test('已安装程序显示升级，最新版本和不支持的平台禁用入�
   client.states[0].backend.operation = { phase: 'failed', running: false, reason: '请先退出 Magpie' };
   assert.ok(nodes(client.render(), (n) => n.props.role === 'alert').some((n) => n.children.some((text) => typeof text === 'string' && text.includes('请先退出'))));
 });
+
+test('拖动或按供应商排序标记为手动顺序并提示；不搜索时按模型排序恢复自动排序', () => {
+  // 名称顺序 Alpha/Beta/Gamma 与供应商顺序 Qoder/Trae/WorkBuddy 不同，两种排序都会真正改变顺序。
+  const models = [{ id: 'workbuddy/x', name: 'Alpha' }, { id: 'qoder-cn/y', name: 'Beta' }, { id: 'trae-cn/z', name: 'Gamma' }];
+  const client = clientHarness(view({ models }));
+  const hint = () => nodes(client.render(), (n) => n.type === 'p' && n.children.includes(client.module.zh.manualOrder)).length;
+  assert.equal(hint(), 0);
+  dragModel(client, 0, 2, true);
+  assert.equal(client.states[0].config.manualOrder, true);
+  assert.equal(hint(), 1);
+  button(client.render(), '按模型排序').props.onClick();
+  assert.equal(client.states[0].config.manualOrder, false);
+  assert.deepEqual(client.states[0].config.models.map((m) => m.name), ['Alpha', 'Beta', 'Gamma']);
+  assert.equal(hint(), 0);
+  button(client.render(), '按供应商排序').props.onClick();
+  assert.deepEqual(client.states[0].config.models.map((m) => m.name), ['Beta', 'Gamma', 'Alpha']);
+  assert.equal(client.states[0].config.manualOrder, true);
+  // 只排部分搜索结果仍是手动顺序：搜索 e 只命中 Beta、Gamma。
+  const partial = clientHarness(view({ models: [models[0], models[2], models[1]] }));
+  nodes(partial.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'e' } });
+  button(partial.render(), '按模型排序').props.onClick();
+  assert.deepEqual(partial.states[0].config.models.map((m) => m.name), ['Alpha', 'Beta', 'Gamma']);
+  assert.equal(partial.states[0].config.manualOrder, true);
+});
+
+test('已是模型顺序但标记为手动时，按模型排序只清除标记并进入待保存', () => {
+  const client = clientHarness(view({ manualOrder: true, models: [{ id: 'qoder-cn/a', name: 'Alpha' }, { id: 'trae-cn/b', name: 'Beta' }] }));
+  const original = client.states[0].config.models;
+  button(client.render(), '按模型排序').props.onClick();
+  assert.equal(client.states[0].config.models, original);
+  assert.equal(client.states[0].config.manualOrder, false);
+  assert.equal(client.states[1], true);
+});
