@@ -73,6 +73,15 @@ test('push 计划：代码和文档有变化但版本未变时不发布', (t) =>
   assert.deepEqual(planReleases({ cwd: repo.cwd, before: repo.before }), { sha, releases: [] });
 });
 
+test('push 计划：新增 Magpie 包在基线中不存在时只计划新包，不补发旧包', (t) => {
+  const repo = repository(t);
+  git(repo.cwd, 'rm', '-r', '--', 'dsh-magpie');
+  const before = repo.commit('新增前基线');
+  repo.setVersion('magpie', '26.10.22');
+  const sha = repo.commit('新增 Magpie');
+  assert.deepEqual(planReleases({ cwd: repo.cwd, before }), { sha, releases: [{ plugin: 'magpie', version: '26.10.22' }] });
+});
+
 test('push 计划：拒绝版本倒退和没有差异基线的首次 push', (t) => {
   const repo = repository(t);
   repo.setVersion('workbuddy', '26.10.14');
@@ -350,7 +359,7 @@ test('拒绝脏源码检出，避免工作目录内容与 tag 不一致', async 
   assert.deepEqual(context.calls, []);
 });
 
-test('仓库三个实际 package.json 均符合发布映射', () => {
+test('仓库各实际 package.json 均符合发布映射', () => {
   for (const plugin of PLUGINS) {
     const pkg = JSON.parse(readFileSync(new URL(`../../${plugin.directory}/package.json`, import.meta.url), 'utf8'));
     assert.equal(pkg.name, plugin.name);

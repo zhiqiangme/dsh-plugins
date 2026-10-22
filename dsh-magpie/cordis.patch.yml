@@ -1,0 +1,4 @@
+# 独立行 ID，与 Magpie 原生的 magpie / magpie-anthropic provider 无关。
+- insert:
+    - id: dsh-magpie
+      name: '@zhiqiangme/dsh-magpie'

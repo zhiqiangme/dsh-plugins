@@ -5,7 +5,8 @@
 | 插件 | npm 包 | 作用 |
 | --- | --- | --- |
 | [dsh-autostart-workbuddy](dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | DSH 启动时默认拉起 WorkBuddy2API Hub（127.0.0.1:7863），可切换 wb2api，可选接管 profile 里的 workbuddy 模型列表 |
-| [dsh-opencode2api](dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | 自动启动 opencode2api，管理后端安装更新、模型同步与 WebUI |
+| [dsh-magpie](dsh-magpie/) | `@zhiqiangme/dsh-magpie` | 独立管理 Magpie 模型清单：手工编辑、勾选、排序、可选导入，并同步到 DSH |
+| [dsh-opencode2api](dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | **停止维护**，保留源码及单独安装入口；“全部”安装不再包含它 |
 | [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内同时提供旧版 Messages 与新版 Search API 的搜索接口（`127.0.0.1:8787`），插件页卡片里配 API Key、一键接入网页搜索 |
 
 插件自身的行为与配置见各自目录下的 README。
@@ -16,7 +17,7 @@
 
 ```powershell
 dsh plugin --profile desktop add @zhiqiangme/dsh-autostart-workbuddy
-dsh plugin --profile desktop add @zhiqiangme/dsh-opencode2api
+dsh plugin --profile desktop add @zhiqiangme/dsh-magpie
 dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search
 ```
 
@@ -25,7 +26,7 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search
 更新与卸载：
 
 ```powershell
-dsh plugin --profile desktop update --latest @zhiqiangme/dsh-autostart-workbuddy @zhiqiangme/dsh-opencode2api @zhiqiangme/dsh-tavily-search
+dsh plugin --profile desktop update --latest @zhiqiangme/dsh-autostart-workbuddy @zhiqiangme/dsh-magpie @zhiqiangme/dsh-tavily-search
 dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 ```
 
@@ -42,14 +43,14 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 双击仓库根目录的 `install-plugins.cmd`（Windows），按提示选（直接回车都是默认项）：
 
 1. 操作：**安装 / 更新**（默认）、卸载、查看安装状态
-2. 插件：**全部**（默认）、`dsh-autostart-workbuddy`、`dsh-opencode2api`、`dsh-tavily-search`
+2. 插件：**全部**（默认安装维护中的 WorkBuddy、Tavily Search、Magpie）、或单独选择；OpenCode API 已停止维护，仍可单独安装，卸载和查看状态时“全部”仍包含它
 3. 装到哪个 DSH：**Desktop**（默认）、Web（`dsh web`）、CLI（`dsh headless`）、全部三个
 
 完成后重启对应的 DSH 生效。也可以在终端里带参数一行跑完（参数都可省略，省略的会询问）：
 
 ```powershell
 .\install-plugins.cmd --action install --plugins all --profiles desktop --yes
-.\install-plugins.cmd --action install --plugins opencode2api --profiles desktop --yes
+.\install-plugins.cmd --action install --plugins magpie --profiles desktop --yes
 .\install-plugins.cmd --action status --profiles desktop,web,cli
 .\install-plugins.cmd --help
 ```
@@ -71,6 +72,8 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 - 卸载不删 `cordis.patch.yml` 里的配置，也不删各插件自管的后端数据（如 `~/.dsh/autostart-workbuddy`、`~/.dsh/autostart-opencode2api`）。
   workbuddy 与 opencode2api 的卡片有「清除后端数据」按钮，卸载前点一下即可删掉各自的数据目录；
   tavily-search 的卡片有「清除插件数据」，删掉保存的 API Key 并把网页搜索接口恢复默认。
+- Magpie 首版管理独立模型清单，使用已运行的 Magpie 网关，不托管其进程。可离线手工编辑；导入是可选快照，不会覆盖手工条目。模型写入独立的 `dsh-magpie` provider。卸载前需要移除该分组时，先在卡片关闭同步并保存。
+- Magpie 是新增包，npm 首次发布前请使用上述源码安装命令。
 
 ## 版本号
 
@@ -91,16 +94,16 @@ git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.1
 4. 核对 npm 包完整性后创建对应的正式 GitHub Release，记录提交、变更及安装 / 更新命令。
 
 普通代码或文档提交不发布；添加本工作流也不会自动补发现有的 `26.10.16`。
-PR 和 `main` 都会执行 [ci.yml](.github/workflows/ci.yml)：Node 22 / 24，Windows 测三个插件，
-Linux 测 Tavily Search，两种系统均测试仓库脚本。测试使用内置 runner 和宿主替身，不需要安装依赖、
+PR 和 `main` 都会执行 [ci.yml](.github/workflows/ci.yml)：Node 22 / 24，Windows 测全部插件，
+Linux 测 Tavily Search 和 Magpie，两种系统均测试仓库脚本。测试使用内置 runner 和宿主替身，不需要安装依赖、
 DSH 桌面版或真实后端。opencode2api 的真实 exe 测试仍需 `OPENCODE2API_TEST_EXE`，默认跳过。
 
 ### 首次启用
 
-先把工作流推送到 GitHub，再到以下三个 npm 包的 **Settings → Trusted publishing** 分别添加 GitHub Actions：
+先把工作流推送到 GitHub，再到以下维护中的 npm 包的 **Settings → Trusted publishing** 分别添加 GitHub Actions（新包需先完成 npm 包初始化）：
 
 - `@zhiqiangme/dsh-autostart-workbuddy`
-- `@zhiqiangme/dsh-opencode2api`
+- `@zhiqiangme/dsh-magpie`
 - `@zhiqiangme/dsh-tavily-search`
 
 三个包填写相同信息：用户 `zhiqiangme`，仓库 `dsh-plugins`，工作流文件名 **`release.yml`**
@@ -143,7 +146,7 @@ CI 使用 GitHub 托管 runner、Node 24、npm ≥11.5.1，以及 `id-token: wri
 文档(repo)：…
 ```
 
-- **范围 = 改动涉及的插件**：`workbuddy` / `opencode2api` / `tavily-search`
+- **范围 = 改动涉及的插件**：`workbuddy` / `magpie` / `tavily-search`（旧 OpenCode 源码保留，停止维护）
 - 只涉及仓库级文件（根 `README.md`、`install-plugins.cmd`、`scripts/`），或**同时**涉及多个插件时，用 `repo`
 - 格式为 `类型(范围)：描述`，类型用 `新增 / 修复 / 文档 / 移除 / 调整 / 改进 / 测试`
 

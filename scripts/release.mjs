@@ -1,4 +1,4 @@
-// 三个独立包共享发布流程；只依赖 Node、Git 和 npm，不改变现有包结构。
+// 各独立包共享发布流程；只依赖 Node、Git 和 npm，不改变现有包结构。
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -12,6 +12,7 @@ export const PLUGINS = [
   { id: 'workbuddy', directory: 'dsh-autostart-workbuddy', name: '@zhiqiangme/dsh-autostart-workbuddy' },
   { id: 'opencode2api', directory: 'dsh-opencode2api', name: '@zhiqiangme/dsh-opencode2api' },
   { id: 'tavily-search', directory: 'dsh-tavily-search', name: '@zhiqiangme/dsh-tavily-search' },
+  { id: 'magpie', directory: 'dsh-magpie', name: '@zhiqiangme/dsh-magpie' },
 ];
 
 function pluginById(id) {
@@ -48,7 +49,9 @@ function git(cwd, ...args) {
   return command('git', args, cwd);
 }
 
-function manifestAt(cwd, sha, plugin) {
+function manifestAt(cwd, sha, plugin, optional = false) {
+  // 新增独立插件在 push.before 尚不存在；仅缺文件算新包，Git/JSON 错误仍应停止发布。
+  if (optional && !git(cwd, 'ls-tree', '--name-only', sha, '--', `${plugin.directory}/package.json`)) return undefined;
   return JSON.parse(git(cwd, 'show', `${sha}:${plugin.directory}/package.json`));
 }
 
@@ -79,10 +82,12 @@ export function planReleases({ cwd = process.cwd(), before, manual = false, plug
     const current = manifestAt(cwd, target, item);
     validateManifest(item, current);
     if (!manual) {
-      const previous = manifestAt(cwd, before, item);
-      const comparison = compareVersions(current.version, previous.version);
-      if (comparison < 0) throw new Error(`${item.id} 版本号不能倒退：${previous.version} → ${current.version}`);
-      if (comparison === 0) continue;
+      const previous = manifestAt(cwd, before, item, true);
+      if (previous) {
+        const comparison = compareVersions(current.version, previous.version);
+        if (comparison < 0) throw new Error(`${item.id} 版本号不能倒退：${previous.version} → ${current.version}`);
+        if (comparison === 0) continue;
+      }
     }
     releases.push({ plugin: item.id, version: current.version });
   }

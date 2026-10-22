@@ -34,8 +34,9 @@ const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
  */
 const CATALOG = [
   { folder: 'dsh-autostart-workbuddy', alias: 'workbuddy', title: 'WorkBuddy 自动启动 + 模型同步', legacy: ['dsh-autostart-workbuddy'] },
-  { folder: 'dsh-opencode2api', alias: 'opencode2api', title: 'OpenCode API', legacy: ['@zhiqiangme/dsh-autostart-opencode2api'], legacyRowIds: ['dsh-autostart-opencode2api'] },
+  { folder: 'dsh-opencode2api', alias: 'opencode2api', title: 'OpenCode API（停止维护，仅单独安装）', maintained: false, legacy: ['@zhiqiangme/dsh-autostart-opencode2api'], legacyRowIds: ['dsh-autostart-opencode2api'] },
   { folder: 'dsh-tavily-search', alias: 'tavily-search', title: 'Tavily 网页搜索', legacy: ['dsh-tavily-search', 'dsh-autostart-websearch'] },
+  { folder: 'dsh-magpie', alias: 'magpie', title: 'Magpie 模型管理', legacy: [] },
 ].map((plugin) => {
   const dir = join(REPO_ROOT, plugin.folder);
   let name = plugin.folder;
@@ -431,12 +432,12 @@ async function uninstallFrom(profile, selected) {
 
 const ACTIONS = ['install', 'uninstall', 'status'];
 
-function resolvePlugins(value) {
+export function resolvePlugins(value, action) {
   const result = [];
   for (const item of value.split(',')) {
     const key = item.trim().toLowerCase();
     if (!key) continue;
-    if (key === 'all') return CATALOG;
+    if (key === 'all') return action === 'install' ? CATALOG.filter((plugin) => plugin.maintained !== false) : CATALOG;
     const match = CATALOG.find((plugin) => [plugin.name, plugin.folder, plugin.alias].includes(key));
     if (!match) throw new Error(`未知插件：${item}（可选 all、${CATALOG.map((plugin) => plugin.alias).join('、')}）`);
     if (!result.includes(match)) result.push(match);
@@ -459,9 +460,10 @@ function resolveProfiles(value) {
   return result;
 }
 
-const HELP = `用法：install-plugins.cmd [--action install|uninstall|status] [--plugins all|workbuddy|opencode2api|tavily-search]
+const HELP = `用法：install-plugins.cmd [--action install|uninstall|status] [--plugins all|workbuddy|opencode2api|tavily-search|magpie]
                            [--profiles desktop|web|cli|all|<其它 profile 名>] [--yes]
-不带参数时逐项询问；--plugins / --profiles 可用逗号分隔多个值。`;
+不带参数时逐项询问；--plugins / --profiles 可用逗号分隔多个值。
+安装 all 仅安装维护中的插件，不包含 opencode2api；卸载和状态 all 仍包含全部。`;
 
 async function main() {
   const { values } = parseArgs({
@@ -492,10 +494,10 @@ async function main() {
 
   let plugins;
   if (values.plugins !== undefined) {
-    plugins = resolvePlugins(values.plugins);
+    plugins = resolvePlugins(values.plugins, action);
   } else {
     const index = await choose('选择插件：', ['全部', ...CATALOG.map((plugin) => `${plugin.name}（${plugin.title}）`)]);
-    plugins = index === 0 ? CATALOG : [CATALOG[index - 1]];
+    plugins = index === 0 ? resolvePlugins('all', action) : [CATALOG[index - 1]];
   }
 
   let profiles;
@@ -533,8 +535,8 @@ async function main() {
   return 0;
 }
 
-// 显式退出：交互读 stdin 的 readline 会让进程一直挂着
-main().then(
+// 仅 CLI 入口执行，允许测试直接验证安装选择；显式退出以关闭交互 readline。
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().then(
   (code) => process.exit(code),
   (error) => {
     bad(error instanceof Error ? error.message : String(error));

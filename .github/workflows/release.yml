@@ -9,7 +9,7 @@ on:
         description: Plugin to retry publishing
         required: true
         type: choice
-        options: [workbuddy, opencode2api, tavily-search]
+        options: [workbuddy, opencode2api, tavily-search, magpie]
       sha:
         description: Original release commit (full 40-character SHA on main)
         required: true
