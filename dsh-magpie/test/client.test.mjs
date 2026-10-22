@@ -36,6 +36,27 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
   assert.ok(button(client.render(), '按供应商排序'));
 });
 
+test('退出联动开关默认关闭，保存持久化且重新载入保留，切换不立即关闭程序', async () => {
+  const calls = [];
+  let saved = view();
+  const client = clientHarness(saved, async (_url, options) => {
+    const body = JSON.parse(options.body);
+    calls.push(body);
+    saved = { ...view(body.config), sync: { ok: true, count: 0 } };
+    return response(saved);
+  });
+  const toggle = () => nodes(client.render(), (n) => n.type === 'label' && n.children.includes('退出 DSH 时同时关闭 Magpie'))[0].children[0];
+  assert.equal(toggle().props.checked, false);
+  toggle().props.onChange({ target: { checked: true } });
+  assert.deepEqual(calls, []);
+  assert.equal(client.states[1], true);
+  await button(client.render(), '保存并同步').props.onClick();
+  assert.equal(calls[0].action, 'save');
+  assert.equal(calls[0].config.closeOnExit, true);
+  assert.equal(toggle().props.checked, true);
+  assert.equal(resolveConfig(saved.config).closeOnExit, true);
+});
+
 test('添加、编辑、调整顺序、取消勾选、删除通过卡片实际事件更新待保存清单', () => {
   const client = clientHarness(view({ models: [{ id: 'first' }] }));
   button(client.render(), '手动添加模型').props.onClick();
