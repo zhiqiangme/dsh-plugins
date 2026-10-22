@@ -2,6 +2,9 @@ import { spawnSync } from 'node:child_process';
 import { anyMagpieRunning, backendPaths, targetPath } from './backend.js';
 import { isLocal } from './config.js';
 
+// 退出关闭脚本本机实测约 1.2 秒，但 PowerShell 冷启动加枚举全部进程在慢机器上会超过 4 秒
+// （GitHub Windows runner 实际遇到过）。只在开启联动时阻塞退出，放宽到 10 秒换取可靠关闭。
+export const CLOSE_TIMEOUT = 10_000;
 // 端口探测只用于判断“已有服务在听”，2 秒足够本机回应。
 const PORT_TIMEOUT = 2_000;
 
@@ -81,7 +84,7 @@ export function closeMagpieSync(config, { env = process.env, platform = process.
   const url = new URL(config.baseURL);
   const port = isLocal(url.href) ? url.port || (url.protocol === 'https:' ? '443' : '80') : '';
   const result = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', CLOSE_SCRIPT], {
-    windowsHide: true, encoding: 'utf8', timeout: 4_000, maxBuffer: 64 * 1024,
+    windowsHide: true, encoding: 'utf8', timeout: CLOSE_TIMEOUT, maxBuffer: 64 * 1024,
     env: { ...env, DSH_MAGPIE_CLOSE_TARGET: target, DSH_MAGPIE_CLOSE_EXPLICIT: config.magpiePath ? '1' : '0', DSH_MAGPIE_CLOSE_PORT: port },
   });
   if (result.error) throw result.error;

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fakeHost } from '../fixtures/host.mjs';
 import { resolveConfig } from '../lib/config.js';
-import { autoStartMagpie, closeMagpieSync, registerAutoStart, registerExitClose } from '../lib/lifecycle.js';
+import { CLOSE_TIMEOUT, autoStartMagpie, closeMagpieSync, registerAutoStart, registerExitClose } from '../lib/lifecycle.js';
 import { backendFixture } from '../fixtures/backend.mjs';
 
 test('关闭联动默认关闭，布尔校验严格，不支持平台不执行进程命令', () => {
@@ -60,6 +60,9 @@ test('命令使用静态脚本和环境参数，保留完整路径，不对远�
     assert.equal(options.env.DSH_MAGPIE_CLOSE_EXPLICIT, '1');
     assert.equal(options.env.DSH_MAGPIE_CLOSE_PORT, '');
     assert.equal(options.windowsHide, true);
+    // 慢机器上 PowerShell 冷启动可超过 4 秒；超时需留足余量。
+    assert.equal(options.timeout, CLOSE_TIMEOUT);
+    assert.ok(CLOSE_TIMEOUT >= 10_000);
     return { status: 0, stdout: '[{"pid":123}]' };
   } });
   assert.deepEqual(result, [{ pid: 123 }]);
