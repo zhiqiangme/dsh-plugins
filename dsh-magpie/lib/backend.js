@@ -41,8 +41,8 @@ async function runningWindows(path) {
 
 /** 与 WB 一样把程序、备份和缓存放在 DSH home，绝不把 Magpie 的账号目录随程序搬走。 */
 export class MagpieBackend {
-  constructor({ env = process.env, platform = process.platform, arch = process.arch, fetchImpl = fetch, probe = probeVersion, isRunning = runningWindows } = {}) {
-    Object.assign(this, { env, platform, arch, fetchImpl, probe, isRunning });
+  constructor({ env = process.env, platform = process.platform, arch = process.arch, fetchImpl = fetch, probe = probeVersion, isRunning = runningWindows, retryDelayMs } = {}) {
+    Object.assign(this, { env, platform, arch, fetchImpl, probe, isRunning, retryDelayMs });
     this.paths = backendPaths(env); this.latest = null; this.operation = null; this.pending = null; this.disposed = false; this.versions = new Map();
   }
   get supported() { return this.platform === 'win32' && ['x64', 'arm64'].includes(this.arch); }
@@ -56,11 +56,17 @@ export class MagpieBackend {
     this.versions.set(path, { key, value }); return value;
   }
   async describe(value) {
-    const path = targetPath(value, this.paths);
+    let path;
+    try { path = targetPath(value, this.paths); }
+    catch (error) {
+      // 已保存的路径可能后来变成目录或符号链接；只在程序区块报错，不能让整张卡片读不出配置。
+      return { supported: this.supported, path: typeof value === 'string' ? value.trim() : '', defaultPath: this.paths.exe, installed: false, version: null, reason: formatError(error), latest: this.latestView(), updateAvailable: false, operation: this.operation };
+    }
     const local = !this.supported ? { installed: isFile(path), version: null, reason: '下载升级目前支持 Windows x64 / ARM64，模型管理不受影响' }
       : this.operation?.running && this.operation.path === path ? { installed: isFile(path), version: this.versions.get(path)?.value.version ?? null, reason: null } : await this.local(path);
-    return { supported: this.supported, path, defaultPath: this.paths.exe, ...local, latest: this.latest ? { version: this.latest.version, url: this.latest.url, publishedAt: this.latest.publishedAt } : null, updateAvailable: Boolean(local.version && this.latest && compareVersions(local.version, this.latest.version) < 0), operation: this.operation };
+    return { supported: this.supported, path, defaultPath: this.paths.exe, ...local, latest: this.latestView(), updateAvailable: Boolean(local.version && this.latest && compareVersions(local.version, this.latest.version) < 0), operation: this.operation };
   }
+  latestView() { return this.latest ? { version: this.latest.version, url: this.latest.url, publishedAt: this.latest.publishedAt } : null; }
   assertReady() {
     if (this.disposed) throw new Error('插件已关闭');
     if (!this.supported) throw new Error('Magpie 下载升级目前支持 Windows x64 / ARM64');
@@ -114,7 +120,7 @@ export class MagpieBackend {
       if (before.version && compareVersions(before.version, this.latest.version) >= 0) return { state: 'up-to-date', version: before.version };
       await this.requireStopped(path);
       this.operation.phase = 'downloading';
-      const download = await downloadRelease(this.latest, { fetchImpl: this.fetchImpl, signal, onProgress: (received, total) => Object.assign(this.operation, { received, total }) });
+      const download = await downloadRelease(this.latest, { fetchImpl: this.fetchImpl, signal, partialDir: join(this.paths.cache, 'downloads'), retryDelayMs: this.retryDelayMs, onProgress: (received, total) => Object.assign(this.operation, { received, total }) });
       signal.throwIfAborted();
       this.operation.phase = 'verifying';
       mkdirSync(dirname(path), { recursive: true });
@@ -128,6 +134,8 @@ export class MagpieBackend {
       this.operation.phase = 'installing';
       await this.swap(path, staged, before, this.latest, download.sha256, signal);
       staged = null; this.versions.delete(path);
+      // 失败时保留已校验的下载供下次直接使用；装好后再删。
+      rmSync(download.file, { force: true });
       return { state: before.installed ? 'updated' : 'installed', version: this.latest.version };
     } finally { try { if (staged) rmSync(staged, { force: true }); } finally { unlock(); } }
   }
@@ -154,6 +162,8 @@ export class MagpieBackend {
     } catch (error) {
       try { if (newMoved) rmSync(path); if (oldMoved) renameSync(retired, path); }
       catch (restoreError) { throw new Error(`升级失败且自动恢复未完成，旧程序保留于 ${retired}：${formatError(restoreError)}`, { cause: error }); }
+      // 恢复成功后这份备份没有记进清单，不再有人清理；恢复失败时保留它兜底。
+      if (archived) try { rmSync(join(this.paths.versions, archived.file), { force: true }); } catch { /* 留给用户清理 */ }
       this.versions.delete(path);
       throw new Error(`安装失败${oldMoved ? '，已恢复旧程序' : ''}：${formatError(error)}`, { cause: error });
     }

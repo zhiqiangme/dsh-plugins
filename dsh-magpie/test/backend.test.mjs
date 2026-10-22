@@ -32,6 +32,18 @@ test('检查版本不安装；下载完成后程序、版本和可核验清单�
   const manifest = readdirSync(backend.paths.cache).find((f) => f.endsWith('.json'));
   assert.equal(JSON.parse(readFileSync(join(backend.paths.cache, manifest))).version, '0.1.2');
   assert.equal(existsSync(join(backend.paths.cache, 'install.lock')), false);
+  assert.deepEqual(readdirSync(join(backend.paths.cache, 'downloads')), [], '安装成功后删除已校验的下载文件');
+});
+
+test('已保存路径变成目录时只在程序状态里报错，不让状态接口失败', async (t) => {
+  const { backend, root } = backendFixture(t);
+  const folder = join(root, 'folder.exe');
+  mkdirSync(folder);
+  const status = await backend.describe(folder);
+  assert.equal(status.installed, false);
+  assert.match(status.reason, /普通文件/);
+  assert.equal(status.path, folder);
+  assert.throws(() => backend.install(folder), /普通文件/);
 });
 
 test('升级指定已有路径，只替换程序并保留旧版备份、邻近配置和账号文件', async (t) => {

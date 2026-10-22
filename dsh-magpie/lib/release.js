@@ -1,9 +1,16 @@
 // 沿用 WorkBuddy 的 Release → 下载 → SHA-256 校验流程；Magpie 发布在独立仓库，产物是裸 exe。
 import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { open } from 'node:fs/promises';
+import { join } from 'node:path';
 
 export const RELEASE_REPO = 'yetone/magpie-releases';
 export const RELEASE_API = `https://api.github.com/repos/${RELEASE_REPO}/releases/latest`;
 const MAX_DOWNLOAD = 256 * 1024 * 1024;
+// 慢速网络下 60 MB 可能要下十几分钟，不设总时长；只在持续无数据时断开并续传。
+const IDLE_TIMEOUT = 30_000;
+const MAX_ATTEMPTS = 5;
+const RETRY_DELAY = 2_000;
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 export const versionOf = (value) => /^v?(\d+\.\d+\.\d+)$/.exec(String(value ?? '').trim())?.[1];
 export function compareVersions(a, b) {
@@ -79,7 +86,79 @@ async function readAsset(asset, { fetchImpl, signal, maxBytes, onProgress }) {
   }
 }
 
-export async function downloadRelease(release, { fetchImpl = fetch, signal, onProgress } = {}) {
+const sizeOf = (path) => { try { return statSync(path).size; } catch { return 0; } };
+const wait = (ms, signal) => new Promise((resolve, reject) => {
+  if (!ms) return resolve();
+  const timer = setTimeout(done, ms);
+  function done() { signal?.removeEventListener('abort', stop); resolve(); }
+  function stop() { clearTimeout(timer); reject(signal.reason); }
+  signal?.addEventListener('abort', stop, { once: true });
+});
+
+/** 把剩余字节续写进 file；服务器忽略 Range 时从头覆盖。返回本次结束时的文件长度。 */
+async function appendAsset(asset, file, start, { fetchImpl, signal, onProgress }) {
+  const idle = new AbortController();
+  let timer;
+  const kick = () => { clearTimeout(timer); timer = setTimeout(() => idle.abort(new Error(`${IDLE_TIMEOUT / 1000} 秒没有收到数据`)), IDLE_TIMEOUT); };
+  kick();
+  const handle = await open(file, start ? 'r+' : 'w');
+  let offset = start;
+  try {
+    const response = await fetchImpl(asset.url, {
+      headers: { 'user-agent': 'dsh-magpie', ...(start ? { range: `bytes=${start}-` } : {}) },
+      signal: signal ? AbortSignal.any([signal, idle.signal]) : idle.signal,
+    });
+    if (start && response.status === 416) { await handle.truncate(0); throw new Error('续传位置无效，已清除部分文件'); }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (start && response.status === 206) {
+      const range = /^bytes (\d+)-\d+\/(?:\d+|\*)$/.exec(response.headers?.get?.('content-range') ?? '');
+      if (Number(range?.[1]) !== start) { await handle.truncate(0); throw new Error('服务器返回的续传范围不符，已清除部分文件'); }
+    } else if (start) { offset = 0; await handle.truncate(0); }
+    const chunks = response.body ?? [Buffer.from(await response.arrayBuffer())];
+    for await (const chunk of chunks) {
+      kick();
+      if (offset + chunk.length > asset.size) throw new Error('下载超过 Release 声明的大小');
+      await handle.write(chunk, 0, chunk.length, offset);
+      offset += chunk.length;
+      onProgress?.(offset, asset.size);
+    }
+    return offset;
+  } finally { clearTimeout(timer); await handle.close(); }
+}
+
+/**
+ * 安装包按预期哈希命名，写在 partialDir：断线后本次自动续传，失败后再点下载也从已有字节续传；
+ * 换了 Release（哈希不同）不会续到旧文件上。校验通过的文件由调用方在安装成功后删除。
+ */
+async function downloadAsset(asset, expected, { fetchImpl, signal, onProgress, partialDir, retryDelayMs }) {
+  mkdirSync(partialDir, { recursive: true });
+  const file = join(partialDir, `${asset.name}.${expected.slice(0, 16)}.part`);
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    signal?.throwIfAborted();
+    let start = sizeOf(file);
+    if (start > asset.size) { rmSync(file, { force: true }); start = 0; }
+    if (start === asset.size) break;
+    try {
+      if (await appendAsset(asset, file, start, { fetchImpl, signal, onProgress }) === asset.size) break;
+      throw new Error('下载不完整或大小不符');
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      lastError = error;
+      if (attempt < MAX_ATTEMPTS) await wait(retryDelayMs * attempt, signal);
+    }
+  }
+  const received = sizeOf(file);
+  if (received !== asset.size) {
+    throw new Error(`下载 ${asset.name} 失败（${received}/${asset.size} 字节，已尝试 ${MAX_ATTEMPTS} 次，再次点击会继续下载）：${formatError(lastError)}`, { cause: lastError });
+  }
+  const bytes = readFileSync(file);
+  if (sha256(bytes) !== expected) { rmSync(file, { force: true }); throw new Error('Magpie 安装包 SHA-256 不匹配，已删除下载文件，现有程序未更改'); }
+  return { bytes, file };
+}
+
+export async function downloadRelease(release, { fetchImpl = fetch, signal, onProgress, partialDir, retryDelayMs = RETRY_DELAY } = {}) {
+  if (!partialDir) throw new Error('缺少下载缓存目录');
   assetURL(release.asset, release.tag);
   let expected = /^sha256:([a-f0-9]{64})$/i.exec(release.asset.digest ?? '')?.[1]?.toLowerCase();
   if (!expected) {
@@ -89,7 +168,6 @@ export async function downloadRelease(release, { fetchImpl = fetch, signal, onPr
     expected = text.split(/\r?\n/).map((line) => /^([a-f0-9]{64})\s+\*?(.+?)\s*$/i.exec(line)).find((match) => match?.[2] === release.asset.name)?.[1]?.toLowerCase();
     if (!expected) throw new Error('SHA256SUMS 缺少当前 Magpie 安装包的校验值');
   }
-  const bytes = await readAsset(release.asset, { fetchImpl, signal, maxBytes: MAX_DOWNLOAD, onProgress });
-  if (sha256(bytes) !== expected) throw new Error('Magpie 安装包 SHA-256 不匹配，现有程序未更改');
-  return { bytes, sha256: expected };
+  const { bytes, file } = await downloadAsset(release.asset, expected, { fetchImpl, signal, onProgress, partialDir, retryDelayMs });
+  return { bytes, sha256: expected, file };
 }
