@@ -17,6 +17,8 @@ window.__ModuleLoader__.load({
       sync: '同步所选模型到 DSH', syncHint: '关闭同步或取消全部勾选，保存后移除“Magpie · DSH”分组。',
       native: '当前还有 Magpie 原生分组。这里保存到独立的“Magpie · DSH”分组，原分组仍可使用。',
       count: '{selected} / {total} 个模型已勾选', search: '搜索名称或 ID', add: '手动添加模型',
+      sortModel: '按模型排序', sortProvider: '按供应商排序',
+      sortModelHint: '对当前搜索结果按模型名称升序排列', sortProviderHint: '对当前搜索结果按供应商简称、模型名称升序排列',
       all: '全选', none: '取消全选', empty: '清单为空。添加模型，或从正在运行的 Magpie 同步。',
       noMatch: '没有匹配的模型。', id: '完整模型 ID', modelName: '显示名称', nameHint: '留空使用模型 ID',
       selected: '同步此模型', drag: '拖动调整 {name} 的顺序', remove: '删除', details: '能力与参数',
@@ -37,6 +39,8 @@ window.__ModuleLoader__.load({
       sync: 'Sync selected models to DSH', syncHint: 'Turning sync off or deselecting all models removes the “Magpie · DSH” group when saved.',
       native: 'Magpie native groups are also configured. This list uses its own “Magpie · DSH” group; existing groups remain available.',
       count: '{selected} / {total} models selected', search: 'Search names or IDs', add: 'Add a model',
+      sortModel: 'Sort by model', sortProvider: 'Sort by provider',
+      sortModelHint: 'Sort matching models by name, ascending', sortProviderHint: 'Sort matching models by short provider name, then model name, ascending',
       all: 'Select all', none: 'Deselect all', empty: 'The list is empty. Add models or sync from a running Magpie.',
       noMatch: 'No matching models.', id: 'Full model ID', modelName: 'Display name', nameHint: 'Defaults to model ID',
       selected: 'Sync this model', drag: 'Drag to reorder {name}', remove: 'Delete', details: 'Capabilities and limits',
@@ -90,6 +94,23 @@ window.__ModuleLoader__.load({
       return !supplier || name.toLowerCase() === supplier.toLowerCase() || name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)
         ? name : `${name} ${supplier}`;
     }
+    function sortModelIndexes(rows, mode, providers = {}) {
+      const collator = new Intl.Collator(['zh-CN', 'en'], { numeric: true, sensitivity: 'base' });
+      const compare = (a, b) => a && b ? collator.compare(a, b) : a ? -1 : b ? 1 : 0;
+      const keys = rows.map((row, index) => {
+        const slash = row.id.indexOf('/');
+        const provider = slash > 0 ? row.id.slice(0, slash) : '';
+        const supplier = Object.hasOwn(providers, provider) ? providers[provider] : provider;
+        let name = (row.name || row.id).trim();
+        if (name === row.id && slash > 0) name = row.id.slice(slash + 1);
+        // 展示名称可能已经带供应商后缀；按模型排序时把后缀作为次级键。
+        if (supplier && name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)) name = name.slice(0, -supplier.length - 1).trimEnd();
+        return { index, name, supplier };
+      });
+      return keys.sort((a, b) => mode === 'provider'
+        ? compare(a.supplier, b.supplier) || compare(a.name, b.name) || a.index - b.index
+        : compare(a.name, b.name) || compare(a.supplier, b.supplier) || a.index - b.index).map(({ index }) => index);
+    }
 
     function ModelsCard({ t }) {
       const [view, setView] = useState(null);
@@ -134,11 +155,20 @@ window.__ModuleLoader__.load({
       const visible = rows.map((row, index) => ({ row, index })).filter(({ row }) => `${row.id} ${labelFor(row)}`.toLowerCase().includes(search.toLowerCase()));
       const visibleIndexes = new Set(visible.map(({ index }) => index));
       const selectVisible = (enabled) => update({ models: rows.map((m, i) => visibleIndexes.has(i) ? { ...m, enabled } : m) });
-      const move = (index, target) => {
-        if (index === target) return;
-        update({ models: moveModel(rows, index, target) });
-        const order = moveModel(rows.map((_row, i) => i), index, target);
+      const reorder = (order) => {
+        if (order.every((index, i) => index === i)) return;
+        update({ models: order.map((index) => rows[index]) });
         setExpanded((old) => new Set([...old].map((i) => order.indexOf(i))));
+      };
+      const move = (index, target) => reorder(moveModel(rows.map((_row, i) => i), index, target));
+      const sort = (mode) => {
+        if (busy || visible.length < 2) return;
+        const order = rows.map((_row, i) => i);
+        const sorted = sortModelIndexes(visible.map(({ row }) => row), mode, view.providerNames);
+        // 只替换匹配条目所在的位置，隐藏模型原位置不动；展开状态跟随同一个模型。
+        visible.forEach(({ index }, i) => { order[index] = visible[sorted[i]].index; });
+        reorder(order);
+        dragSource.current = null; setDrag(null);
       };
       const endDrag = () => { dragSource.current = null; setDrag(null); };
       const dropPosition = (event, index) => {
@@ -176,7 +206,8 @@ window.__ModuleLoader__.load({
         h('div', { className: 'bar spread section' }, h('strong', null, t('count', { selected: rows.filter((m) => m.enabled).length, total: rows.length })), h('div', { className: 'bar' },
           button(t('add'), () => { update({ models: [...rows, { id: '', name: '', enabled: true, input: ['text'], reasoningEfforts: [] }] }); setExpanded((old) => new Set([...old, rows.length])); }), button(t('catalog'), syncCatalog, { disabled: busy || !view.editable }))),
         h('div', { className: 'bar section' }, h('input', { className: 'search', type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: search, onChange: (e) => setSearch(e.target.value) }),
-          button(t('all'), () => selectVisible(true)), button(t('none'), () => selectVisible(false))),
+          h('div', { className: 'bar' }, button(t('sortModel'), () => sort('model'), { title: t('sortModelHint'), disabled: busy || visible.length < 2 }), button(t('sortProvider'), () => sort('provider'), { title: t('sortProviderHint'), disabled: busy || visible.length < 2 })),
+          h('div', { className: 'bar' }, button(t('all'), () => selectVisible(true)), button(t('none'), () => selectVisible(false)))),
         !rows.length ? h('p', { className: 'notice section' }, t('empty')) : !visible.length ? h('p', null, t('noMatch')) : null,
         h('div', { className: 'model-list' }, ...visible.map(({ row, index }) => h('div', {
           className: `model${expanded.has(index) ? ' expanded' : ''}${drag?.source === index ? ' dragging' : ''}${drag?.index === index ? (drag.after ? ' drop-after' : ' drop-before') : ''}`, key: index,
@@ -222,6 +253,6 @@ window.__ModuleLoader__.load({
         ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, locale: namespace, inject: () => ({ t }) }, ModelsCard));
       }
     }
-    return { name: 'dsh-magpie-client', inject: ['slots', 'locale'], apply, ModelsCard, moveModel, displayModelName, zh, en };
+    return { name: 'dsh-magpie-client', inject: ['slots', 'locale'], apply, ModelsCard, moveModel, displayModelName, sortModelIndexes, zh, en };
   },
 });

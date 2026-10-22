@@ -32,6 +32,8 @@ npm 发布后可用 `dsh plugin --profile desktop add @zhiqiangme/dsh-magpie`。
 
 支持搜索、全选、取消全选、删除和离线编辑。批量勾选只影响当前搜索结果。保存只写 DSH 配置，不要求 Magpie 正在运行；模型 ID 是否可用，需要网关和上游实际支持。
 
+「按模型排序」按模型名称升序排列，同名模型再按供应商简称排列；「按供应商排序」先按供应商简称升序分组，再按模型名称排列。排序忽略大小写，数字按自然顺序排列（例如 Model 2 在 Model 10 前），空名称或无供应商的条目排在后面；键值相同的条目保留相对顺序。有搜索条件时只重排匹配模型，隐藏条目的位置不变。勾选、编辑内容和展开状态一并保留，点击「保存并同步」后保存新顺序。
+
 本分组逐模型默认选择已配置档位中的最高档，按 `off < minimal < low < medium < high < xhigh < max` 排序。例如 Step 的 `low, medium, high` 默认 High，Flash 的 `low, high, max` 默认 Max。手动选择的档位继续生效；未声明推理能力的模型不补默认值。
 
 当前 DSH 的 llm-pi-ai 只提供 provider 级默认配置。插件在宿主现有适配器的 `resolveModel` / `prepareCall` / `stream` 接口上仅补充 `dsh-magpie` 路由的逐模型默认值，沿用同一套模型元数据与协议实现。已有 provider 和模型 ID 保持不变，其它分组不受影响；适配器重载时重新附加，停用插件时撤销。

@@ -31,6 +31,8 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
   assert.equal(client.styles.length, 1);
   assert.ok(button(client.render(), '手动添加模型'));
   assert.ok(button(client.render(), '从 Magpie 同步'));
+  assert.ok(button(client.render(), '按模型排序'));
+  assert.ok(button(client.render(), '按供应商排序'));
 });
 
 test('添加、编辑、调整顺序、取消勾选、删除通过卡片实际事件更新待保存清单', () => {
@@ -263,4 +265,84 @@ test('管理行预览供应商简称，可按简称搜索；修改名称或 ID �
   nodes(client.render(), (n) => n.props.placeholder === 'provider/model-id')[1].props.onChange({ target: { value: 'opencode-zen-free/new-model' } });
   assert.equal(labels()[1], '我的模型 OpenCode');
   assert.equal(client.states[0].config.models[1].name, '我的模型');
+});
+
+test('按模型或供应商排序保留草稿、勾选和展开，点击保存后提交新顺序', async () => {
+  let posted;
+  const initial = view({ models: [
+    { id: 'zcode/ten', name: 'Model 10', enabled: false, input: ['text', 'image'], contextWindow: 1000000 },
+    { id: 'workbuddy-ai/two', name: 'Model 2 WorkBuddy GL' },
+    { id: 'opencode-zen-free/two', name: 'Model 2' },
+    { id: 'workbuddy/one', name: 'Model 1' },
+    { id: 'qoder-cn/ten', name: 'Model 10' },
+  ] });
+  const client = clientHarness(initial, async (_url, options) => {
+    posted = JSON.parse(options.body);
+    return response({ ...initial, config: resolveConfig(posted.config), sync: { ok: true, count: 4 } });
+  });
+  field(client.render(), '思考档位（逗号分隔）').props.onChange({ target: { value: 'low,' } });
+  nodes(client.render(), (n) => n.props.className === 'model-toggle')[0].props.onClick();
+  nodes(client.render(), (n) => n.props.className === 'model-toggle')[3].props.onClick();
+  const draft = [...client.states[0].config.models];
+  button(client.render(), '按模型排序').props.onClick();
+  assert.deepEqual(client.states[0].config.models, [draft[3], draft[2], draft[1], draft[4], draft[0]]);
+  assert.deepEqual([...client.states[6]], [4, 0]);
+  assert.equal(client.states[1], true);
+  assert.equal(client.states[0].config.models[4].enabled, false);
+  assert.equal(client.states[0].config.models[4].effortText, 'low,');
+  button(client.render(), '按供应商排序').props.onClick();
+  assert.deepEqual(client.states[0].config.models, [draft[2], draft[4], draft[3], draft[1], draft[0]]);
+  assert.deepEqual([...client.states[6]], [4, 2]);
+  assert.equal(client.states[0].config.models[3].name, 'Model 2 WorkBuddy GL');
+  assert.equal(posted, undefined, '排序只调整草稿，不自动写入 DSH');
+  await button(client.render(), '保存并同步').props.onClick();
+  assert.deepEqual(posted.config.models.map((m) => m.id), ['opencode-zen-free/two', 'qoder-cn/ten', 'workbuddy/one', 'workbuddy-ai/two', 'zcode/ten']);
+  assert.equal(client.states[1], false);
+});
+
+test('快速排序只重排搜索结果所在位置，隐藏条目、筛选及展开状态保留', () => {
+  const client = clientHarness(view({ models: [
+    { id: 'hidden/one' }, { id: 'visible/z', name: 'Zebra' }, { id: 'hidden/two' },
+    { id: 'visible/a', name: 'Alpha' }, { id: 'hidden/three' }, { id: 'visible/b', name: 'Beta' },
+  ] }));
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'visible' } });
+  nodes(client.render(), (n) => n.props.className === 'model-toggle')[0].props.onClick();
+  const before = [...client.states[0].config.models];
+  button(client.render(), '按模型排序').props.onClick();
+  assert.deepEqual(client.states[0].config.models, [before[0], before[3], before[2], before[5], before[4], before[1]]);
+  assert.equal(client.states[5], 'visible');
+  assert.deepEqual([...client.states[6]], [5]);
+  assert.match(button(client.render(), '按模型排序').props.title, /当前搜索结果/);
+});
+
+test('排序识别 ID 后的模型名，忽略大小写，自然数字顺序，同键稳定且空条目在后', () => {
+  const client = clientHarness();
+  const rows = [
+    { id: 'workbuddy/model10', name: 'workbuddy/model10' },
+    { id: 'opencode-zen-free/model2', name: 'model2 OpenCode' },
+    { id: 'qoder-cn/b', name: 'MODEL2' }, { id: 'qoder-cn/c', name: 'model2' },
+    { id: '', name: '' }, { id: 'custom-routing-group', name: 'Group' },
+    { id: 'constructor/x', name: 'Model1' },
+  ];
+  assert.deepEqual(client.module.sortModelIndexes(rows, 'model', PROVIDER_NAMES), [5, 6, 1, 2, 3, 0, 4]);
+  assert.deepEqual(client.module.sortModelIndexes(rows, 'provider', PROVIDER_NAMES), [6, 1, 2, 3, 0, 5, 4]);
+});
+
+test('已排好时不产生未保存状态，处理期间或不足两个匹配模型时禁用快速排序', () => {
+  const empty = clientHarness(view());
+  assert.equal(button(empty.render(), '按模型排序').props.disabled, true);
+  const client = clientHarness(view({ models: [{ id: 'opencode-zen-free/a', name: 'Alpha' }, { id: 'workbuddy/b', name: 'Beta' }] }));
+  const original = client.states[0].config.models;
+  button(client.render(), '按模型排序').props.onClick();
+  button(client.render(), '按供应商排序').props.onClick();
+  assert.equal(client.states[0].config.models, original);
+  assert.equal(client.states[1], false);
+  client.states[2] = true;
+  assert.equal(button(client.render(), '按供应商排序').props.disabled, true);
+  button(client.render(), '按模型排序').props.onClick();
+  assert.equal(client.states[1], false);
+  client.states[2] = false;
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'Alpha' } });
+  assert.equal(button(client.render(), '按模型排序').props.disabled, true);
+  assert.equal(button(client.render(), '按供应商排序').props.disabled, true);
 });
