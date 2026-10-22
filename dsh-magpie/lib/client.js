@@ -33,7 +33,8 @@ window.__ModuleLoader__.load({
       backendDefault: '留空使用插件独立目录', backendCheck: '检查更新', backendDownload: '下载 Magpie', backendUpgrade: '升级 Magpie',
       backendLatest: '最新版本：{version}', backendCurrent: '当前版本：{version}', backendUpToDate: '已是最新版本或更新',
       backendChecking: '正在检查版本…', backendDownloading: '正在下载…', backendVerifying: '正在校验程序…', backendInstalling: '正在替换程序…',
-      backendInstalled: 'Magpie {version} 已下载，请从程序路径启动。', backendUpdated: '已升级到 Magpie {version}，可以重新启动 Magpie。',
+      backendInstalled: 'Magpie {version} 已下载并启动。', backendUpdated: '已升级到 Magpie {version} 并重新启动。', backendStarting: '正在启动 Magpie…',
+      backendAlreadyRunning: 'Magpie {version} 已就绪，程序已在运行，未重复启动。', backendLaunchFailed: 'Magpie {version} 已就绪，但启动失败：{reason}。请从程序路径手动启动。',
       backendProgress: '已下载 {received} / {total} MiB', backendFailed: '操作失败：{reason}',
       closeOnExit: '退出 DSH 时同时关闭 Magpie',
       closeOnExitHint: '保存后生效。结束本机 Magpie（包括托盘）；优先使用指定程序路径，未指定时识别本机网关或插件独立目录。停用、更新插件不会触发。',
@@ -78,7 +79,8 @@ window.__ModuleLoader__.load({
       backendDefault: 'Leave blank for the plugin directory', backendCheck: 'Check for updates', backendDownload: 'Download Magpie', backendUpgrade: 'Update Magpie',
       backendLatest: 'Latest: {version}', backendCurrent: 'Current: {version}', backendUpToDate: 'Up to date or newer',
       backendChecking: 'Checking version…', backendDownloading: 'Downloading…', backendVerifying: 'Verifying executable…', backendInstalling: 'Replacing executable…',
-      backendInstalled: 'Magpie {version} downloaded. Launch it from the executable path.', backendUpdated: 'Updated to Magpie {version}. You can restart Magpie.',
+      backendInstalled: 'Magpie {version} downloaded and started.', backendUpdated: 'Updated to Magpie {version} and restarted it.', backendStarting: 'Starting Magpie…',
+      backendAlreadyRunning: 'Magpie {version} is ready and already running; not started again.', backendLaunchFailed: 'Magpie {version} is ready but could not start: {reason}. Launch it from the executable path.',
       backendProgress: 'Downloaded {received} / {total} MiB', backendFailed: 'Operation failed: {reason}',
       closeOnExit: 'Close Magpie when DSH exits',
       closeOnExitHint: 'Save to apply. Ends local Magpie, including its tray process. Uses the configured executable path, or detects the local gateway or plugin directory. Disabling or updating the plugin does not trigger this.',
@@ -597,8 +599,11 @@ window.__ModuleLoader__.load({
         // 程序操作不保存或覆盖模型草稿；程序路径仍由原有保存流程持久化。
         setView((old) => ({ ...old, backend: result.backend }));
       });
-      const backendPhase = operation ? ({ checking: t('backendChecking'), downloading: t('backendDownloading'), verifying: t('backendVerifying'), installing: t('backendInstalling'),
-        installed: t('backendInstalled', { version: operation.version }), updated: t('backendUpdated', { version: operation.version }), 'up-to-date': t('backendUpToDate'), failed: t('backendFailed', { reason: operation.reason }) })[operation.phase] : '';
+      // 安装成功后按启动结果给出提示；启动失败不影响安装结果。
+      const finished = (key) => operation.launchError ? t('backendLaunchFailed', { version: operation.version, reason: operation.launchError })
+        : operation.alreadyRunning ? t('backendAlreadyRunning', { version: operation.version }) : t(key, { version: operation.version });
+      const backendPhase = operation ? ({ checking: t('backendChecking'), downloading: t('backendDownloading'), verifying: t('backendVerifying'), installing: t('backendInstalling'), starting: t('backendStarting'),
+        installed: finished('backendInstalled'), updated: finished('backendUpdated'), 'up-to-date': t('backendUpToDate'), failed: t('backendFailed', { reason: operation.reason }) })[operation.phase] : '';
       const syncCatalog = () => perform(async () => {
         const result = await request({ action: 'sync-catalog', config, revision: view.revision, apiKey: key || undefined });
         setView(result); setDirty(false); setKey(''); setSearch(''); setExpanded(new Set());
@@ -668,7 +673,7 @@ window.__ModuleLoader__.load({
             backend?.version ? h('span', { className: 'muted' }, t('backendCurrent', { version: backend.version })) : null,
             backend?.latest ? h('span', { className: 'muted' }, t('backendLatest', { version: backend.latest.version })) : null),
           backend?.reason ? h('p', { className: 'error', role: 'alert' }, backend.reason) : null,
-          backendPhase ? h('p', { className: operation.phase === 'failed' ? 'error' : 'muted', role: operation.phase === 'failed' ? 'alert' : 'status' }, backendPhase) : null,
+          backendPhase ? h('p', { className: operation.phase === 'failed' || operation.launchError ? 'error' : 'muted', role: operation.phase === 'failed' || operation.launchError ? 'alert' : 'status' }, backendPhase) : null,
           operation?.running ? h('progress', { value: operation.received, max: operation.total || 1, 'aria-label': t('backendDownloading') }) : null,
           operation?.running && operation.total ? h('p', { className: 'muted' }, t('backendProgress', { received: (operation.received / 1048576).toFixed(1), total: (operation.total / 1048576).toFixed(1) })) : null),
         h('details', { className: 'section' }, h('summary', null, t('connection')),

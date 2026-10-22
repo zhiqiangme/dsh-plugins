@@ -35,6 +35,31 @@ test('检查版本不安装；下载完成后程序、版本和可核验清单�
   assert.deepEqual(readdirSync(join(backend.paths.cache, 'downloads')), [], '安装成功后删除已校验的下载文件');
 });
 
+test('下载或升级完成后启动 Magpie；已在运行不重复启动，启动失败不影响安装结果', async (t) => {
+  const { backend, launches } = backendFixture(t);
+  backend.install();
+  const installed = await finish(backend);
+  assert.equal(installed.phase, 'installed');
+  assert.equal(installed.launched, true);
+  assert.deepEqual(launches, [backend.paths.exe]);
+  // 已是最新时不下载也不启动。
+  backend.install();
+  assert.equal((await finish(backend)).phase, 'up-to-date');
+  assert.equal(launches.length, 1);
+  const other = backendFixture(t, { launch: async () => { throw Object.assign(new Error('blocked'), { code: 'EACCES' }); } });
+  other.backend.install();
+  const failed = await finish(other.backend);
+  assert.equal(failed.phase, 'installed');
+  assert.equal(failed.launched, false);
+  assert.match(failed.launchError, /EACCES/);
+  // 全新安装时目标文件不存在，安装前不查进程；装好后发现同一程序已在运行（例如用户刚手动打开）。
+  const running = backendFixture(t, { isRunning: async () => true });
+  running.backend.install();
+  const already = await finish(running.backend);
+  assert.equal(already.alreadyRunning, true);
+  assert.deepEqual(running.launches, []);
+});
+
 test('已保存路径变成目录时只在程序状态里报错，不让状态接口失败', async (t) => {
   const { backend, root } = backendFixture(t);
   const folder = join(root, 'folder.exe');

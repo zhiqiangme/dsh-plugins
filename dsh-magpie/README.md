@@ -2,7 +2,7 @@
 
 在 DSH「插件」页管理 Magpie 提供的模型，并把选中的模型写入 DSH 的 **Magpie** 模型分组。模型清单、名称、勾选、顺序、上下文、输出限额、图片输入和思考档位都由本插件保存。
 
-可在卡片下载或升级 Windows 版 Magpie，下载后自行启动 Magpie；可选退出 DSH 时关闭本机 Magpie。插件不自动启动 Magpie，也不迁移或卸载旧 OpenCode 插件。
+可在卡片下载或升级 Windows 版 Magpie，完成后自动启动；可选退出 DSH 时关闭本机 Magpie。插件只在下载或升级完成时启动 Magpie，不在 DSH 启动时拉起，也不迁移或卸载旧 OpenCode 插件。
 
 ## 安装
 
@@ -37,7 +37,7 @@ npm 发布后可用 `dsh plugin --profile desktop add @zhiqiangme/dsh-magpie`。
 
 ## 下载与升级 Magpie
 
-展开「Magpie 下载与升级」，点击「检查更新」或「下载 Magpie」。已安装时显示当前版本和「升级 Magpie」；下载期间显示进度，完成后从显示的程序路径启动 Magpie。升级前完全退出目标 Magpie（包括托盘），再点击升级；不会自动中断会话或重启应用。
+展开「Magpie 下载与升级」，点击「检查更新」或「下载 Magpie」。已安装时显示当前版本和「升级 Magpie」；下载期间显示进度。下载或升级完成后自动以独立进程启动 Magpie，DSH 退出不会连带结束它（除非开启「退出 DSH 时同时关闭 Magpie」）；若该程序已在运行则不重复启动，启动失败只提示原因、不影响安装结果。升级前完全退出目标 Magpie（包括托盘），再点击升级；插件不会替你结束正在运行的 Magpie。
 
 - 默认安装到 `<DSH_HOME>/magpie/backend/current/magpie.exe`，未指定 `DSH_HOME` 时使用 `~/.dsh`。`Magpie 程序路径` 可填写已有 exe 的绝对路径，留空恢复独立目录；通过「保存并同步」保存路径偏好。程序操作立即作用于填写的路径，但不会保存或覆盖模型草稿。
 - 下载中断后自动续传：连接 30 秒无数据即断开，从已下载的字节继续请求，最多尝试 5 次；仍失败时保留部分文件，再次点击「下载 Magpie」或「升级 Magpie」接着下载。部分文件以预期 SHA-256 命名，放在 `<DSH_HOME>/magpie/cache/downloads`，换了 Release 不会续到旧文件上；校验不符时删除并从头下载，安装成功后删除。

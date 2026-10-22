@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -31,6 +31,20 @@ export async function probeVersion(path, signal) {
   if (!version) throw new Error('该文件没有返回有效的 Magpie 版本，拒绝覆盖');
   return version;
 }
+/**
+ * 以独立进程启动 Magpie：detached 让它脱离 DSH 的进程组与作业对象，DSH 退出不会连带结束它
+ * （是否随 DSH 关闭由「退出 DSH 时同时关闭 Magpie」决定）。
+ * DSH 的运行时以 ELECTRON_RUN_AS_NODE 启动，继承下去会让 Electron 类程序变成 Node；启动前去掉。
+ */
+export function launchDetached(path) {
+  return new Promise((resolve, reject) => {
+    const env = { ...process.env };
+    for (const name of ['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS']) delete env[name];
+    const child = spawn(path, [], { cwd: dirname(path), detached: true, stdio: 'ignore', windowsHide: false, env });
+    child.once('error', reject);
+    child.once('spawn', () => { child.unref(); resolve(child.pid); });
+  });
+}
 async function runningWindows(path) {
   // 路径经环境传入固定脚本，不能把用户输入拼进 PowerShell 命令。
   const script = "$ErrorActionPreference='Stop'; $target=[IO.Path]::GetFullPath($env:DSH_MAGPIE_PROBE_TARGET); $name=[IO.Path]::GetFileName($target); @(Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq $target) -or (!$_.ExecutablePath -and $_.Name -eq $name) } | Select-Object -ExpandProperty ProcessId) | ConvertTo-Json -Compress";
@@ -41,8 +55,8 @@ async function runningWindows(path) {
 
 /** 与 WB 一样把程序、备份和缓存放在 DSH home，绝不把 Magpie 的账号目录随程序搬走。 */
 export class MagpieBackend {
-  constructor({ env = process.env, platform = process.platform, arch = process.arch, fetchImpl = fetch, probe = probeVersion, isRunning = runningWindows, retryDelayMs } = {}) {
-    Object.assign(this, { env, platform, arch, fetchImpl, probe, isRunning, retryDelayMs });
+  constructor({ env = process.env, platform = process.platform, arch = process.arch, fetchImpl = fetch, probe = probeVersion, isRunning = runningWindows, launch = launchDetached, retryDelayMs } = {}) {
+    Object.assign(this, { env, platform, arch, fetchImpl, probe, isRunning, launch, retryDelayMs });
     this.paths = backendPaths(env); this.latest = null; this.operation = null; this.pending = null; this.disposed = false; this.versions = new Map();
   }
   get supported() { return this.platform === 'win32' && ['x64', 'arm64'].includes(this.arch); }
@@ -136,8 +150,17 @@ export class MagpieBackend {
       staged = null; this.versions.delete(path);
       // 失败时保留已校验的下载供下次直接使用；装好后再删。
       rmSync(download.file, { force: true });
-      return { state: before.installed ? 'updated' : 'installed', version: this.latest.version };
+      return { state: before.installed ? 'updated' : 'installed', version: this.latest.version, ...await this.start(path) };
     } finally { try { if (staged) rmSync(staged, { force: true }); } finally { unlock(); } }
+  }
+  /** 安装已完成，启动失败只作提示，不能把成功的安装报成失败。 */
+  async start(path) {
+    this.operation.phase = 'starting';
+    try {
+      // 升级前已确认目标未运行；这里再查一次，避免重复打开用户刚手动启动的同一程序。
+      if (await this.isRunning(path)) return { launched: false, alreadyRunning: true };
+      return { launched: true, pid: await this.launch(path) };
+    } catch (error) { return { launched: false, launchError: formatError(error) }; }
   }
   async swap(path, staged, before, release, hash, signal) {
     const retired = `${path}.${randomUUID()}.old`;

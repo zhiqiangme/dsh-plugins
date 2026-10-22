@@ -25,15 +25,16 @@ export function backendFixture(t, options = {}) {
     assert.ok(basename(root).startsWith('dsh-magpie-backend-'));
     rmSync(root, { recursive: true, force: true });
   });
-  const release = releaseFixture();
+  const release = releaseFixture(), launches = [];
   const backend = new MagpieBackend({ env: { DSH_MAGPIE_BACKEND_ROOT: root }, platform: 'win32', arch: 'x64', fetchImpl: release.fetchImpl,
     probe: async (path) => {
       const match = /^magpie (\d+\.\d+\.\d+)$/.exec(readFileSync(path, 'utf8'));
       if (!match) throw new Error('not magpie');
       return match[1];
-    }, isRunning: async () => false, ...options });
+    // 测试不能真的启动进程；记录启动请求供断言。
+    }, isRunning: async () => false, launch: async (path) => { launches.push(path); return 4321; }, ...options });
   t.after(() => backend.dispose());
-  return { backend, root, ...release };
+  return { backend, root, launches, ...release };
 }
 export async function finish(backend) {
   const pending = backend.pending;
