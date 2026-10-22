@@ -27,6 +27,8 @@ npm 发布后可用 `dsh plugin --profile desktop add @zhiqiangme/dsh-magpie`。
 3. 模型列表左侧勾选，显示名称右侧箭头展开详细配置；详情在列表原位展开，后续模型自动下移。按需编辑 ID、名称、上下文、输出限额、图片输入和思考档位，例如 `low, high, max`。未知能力留空，不按模型名称猜测。
 4. 勾选模型，拖动勾选框左侧的六点手柄调整顺序，开启「同步所选模型到 DSH」，点击「保存并同步」。选中的模型按清单顺序出现在 **Magpie · DSH** 分组。
 
+管理列表与 DSH 模型选择器会在模型名后追加供应商简称，例如 `DeepSeek V4.1 Flash WorkBuddy`、`Step-5-Preview WorkBuddy GL`、`DeepSeek V4.1 Flash Free OpenCode`。`workbuddy-ai` 为国际版，显示为 `WorkBuddy GL`；`workbuddy` 为国内版，显示为 `WorkBuddy`。Qoder / Trae 国际版同样使用 `GL`。名称已带对应简称时不重复追加；手工名称、模型 ID 与排序保持不变，未知供应商或路由组沿用手工名称。
+
 支持搜索、全选、取消全选、删除和离线编辑。批量勾选只影响当前搜索结果。保存只写 DSH 配置，不要求 Magpie 正在运行；模型 ID 是否可用，需要网关和上游实际支持。
 
 本分组逐模型默认选择已配置档位中的最高档，按 `off < minimal < low < medium < high < xhigh < max` 排序。例如 Step 的 `low, medium, high` 默认 High，Flash 的 `low, high, max` 默认 Max。手动选择的档位继续生效；未声明推理能力的模型不补默认值。

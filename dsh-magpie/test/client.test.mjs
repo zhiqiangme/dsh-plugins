@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveConfig } from '../lib/config.js';
+import { PROVIDER_NAMES } from '../lib/names.js';
 import { clientHarness, button, field, nodes } from '../fixtures/client.mjs';
 
-const view = (config = {}) => ({ ok: true, config: resolveConfig(config), revision: 'revision-one', nativeProviders: ['magpie'], editable: true, keyConfigured: false, keyWritable: true });
+const view = (config = {}) => ({ ok: true, config: resolveConfig(config), revision: 'revision-one', providerNames: PROVIDER_NAMES, nativeProviders: ['magpie'], editable: true, keyConfigured: false, keyWritable: true });
 const response = (body, status = 200) => ({ ok: status === 200, status, json: async () => body });
 const handles = (tree) => nodes(tree, (n) => n.props.className === 'model-drag');
 const modelRows = (tree) => nodes(tree, (n) => n.props.className?.split(' ').includes('model'));
@@ -211,4 +212,23 @@ test('处理期间或仅一个模型时禁用手柄，草稿变化后拒绝过�
   modelRows(client.render())[1].props.onDrop(stale);
   assert.equal(stale.prevented, false);
   assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['a', 'b', '']);
+});
+
+test('管理行预览供应商简称，可按简称搜索；修改名称或 ID 即时更新后缀但不改写手工名称', () => {
+  const client = clientHarness(view({ models: [
+    { id: 'workbuddy/flash', name: 'DeepSeek V4.1 Flash' },
+    { id: 'workbuddy-ai/flash', name: 'DeepSeek V4.1 Flash' },
+    { id: 'opencode-zen-free/flash', name: 'DeepSeek V4.1 Flash Free' },
+  ] }));
+  const labels = () => nodes(client.render(), (n) => n.props.className === 'model-name').map((n) => n.children[0]);
+  assert.deepEqual(labels(), ['DeepSeek V4.1 Flash WorkBuddy', 'DeepSeek V4.1 Flash WorkBuddy GL', 'DeepSeek V4.1 Flash Free OpenCode']);
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'WorkBuddy GL' } });
+  assert.deepEqual(labels(), ['DeepSeek V4.1 Flash WorkBuddy GL']);
+  assert.equal(field(client.render(), '显示名称').props.value, 'DeepSeek V4.1 Flash');
+  field(client.render(), '显示名称').props.onChange({ target: { value: '我的模型' } });
+  assert.deepEqual(labels(), ['我的模型 WorkBuddy GL']);
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: '' } });
+  nodes(client.render(), (n) => n.props.placeholder === 'provider/model-id')[1].props.onChange({ target: { value: 'opencode-zen-free/new-model' } });
+  assert.equal(labels()[1], '我的模型 OpenCode');
+  assert.equal(client.states[0].config.models[1].name, '我的模型');
 });

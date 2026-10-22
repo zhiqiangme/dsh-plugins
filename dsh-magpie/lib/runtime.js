@@ -1,5 +1,6 @@
 import { KEY_REF, PACKAGE_NAME, PLUGIN_ID, object, resolveConfig, revision } from './config.js';
 import { credential, findEntry, importModels, requestGateway, syncModels } from './models.js';
+import { PROVIDER_NAMES } from './names.js';
 
 export function hostService(ctx, name, usable = (value) => value !== undefined) {
   const candidates = [];
@@ -36,7 +37,7 @@ export class ModelManager {
     const saved = await this.credentials?.resolve?.(KEY_REF);
     const llm = findEntry(this.editor, '@deepseek-ai/dsh-llm-pi-ai');
     return {
-      ok: true, config, revision: revision(config), lastSync: this.lastSync,
+      ok: true, config, revision: revision(config), lastSync: this.lastSync, providerNames: PROVIDER_NAMES,
       keyConfigured: Boolean(this.env[KEY_REF] || saved?.value),
       keyWritable: !this.env[KEY_REF] && (await this.credentials?.describe?.(KEY_REF))?.writable !== false,
       editable: Boolean(findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID)),

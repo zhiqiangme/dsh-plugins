@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { gatewayURL, isLocal, KEY_REF, object, PROVIDER_ID, normalizeModel } from './config.js';
+import { displayModelName } from './names.js';
 
 export const LLM_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
 export function findEntry(editor, name, id) {
@@ -47,7 +48,7 @@ export function importModels(payload) {
 
 export function modelEntries(config) {
   return config.models.filter((m) => m.enabled).map(({ enabled: _enabled, reasoningEfforts, ...m }) => ({
-    ...m, ...(reasoningEfforts.length ? { reasoningEfforts: Object.fromEntries(reasoningEfforts.map((e) => [e, e])) } : {}),
+    ...m, name: displayModelName(m), ...(reasoningEfforts.length ? { reasoningEfforts: Object.fromEntries(reasoningEfforts.map((e) => [e, e])) } : {}),
   }));
 }
 

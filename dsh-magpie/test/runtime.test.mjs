@@ -23,6 +23,8 @@ test('保存手工清单不拉 Magpie 目录，重建实例后仍保留', async 
   const reopened = new ModelManager(host.ctx, host.own.options.config, { env: {} });
   assert.deepEqual((await reopened.describe()).config, result.config);
   assert.deepEqual(result.nativeProviders, ['magpie']);
+  assert.equal(result.providerNames['workbuddy-ai'], 'WorkBuddy GL');
+  assert.equal(result.providerNames.workbuddy, 'WorkBuddy');
 });
 
 test('两个页面保存时拒绝过期版本，保留新清单和凭据', async () => {

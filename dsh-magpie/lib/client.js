@@ -87,6 +87,14 @@ window.__ModuleLoader__.load({
       if (value >= 1000) return `${Math.round(value / 100) / 10}K`;
       return String(value);
     }
+    // 简称由服务端统一提供；本地派生名称让编辑 ID / 名称时立即预览，不改写手工输入。
+    function displayModelName(row, providers = {}) {
+      const name = row.name || row.id || '';
+      const provider = row.id?.includes('/') ? row.id.split('/')[0] : '';
+      const supplier = Object.hasOwn(providers, provider) ? providers[provider] : undefined;
+      return !supplier || name.toLowerCase() === supplier.toLowerCase() || name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)
+        ? name : `${name} ${supplier}`;
+    }
 
     function ModelsCard({ t }) {
       const [view, setView] = useState(null);
@@ -114,6 +122,7 @@ window.__ModuleLoader__.load({
       const config = view.config;
       const update = (patch) => { setView((v) => ({ ...v, config: { ...v.config, ...patch } })); setDirty(true); };
       const rows = config.models;
+      const labelFor = (row) => displayModelName(row, view.providerNames) || t('newModel');
       const updateRow = (index, patch) => update({ models: rows.map((row, i) => i === index ? { ...row, ...patch } : row) });
       const field = (label, value, change, options = {}) => h('label', { className: 'field' }, label, h('input', { value: value ?? '', disabled: busy, onChange: (e) => change(e.target.value), ...options }));
       const importCatalog = () => perform(async () => {
@@ -127,7 +136,7 @@ window.__ModuleLoader__.load({
         setView(result); setDirty(false); setKey('');
         setNotice({ error: !result.sync.ok, text: result.sync.ok ? t('saved', { count: result.sync.count }) : t('saveFailed', { reason: result.sync.reason }) });
       });
-      const visible = rows.map((row, index) => ({ row, index })).filter(({ row }) => `${row.id} ${row.name}`.toLowerCase().includes(search.toLowerCase()));
+      const visible = rows.map((row, index) => ({ row, index })).filter(({ row }) => `${row.id} ${labelFor(row)}`.toLowerCase().includes(search.toLowerCase()));
       const visibleIndexes = new Set(visible.map(({ index }) => index));
       const selectVisible = (enabled) => update({ models: rows.map((m, i) => visibleIndexes.has(i) ? { ...m, enabled } : m) });
       const move = (index, target) => {
@@ -183,7 +192,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'model-header' },
             button(h('svg', { viewBox: '0 0 16 20', fill: 'currentColor', 'aria-hidden': true }, ...[5, 10, 15].flatMap((cy) => [5, 11].map((cx) => h('circle', { key: `${cx}-${cy}`, cx, cy, r: 1.4 })))), undefined, {
               className: 'model-drag', draggable: !busy && rows.length > 1, disabled: busy || rows.length < 2,
-              title: t('drag', { name: row.name || row.id || t('newModel') }), 'aria-label': t('drag', { name: row.name || row.id || t('newModel') }),
+              title: t('drag', { name: labelFor(row) }), 'aria-label': t('drag', { name: labelFor(row) }),
               onDragStart: (event) => {
                 if (busy || rows.length < 2) { event.preventDefault(); return; }
                 dragSource.current = { index, rows }; setDrag({ source: index });
@@ -191,8 +200,8 @@ window.__ModuleLoader__.load({
                 event.dataTransfer.setDragImage?.(event.currentTarget.parentElement, 20, 20);
               }, onDragEnd: endDrag,
             }),
-            h('label', { className: 'model-select', title: row.id }, h('input', { type: 'checkbox', checked: row.enabled, disabled: busy, onChange: (e) => updateRow(index, { enabled: e.target.checked }) }), h('span', { className: 'model-name' }, row.name || row.id || t('newModel'))),
-            button(h('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true }, h('path', { d: 'm6 3 5 5-5 5', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })), () => setExpanded((old) => { const next = new Set(old); if (next.has(index)) next.delete(index); else next.add(index); return next; }), { className: 'model-toggle', 'aria-expanded': expanded.has(index), 'aria-controls': `dsm-mp-details-${index}`, 'aria-label': t(expanded.has(index) ? 'collapse' : 'expand', { name: row.name || row.id || t('newModel') }) }),
+            h('label', { className: 'model-select', title: row.id }, h('input', { type: 'checkbox', checked: row.enabled, disabled: busy, onChange: (e) => updateRow(index, { enabled: e.target.checked }) }), h('span', { className: 'model-name' }, labelFor(row))),
+            button(h('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true }, h('path', { d: 'm6 3 5 5-5 5', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })), () => setExpanded((old) => { const next = new Set(old); if (next.has(index)) next.delete(index); else next.add(index); return next; }), { className: 'model-toggle', 'aria-expanded': expanded.has(index), 'aria-controls': `dsm-mp-details-${index}`, 'aria-label': t(expanded.has(index) ? 'collapse' : 'expand', { name: labelFor(row) }) }),
             h('div', { className: 'model-badges' }, row.input.includes('image') ? h('span', { className: 'badge' }, t('vision')) : null, row.contextWindow ? h('span', { className: 'badge' }, formatTokens(row.contextWindow)) : null),
             h('div', { className: 'model-actions' }, button(t('remove'), () => remove(index), { className: 'danger' }))),
           h('div', { className: 'model-details', id: `dsm-mp-details-${index}`, hidden: !expanded.has(index) },
@@ -218,6 +227,6 @@ window.__ModuleLoader__.load({
         ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, locale: namespace, inject: () => ({ t }) }, ModelsCard));
       }
     }
-    return { name: 'dsh-magpie-client', inject: ['slots', 'locale'], apply, ModelsCard, mergeCatalog, moveModel, zh, en };
+    return { name: 'dsh-magpie-client', inject: ['slots', 'locale'], apply, ModelsCard, mergeCatalog, moveModel, displayModelName, zh, en };
   },
 });
