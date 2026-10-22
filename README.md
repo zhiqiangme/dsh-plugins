@@ -5,7 +5,7 @@
 | 插件 | npm 包 | 作用 |
 | --- | --- | --- |
 | [dsh-autostart-workbuddy](dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | DSH 启动时默认拉起 WorkBuddy2API Hub（127.0.0.1:7863），可切换 wb2api，可选接管 profile 里的 workbuddy 模型列表 |
-| [dsh-magpie](dsh-magpie/) | `@zhiqiangme/dsh-magpie` | 独立管理 Magpie 模型清单：手工编辑、勾选、排序、可选导入，并同步到 DSH |
+| [dsh-magpie](dsh-magpie/) | `@zhiqiangme/dsh-magpie` | 管理 Magpie 模型清单：手工编辑、勾选、拖动排序，或从 Magpie 全量覆盖并立即同步到 DSH |
 | [dsh-opencode2api](dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | **停止维护**，保留源码及单独安装入口；“全部”安装不再包含它 |
 | [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内同时提供旧版 Messages 与新版 Search API 的搜索接口（`127.0.0.1:8787`），插件页卡片里配 API Key、一键接入网页搜索 |
 
@@ -72,7 +72,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 - 卸载不删 `cordis.patch.yml` 里的配置，也不删各插件自管的后端数据（如 `~/.dsh/autostart-workbuddy`、`~/.dsh/autostart-opencode2api`）。
   workbuddy 与 opencode2api 的卡片有「清除后端数据」按钮，卸载前点一下即可删掉各自的数据目录；
   tavily-search 的卡片有「清除插件数据」，删掉保存的 API Key 并把网页搜索接口恢复默认。
-- Magpie 首版管理独立模型清单，使用已运行的 Magpie 网关，不托管其进程。可离线手工编辑；导入是可选快照，不会覆盖手工条目。模型写入独立的 `dsh-magpie` provider。卸载前需要移除该分组时，先在卡片关闭同步并保存。
+- Magpie 使用已运行的网关，不托管其进程。可离线手工编辑；点击「从 Magpie 同步」会全量覆盖当前清单，移除上游已关闭或删除的条目，并立即保存、更新 DSH。模型写入独立的 `dsh-magpie` provider。卸载前需要移除该分组时，先在卡片关闭同步并保存。
 - Magpie 是新增包，npm 首次发布前请使用上述源码安装命令。
 
 ## 版本号

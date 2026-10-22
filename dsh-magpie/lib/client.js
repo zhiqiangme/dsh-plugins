@@ -8,16 +8,16 @@ window.__ModuleLoader__.load({
     const namespace = 'settings.dsh-magpie';
     const path = '/plugins/dsh-magpie/models';
     const zh = {
-      title: 'Magpie 模型管理', description: '清单由此插件独立保存。可以手动添加，也可以从 Magpie 导入后编辑。',
+      title: 'Magpie 模型管理', description: '可以手动编辑；从 Magpie 同步会全量覆盖当前清单，并立即保存和更新 DSH。',
       loading: '正在读取配置…', reload: '重新载入', discard: '放弃更改并重新载入', connection: '连接设置',
       url: 'Magpie 网关地址', protocol: 'API 协议', key: '网关 Key', keyHint: '本机可留空；远程网关需要有效 Key。已保存时留空表示沿用。',
       keySaved: '已保存 Key', keyEmpty: '使用本机标识', keyReadonly: 'Key 由环境变量提供，只读',
-      check: '检查连接', connected: '已连接 Magpie {version}', import: '从 Magpie 导入',
-      imported: '新增 {count} 个模型，已存在的条目保持原样；请勾选后保存。',
+      check: '检查连接', connected: '已连接 Magpie {version}', catalog: '从 Magpie 同步',
+      mirrored: '已按 Magpie 当前目录覆盖保存，DSH 分组现有 {count} 个模型。',
       sync: '同步所选模型到 DSH', syncHint: '关闭同步或取消全部勾选，保存后移除“Magpie · DSH”分组。',
       native: '当前还有 Magpie 原生分组。这里保存到独立的“Magpie · DSH”分组，原分组仍可使用。',
       count: '{selected} / {total} 个模型已勾选', search: '搜索名称或 ID', add: '手动添加模型',
-      all: '全选', none: '取消全选', empty: '清单为空。添加模型，或从正在运行的 Magpie 导入。',
+      all: '全选', none: '取消全选', empty: '清单为空。添加模型，或从正在运行的 Magpie 同步。',
       noMatch: '没有匹配的模型。', id: '完整模型 ID', modelName: '显示名称', nameHint: '留空使用模型 ID',
       selected: '同步此模型', drag: '拖动调整 {name} 的顺序', remove: '删除', details: '能力与参数',
       expand: '展开 {name} 的详细配置', collapse: '收起 {name} 的详细配置', newModel: '新模型',
@@ -28,16 +28,16 @@ window.__ModuleLoader__.load({
       invalidJson: '服务返回了无效响应',
     };
     const en = {
-      title: 'Magpie models', description: 'This plugin keeps its own list. Add models manually or import a snapshot from Magpie and edit it.',
+      title: 'Magpie models', description: 'Edit manually, or sync from Magpie to replace the entire list, save it and update DSH immediately.',
       loading: 'Loading configuration…', reload: 'Reload', discard: 'Discard edits and reload', connection: 'Connection',
       url: 'Magpie gateway URL', protocol: 'API protocol', key: 'Gateway key', keyHint: 'Optional on this machine; required for a remote gateway. Leave blank to keep the saved key.',
       keySaved: 'Key saved', keyEmpty: 'Using local identity', keyReadonly: 'The environment supplies a read-only key',
-      check: 'Check connection', connected: 'Connected to Magpie {version}', import: 'Import from Magpie',
-      imported: 'Added {count} models. Existing entries were kept. Select models and save.',
+      check: 'Check connection', connected: 'Connected to Magpie {version}', catalog: 'Sync from Magpie',
+      mirrored: 'Replaced and saved the list from Magpie. The DSH group now has {count} models.',
       sync: 'Sync selected models to DSH', syncHint: 'Turning sync off or deselecting all models removes the “Magpie · DSH” group when saved.',
       native: 'Magpie native groups are also configured. This list uses its own “Magpie · DSH” group; existing groups remain available.',
       count: '{selected} / {total} models selected', search: 'Search names or IDs', add: 'Add a model',
-      all: 'Select all', none: 'Deselect all', empty: 'The list is empty. Add models or import from a running Magpie.',
+      all: 'Select all', none: 'Deselect all', empty: 'The list is empty. Add models or sync from a running Magpie.',
       noMatch: 'No matching models.', id: 'Full model ID', modelName: 'Display name', nameHint: 'Defaults to model ID',
       selected: 'Sync this model', drag: 'Drag to reorder {name}', remove: 'Delete', details: 'Capabilities and limits',
       expand: 'Expand details for {name}', collapse: 'Collapse details for {name}', newModel: 'New model',
@@ -70,11 +70,6 @@ window.__ModuleLoader__.load({
       const value = await res.json();
       if (!res.ok || !value.ok) throw new Error(value.reason || `HTTP ${res.status}`);
       return value;
-    }
-    // 只补充新 ID；已编辑的名称、能力、勾选和顺序都以插件自己的清单为准。
-    function mergeCatalog(current, imported) {
-      const seen = new Set(current.map((m) => m.id));
-      return [...current, ...imported.filter((m) => !seen.has(m.id) && seen.add(m.id))];
     }
     function moveModel(rows, index, target) {
       const next = [...rows];
@@ -125,11 +120,11 @@ window.__ModuleLoader__.load({
       const labelFor = (row) => displayModelName(row, view.providerNames) || t('newModel');
       const updateRow = (index, patch) => update({ models: rows.map((row, i) => i === index ? { ...row, ...patch } : row) });
       const field = (label, value, change, options = {}) => h('label', { className: 'field' }, label, h('input', { value: value ?? '', disabled: busy, onChange: (e) => change(e.target.value), ...options }));
-      const importCatalog = () => perform(async () => {
-        const result = await request({ action: 'import', baseURL: config.baseURL, apiKey: key || undefined });
-        const models = mergeCatalog(rows, result.models);
-        update({ models });
-        setNotice({ text: t('imported', { count: models.length - rows.length }) });
+      const syncCatalog = () => perform(async () => {
+        const result = await request({ action: 'sync-catalog', config, revision: view.revision, apiKey: key || undefined });
+        setView(result); setDirty(false); setKey(''); setSearch(''); setExpanded(new Set());
+        dragSource.current = null; setDrag(null);
+        setNotice({ error: !result.sync.ok, text: result.sync.ok ? t('mirrored', { count: result.sync.count }) : t('saveFailed', { reason: result.sync.reason }) });
       });
       const save = () => perform(async () => {
         const result = await request({ action: 'save', config, revision: view.revision, apiKey: key || undefined });
@@ -179,7 +174,7 @@ window.__ModuleLoader__.load({
           button(t('check'), () => perform(async () => { const result = await request({ action: 'check', baseURL: config.baseURL, apiKey: key || undefined }); setNotice({ text: t('connected', { version: result.version }) }); }))),
         h('div', { className: 'section' }, h('label', null, h('input', { type: 'checkbox', checked: config.syncEnabled, disabled: busy, onChange: (e) => update({ syncEnabled: e.target.checked }) }), ' ', t('sync')), h('p', { className: 'muted' }, t('syncHint'))),
         h('div', { className: 'bar spread section' }, h('strong', null, t('count', { selected: rows.filter((m) => m.enabled).length, total: rows.length })), h('div', { className: 'bar' },
-          button(t('add'), () => { update({ models: [...rows, { id: '', name: '', enabled: true, input: ['text'], reasoningEfforts: [] }] }); setExpanded((old) => new Set([...old, rows.length])); }), button(t('import'), importCatalog))),
+          button(t('add'), () => { update({ models: [...rows, { id: '', name: '', enabled: true, input: ['text'], reasoningEfforts: [] }] }); setExpanded((old) => new Set([...old, rows.length])); }), button(t('catalog'), syncCatalog, { disabled: busy || !view.editable }))),
         h('div', { className: 'bar section' }, h('input', { className: 'search', type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: search, onChange: (e) => setSearch(e.target.value) }),
           button(t('all'), () => selectVisible(true)), button(t('none'), () => selectVisible(false))),
         !rows.length ? h('p', { className: 'notice section' }, t('empty')) : !visible.length ? h('p', null, t('noMatch')) : null,
@@ -227,6 +222,6 @@ window.__ModuleLoader__.load({
         ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, locale: namespace, inject: () => ({ t }) }, ModelsCard));
       }
     }
-    return { name: 'dsh-magpie-client', inject: ['slots', 'locale'], apply, ModelsCard, mergeCatalog, moveModel, displayModelName, zh, en };
+    return { name: 'dsh-magpie-client', inject: ['slots', 'locale'], apply, ModelsCard, moveModel, displayModelName, zh, en };
   },
 });

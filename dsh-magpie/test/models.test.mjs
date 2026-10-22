@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { gatewayURL, KEY_REF, PROVIDER_ID, resolveConfig } from '../lib/config.js';
-import { importModels, modelEntries, withProvider, syncModels } from '../lib/models.js';
+import { catalogModels, modelEntries, withProvider, syncModels } from '../lib/models.js';
 import { fakeHost } from '../fixtures/host.mjs';
 
 const manual = (extra = {}) => resolveConfig({ syncEnabled: true, models: [{ id: 'group/custom', name: '手工名称', input: ['text', 'image'], reasoningEfforts: ['low', 'high'] }], ...extra });
@@ -28,16 +28,22 @@ test('手工模型独立规划：保留完整 ID、排序、图像能力和实�
   assert.equal('maxTokens' in entries[1], false, '未知限额保持未知');
 });
 
-test('Magpie 快照字段适配，导入默认不选，输出给 DSH 留出预算', () => {
-  const rows = importModels({ data: [{ id: 'provider/a', display_name: '真实名称', reasoning: true, context_window: 200000, max_output_tokens: 150000, modalities: { input: ['text', 'image'] }, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] }, { id: 'provider/a' }, { id: 'group/g', reasoning: true, reasoning_levels: ['high', 'max'] }] });
+test('Magpie 全量目录保留上游限额、能力和顺序，全部勾选并按规范化 ID 去重', () => {
+  const rows = catalogModels({ data: [{ id: 'provider/a', display_name: '真实名称', reasoning: true, context_window: 200000, max_output_tokens: 150000, modalities: { input: ['text', 'image'] }, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] }, { id: ' provider/a ' }, { id: 'group/g', reasoning: true, reasoning_levels: ['high', 'max'] }] });
   assert.equal(rows.length, 2);
   assert.equal(rows[0].name, '真实名称');
-  assert.equal(rows[0].enabled, false);
-  assert.equal(rows[0].maxTokens, 50000);
+  assert.equal(rows[0].enabled, true);
+  assert.equal(rows[0].maxTokens, 150000);
   assert.deepEqual(rows[0].input, ['text', 'image']);
   assert.deepEqual(rows[0].reasoningEfforts, ['low', 'high']);
   assert.deepEqual(rows[1].reasoningEfforts, ['high', 'max']);
-  assert.throws(() => importModels({ invalid: [] }), /格式无效/);
+  assert.deepEqual(rows.map((m) => m.id), ['provider/a', 'group/g']);
+  assert.ok(rows.every((m) => m.enabled));
+  assert.throws(() => catalogModels({ invalid: [] }), /格式无效/);
+  assert.throws(() => catalogModels({ data: [{ id: 'valid' }, null] }), /无效条目/);
+  assert.throws(() => catalogModels({ data: [{ id: '' }] }), /模型 ID/);
+  assert.throws(() => catalogModels({ data: [{ id: 'x', context_window: 10, max_output_tokens: 10 }] }), /最大输出/);
+  assert.deepEqual(catalogModels({ data: [] }), []);
 });
 
 test('合并只改独立 provider，保留其它分组与自定义选项，移除不适用的默认档位', () => {

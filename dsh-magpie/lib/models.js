@@ -25,25 +25,24 @@ export async function requestGateway(baseURL, path, key, fetchImpl = fetch) {
   return response.json();
 }
 
-/** 导入是一次性快照。之后目录刷新不更改本插件持有的手工清单。 */
-export function importModels(payload) {
+/** 全量目录在写入前完整校验；异常条目不能被静默跳过，否则会误删本地模型。 */
+export function catalogModels(payload) {
   const list = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : undefined;
   if (!list) throw new Error('Magpie 模型目录格式无效');
-  if (list.length > 512) throw new Error('目录超过 512 项，请分批手工添加');
+  if (list.length > 512) throw new Error('目录超过 512 项，未同步，现有清单保持不变');
   const seen = new Set();
-  return list.filter((m) => m && typeof m.id === 'string' && !seen.has(m.id) && seen.add(m.id)).map((m) => {
+  return list.map((m) => {
+    if (!m || typeof m.id !== 'string') throw new Error('Magpie 模型目录包含无效条目');
     const contextWindow = Number(m.context_window ?? m.context_length) || undefined;
     const output = Number(m.max_output_tokens ?? m.max_output) || undefined;
-    // DSH 用 maxTokens 预留输出预算；照搬接近整个窗口的上游限额会提前触发压缩。
-    const maxTokens = output && contextWindow ? Math.min(output, Math.floor(contextWindow / 4)) : output;
     const efforts = m.supported_reasoning_levels ?? m.reasoning_levels ?? [];
     return normalizeModel({
-      id: m.id, name: m.display_name || m.name || m.id, enabled: false,
-      contextWindow, maxTokens,
+      id: m.id, name: m.display_name || m.name || m.id, enabled: true,
+      contextWindow, maxTokens: output,
       input: m.modalities?.input?.includes('image') ? ['text', 'image'] : ['text'],
       reasoningEfforts: m.reasoning === true && Array.isArray(efforts) ? efforts.map((e) => typeof e === 'string' ? e : e?.effort).filter(Boolean) : [],
     });
-  });
+  }).filter((m) => !seen.has(m.id) && seen.add(m.id));
 }
 
 export function modelEntries(config) {

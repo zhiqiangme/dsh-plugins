@@ -71,16 +71,70 @@ test('Key 写凭据库，GET 不回显；空输入沿用，环境变量不被表
   await assert.rejects(envManager.handle({ action: 'save', revision: view.revision, config, apiKey: 'replace-env' }), /不可写/);
 });
 
-test('导入是可选读取，不保存、不推理、不删除已有自定义清单；错误身份拒绝导入', async () => {
+test('全量同步以 Magpie 目录覆盖保存并更新 DSH，移除旧项和手工项，全部勾选', async () => {
   const calls = [];
-  const host = setup({ fetchImpl: async (url) => { calls.push(url); return { ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie', version: 'test' } : { data: [{ id: 'imported/a' }] } }; } });
-  const result = await host.manager.handle({ action: 'import' });
-  assert.equal(result.models[0].id, 'imported/a');
-  assert.equal(result.models[0].enabled, false);
-  assert.deepEqual(host.own.options.config, {});
+  const host = setup({ fetchImpl: async (url) => { calls.push(url); return { ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie', version: 'test' } : { data: [{ id: 'workbuddy-ai/b', display_name: 'B', context_window: 1000000, max_output_tokens: 128000 }, { id: 'new/a', display_name: 'A' }] } }; } });
+  host.own.options.config = { models: [{ id: 'workbuddy/disabled' }, { id: 'workbuddy-ai/b', name: '旧名字', enabled: false }, { id: 'manual' }] };
+  const initial = await host.manager.describe();
+  const result = await host.manager.handle({ action: 'sync-catalog', revision: initial.revision, config: { ...initial.config, models: [{ id: '' }] } });
+  assert.equal(result.saved, true);
+  assert.equal(result.sync.ok, true);
+  assert.deepEqual(result.config.models.map((m) => m.id), ['workbuddy-ai/b', 'new/a']);
+  assert.equal(result.config.models[0].name, 'B');
+  assert.equal(result.config.models[0].maxTokens, 128000);
+  assert.ok(result.config.models.every((m) => m.enabled));
+  assert.equal(result.config.syncEnabled, true);
+  assert.deepEqual(host.own.options.config.models, result.config.models);
+  assert.deepEqual(host.llm.options.config.providers[PROVIDER_ID].models.map((m) => m.id), ['workbuddy-ai/b', 'new/a']);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].name, 'B WorkBuddy GL');
+  assert.deepEqual(host.llm.options.config.providers.magpie.models, [{ id: 'native' }]);
+  assert.deepEqual(host.llm.options.config.providers.unrelated.models, [{ id: 'keep' }]);
   assert.deepEqual(calls.map((url) => new URL(url).pathname), ['/api/hello', '/v1/models']);
+  const editsBefore = host.edits.length;
   host.manager.fetch = async () => ({ ok: true, json: async () => ({ name: 'other-app' }) });
-  await assert.rejects(host.manager.handle({ action: 'import' }), /身份/);
+  await assert.rejects(host.manager.handle({ action: 'sync-catalog', revision: result.revision, config: result.config }), /身份/);
+  assert.equal(host.edits.length, editsBefore);
+});
+
+test('合法空目录清空清单并移除 DSH 分组；异常目录及网络失败保留原配置', async () => {
+  const host = setup();
+  const saved = await host.manager.handle({ action: 'save', revision: (await host.manager.describe()).revision, config });
+  const previous = structuredClone([host.own.options.config, host.llm.options.config, [...host.keys]]);
+  const edits = host.edits.length;
+  for (const payload of [{ wrong: [] }, { data: [{ id: 'valid' }, null] }, { data: [{ id: '' }] }, { data: [{ id: 'invalid-limit', context_window: 10, max_output_tokens: 10 }] }, { data: Array.from({ length: 513 }, (_, i) => ({ id: `x${i}` })) }]) {
+    host.manager.fetch = async (url) => ({ ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie' } : payload });
+    await assert.rejects(host.manager.handle({ action: 'sync-catalog', revision: saved.revision, config: saved.config }));
+    assert.deepEqual([host.own.options.config, host.llm.options.config, [...host.keys]], previous);
+    assert.equal(host.edits.length, edits);
+  }
+  host.manager.fetch = async () => { throw new Error('offline'); };
+  await assert.rejects(host.manager.handle({ action: 'sync-catalog', revision: saved.revision, config: saved.config }), /offline/);
+  assert.deepEqual([host.own.options.config, host.llm.options.config, [...host.keys]], previous);
+  host.manager.fetch = async (url) => ({ ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie' } : { data: [] } });
+  const cleared = await host.manager.handle({ action: 'sync-catalog', revision: saved.revision, config: saved.config });
+  assert.deepEqual(cleared.config.models, []);
+  assert.deepEqual(host.own.options.config.models, []);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID], undefined);
+  assert.equal(cleared.sync.count, 0);
+});
+
+test('全量同步下载期间其他页面修改配置时，锁内拒绝旧版本，保留新清单', async () => {
+  let release, started;
+  const ready = new Promise((resolve) => { started = resolve; });
+  const payload = new Promise((resolve) => { release = resolve; });
+  const host = setup({ fetchImpl: async (url) => ({ ok: true, json: async () => {
+    if (url.endsWith('/api/hello')) return { name: 'magpie' };
+    started(); return payload;
+  } }) });
+  const initial = await host.manager.describe();
+  const pending = host.manager.handle({ action: 'sync-catalog', revision: initial.revision, config: initial.config });
+  await ready;
+  await host.editor.edit(host.own, () => config);
+  release({ data: [{ id: 'remote' }] });
+  await assert.rejects(pending, (error) => error.status === 409);
+  assert.deepEqual(host.own.options.config, config);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID], undefined);
+  assert.equal(host.keys.size, 0);
 });
 
 test('保存完整配置、非法模型和缺少版本都须拒绝', async () => {

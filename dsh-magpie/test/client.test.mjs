@@ -30,7 +30,7 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
   assert.ok(Object.values(client.module.zh).every((value) => typeof value === 'string'));
   assert.equal(client.styles.length, 1);
   assert.ok(button(client.render(), '手动添加模型'));
-  assert.ok(button(client.render(), '从 Magpie 导入'));
+  assert.ok(button(client.render(), '从 Magpie 同步'));
 });
 
 test('添加、编辑、调整顺序、取消勾选、删除通过卡片实际事件更新待保存清单', () => {
@@ -49,15 +49,46 @@ test('添加、编辑、调整顺序、取消勾选、删除通过卡片实际�
   assert.equal(client.states[0].config.models[0].id, 'first');
 });
 
-test('重复导入不覆盖手工名称、能力、勾选或顺序；新模型默认不勾选', async () => {
-  const client = clientHarness(view({ models: [{ id: 'manual/a', name: '手工名称', enabled: true }, { id: 'missing/upstream' }] }), async () => response({ ok: true, models: [{ id: 'manual/a', name: '上游新名称', enabled: false }, { id: 'new/b', name: '新增', enabled: false, input: ['text'], reasoningEfforts: [] }] }));
-  await button(client.render(), '从 Magpie 导入').props.onClick();
+test('从 Magpie 同步立即提交并用已保存的全量结果替换草稿，重置筛选和展开', async () => {
+  let posted;
+  const client = clientHarness(view({ models: [{ id: 'workbuddy/old', name: '旧模型' }, { id: 'manual/a' }] }), async (_url, options) => {
+    posted = JSON.parse(options.body);
+    return response({ ...view({ syncEnabled: true, models: [{ id: 'new/b', name: '新增' }, { id: 'manual/a', name: '上游新名称' }] }), saved: true, sync: { ok: true, count: 2 } });
+  });
+  field(client.render(), '显示名称').props.onChange({ target: { value: '未保存名称' } });
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: '未保存名称' } });
+  nodes(client.render(), (n) => n.props.className === 'model-toggle')[0].props.onClick();
+  await button(client.render(), '从 Magpie 同步').props.onClick();
+  assert.equal(posted.action, 'sync-catalog');
+  assert.equal(posted.revision, 'revision-one');
+  assert.equal(posted.config.models[0].name, '未保存名称');
   const list = client.states[0].config.models;
-  assert.deepEqual(list.map((m) => m.id), ['manual/a', 'missing/upstream', 'new/b']);
-  assert.equal(list[0].name, '手工名称');
-  assert.equal(list[0].enabled, true);
-  assert.equal(list[2].enabled, false);
+  assert.deepEqual(list.map((m) => m.id), ['new/b', 'manual/a']);
+  assert.equal(list[1].name, '上游新名称');
+  assert.ok(list.every((m) => m.enabled));
+  assert.equal(client.states[1], false);
+  assert.equal(client.states[5], '');
+  assert.deepEqual([...client.states[6]], []);
+  assert.match(client.states[3].text, /覆盖保存.*2/);
+});
+
+test('全量同步读取失败时保留未保存草稿、筛选和展开，DSH 更新失败明确显示', async () => {
+  const client = clientHarness(view({ models: [{ id: 'draft' }] }), async () => response({ ok: false, reason: 'Magpie 返回 HTTP 503' }, 500));
+  field(client.render(), '显示名称').props.onChange({ target: { value: '未保存' } });
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: '未保存' } });
+  nodes(client.render(), (n) => n.props.className === 'model-toggle')[0].props.onClick();
+  await button(client.render(), '从 Magpie 同步').props.onClick();
+  assert.equal(client.states[0].config.models[0].name, '未保存');
   assert.equal(client.states[1], true);
+  assert.equal(client.states[5], '未保存');
+  assert.deepEqual([...client.states[6]], [0]);
+  assert.match(client.states[3].text, /503/);
+  const failedSync = clientHarness(view(), async () => response({ ...view({ models: [{ id: 'fresh' }] }), saved: true, sync: { ok: false, reason: '服务未就绪' } }));
+  await button(failedSync.render(), '从 Magpie 同步').props.onClick();
+  assert.equal(failedSync.states[1], false);
+  assert.equal(failedSync.states[0].config.models[0].id, 'fresh');
+  assert.match(failedSync.states[3].text, /清单已保存.*服务未就绪/);
+  assert.equal(failedSync.states[3].error, true);
 });
 
 test('思考档位输入保留未完成的逗号，保存包含所选模型与原始 ID', async () => {
@@ -100,6 +131,7 @@ test('Key 为只读或配置服务未就绪时相应控件禁用', () => {
   const client = clientHarness({ ...view(), keyWritable: false, editable: false });
   assert.equal(field(client.render(), '网关 Key').props.disabled, true);
   assert.equal(button(client.render(), '保存并同步').props.disabled, true);
+  assert.equal(button(client.render(), '从 Magpie 同步').props.disabled, true);
 });
 
 test('紧凑行的勾选框位于显示名称左侧，下拉按钮控制原位详情，开关不改变模型选择', () => {

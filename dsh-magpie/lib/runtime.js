@@ -1,5 +1,5 @@
 import { KEY_REF, PACKAGE_NAME, PLUGIN_ID, object, resolveConfig, revision } from './config.js';
-import { credential, findEntry, importModels, requestGateway, syncModels } from './models.js';
+import { credential, findEntry, catalogModels, requestGateway, syncModels } from './models.js';
 import { PROVIDER_NAMES } from './names.js';
 
 export function hostService(ctx, name, usable = (value) => value !== undefined) {
@@ -60,27 +60,34 @@ export class ModelManager {
     }
   }
   async handle(body) {
-    if (['check', 'import'].includes(body.action)) {
+    if (body.action === 'check') {
       const config = resolveConfig({ ...this.current(), baseURL: body.baseURL ?? this.current().baseURL });
       const key = await credential(this.credentials, this.env, config.baseURL, body.apiKey);
       const hello = await requestGateway(config.baseURL, '/api/hello', key, this.fetch);
       if (hello?.name !== 'magpie') throw new Error('该地址没有返回 Magpie 身份信息');
-      if (body.action === 'check') return { ok: true, version: hello.version };
-      const models = importModels(await requestGateway(config.baseURL, '/v1/models', key, this.fetch));
-      return { ok: true, models };
+      return { ok: true, version: hello.version };
     }
-    if (body.action !== 'save' && body.action !== 'sync') throw new Error('不支持的操作');
+    if (!['save', 'sync', 'sync-catalog'].includes(body.action)) throw new Error('不支持的操作');
     return this.enqueue(async () => {
       this.assertRevision(body.revision);
       if (body.action === 'sync') return { ok: true, sync: await this.sync(), ...await this.describe() };
       if (!body.config || typeof body.config !== 'object' || Array.isArray(body.config)) throw new Error('保存需要完整的配置对象');
-      const config = resolveConfig(body.config);
+      const mirror = body.action === 'sync-catalog';
+      // 全量同步替换草稿模型，允许用户用同步按钮修复尚未填完的手工条目。
+      let config = resolveConfig(mirror ? { ...body.config, enabled: true, syncEnabled: true, models: [] } : body.config);
       if (body.apiKey !== undefined && typeof body.apiKey !== 'string') throw new Error('Key 必须是文本');
       const entry = findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID);
       if (!entry || typeof this.editor?.edit !== 'function') throw new Error('宿主 configEditor 尚未就绪，无法保存');
       const key = body.apiKey?.trim();
       if (key && (this.env[KEY_REF] || typeof this.credentials?.set !== 'function' || (await this.credentials.describe?.(KEY_REF))?.writable === false)) {
         throw new Error('DSH 凭据不可写，未保存');
+      }
+      if (mirror) {
+        const gatewayKey = await credential(this.credentials, this.env, config.baseURL, body.apiKey);
+        const hello = await requestGateway(config.baseURL, '/api/hello', gatewayKey, this.fetch);
+        if (hello?.name !== 'magpie') throw new Error('该地址没有返回 Magpie 身份信息');
+        const models = catalogModels(await requestGateway(config.baseURL, '/v1/models', gatewayKey, this.fetch));
+        config = resolveConfig({ ...config, models });
       }
       // 在宿主锁内核对版本，旧页面不能覆盖其它页面刚保存的模型清单。
       await this.editor.edit(entry, (raw) => {
