@@ -6,6 +6,7 @@ export function clientHarness(initial, fetchImpl = async () => { throw new Error
   const React = {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
     useState: (fallback) => { const i = index++; if (!(i in states)) states[i] = fallback; return [states[i], (value) => { states[i] = typeof value === 'function' ? value(states[i]) : value; }]; },
+    useRef: (fallback) => { const i = index++; if (!(i in states)) states[i] = { current: fallback }; return states[i]; },
     useEffect() {},
   };
   const window = { __ModuleLoader__: { load: (value) => { registration = value; } } };

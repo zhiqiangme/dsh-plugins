@@ -4,7 +4,7 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react');
     const h = React.createElement;
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useRef } = React;
     const namespace = 'settings.dsh-magpie';
     const path = '/plugins/dsh-magpie/models';
     const zh = {
@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
       count: '{selected} / {total} 个模型已勾选', search: '搜索名称或 ID', add: '手动添加模型',
       all: '全选', none: '取消全选', empty: '清单为空。添加模型，或从正在运行的 Magpie 导入。',
       noMatch: '没有匹配的模型。', id: '完整模型 ID', modelName: '显示名称', nameHint: '留空使用模型 ID',
-      selected: '同步此模型', up: '上移', down: '下移', remove: '删除', details: '能力与参数',
+      selected: '同步此模型', drag: '拖动调整 {name} 的顺序', remove: '删除', details: '能力与参数',
       expand: '展开 {name} 的详细配置', collapse: '收起 {name} 的详细配置', newModel: '新模型',
       context: '上下文窗口', output: '最大输出 token', vision: '支持图片输入', efforts: '思考档位（逗号分隔）',
       effortHint: '留空表示不声明思考档位', unspecified: '不指定', save: '保存并同步', saving: '处理中…',
@@ -39,7 +39,7 @@ window.__ModuleLoader__.load({
       count: '{selected} / {total} models selected', search: 'Search names or IDs', add: 'Add a model',
       all: 'Select all', none: 'Deselect all', empty: 'The list is empty. Add models or import from a running Magpie.',
       noMatch: 'No matching models.', id: 'Full model ID', modelName: 'Display name', nameHint: 'Defaults to model ID',
-      selected: 'Sync this model', up: 'Move up', down: 'Move down', remove: 'Delete', details: 'Capabilities and limits',
+      selected: 'Sync this model', drag: 'Drag to reorder {name}', remove: 'Delete', details: 'Capabilities and limits',
       expand: 'Expand details for {name}', collapse: 'Collapse details for {name}', newModel: 'New model',
       context: 'Context window', output: 'Max output tokens', vision: 'Image input', efforts: 'Reasoning levels (comma-separated)',
       effortHint: 'Leave blank to declare no reasoning levels', unspecified: 'Unspecified', save: 'Save and sync', saving: 'Working…',
@@ -57,6 +57,7 @@ window.__ModuleLoader__.load({
       .dsm-mp button.primary{background:var(--dsw-alias-label-primary,#202635);border-color:transparent;color:var(--dsw-alias-bg-layer-3,#f2f5fb)}.dsm-mp button.primary:hover:not(:disabled){opacity:.88}.dsm-mp button.primary:disabled{background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-dimmed,#8a8f99);border-color:var(--dsw-alias-border-l2,#dce1eb)}
       .dsm-mp .model-list{margin-top:10px;display:flex;flex-direction:column;gap:2px}.dsm-mp .model{border:1px solid transparent;border-radius:8px;min-width:0}.dsm-mp .model:hover,.dsm-mp .model.expanded{background:var(--dsw-alias-bg-layer-3,#f2f5fb)}.dsm-mp .model.expanded{border-color:var(--dsw-alias-border-l2,#dce1eb)}
       .dsm-mp .model-header{display:flex;align-items:center;gap:6px;padding:6px 8px;min-width:0;min-height:42px}.dsm-mp .model-select{display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer}.dsm-mp .model-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dsm-mp .model input[type=checkbox]{margin:0;flex:none;accent-color:var(--dsw-alias-brand-primary,#4666db)}
+      .dsm-mp .model-drag{padding:3px;flex:none;border-color:transparent;background:transparent;cursor:grab;line-height:1;color:var(--dsw-alias-label-secondary,#657084)}.dsm-mp .model-drag:active{cursor:grabbing}.dsm-mp .model-drag svg{display:block;width:16px;height:20px;pointer-events:none}.dsm-mp .model.dragging{opacity:.45}.dsm-mp .model.drop-before{border-top-color:var(--dsw-alias-label-primary,#202635)}.dsm-mp .model.drop-after{border-bottom-color:var(--dsw-alias-label-primary,#202635)}
       .dsm-mp .model-toggle{padding:4px 6px;line-height:1;border-color:transparent;background:transparent;flex:none}.dsm-mp .model-toggle svg{display:block;width:16px;height:16px;transition:transform .15s}.dsm-mp .model-toggle[aria-expanded=true] svg{transform:rotate(90deg)}.dsm-mp .model-badges{display:flex;gap:6px;margin-left:auto;flex:none}.dsm-mp .badge{padding:0 5px;border:1px solid var(--dsw-alias-border-l2,#dce1eb);border-radius:4px;color:var(--dsw-alias-label-secondary,#657084);font-size:12px;white-space:nowrap}
       .dsm-mp .model-actions{display:flex;gap:4px;flex:none;margin-left:auto}.dsm-mp .model-badges+.model-actions{margin-left:4px}.dsm-mp .model-actions button{padding:3px 7px;background:transparent}.dsm-mp .model-details{padding:0 12px 12px;min-width:0}.dsm-mp .model-details[hidden]{display:none}
       .dsm-mp summary{cursor:pointer}.dsm-mp details>summary{color:var(--dsw-alias-label-secondary,#657084)}.dsm-mp .notice{padding:10px 12px;border-radius:6px;background:var(--dsw-alias-bg-layer-3,#f2f5fb);overflow-wrap:anywhere}.dsm-mp .error{color:var(--dsw-alias-state-error-primary,#b93645)}
@@ -75,9 +76,9 @@ window.__ModuleLoader__.load({
       const seen = new Set(current.map((m) => m.id));
       return [...current, ...imported.filter((m) => !seen.has(m.id) && seen.add(m.id))];
     }
-    function moveModel(rows, index, delta) {
-      const next = [...rows], target = index + delta;
-      if (target >= 0 && target < next.length) [next[index], next[target]] = [next[target], next[index]];
+    function moveModel(rows, index, target) {
+      const next = [...rows];
+      if (index >= 0 && index < next.length && target >= 0 && target < next.length) next.splice(target, 0, ...next.splice(index, 1));
       return next;
     }
     function formatTokens(value) {
@@ -95,6 +96,8 @@ window.__ModuleLoader__.load({
       const [key, setKey] = useState('');
       const [search, setSearch] = useState('');
       const [expanded, setExpanded] = useState(new Set());
+      const [drag, setDrag] = useState(null);
+      const dragSource = useRef(null);
       useEffect(() => {
         let active = true;
         request().then((value) => { if (active) setView(value); }).catch((error) => { if (active) setNotice({ error: true, text: error.message }); });
@@ -127,9 +130,27 @@ window.__ModuleLoader__.load({
       const visible = rows.map((row, index) => ({ row, index })).filter(({ row }) => `${row.id} ${row.name}`.toLowerCase().includes(search.toLowerCase()));
       const visibleIndexes = new Set(visible.map(({ index }) => index));
       const selectVisible = (enabled) => update({ models: rows.map((m, i) => visibleIndexes.has(i) ? { ...m, enabled } : m) });
-      const move = (index, delta) => {
-        update({ models: moveModel(rows, index, delta) });
-        setExpanded((old) => new Set([...old].map((i) => i === index ? index + delta : i === index + delta ? index : i)));
+      const move = (index, target) => {
+        if (index === target) return;
+        update({ models: moveModel(rows, index, target) });
+        const order = moveModel(rows.map((_row, i) => i), index, target);
+        setExpanded((old) => new Set([...old].map((i) => order.indexOf(i))));
+      };
+      const endDrag = () => { dragSource.current = null; setDrag(null); };
+      const dropPosition = (event, index) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        return { index, after: event.clientY >= rect.top + rect.height / 2 };
+      };
+      // 只接受本卡片手柄发起的拖动；外部文本、另一张卡片及已过期的草稿不能触发排序。
+      const canDrop = () => !busy && dragSource.current?.rows === rows;
+      const drop = (event, index) => {
+        if (!canDrop()) return;
+        event.preventDefault();
+        const source = dragSource.current.index;
+        const { after } = dropPosition(event, index);
+        const slot = index + Number(after);
+        move(source, slot > source ? slot - 1 : slot);
+        endDrag();
       };
       const remove = (index) => {
         update({ models: rows.filter((_m, i) => i !== index) });
@@ -153,14 +174,27 @@ window.__ModuleLoader__.load({
         h('div', { className: 'bar section' }, h('input', { className: 'search', type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: search, onChange: (e) => setSearch(e.target.value) }),
           button(t('all'), () => selectVisible(true)), button(t('none'), () => selectVisible(false))),
         !rows.length ? h('p', { className: 'notice section' }, t('empty')) : !visible.length ? h('p', null, t('noMatch')) : null,
-        h('div', { className: 'model-list' }, ...visible.map(({ row, index }) => h('div', { className: `model${expanded.has(index) ? ' expanded' : ''}`, key: index },
+        h('div', { className: 'model-list' }, ...visible.map(({ row, index }) => h('div', {
+          className: `model${expanded.has(index) ? ' expanded' : ''}${drag?.source === index ? ' dragging' : ''}${drag?.index === index ? (drag.after ? ' drop-after' : ' drop-before') : ''}`, key: index,
+          onDragOver: (event) => { if (!canDrop()) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDrag({ source: dragSource.current.index, ...dropPosition(event, index) }); },
+          onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDrag((old) => old ? { source: old.source } : null); },
+          onDrop: (event) => drop(event, index),
+        },
           h('div', { className: 'model-header' },
+            button(h('svg', { viewBox: '0 0 16 20', fill: 'currentColor', 'aria-hidden': true }, ...[5, 10, 15].flatMap((cy) => [5, 11].map((cx) => h('circle', { key: `${cx}-${cy}`, cx, cy, r: 1.4 })))), undefined, {
+              className: 'model-drag', draggable: !busy && rows.length > 1, disabled: busy || rows.length < 2,
+              title: t('drag', { name: row.name || row.id || t('newModel') }), 'aria-label': t('drag', { name: row.name || row.id || t('newModel') }),
+              onDragStart: (event) => {
+                if (busy || rows.length < 2) { event.preventDefault(); return; }
+                dragSource.current = { index, rows }; setDrag({ source: index });
+                event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', row.id);
+                event.dataTransfer.setDragImage?.(event.currentTarget.parentElement, 20, 20);
+              }, onDragEnd: endDrag,
+            }),
             h('label', { className: 'model-select', title: row.id }, h('input', { type: 'checkbox', checked: row.enabled, disabled: busy, onChange: (e) => updateRow(index, { enabled: e.target.checked }) }), h('span', { className: 'model-name' }, row.name || row.id || t('newModel'))),
             button(h('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true }, h('path', { d: 'm6 3 5 5-5 5', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })), () => setExpanded((old) => { const next = new Set(old); if (next.has(index)) next.delete(index); else next.add(index); return next; }), { className: 'model-toggle', 'aria-expanded': expanded.has(index), 'aria-controls': `dsm-mp-details-${index}`, 'aria-label': t(expanded.has(index) ? 'collapse' : 'expand', { name: row.name || row.id || t('newModel') }) }),
             h('div', { className: 'model-badges' }, row.input.includes('image') ? h('span', { className: 'badge' }, t('vision')) : null, row.contextWindow ? h('span', { className: 'badge' }, formatTokens(row.contextWindow)) : null),
-            h('div', { className: 'model-actions' }, button('↑', () => move(index, -1), { 'aria-label': t('up'), title: t('up'), disabled: busy || index === 0 }),
-              button('↓', () => move(index, 1), { 'aria-label': t('down'), title: t('down'), disabled: busy || index === rows.length - 1 }),
-              button(t('remove'), () => remove(index), { className: 'danger' }))),
+            h('div', { className: 'model-actions' }, button(t('remove'), () => remove(index), { className: 'danger' }))),
           h('div', { className: 'model-details', id: `dsm-mp-details-${index}`, hidden: !expanded.has(index) },
           h('div', { className: 'fields' }, field(t('id'), row.id, (id) => updateRow(index, { id }), { placeholder: 'provider/model-id', spellCheck: false }), field(t('modelName'), row.name, (name) => updateRow(index, { name }), { placeholder: t('nameHint') })),
           h('div', { className: 'fields' },
