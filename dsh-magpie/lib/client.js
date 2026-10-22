@@ -101,9 +101,13 @@ window.__ModuleLoader__.load({
       if (value >= 1000) return `${Math.round(value / 100) / 10}K`;
       return String(value);
     }
+    function normalizeDisplayName(name) {
+      // 与服务端保持相同别名规则；仅影响展示及排序，不改写上游名称或完整路由 ID。
+      return name.replace(/^deepseek[\s_-]+(?:v4\.1[\s_-]+)?flash(?=$|[\s(_-])/i, 'DeepSeek V4.1 Flash');
+    }
     // 简称由服务端统一提供；本地派生名称让编辑 ID / 名称时立即预览，不改写手工输入。
     function displayModelName(row, providers = {}) {
-      const name = row.name || row.id || '';
+      const name = normalizeDisplayName(row.name || row.id || '');
       const provider = row.id?.includes('/') ? row.id.split('/')[0] : '';
       const supplier = Object.hasOwn(providers, provider) ? providers[provider] : undefined;
       return !supplier || name.toLowerCase() === supplier.toLowerCase() || name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)
@@ -120,7 +124,7 @@ window.__ModuleLoader__.load({
         if (name === row.id && slash > 0) name = row.id.slice(slash + 1);
         // 展示名称可能已经带供应商后缀；按模型排序时把后缀作为次级键。
         if (supplier && name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)) name = name.slice(0, -supplier.length - 1).trimEnd();
-        return { index, name, supplier };
+        return { index, name: normalizeDisplayName(name), supplier };
       });
       return keys.sort((a, b) => mode === 'provider'
         ? compare(a.supplier, b.supplier) || compare(a.name, b.name) || a.index - b.index

@@ -14,9 +14,14 @@ export const PROVIDER_NAMES = Object.freeze({
   codex: 'Codex',
 });
 
+function normalizeDisplayName(name) {
+  // 上游的 DeepSeek-Flash 与 V4.1 Flash 别名统一展示，保留 Free、Max 等尾缀及原始配置。
+  return name.replace(/^deepseek[\s_-]+(?:v4\.1[\s_-]+)?flash(?=$|[\s(_-])/i, 'DeepSeek V4.1 Flash');
+}
+
 /** 只派生展示名称，手工名称和完整路由 ID 仍原样保存；未知供应商及路由组不乱加标签。 */
 export function displayModelName(row, providers = PROVIDER_NAMES) {
-  const name = row.name || row.id || '';
+  const name = normalizeDisplayName(row.name || row.id || '');
   const provider = row.id?.includes('/') ? row.id.split('/')[0] : '';
   const supplier = Object.hasOwn(providers, provider) ? providers[provider] : undefined;
   return !supplier || name.toLowerCase() === supplier.toLowerCase() || name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)

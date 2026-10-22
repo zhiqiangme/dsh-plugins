@@ -22,8 +22,8 @@ test('前端预览和 DSH 同步使用相同供应商简称，区分 WorkBuddy �
 
 test('重复同步不叠加简称，手工名称、完整 ID、排序及勾选原样保存', () => {
   const config = resolveConfig({ models: [
-    { id: 'workbuddy/model', name: 'DeepSeek V4.1 Flash' },
-    { id: 'workbuddy-ai/model', name: 'DeepSeek V4.1 Flash WorkBuddy GL' },
+    { id: 'workbuddy/model', name: 'DeepSeek-Flash' },
+    { id: 'workbuddy-ai/model', name: 'Deepseek-V4.1-Flash WorkBuddy GL' },
     { id: 'opencode-zen-free/model', name: 'DeepSeek V4.1 Flash opencode' },
     { id: 'qoder-cn/unselected', enabled: false },
   ] });
@@ -33,6 +33,31 @@ test('重复同步不叠加简称，手工名称、完整 ID、排序及勾选�
   assert.deepEqual(entries.map((row) => row.id), ['workbuddy/model', 'workbuddy-ai/model', 'opencode-zen-free/model']);
   assert.deepEqual(entries.map((row) => row.name), ['DeepSeek V4.1 Flash WorkBuddy', 'DeepSeek V4.1 Flash WorkBuddy GL', 'DeepSeek V4.1 Flash opencode']);
   assert.deepEqual(modelEntries(config), entries);
+});
+
+test('前端和 DSH 统一 Flash 别名并保留尾缀，不误改其他版本或手工前缀', () => {
+  const client = clientHarness();
+  for (const [name, expected] of [
+    ['DeepSeek-Flash', 'DeepSeek V4.1 Flash'],
+    ['deepseek flash', 'DeepSeek V4.1 Flash'],
+    ['Deepseek-V4.1-Flash', 'DeepSeek V4.1 Flash'],
+    ['DeepSeek_V4.1_Flash', 'DeepSeek V4.1 Flash'],
+    ['DeepSeek V4.1 Flash Free', 'DeepSeek V4.1 Flash Free'],
+    ['DeepSeek-V4.1-Flash (Max)', 'DeepSeek V4.1 Flash (Max)'],
+    ['DeepSeek-Flash Qoder', 'DeepSeek V4.1 Flash Qoder'],
+    ['DeepSeek V3 Flash', 'DeepSeek V3 Flash'],
+    ['DeepSeek V4.2 Flash', 'DeepSeek V4.2 Flash'],
+    ['DeepSeek V4.1 Pro', 'DeepSeek V4.1 Pro'],
+    ['DeepSeek Flashlight', 'DeepSeek Flashlight'],
+    ['我的 DeepSeek Flash', '我的 DeepSeek Flash'],
+    ['Qwen3.8-Flash', 'Qwen3.8-Flash'],
+  ]) {
+    const row = { id: 'qoder-cn/dfmodel', name };
+    const label = expected.endsWith(' Qoder') ? expected : `${expected} Qoder`;
+    assert.equal(displayModelName(row), label);
+    assert.equal(client.module.displayModelName(row, PROVIDER_NAMES), label);
+    assert.equal(row.name, name);
+  }
 });
 
 test('未知供应商、路由组和空白新条目不猜供应商，已含简称不会重复追加', () => {

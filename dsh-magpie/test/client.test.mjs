@@ -268,6 +268,29 @@ test('管理行预览供应商简称，可按简称搜索；修改名称或 ID �
   assert.equal(client.states[0].config.models[1].name, '我的模型');
 });
 
+test('Flash 别名统一展示、搜索和排序，保存仍使用原始名称及路由 ID', async () => {
+  let posted;
+  const initial = view({ models: [
+    { id: 'workbuddy-ai/deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash' },
+    { id: 'qoder-cn/dfmodel', name: 'DeepSeek-Flash' },
+    { id: 'opencode-zen-free/deepseek-v4.1-flash-free', name: 'DeepSeek V4.1 Flash Free' },
+  ] });
+  const original = structuredClone(initial.config.models);
+  const client = clientHarness(initial, async (_url, options) => {
+    posted = JSON.parse(options.body);
+    return response({ ...initial, config: resolveConfig(posted.config), sync: { ok: true, count: 3 } });
+  });
+  const labels = () => nodes(client.render(), (n) => n.props.className === 'model-name').map((n) => n.children[0]);
+  assert.deepEqual(labels(), ['DeepSeek V4.1 Flash WorkBuddy GL', 'DeepSeek V4.1 Flash Qoder', 'DeepSeek V4.1 Flash Free OpenCode']);
+  assert.equal(field(client.render(), '显示名称').props.value, 'Deepseek-V4.1-Flash');
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'DeepSeek V4.1 Flash' } });
+  assert.equal(labels().length, 3);
+  button(client.render(), '按模型排序').props.onClick();
+  assert.deepEqual(labels(), ['DeepSeek V4.1 Flash Qoder', 'DeepSeek V4.1 Flash WorkBuddy GL', 'DeepSeek V4.1 Flash Free OpenCode']);
+  await button(client.render(), '保存并同步').props.onClick();
+  assert.deepEqual(posted.config.models, [original[1], original[0], original[2]]);
+});
+
 test('按模型或供应商排序保留草稿、勾选和展开，点击保存后提交新顺序', async () => {
   let posted;
   const initial = view({ models: [
