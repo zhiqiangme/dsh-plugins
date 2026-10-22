@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { resolveConfig } from '../lib/config.js';
-import { PROVIDER_NAMES } from '../lib/names.js';
+import { PROVIDER_NAMES, sortModelIndexes as serverSort } from '../lib/names.js';
 import { clientHarness, button, field, nodes } from '../fixtures/client.mjs';
 
 const view = (config = {}) => ({ ok: true, config: resolveConfig(config), revision: 'revision-one', providerNames: PROVIDER_NAMES, nativeProviders: ['magpie'], editable: true, keyConfigured: false, keyWritable: true });
@@ -378,6 +378,8 @@ test('排序识别 ID 后的模型名，忽略大小写，自然数字顺序，�
   ];
   assert.deepEqual(client.module.sortModelIndexes(rows, 'model', PROVIDER_NAMES), [5, 6, 1, 2, 3, 0, 4]);
   assert.deepEqual(client.module.sortModelIndexes(rows, 'provider', PROVIDER_NAMES), [6, 1, 2, 3, 0, 5, 4]);
+  // 服务端同步后的排序必须与卡片按钮一致。
+  for (const mode of ['model', 'provider']) assert.deepEqual(serverSort(rows, mode), client.module.sortModelIndexes(rows, mode, PROVIDER_NAMES));
 });
 
 test('已排好时不产生未保存状态，处理期间或不足两个匹配模型时禁用快速排序', () => {

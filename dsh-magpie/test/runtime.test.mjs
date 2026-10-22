@@ -83,14 +83,15 @@ test('全量同步以 Magpie 目录覆盖保存并更新 DSH，移除旧项和�
   const result = await host.manager.handle({ action: 'sync-catalog', revision: initial.revision, config: { ...initial.config, models: [{ id: '' }] } });
   assert.equal(result.saved, true);
   assert.equal(result.sync.ok, true);
-  assert.deepEqual(result.config.models.map((m) => m.id), ['workbuddy-ai/b', 'new/a']);
-  assert.equal(result.config.models[0].name, 'B');
-  assert.equal(result.config.models[0].maxTokens, 128000);
+  // 同步后按模型名称排序保存：A 在 B 前，与上游返回顺序无关。
+  assert.deepEqual(result.config.models.map((m) => m.id), ['new/a', 'workbuddy-ai/b']);
+  assert.equal(result.config.models[1].name, 'B');
+  assert.equal(result.config.models[1].maxTokens, 128000);
   assert.ok(result.config.models.every((m) => m.enabled));
   assert.equal(result.config.syncEnabled, true);
   assert.deepEqual(host.own.options.config.models, result.config.models);
-  assert.deepEqual(host.llm.options.config.providers[PROVIDER_ID].models.map((m) => m.id), ['workbuddy-ai/b', 'new/a']);
-  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].name, 'B WorkBuddy GL');
+  assert.deepEqual(host.llm.options.config.providers[PROVIDER_ID].models.map((m) => m.id), ['new/a', 'workbuddy-ai/b']);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[1].name, 'B WorkBuddy GL');
   assert.deepEqual(host.llm.options.config.providers.magpie.models, [{ id: 'native' }]);
   assert.deepEqual(host.llm.options.config.providers.unrelated.models, [{ id: 'keep' }]);
   assert.deepEqual(calls.map((url) => new URL(url).pathname), ['/api/hello', '/v1/models']);

@@ -27,3 +27,25 @@ export function displayModelName(row, providers = PROVIDER_NAMES) {
   return !supplier || name.toLowerCase() === supplier.toLowerCase() || name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)
     ? name : `${name} ${supplier}`;
 }
+
+/**
+ * 与卡片「按模型排序 / 按供应商排序」相同的排序（client.js 的同名函数，两处需保持一致）：
+ * 名称取 ID 后段并去掉已带的供应商后缀，忽略大小写、数字按自然顺序，同键保持原顺序，空名称排后。
+ * 返回原数组下标的新顺序。
+ */
+export function sortModelIndexes(rows, mode = 'model', providers = PROVIDER_NAMES) {
+  const collator = new Intl.Collator(['zh-CN', 'en'], { numeric: true, sensitivity: 'base' });
+  const compare = (a, b) => a && b ? collator.compare(a, b) : a ? -1 : b ? 1 : 0;
+  const keys = rows.map((row, index) => {
+    const slash = row.id.indexOf('/');
+    const provider = slash > 0 ? row.id.slice(0, slash) : '';
+    const supplier = Object.hasOwn(providers, provider) ? providers[provider] : provider;
+    let name = (row.name || row.id).trim();
+    if (name === row.id && slash > 0) name = row.id.slice(slash + 1);
+    if (supplier && name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)) name = name.slice(0, -supplier.length - 1).trimEnd();
+    return { index, name: normalizeDisplayName(name), supplier };
+  });
+  return keys.sort((a, b) => mode === 'provider'
+    ? compare(a.supplier, b.supplier) || compare(a.name, b.name) || a.index - b.index
+    : compare(a.name, b.name) || compare(a.supplier, b.supplier) || a.index - b.index).map(({ index }) => index);
+}
