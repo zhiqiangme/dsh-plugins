@@ -8,13 +8,13 @@ window.__ModuleLoader__.load({
     const namespace = 'settings.dsh-magpie';
     const path = '/plugins/dsh-magpie/models';
     const zh = {
-      title: 'Magpie 模型管理', description: '开关和下拉改完立即生效；连接设置和模型清单改完点击「保存并同步」。从 Magpie 同步会全量覆盖当前清单，并立即保存和更新 DSH。',
+      title: 'Magpie 模型管理', description: '开关和选项即时生效；连接、程序路径和模型清单改完点击「保存并同步」。',
       loading: '正在读取配置…', reload: '重新载入', discard: '放弃更改并重新载入', connection: '连接设置',
       url: 'Magpie 网关地址', protocol: 'API 协议', key: '网关 Key', keyHint: '本机可留空；远程网关需要有效 Key。已保存时留空表示沿用。',
       keySaved: '已保存 Key', keyEmpty: '使用本机标识', keyReadonly: 'Key 由环境变量提供，只读',
       check: '检查连接', connected: '已连接 Magpie {version}', catalog: '从 Magpie 同步',
       mirrored: '已按 Magpie 当前目录覆盖保存，DSH 分组现有 {count} 个模型。',
-      sync: '同步所选模型到 DSH', syncHint: '改完立即生效，关闭即移除“Magpie”分组；取消全部模型勾选则在保存并同步后移除。',
+      sync: '同步到 DSH', syncHint: '勾选的模型按顺序写入 DSH 的“Magpie”分组；关闭即移除该分组。',
       native: '当前还有 Magpie 原生分组。这里保存到独立的“Magpie”分组（ID 为 dsh-magpie），原分组仍可使用。',
       count: '{selected} / {total} 个模型已勾选', search: '搜索名称或 ID', add: '手动添加模型',
       sortModel: '按模型排序', sortProvider: '按供应商排序',
@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
       saved: '已保存，DSH 分组现有 {count} 个模型。', saveFailed: '清单已保存，同步未完成：{reason}',
       readOnly: '宿主配置服务尚未就绪，暂时无法保存。', unsaved: '有未保存的更改', savedState: '已保存',
       invalidJson: '服务返回了无效响应',
-      backendTitle: 'Magpie 下载与升级', backendMissing: '尚未下载', backendUnknown: '版本未识别',
+      backendTitle: 'Magpie 程序', backendMissing: '尚未下载', backendUnknown: '版本未识别',
       backendPath: 'Magpie 程序路径', backendPathHint: '留空使用插件独立目录；也可填写已有 Magpie 的 exe 绝对路径。更改路径后点击保存并同步保存配置。',
       backendDefault: '留空使用插件独立目录', backendCheck: '检查更新', backendDownload: '下载 Magpie', backendUpgrade: '升级 Magpie',
       backendLatest: '最新版本：{version}', backendCurrent: '当前版本：{version}', backendUpToDate: '已是最新版本或更新',
@@ -37,18 +37,23 @@ window.__ModuleLoader__.load({
       backendInstalled: 'Magpie {version} 已下载并打开。', backendUpdated: '已升级到 Magpie {version}，并在后台启动。', backendStarting: '正在启动 Magpie…', backendStopping: '正在退出运行中的 Magpie…',
       backendAlreadyRunning: 'Magpie {version} 已就绪，程序已在运行，未重复启动。', backendLaunchFailed: 'Magpie {version} 已就绪，但启动失败：{reason}。请从程序路径手动启动。',
       backendProgress: '已下载 {received} / {total} MiB', backendFailed: '操作失败：{reason}',
-      autoStart: '启动 DSH 时自动打开 Magpie',
-      autoStartHint: '仅本机地址。DSH 启动时若本机没有 Magpie 在运行，在后台（托盘）启动程序路径中的 Magpie，不弹出窗口；需要界面时点「打开 Magpie 界面」。',
-      autoLightweight: '自动开启 Magpie 轻量模式',
-      autoLightweightHint: '插件启动 Magpie 前和 DSH 启动时，把 Magpie 的轻量模式设为开启：窗口关闭一分钟后释放界面内存，网关和后台任务照常运行。取消勾选后插件不再改动这项设置。',
+      autoStart: '启动 DSH 时打开 Magpie',
+      autoStartHint: '仅本机地址。没有 Magpie 在运行时在托盘启动，不弹出窗口。',
+      autoLightweight: '自动开启轻量模式',
+      autoLightweightHint: '插件启动 Magpie 前设为开启：窗口关闭约一分钟后释放界面内存，网关照常运行。',
       keepAwake: '防止休眠', keepAwakeOff: '关闭', keepAwakeOn: '开启', keepAwakeDisplay: '屏幕也常亮',
-      keepAwakeHint: '在 Magpie 运行任务时让电脑保持唤醒。改动直接写入 Magpie 的设置，与 Magpie「设置 › 常规」中的同名选项相同。',
-      magpieSettingsMissing: '还没有 Magpie 设置文件，打开一次 Magpie 后可用。',
+      keepAwakeHint: 'Magpie 运行任务时让电脑保持唤醒。',
+      magpieSettingsMissing: '打开一次 Magpie 后可用。',
       open: '打开 Magpie 界面', opened: '已打开 Magpie 窗口。',
-      closeOnExit: '退出 DSH 时同时关闭 Magpie',
-      closeOnExitHint: '结束本机 Magpie（包括托盘）；优先使用指定程序路径，未指定时识别本机网关或插件独立目录。停用、更新插件不会触发。',
-      sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动：已配置模型后隐藏', sidebarAlways: '始终显示', sidebarNever: '始终隐藏',
-      sidebarEntryHint: '入口位于左上角「插件」一栏，点击打开本页面。自动模式下清单没有模型时显示，保存至少一个模型后隐藏；正在查看的 Magpie 页面离开后才收起入口。',
+      closeOnExit: '退出 DSH 时关闭 Magpie',
+      closeOnExitHint: '结束本机 Magpie 及其托盘；停用或更新插件不会触发。',
+      sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动', sidebarAlways: '显示', sidebarNever: '隐藏',
+      sidebarEntryHint: '左上角「插件」一栏的 Magpie 入口。自动：清单为空时显示，保存模型后隐藏。',
+      tabModels: '模型', tabConnection: '连接', tabPreferences: '偏好', tabUpdates: '更新',
+      gatewayOnline: '网关在线 {version}', gatewayOffline: '网关未连接', gatewayChecking: '正在检查网关…',
+      programVersion: 'Magpie {version}', programMissing: '未下载 Magpie', programUpgrade: '可升级到 {version}',
+      groupProgram: 'Magpie 程序', groupMagpieSettings: 'Magpie 设置', groupMagpieSettingsHint: '直接写入 Magpie 自己的设置，与其「设置 › 常规」中的同名选项相同。', groupDsh: 'DSH',
+      connectionHint: '改完点击「保存并同步」生效。',
       updateTitle: '插件更新', updateChecking: '正在检查更新…', updateCheck: '检查更新',
       updateCheckFailed: '检查更新失败：{reason}', updateCurrent: '当前运行版本：', updateLatestVersion: 'npm 最新版本：',
       updateUpToDate: '已是最新', updateAvailable: '有新版本', updatePendingRestart: '等待重启', updatePendingRefresh: '等待刷新',
@@ -65,13 +70,13 @@ window.__ModuleLoader__.load({
       restartNow: '立即重启 DSH', restarting: '正在重启 DSH…', restartFailed: '未能确认重启：{reason}',
     };
     const en = {
-      title: 'Magpie models', description: 'Switches and menus apply at once; click “Save and sync” after editing the connection or the model list. Syncing from Magpie replaces the entire list, saves it and updates DSH immediately.',
+      title: 'Magpie models', description: 'Switches and choices apply at once; click “Save and sync” after editing the connection, executable path or model list.',
       loading: 'Loading configuration…', reload: 'Reload', discard: 'Discard edits and reload', connection: 'Connection',
       url: 'Magpie gateway URL', protocol: 'API protocol', key: 'Gateway key', keyHint: 'Optional on this machine; required for a remote gateway. Leave blank to keep the saved key.',
       keySaved: 'Key saved', keyEmpty: 'Using local identity', keyReadonly: 'The environment supplies a read-only key',
       check: 'Check connection', connected: 'Connected to Magpie {version}', catalog: 'Sync from Magpie',
       mirrored: 'Replaced and saved the list from Magpie. The DSH group now has {count} models.',
-      sync: 'Sync selected models to DSH', syncHint: 'Applies at once: turning it off removes the “Magpie” group. Deselecting every model removes it after Save and sync.',
+      sync: 'Sync to DSH', syncHint: 'Ticked models go into the DSH “Magpie” group in this order; turning this off removes the group.',
       native: 'Magpie native groups are also configured. This list uses its own “Magpie” group (ID dsh-magpie); existing groups remain available.',
       count: '{selected} / {total} models selected', search: 'Search names or IDs', add: 'Add a model',
       sortModel: 'Sort by model', sortProvider: 'Sort by provider',
@@ -86,7 +91,7 @@ window.__ModuleLoader__.load({
       saved: 'Saved. The DSH group now has {count} models.', saveFailed: 'List saved; sync incomplete: {reason}',
       readOnly: 'Host configuration services are not ready. Saving is unavailable.', unsaved: 'Unsaved edits', savedState: 'Saved',
       invalidJson: 'The server returned an invalid response',
-      backendTitle: 'Download and update Magpie', backendMissing: 'Not downloaded', backendUnknown: 'Unrecognized version',
+      backendTitle: 'Magpie program', backendMissing: 'Not downloaded', backendUnknown: 'Unrecognized version',
       backendPath: 'Magpie executable path', backendPathHint: 'Leave blank for the plugin directory, or enter an existing Magpie exe absolute path. Save and sync to keep path changes.',
       backendDefault: 'Leave blank for the plugin directory', backendCheck: 'Check for updates', backendDownload: 'Download Magpie', backendUpgrade: 'Update Magpie',
       backendLatest: 'Latest: {version}', backendCurrent: 'Current: {version}', backendUpToDate: 'Up to date or newer',
@@ -95,17 +100,22 @@ window.__ModuleLoader__.load({
       backendAlreadyRunning: 'Magpie {version} is ready and already running; not started again.', backendLaunchFailed: 'Magpie {version} is ready but could not start: {reason}. Launch it from the executable path.',
       backendProgress: 'Downloaded {received} / {total} MiB', backendFailed: 'Operation failed: {reason}',
       autoStart: 'Open Magpie when DSH starts',
-      autoStartHint: 'Local addresses only. When DSH starts and no Magpie is running on this machine, starts the Magpie at the executable path in the background (tray only, no window). Use “Open Magpie” when you need its window.',
-      autoLightweight: 'Turn on Magpie lightweight mode',
-      autoLightweightHint: 'Before the plugin starts Magpie and when DSH starts, turns on Magpie’s lightweight mode: about a minute after its window closes the page memory is released, while the gateway and background tasks keep running. Unticked, the plugin leaves that setting alone.',
+      autoStartHint: 'Local addresses only. Starts it in the tray, without a window, when no Magpie is running.',
+      autoLightweight: 'Turn on lightweight mode',
+      autoLightweightHint: 'Set before the plugin starts Magpie: about a minute after its window closes the page memory is released; the gateway keeps running.',
       keepAwake: 'Keep awake', keepAwakeOff: 'Off', keepAwakeOn: 'On', keepAwakeDisplay: 'Screen on too',
-      keepAwakeHint: 'Keeps the computer awake while Magpie runs tasks. Written straight into Magpie’s settings; the same option as Magpie’s Settings › General.',
-      magpieSettingsMissing: 'Magpie has no settings file yet. Open Magpie once to use this.',
+      keepAwakeHint: 'Keeps the computer awake while Magpie runs tasks.',
+      magpieSettingsMissing: 'Available once Magpie has been opened.',
       open: 'Open Magpie', opened: 'Opened the Magpie window.',
       closeOnExit: 'Close Magpie when DSH exits',
-      closeOnExitHint: 'Ends local Magpie, including its tray process. Uses the configured executable path, or detects the local gateway or plugin directory. Disabling or updating the plugin does not trigger this.',
-      sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto: hide once models are configured', sidebarAlways: 'Always show', sidebarNever: 'Always hide',
-      sidebarEntryHint: 'The entry sits with Plugins at the top of the sidebar and opens this page. In auto mode it shows while the list has no models and hides once at least one model is saved; an open Magpie page keeps its entry until you leave it.',
+      closeOnExitHint: 'Ends local Magpie and its tray process; disabling or updating the plugin does not.',
+      sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto', sidebarAlways: 'Show', sidebarNever: 'Hide',
+      sidebarEntryHint: 'The Magpie entry next to Plugins in the sidebar. Auto: shown while the list is empty, hidden once models are saved.',
+      tabModels: 'Models', tabConnection: 'Connection', tabPreferences: 'Preferences', tabUpdates: 'Updates',
+      gatewayOnline: 'Gateway online {version}', gatewayOffline: 'Gateway offline', gatewayChecking: 'Checking gateway…',
+      programVersion: 'Magpie {version}', programMissing: 'Magpie not downloaded', programUpgrade: 'Update to {version}',
+      groupProgram: 'Magpie program', groupMagpieSettings: 'Magpie settings', groupMagpieSettingsHint: 'Written straight into Magpie’s own settings; the same options as its Settings › General.', groupDsh: 'DSH',
+      connectionHint: 'Click “Save and sync” to apply changes here.',
       updateTitle: 'Plugin update', updateChecking: 'Checking for updates…', updateCheck: 'Check for updates',
       updateCheckFailed: 'Update check failed: {reason}', updateCurrent: 'Running version: ', updateLatestVersion: 'Latest on npm: ',
       updateUpToDate: 'Up to date', updateAvailable: 'Update available', updatePendingRestart: 'Restart pending', updatePendingRefresh: 'Reload pending',
@@ -141,6 +151,9 @@ window.__ModuleLoader__.load({
     // 客户端可能先于服务端路由就绪；读取已保存配置失败时短暂重试，仍失败则不显示入口。
     const CONFIG_RETRIES = 5;
     const CONFIG_RETRY_MS = 2000;
+    // 标题处的网关状态定时刷新；本机请求很轻，15 秒足够反映 Magpie 被打开或关闭。
+    const STATUS_POLL_MS = 15000;
+    const TABS = [['models', 'tabModels'], ['connection', 'tabConnection'], ['preferences', 'tabPreferences'], ['updates', 'tabUpdates']];
     // 卡片在插件设置和侧栏页面各自挂载；读取或保存后经此通知侧栏按已保存的配置重新判断入口。
     const savedConfig = { value: undefined, listeners: new Set() };
     function publishConfig(config) {
@@ -162,25 +175,80 @@ window.__ModuleLoader__.load({
       return payload;
     }
     const CSS = `
-      .dsm-mp{color:var(--dsw-alias-label-primary,#202635);border:1px solid var(--dsw-alias-border-l2,#dce1eb);border-radius:12px;padding:20px;background:var(--dsw-alias-bg-layer-2,#fff);font-size:13px;line-height:1.6;box-sizing:border-box;min-width:0}
-      .dsm-mp *{box-sizing:border-box}.dsm-mp h3{font-size:17px;margin:0}.dsm-mp p{margin:6px 0 12px}.dsm-mp .muted{color:var(--dsw-alias-label-secondary,#657084)}
-      .dsm-mp .bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.dsm-mp .spread{justify-content:space-between}.dsm-mp .section{margin-top:16px}.dsm-mp .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
-      .dsm-mp label.field{display:flex;flex-direction:column;gap:4px;min-width:0}.dsm-mp input:not([type=checkbox]),.dsm-mp select{width:100%;min-width:0;padding:7px 9px;border:1px solid var(--dsw-alias-border-l2,#dce1eb);border-radius:6px;background:var(--dsw-alias-bg-layer-2,#fff);color:inherit;font:inherit}
-      .dsm-mp button{border:1px solid var(--dsw-alias-border-l2,#dce1eb);border-radius:6px;padding:6px 10px;background:var(--dsw-alias-bg-layer-2,#fff);color:inherit;font:inherit;cursor:pointer}.dsm-mp button:disabled{color:var(--dsw-alias-label-dimmed,#8a8f99);cursor:default}.dsm-mp button.danger{color:var(--dsw-alias-state-error-primary,#b93645)}
-      /* DSH 的 brand-primary 在深色主题接近白色；主按钮使用宿主的反色配色。 */
-      .dsm-mp button.primary{background:var(--dsw-alias-label-primary,#202635);border-color:transparent;color:var(--dsw-alias-bg-layer-3,#f2f5fb)}.dsm-mp button.primary:hover:not(:disabled){opacity:.88}.dsm-mp button.primary:disabled{background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-dimmed,#8a8f99);border-color:var(--dsw-alias-border-l2,#dce1eb)}
-      .dsm-mp .model-list{margin-top:10px;display:flex;flex-direction:column;gap:2px}.dsm-mp .model{border:1px solid transparent;border-radius:8px;min-width:0}.dsm-mp .model:hover,.dsm-mp .model.expanded{background:var(--dsw-alias-bg-layer-3,#f2f5fb)}.dsm-mp .model.expanded{border-color:var(--dsw-alias-border-l2,#dce1eb)}
-      .dsm-mp .model-header{display:flex;align-items:center;gap:6px;padding:6px 8px;min-width:0;min-height:42px}.dsm-mp .model-select{display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer}.dsm-mp .model-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dsm-mp .model input[type=checkbox]{margin:0;flex:none;accent-color:var(--dsw-alias-brand-primary,#4666db)}
-      .dsm-mp .model-drag{padding:3px;flex:none;border-color:transparent;background:transparent;cursor:grab;line-height:1;color:var(--dsw-alias-label-secondary,#657084)}.dsm-mp .model-drag:active{cursor:grabbing}.dsm-mp .model-drag svg{display:block;width:16px;height:20px;pointer-events:none}.dsm-mp .model.dragging{opacity:.45}.dsm-mp .model.drop-before{border-top-color:var(--dsw-alias-label-primary,#202635)}.dsm-mp .model.drop-after{border-bottom-color:var(--dsw-alias-label-primary,#202635)}
-      .dsm-mp .model-toggle{padding:4px 6px;line-height:1;border-color:transparent;background:transparent;flex:none}.dsm-mp .model-toggle svg{display:block;width:16px;height:16px;transition:transform .15s}.dsm-mp .model-toggle[aria-expanded=true] svg{transform:rotate(90deg)}.dsm-mp .model-badges{display:flex;gap:6px;margin-left:auto;flex:none}.dsm-mp .badge{padding:0 5px;border:1px solid var(--dsw-alias-border-l2,#dce1eb);border-radius:4px;color:var(--dsw-alias-label-secondary,#657084);font-size:12px;white-space:nowrap}
-      .dsm-mp .model-actions{display:flex;gap:4px;flex:none;margin-left:auto}.dsm-mp .model-badges+.model-actions{margin-left:4px}.dsm-mp .model-actions button{padding:3px 7px;background:transparent}.dsm-mp .model-details{padding:0 12px 12px;min-width:0}.dsm-mp .model-details[hidden]{display:none}
-      .dsm-mp summary{cursor:pointer}.dsm-mp details>summary{color:var(--dsw-alias-label-secondary,#657084)}.dsm-mp .notice{padding:10px 12px;border-radius:6px;background:var(--dsw-alias-bg-layer-3,#f2f5fb);overflow-wrap:anywhere}.dsm-mp .error{color:var(--dsw-alias-state-error-primary,#b93645)}
-      .dsm-mp .search{flex:1;min-width:160px}.dsm-mp .foot{margin-top:16px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2,#dce1eb)}
-      .dsm-mp .backend .bar{margin-top:10px}.dsm-mp .backend-path,.dsm-mp .backend .error{overflow-wrap:anywhere}.dsm-mp .backend progress{display:block;width:100%;height:8px;margin-top:10px;accent-color:var(--dsw-alias-label-primary,#202635)}
-      .dsm-mp .plugin-update{margin-top:20px;padding-top:16px;border-top:1px solid var(--dsw-alias-border-l2,#dce1eb)}.dsm-mp .plugin-update p{overflow-wrap:anywhere}.dsm-mp .plugin-update-title{font-weight:600}
+      .dsm-mp{--mp-fg:var(--dsw-alias-label-primary,#0f1115);--mp-muted:var(--dsw-alias-label-secondary,#61666b);--mp-faint:var(--dsw-alias-label-tertiary,#81858c);--mp-dimmed:var(--dsw-alias-label-dimmed,#a0a5ad);
+        --mp-border:var(--dsw-alias-border-l2,#0000001a);--mp-border-soft:var(--dsw-alias-border-l1,#0000000a);--mp-bg:var(--dsw-alias-bg-layer-2,#fff);--mp-raised:var(--dsw-alias-button-elevated-fill,#fff);
+        --mp-fill:var(--dsw-alias-interactive-bg-hover,#2631480f);--mp-hover:var(--dsw-alias-interactive-bg-active,#2631481a);--mp-accent:var(--dsw-alias-state-business-primary,#4176e6);
+        --mp-ok:var(--dsw-alias-state-success-primary,#22c55e);--mp-warn:var(--dsw-alias-state-warn-primary,#f59e0b);--mp-error:var(--dsw-alias-state-error-primary,#dc2626);
+        color:var(--mp-fg);border:1px solid var(--mp-border);border-radius:12px;background:var(--mp-bg);font-size:13px;line-height:1.55;box-sizing:border-box;min-width:0}
+      .dsm-mp *{box-sizing:border-box}.dsm-mp p{margin:0}.dsm-mp h3,.dsm-mp h4{margin:0}.dsm-mp .muted{color:var(--mp-muted)}.dsm-mp .error{color:var(--mp-error)}
+      .dsm-mp .bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.dsm-mp .spread{justify-content:space-between}
+      .dsm-mp button{border:1px solid var(--mp-border);border-radius:8px;padding:5px 12px;background:transparent;color:inherit;font:inherit;line-height:20px;cursor:pointer;white-space:nowrap}
+      .dsm-mp button:hover:not(:disabled){background:var(--mp-fill)}.dsm-mp button:disabled{color:var(--mp-dimmed);cursor:default}
+      .dsm-mp button:focus-visible,.dsm-mp input:focus-visible,.dsm-mp select:focus-visible{outline:2px solid var(--mp-accent);outline-offset:1px}
+      /* DSH 的 brand-primary 在深色主题接近白色，主按钮用宿主的反色配对，两种主题都清楚。 */
+      .dsm-mp button.primary{background:var(--dsw-alias-brand-primary,#0f1115);border-color:transparent;color:var(--dsw-alias-brand-primary-invert,#f9fafb);font-weight:500}
+      .dsm-mp button.primary:hover:not(:disabled){background:var(--dsw-alias-brand-primary,#0f1115);opacity:.86}.dsm-mp button.primary:disabled{background:var(--mp-fill);color:var(--mp-dimmed)}
+      .dsm-mp button.ghost{border-color:transparent;padding:3px 8px;color:var(--mp-muted)}.dsm-mp button.ghost:hover:not(:disabled){color:var(--mp-fg)}.dsm-mp button.danger{color:var(--mp-error)}
+      .dsm-mp input:not([type=checkbox]),.dsm-mp select{width:100%;min-width:0;padding:6px 10px;border:1px solid var(--mp-border);border-radius:8px;background:transparent;color:inherit;font:inherit;line-height:20px}
+      .dsm-mp select option{background:var(--mp-bg);color:var(--mp-fg)}.dsm-mp input::placeholder{color:var(--mp-faint)}
+      .dsm-mp input[type=checkbox]{accent-color:var(--mp-accent)}
+      .dsm-mp .switch{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:34px;height:20px;margin:0;border-radius:999px;background:var(--dsw-alias-border-l4,#00000029);cursor:pointer;transition:background .15s}
+      .dsm-mp .switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0000004d;transition:transform .15s}
+      .dsm-mp .switch:checked{background:var(--mp-accent)}.dsm-mp .switch:checked::after{transform:translateX(14px)}.dsm-mp .switch:disabled{opacity:.45;cursor:default}
+      .dsm-mp .segmented{display:inline-flex;gap:2px;padding:2px;border-radius:8px;background:var(--mp-fill)}
+      .dsm-mp .segmented button{border:0;border-radius:6px;padding:3px 10px;color:var(--mp-muted)}.dsm-mp .segmented button:hover:not(:disabled){background:transparent;color:var(--mp-fg)}
+      .dsm-mp .segmented button.active{background:var(--mp-raised);color:var(--mp-fg);box-shadow:0 1px 2px #0000001f}.dsm-mp .segmented button.active:hover:not(:disabled){background:var(--mp-raised)}
+      .dsm-mp .head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:18px 20px 14px}
+      .dsm-mp .title{display:flex;align-items:center;gap:8px}.dsm-mp .title svg{color:var(--mp-accent)}.dsm-mp h3{font-size:16px;font-weight:600}
+      .dsm-mp .head-desc{margin-top:4px;color:var(--mp-muted);font-size:12px}
+      .dsm-mp .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+      .dsm-mp .chip{display:inline-flex;align-items:center;gap:6px;padding:1px 9px;border:0;border-radius:999px;background:var(--mp-fill);color:var(--mp-muted);font-size:12px;line-height:20px}
+      .dsm-mp .chip .dot{width:6px;height:6px;border-radius:50%;background:var(--mp-faint)}.dsm-mp .chip.ok .dot{background:var(--mp-ok)}.dsm-mp .chip.off .dot{background:var(--mp-error)}
+      .dsm-mp button.chip{padding:1px 9px;border:0}.dsm-mp button.chip:hover:not(:disabled){background:var(--mp-hover);color:var(--mp-fg)}.dsm-mp .chip .new{color:var(--mp-accent)}
+      .dsm-mp .tabs{display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--mp-border);overflow-x:auto;scrollbar-width:none}
+      .dsm-mp .tabs button.tab{position:relative;border:0;border-radius:0;padding:8px 10px 9px;background:transparent;color:var(--mp-muted);font-weight:500}
+      .dsm-mp .tabs button.tab:hover{background:transparent;color:var(--mp-fg)}
+      .dsm-mp .tabs button.tab[aria-selected=true]{color:var(--mp-fg)}.dsm-mp .tabs button.tab[aria-selected=true]::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--mp-fg)}
+      .dsm-mp .tab .count{margin-left:6px;padding:0 6px;border-radius:999px;background:var(--mp-fill);font-size:11px;font-weight:400}
+      .dsm-mp .tab .mark{display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;background:var(--mp-accent);vertical-align:2px}
+      .dsm-mp .panel{padding:16px 20px 20px;min-width:0}
+      .dsm-mp .row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--mp-border-soft)}
+      .dsm-mp .row:last-child{border-bottom:0}.dsm-mp label.row{cursor:pointer}
+      .dsm-mp .row-text{display:flex;flex-direction:column;gap:2px;min-width:0}.dsm-mp .row-title{font-weight:500}.dsm-mp .row-hint{color:var(--mp-muted);font-size:12px}.dsm-mp .row-control{flex:none}
+      .dsm-mp .group{display:flex;flex-direction:column;gap:2px;margin:22px 0 2px;font-size:12px;font-weight:600;color:var(--mp-faint)}.dsm-mp .group:first-child{margin-top:0}
+      .dsm-mp .group span{font-weight:400}
+      .dsm-mp .hint{margin-top:6px;color:var(--mp-muted);font-size:12px}
+      .dsm-mp .notice{margin-top:12px;padding:8px 12px;border-radius:8px;background:var(--mp-fill);overflow-wrap:anywhere}
+      .dsm-mp .notice.error{color:var(--mp-error);background:color-mix(in srgb,var(--mp-error) 12%,transparent)}
+      .dsm-mp .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+      .dsm-mp label.field{display:flex;flex-direction:column;gap:6px;min-width:0;font-weight:500}.dsm-mp label.field input,.dsm-mp label.field select{font-weight:400}
+      .dsm-mp .toolbar{display:flex;align-items:center;gap:8px;margin-top:14px}.dsm-mp .toolbar .search{flex:1;min-width:160px}
+      .dsm-mp .list-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:14px;padding:0 4px 6px;border-bottom:1px solid var(--mp-border-soft)}
+      .dsm-mp .list-head .count{font-weight:600}.dsm-mp .list-actions{display:flex;align-items:center;gap:2px;flex-wrap:wrap}
+      .dsm-mp .divider{width:1px;height:14px;margin:0 6px;background:var(--mp-border)}
+      .dsm-mp .empty{margin-top:12px;padding:28px 16px;border:1px dashed var(--mp-border);border-radius:10px;text-align:center;color:var(--mp-muted)}
+      .dsm-mp .model-list{margin-top:6px;display:flex;flex-direction:column;gap:2px}.dsm-mp .model{border:1px solid transparent;border-radius:8px;min-width:0}
+      .dsm-mp .model:hover,.dsm-mp .model.expanded{background:var(--mp-fill)}.dsm-mp .model.expanded{border-color:var(--mp-border)}
+      .dsm-mp .model-header{display:flex;align-items:center;gap:6px;padding:5px 8px;min-width:0;min-height:40px}.dsm-mp .model-select{display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer}
+      .dsm-mp .model-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dsm-mp .model input[type=checkbox]{margin:0;flex:none}
+      .dsm-mp .model-drag{padding:3px;flex:none;border-color:transparent;background:transparent;cursor:grab;line-height:1;color:var(--mp-faint)}.dsm-mp .model-drag:active{cursor:grabbing}.dsm-mp .model-drag svg{display:block;width:16px;height:20px;pointer-events:none}
+      .dsm-mp .model.dragging{opacity:.45}.dsm-mp .model.drop-before{border-top-color:var(--mp-accent)}.dsm-mp .model.drop-after{border-bottom-color:var(--mp-accent)}
+      .dsm-mp .model-toggle{padding:4px 6px;line-height:1;border-color:transparent;background:transparent;flex:none;color:var(--mp-faint)}.dsm-mp .model-toggle svg{display:block;width:16px;height:16px;transition:transform .15s}.dsm-mp .model-toggle[aria-expanded=true] svg{transform:rotate(90deg)}
+      .dsm-mp .model-badges{display:flex;gap:6px;margin-left:auto;flex:none}.dsm-mp .badge{padding:0 6px;border-radius:4px;background:var(--mp-fill);color:var(--mp-muted);font-size:11px;line-height:18px;white-space:nowrap}
+      .dsm-mp .model-actions{display:flex;gap:4px;flex:none;margin-left:auto}.dsm-mp .model-badges+.model-actions{margin-left:4px}.dsm-mp .model-actions button{padding:2px 8px;border-color:transparent;font-size:12px}
+      .dsm-mp .model-details{padding:0 12px 12px;min-width:0}.dsm-mp .model-details[hidden]{display:none}.dsm-mp .model-details label:not(.field){display:flex;align-items:center;gap:8px;align-self:end;padding-bottom:7px}
+      .dsm-mp .backend+.plugin-update{margin-top:22px;padding-top:18px;border-top:1px solid var(--mp-border)}.dsm-mp .block h4{font-size:14px;font-weight:600}
+      .dsm-mp .versions{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:8px;color:var(--mp-muted)}.dsm-mp .versions strong{color:var(--mp-fg);font-weight:500}
+      .dsm-mp .backend .bar{margin-top:12px}.dsm-mp .backend-path{overflow-wrap:anywhere}.dsm-mp .backend progress{display:block;width:100%;height:6px;margin-top:10px;accent-color:var(--mp-accent)}
+      .dsm-mp .plugin-update p{margin-top:8px;overflow-wrap:anywhere}.dsm-mp .plugin-update-title{font-size:14px;font-weight:600;margin-right:auto}
+      .dsm-mp .foot{position:sticky;bottom:0;z-index:1;padding:12px 20px;border-top:1px solid var(--mp-border);border-radius:0 0 12px 12px;background:var(--mp-bg)}
+      .dsm-mp .foot .notice{margin:0 0 10px}.dsm-mp .foot .error:not(.notice){margin:0 0 10px}
+      .dsm-mp .state{display:inline-flex;align-items:center;gap:8px;color:var(--mp-muted)}.dsm-mp .state::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--mp-ok)}
+      .dsm-mp .state.dirty{color:var(--mp-fg);font-weight:500}.dsm-mp .state.dirty::before{background:var(--mp-warn)}
       /* 侧栏整页：顶部留出宿主标题栏，内容最宽 960px 居中，与插件市场页面一致。 */
       .dsm-mp-page{box-sizing:border-box;height:100%;overflow-y:auto;padding:calc(28px + var(--dsh-frame-top-clearance,0px)) max(clamp(16px,4vw,48px),calc((100% - 960px) / 2)) 32px}
-      @media(max-width:600px){.dsm-mp{padding:14px}.dsm-mp .fields{grid-template-columns:minmax(0,1fr)}.dsm-mp .search{flex-basis:100%}.dsm-mp .model-badges{display:none}.dsm-mp .model-select{flex:1}.dsm-mp .model-actions{margin-left:auto}}
+      @media(max-width:640px){.dsm-mp .head,.dsm-mp .panel,.dsm-mp .foot{padding-left:14px;padding-right:14px}.dsm-mp .fields{grid-template-columns:minmax(0,1fr)}
+        .dsm-mp .row:has(.segmented){flex-wrap:wrap}.dsm-mp .toolbar{flex-wrap:wrap}.dsm-mp .toolbar .search{flex-basis:100%}.dsm-mp .model-badges{display:none}.dsm-mp .model-select{flex:1}}
     `;
 
     async function request(body) {
@@ -604,6 +672,8 @@ window.__ModuleLoader__.load({
       const [drag, setDrag] = useState(null);
       const dragSource = useRef(null);
       const updater = useUpdater(t);
+      const [tab, setTab] = useState('models');
+      const [gateway, setGateway] = useState(null);
       const busy = modelBusy || updater.model.busy || isActiveOperation(updater.model.operation);
       const failure = (error) => ({ error: true, text: error?.code === 'INVALID_JSON' ? `${t('invalidJson')}（${error.message}）` : error.message });
       useEffect(() => {
@@ -624,6 +694,14 @@ window.__ModuleLoader__.load({
         }, 1000);
         return () => { active = false; clearInterval(timer); };
       }, [operation?.id, operation?.running]);
+      // 网关状态按已保存的地址检查；保存或程序操作结束后重新检查。
+      useEffect(() => {
+        let active = true;
+        const check = () => request({ action: 'status' }).then((result) => { if (active) setGateway(result.gateway); }, () => { if (active) setGateway({ online: false }); });
+        check();
+        const timer = setInterval(check, STATUS_POLL_MS);
+        return () => { active = false; clearInterval(timer); };
+      }, [view?.revision, operation?.running]);
       const perform = async (run) => {
         setBusy(true); setNotice(null);
         try { await run(); } catch (error) { setNotice(failure(error)); }
@@ -631,7 +709,8 @@ window.__ModuleLoader__.load({
       };
       const reload = () => perform(async () => { const value = await request(); publishConfig(value.config); setView(value); setDirty(false); setKey(''); setExpanded(new Set()); });
       const button = (text, click, extra = {}) => h('button', { type: 'button', disabled: busy, onClick: click, ...extra }, text);
-      if (!view) return h('section', { className: 'dsm-mp' }, h('h3', null, t('title')), notice ? h('p', { className: 'notice error', role: 'alert' }, notice.text) : h('p', null, t('loading')), button(t('reload'), reload));
+      if (!view) return h('section', { className: 'dsm-mp' }, h('header', { className: 'head' }, h('div', { className: 'title' }, h(MagpieGlyph, { size: 20 }), h('h3', null, t('title')))),
+        h('div', { className: 'panel' }, notice ? h('p', { className: 'notice error', role: 'alert' }, notice.text) : h('p', { className: 'muted' }, t('loading')), h('div', { className: 'bar', style: { marginTop: 12 } }, button(t('reload'), reload))));
       const config = view.config;
       const update = (patch) => { setView((v) => ({ ...v, config: { ...v.config, ...patch } })); setDirty(true); };
       const rows = config.models;
@@ -719,98 +798,148 @@ window.__ModuleLoader__.load({
         update({ models: rows.filter((_m, i) => i !== index) });
         setExpanded((old) => new Set([...old].filter((i) => i !== index).map((i) => i > index ? i - 1 : i)));
       };
-      return h('section', { className: 'dsm-mp', 'aria-busy': busy },
-        h('div', { className: 'bar spread' }, h('h3', null, t('title')), h('span', { className: 'muted' }, t(dirty ? 'unsaved' : 'savedState'))),
-        h('p', { className: 'muted' }, t('description')),
-        h('div', { className: 'bar' }, button(t('open'), openMagpie, { disabled: busy || operation?.running || backend?.supported === false || !backend?.installed || !backend?.version })),
-        h('div', { className: 'section' }, h('label', null, h('input', { type: 'checkbox', checked: config.autoStart !== false,
-          disabled: busy || !view.editable || backend?.supported === false,
-          onChange: (e) => applyNow({ autoStart: e.target.checked }),
-        }), ' ', t('autoStart')), h('p', { className: 'muted' }, t('autoStartHint'))),
-        h('div', { className: 'section' }, h('label', null, h('input', { type: 'checkbox', checked: config.closeOnExit === true,
-          disabled: busy || !view.editable || backend?.supported === false,
-          onChange: (e) => applyNow({ closeOnExit: e.target.checked }),
-        }), ' ', t('closeOnExit')), h('p', { className: 'muted' }, t('closeOnExitHint'))),
-        h('div', { className: 'section' }, h('label', null, h('input', { type: 'checkbox', checked: config.autoLightweight !== false,
-          disabled: busy || !view.editable || backend?.supported === false,
-          onChange: (e) => applyNow({ autoLightweight: e.target.checked }),
-        }), ' ', t('autoLightweight')), h('p', { className: 'muted' }, t('autoLightweightHint'))),
-        h('div', { className: 'section' }, h('div', { className: 'fields' },
-          h('label', { className: 'field' }, t('keepAwake'),
-            h('select', { value: magpieSettings?.keepAwake ?? 'off', disabled: busy || !magpieSettings?.available, onChange: (e) => setKeepAwake(e.target.value) },
-              ...[['off', 'keepAwakeOff'], ['on', 'keepAwakeOn'], ['display', 'keepAwakeDisplay']].map(([value, label]) => h('option', { key: value, value }, t(label))))),
-          h('label', { className: 'field' }, t('sidebarEntry'),
-          h('select', { value: config.sidebarEntry ?? 'auto', disabled: busy || !view.editable, onChange: (e) => applyNow({ sidebarEntry: e.target.value }) },
-            ...Object.entries(SIDEBAR_MODES).map(([value, label]) => h('option', { key: value, value }, t(label)))))),
-        h('p', { className: 'muted' }, magpieSettings?.available ? t('keepAwakeHint') : t('magpieSettingsMissing')),
-        h('p', { className: 'muted' }, t('sidebarEntryHint'))),
-        view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
-        h('details', { className: 'section backend' }, h('summary', null, t('backendTitle'), ' · ', backend?.version || t(backend?.installed ? 'backendUnknown' : 'backendMissing')),
-          h('div', { className: 'fields' }, field(t('backendPath'), config.magpiePath, (magpiePath) => {
-            update({ magpiePath }); setView((old) => ({ ...old, backend: { ...old.backend, installed: false, version: null, reason: null } }));
-          }, { placeholder: backend?.defaultPath || t('backendDefault'), disabled: busy || operation?.running })),
-          h('p', { className: 'muted' }, t('backendPathHint')),
-          backend?.path ? h('p', { className: 'muted backend-path' }, backend.path) : null,
-          h('div', { className: 'bar' },
-            button(t('backendCheck'), () => backendAction('backend-check'), { disabled: busy || operation?.running || backend?.supported === false }),
-            button(t(backend?.installed ? 'backendUpgrade' : 'backendDownload'), () => backendAction('backend-install'), { disabled: busy || operation?.running || backend?.supported === false || (backend?.installed && (!backend.version || (backend.latest && !backend.updateAvailable))) }),
-            backend?.version ? h('span', { className: 'muted' }, t('backendCurrent', { version: backend.version })) : null,
-            backend?.latest ? h('span', { className: 'muted' }, t('backendLatest', { version: backend.latest.version })) : null),
-          backend?.reason ? h('p', { className: 'error', role: 'alert' }, backend.reason) : null,
-          backendPhase ? h('p', { className: operation.phase === 'failed' || operation.launchError ? 'error' : 'muted', role: operation.phase === 'failed' || operation.launchError ? 'alert' : 'status' }, backendPhase) : null,
-          operation?.running ? h('progress', { value: operation.received, max: operation.total || 1, 'aria-label': t('backendDownloading') }) : null,
-          operation?.running && operation.total ? h('p', { className: 'muted' }, t('backendProgress', { received: (operation.received / 1048576).toFixed(1), total: (operation.total / 1048576).toFixed(1) })) : null),
-        h('details', { className: 'section' }, h('summary', null, t('connection')),
+      const selected = rows.filter((m) => m.enabled).length;
+      const unsupported = backend?.supported === false;
+      // 设置行：左侧标题与一句说明，右侧控件；开关整行可点。
+      const row = (title, hint, control, as = 'div') => h(as, { className: 'row' },
+        h('span', { className: 'row-text' }, h('span', { className: 'row-title' }, title), hint ? h('span', { className: 'row-hint' }, hint) : null),
+        h('span', { className: 'row-control' }, control));
+      const toggle = (title, hint, checked, change, disabled) => row(title, hint,
+        h('input', { type: 'checkbox', role: 'switch', className: 'switch', 'aria-label': title, checked, disabled, onChange: (e) => change(e.target.checked) }), 'label');
+      const choice = (title, hint, value, options, change, disabled) => row(title, hint,
+        h('div', { className: 'segmented', role: 'radiogroup', 'aria-label': title }, ...options.map(([option, label]) => h('button', {
+          key: option, type: 'button', role: 'radio', 'aria-checked': value === option, className: value === option ? 'active' : '', disabled,
+          onClick: () => value === option ? undefined : change(option),
+        }, label))));
+      const addModel = () => { update({ models: [...rows, { id: '', name: '', enabled: true, input: ['text'], reasoningEfforts: [] }] }); setExpanded((old) => new Set([...old, rows.length])); };
+      const checkConnection = () => perform(async () => { const result = await request({ action: 'check', baseURL: config.baseURL, apiKey: key || undefined }); setNotice({ text: t('connected', { version: result.version }) }); });
+      const pluginUpdate = updater.model.version?.phase === 'ready' && updater.model.version.updateAvailable;
+
+      const header = h('header', { className: 'head' },
+        h('div', null,
+          h('div', { className: 'title' }, h(MagpieGlyph, { size: 20 }), h('h3', null, t('title'))),
+          h('p', { className: 'head-desc' }, t('description')),
+          h('div', { className: 'chips' },
+            h('span', { className: `chip${gateway?.online ? ' ok' : gateway ? ' off' : ''}`, role: 'status' }, h('span', { className: 'dot', 'aria-hidden': true }),
+              !gateway ? t('gatewayChecking') : gateway.online ? t('gatewayOnline', { version: gateway.version ?? '' }).trim() : t('gatewayOffline')),
+            h('button', { type: 'button', className: 'chip', onClick: () => setTab('updates') },
+              backend?.version ? t('programVersion', { version: backend.version }) : t(backend?.installed ? 'backendUnknown' : 'programMissing'),
+              backend?.updateAvailable ? h('span', { className: 'new' }, ` · ${t('programUpgrade', { version: backend.latest.version })}`) : null))),
+        button(t('open'), openMagpie, { disabled: busy || operation?.running || unsupported || !backend?.installed || !backend?.version }));
+
+      const tabs = h('div', { className: 'tabs', role: 'tablist' }, ...TABS.map(([id, label]) => h('button', {
+        key: id, type: 'button', role: 'tab', className: 'tab', id: `dsm-mp-tab-${id}`, 'aria-selected': tab === id, 'aria-controls': 'dsm-mp-panel', onClick: () => setTab(id),
+      }, t(label),
+      id === 'models' ? h('span', { className: 'count' }, rows.length) : null,
+      id === 'updates' && (backend?.updateAvailable || pluginUpdate) ? h('span', { className: 'mark', 'aria-hidden': true }) : null)));
+
+      const modelList = h('div', { className: 'model-list' }, ...visible.map(({ row: model, index }) => h('div', {
+        className: `model${expanded.has(index) ? ' expanded' : ''}${drag?.source === index ? ' dragging' : ''}${drag?.index === index ? (drag.after ? ' drop-after' : ' drop-before') : ''}`, key: index,
+        onDragOver: (event) => { if (!canDrop()) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDrag({ source: dragSource.current.index, ...dropPosition(event, index) }); },
+        onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDrag((old) => old ? { source: old.source } : null); },
+        onDrop: (event) => drop(event, index),
+      },
+        h('div', { className: 'model-header' },
+          button(h('svg', { viewBox: '0 0 16 20', fill: 'currentColor', 'aria-hidden': true }, ...[5, 10, 15].flatMap((cy) => [5, 11].map((cx) => h('circle', { key: `${cx}-${cy}`, cx, cy, r: 1.4 })))), undefined, {
+            className: 'model-drag', draggable: !busy && rows.length > 1, disabled: busy || rows.length < 2,
+            title: t('drag', { name: labelFor(model) }), 'aria-label': t('drag', { name: labelFor(model) }),
+            onDragStart: (event) => {
+              if (busy || rows.length < 2) { event.preventDefault(); return; }
+              dragSource.current = { index, rows }; setDrag({ source: index });
+              event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', model.id);
+              event.dataTransfer.setDragImage?.(event.currentTarget.parentElement, 20, 20);
+            }, onDragEnd: endDrag,
+          }),
+          h('label', { className: 'model-select', title: model.id }, h('input', { type: 'checkbox', checked: model.enabled, disabled: busy, onChange: (e) => updateRow(index, { enabled: e.target.checked }) }), h('span', { className: 'model-name' }, labelFor(model))),
+          button(h('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true }, h('path', { d: 'm6 3 5 5-5 5', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })), () => setExpanded((old) => { const next = new Set(old); if (next.has(index)) next.delete(index); else next.add(index); return next; }), { className: 'model-toggle', 'aria-expanded': expanded.has(index), 'aria-controls': `dsm-mp-details-${index}`, 'aria-label': t(expanded.has(index) ? 'collapse' : 'expand', { name: labelFor(model) }) }),
+          h('div', { className: 'model-badges' }, model.input.includes('image') ? h('span', { className: 'badge' }, t('vision')) : null, model.contextWindow ? h('span', { className: 'badge' }, formatTokens(model.contextWindow)) : null),
+          h('div', { className: 'model-actions' }, button(t('remove'), () => remove(index), { className: 'danger' }))),
+        h('div', { className: 'model-details', id: `dsm-mp-details-${index}`, hidden: !expanded.has(index) },
+          h('div', { className: 'fields' }, field(t('id'), model.id, (id) => updateRow(index, { id }), { placeholder: 'provider/model-id', spellCheck: false }), field(t('modelName'), model.name, (name) => updateRow(index, { name }), { placeholder: t('nameHint') })),
+          h('div', { className: 'fields' },
+            field(t('context'), model.contextWindow, (contextWindow) => updateRow(index, { contextWindow }), { type: 'number', min: 1, placeholder: t('unspecified') }),
+            field(t('output'), model.maxTokens, (maxTokens) => updateRow(index, { maxTokens }), { type: 'number', min: 1, placeholder: t('unspecified') }),
+            field(t('efforts'), model.effortText ?? model.reasoningEfforts.join(', '), (value) => updateRow(index, { effortText: value, reasoningEfforts: value.split(/[,，]/).map((x) => x.trim().toLowerCase()).filter(Boolean) }), { placeholder: t('effortHint') }),
+            h('label', null, h('input', { type: 'checkbox', disabled: busy, checked: model.input.includes('image'), onChange: (e) => updateRow(index, { input: e.target.checked ? ['text', 'image'] : ['text'] }) }), t('vision')))))));
+
+      const panels = {
+        models: () => [
+          toggle(t('sync'), t('syncHint'), config.syncEnabled, (syncEnabled) => applyNow({ syncEnabled }), busy || !view.editable),
+          view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
+          h('div', { className: 'toolbar' },
+            h('input', { className: 'search', type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: search, onChange: (e) => setSearch(e.target.value) }),
+            button(t('catalog'), syncCatalog, { disabled: busy || !view.editable }),
+            button(t('add'), addModel)),
+          h('div', { className: 'list-head' },
+            h('span', { className: 'count' }, t('count', { selected, total: rows.length })),
+            h('div', { className: 'list-actions' },
+              button(t('all'), () => selectVisible(true), { className: 'ghost' }), button(t('none'), () => selectVisible(false), { className: 'ghost' }),
+              h('span', { className: 'divider', 'aria-hidden': true }),
+              button(t('sortModel'), () => sort('model'), { className: 'ghost', title: t('sortModelHint'), disabled: busy || visible.length < 2 }),
+              button(t('sortProvider'), () => sort('provider'), { className: 'ghost', title: t('sortProviderHint'), disabled: busy || visible.length < 2 }))),
+          config.manualOrder && rows.length ? h('p', { className: 'hint' }, t('manualOrder')) : null,
+          !rows.length ? h('p', { className: 'empty' }, t('empty')) : !visible.length ? h('p', { className: 'empty' }, t('noMatch')) : null,
+          modelList,
+        ],
+        connection: () => [
+          h('p', { className: 'muted' }, t('connectionHint')),
           h('div', { className: 'fields' },
             field(t('url'), config.baseURL, (baseURL) => update({ baseURL }), { type: 'url', placeholder: 'http://127.0.0.1:3425' }),
             h('label', { className: 'field' }, t('protocol'), h('select', { value: config.api, disabled: busy, onChange: (e) => update({ api: e.target.value }) },
               ...[['openai-completions', 'OpenAI Chat Completions'], ['openai-responses', 'OpenAI Responses'], ['anthropic-messages', 'Anthropic Messages']].map(([value, label]) => h('option', { key: value, value }, label)))),
             field(t('key'), key, (value) => { setKey(value); setDirty(true); }, { type: 'password', autoComplete: 'new-password', disabled: busy || !view.keyWritable, placeholder: t(view.keyConfigured ? 'keySaved' : 'keyEmpty') })),
-          h('p', { className: 'muted' }, t(view.keyWritable ? 'keyHint' : 'keyReadonly')),
-          button(t('check'), () => perform(async () => { const result = await request({ action: 'check', baseURL: config.baseURL, apiKey: key || undefined }); setNotice({ text: t('connected', { version: result.version }) }); }))),
-        h('div', { className: 'section' }, h('label', null, h('input', { type: 'checkbox', checked: config.syncEnabled, disabled: busy || !view.editable, onChange: (e) => applyNow({ syncEnabled: e.target.checked }) }), ' ', t('sync')), h('p', { className: 'muted' }, t('syncHint'))),
-        h('div', { className: 'bar spread section' }, h('strong', null, t('count', { selected: rows.filter((m) => m.enabled).length, total: rows.length })), h('div', { className: 'bar' },
-          button(t('add'), () => { update({ models: [...rows, { id: '', name: '', enabled: true, input: ['text'], reasoningEfforts: [] }] }); setExpanded((old) => new Set([...old, rows.length])); }), button(t('catalog'), syncCatalog, { disabled: busy || !view.editable }))),
-        h('div', { className: 'bar section' }, h('input', { className: 'search', type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: search, onChange: (e) => setSearch(e.target.value) }),
-          h('div', { className: 'bar' }, button(t('sortModel'), () => sort('model'), { title: t('sortModelHint'), disabled: busy || visible.length < 2 }), button(t('sortProvider'), () => sort('provider'), { title: t('sortProviderHint'), disabled: busy || visible.length < 2 })),
-          h('div', { className: 'bar' }, button(t('all'), () => selectVisible(true)), button(t('none'), () => selectVisible(false)))),
-        config.manualOrder && rows.length ? h('p', { className: 'muted' }, t('manualOrder')) : null,
-        !rows.length ? h('p', { className: 'notice section' }, t('empty')) : !visible.length ? h('p', null, t('noMatch')) : null,
-        h('div', { className: 'model-list' }, ...visible.map(({ row, index }) => h('div', {
-          className: `model${expanded.has(index) ? ' expanded' : ''}${drag?.source === index ? ' dragging' : ''}${drag?.index === index ? (drag.after ? ' drop-after' : ' drop-before') : ''}`, key: index,
-          onDragOver: (event) => { if (!canDrop()) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDrag({ source: dragSource.current.index, ...dropPosition(event, index) }); },
-          onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDrag((old) => old ? { source: old.source } : null); },
-          onDrop: (event) => drop(event, index),
-        },
-          h('div', { className: 'model-header' },
-            button(h('svg', { viewBox: '0 0 16 20', fill: 'currentColor', 'aria-hidden': true }, ...[5, 10, 15].flatMap((cy) => [5, 11].map((cx) => h('circle', { key: `${cx}-${cy}`, cx, cy, r: 1.4 })))), undefined, {
-              className: 'model-drag', draggable: !busy && rows.length > 1, disabled: busy || rows.length < 2,
-              title: t('drag', { name: labelFor(row) }), 'aria-label': t('drag', { name: labelFor(row) }),
-              onDragStart: (event) => {
-                if (busy || rows.length < 2) { event.preventDefault(); return; }
-                dragSource.current = { index, rows }; setDrag({ source: index });
-                event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', row.id);
-                event.dataTransfer.setDragImage?.(event.currentTarget.parentElement, 20, 20);
-              }, onDragEnd: endDrag,
-            }),
-            h('label', { className: 'model-select', title: row.id }, h('input', { type: 'checkbox', checked: row.enabled, disabled: busy, onChange: (e) => updateRow(index, { enabled: e.target.checked }) }), h('span', { className: 'model-name' }, labelFor(row))),
-            button(h('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true }, h('path', { d: 'm6 3 5 5-5 5', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })), () => setExpanded((old) => { const next = new Set(old); if (next.has(index)) next.delete(index); else next.add(index); return next; }), { className: 'model-toggle', 'aria-expanded': expanded.has(index), 'aria-controls': `dsm-mp-details-${index}`, 'aria-label': t(expanded.has(index) ? 'collapse' : 'expand', { name: labelFor(row) }) }),
-            h('div', { className: 'model-badges' }, row.input.includes('image') ? h('span', { className: 'badge' }, t('vision')) : null, row.contextWindow ? h('span', { className: 'badge' }, formatTokens(row.contextWindow)) : null),
-            h('div', { className: 'model-actions' }, button(t('remove'), () => remove(index), { className: 'danger' }))),
-          h('div', { className: 'model-details', id: `dsm-mp-details-${index}`, hidden: !expanded.has(index) },
-          h('div', { className: 'fields' }, field(t('id'), row.id, (id) => updateRow(index, { id }), { placeholder: 'provider/model-id', spellCheck: false }), field(t('modelName'), row.name, (name) => updateRow(index, { name }), { placeholder: t('nameHint') })),
-          h('div', { className: 'fields' },
-            field(t('context'), row.contextWindow, (contextWindow) => updateRow(index, { contextWindow }), { type: 'number', min: 1, placeholder: t('unspecified') }),
-            field(t('output'), row.maxTokens, (maxTokens) => updateRow(index, { maxTokens }), { type: 'number', min: 1, placeholder: t('unspecified') }),
-            field(t('efforts'), row.effortText ?? row.reasoningEfforts.join(', '), (value) => updateRow(index, { effortText: value, reasoningEfforts: value.split(/[,，]/).map((s) => s.trim().toLowerCase()).filter(Boolean) }), { placeholder: t('effortHint') }),
-            h('label', null, h('input', { type: 'checkbox', disabled: busy, checked: row.input.includes('image'), onChange: (e) => updateRow(index, { input: e.target.checked ? ['text', 'image'] : ['text'] }) }), t('vision'))))))),
-        notice ? h('p', { className: `notice section${notice.error ? ' error' : ''}`, role: notice.error ? 'alert' : 'status' }, notice.text) : null,
-        !view.editable ? h('p', { className: 'error' }, t('readOnly')) : null,
-        h('div', { className: 'bar foot spread' }, button(t(dirty ? 'discard' : 'reload'), reload), button(t(busy ? 'saving' : 'save'), save, { className: 'primary', disabled: busy || !view.editable })),
-        h('section', { className: 'plugin-update', 'aria-label': t('updateTitle') }, renderUpdateSection({ ...updater.model,
-          blocked: dirty || modelBusy || operation?.running,
-          blockedHint: dirty ? t('updateSaveFirst') : t('updateWait'),
-        }, updater.actions, t)),
+          h('p', { className: 'hint' }, t(view.keyWritable ? 'keyHint' : 'keyReadonly')),
+          h('div', { className: 'bar', style: { marginTop: 14 } }, button(t('check'), checkConnection)),
+        ],
+        preferences: () => [
+          h('h4', { className: 'group' }, t('groupProgram')),
+          toggle(t('autoStart'), t('autoStartHint'), config.autoStart !== false, (autoStart) => applyNow({ autoStart }), busy || !view.editable || unsupported),
+          toggle(t('closeOnExit'), t('closeOnExitHint'), config.closeOnExit === true, (closeOnExit) => applyNow({ closeOnExit }), busy || !view.editable || unsupported),
+          h('h4', { className: 'group' }, t('groupMagpieSettings'), h('span', null, t('groupMagpieSettingsHint'))),
+          toggle(t('autoLightweight'), t('autoLightweightHint'), config.autoLightweight !== false, (autoLightweight) => applyNow({ autoLightweight }), busy || !view.editable || unsupported),
+          choice(t('keepAwake'), magpieSettings?.available ? t('keepAwakeHint') : t('magpieSettingsMissing'), magpieSettings?.keepAwake ?? 'off',
+            [['off', t('keepAwakeOff')], ['on', t('keepAwakeOn')], ['display', t('keepAwakeDisplay')]], setKeepAwake, busy || !magpieSettings?.available),
+          h('h4', { className: 'group' }, t('groupDsh')),
+          choice(t('sidebarEntry'), t('sidebarEntryHint'), config.sidebarEntry ?? 'auto', Object.entries(SIDEBAR_MODES).map(([value, label]) => [value, t(label)]),
+            (sidebarEntry) => applyNow({ sidebarEntry }), busy || !view.editable),
+        ],
+        updates: () => [
+          h('section', { className: 'block backend' },
+            h('div', { className: 'bar spread' }, h('h4', null, t('backendTitle')),
+              h('div', { className: 'bar' },
+                button(t('backendCheck'), () => backendAction('backend-check'), { disabled: busy || operation?.running || unsupported }),
+                button(t(backend?.installed ? 'backendUpgrade' : 'backendDownload'), () => backendAction('backend-install'), {
+                  className: !backend?.installed || backend?.updateAvailable ? 'primary' : '',
+                  disabled: busy || operation?.running || unsupported || (backend?.installed && (!backend.version || (backend.latest && !backend.updateAvailable))),
+                }))),
+            h('div', { className: 'versions' },
+              h('span', null, backend?.version ? t('backendCurrent', { version: backend.version }) : t(backend?.installed ? 'backendUnknown' : 'backendMissing')),
+              backend?.latest ? h('span', null, t('backendLatest', { version: backend.latest.version })) : null),
+            backend?.reason ? h('p', { className: 'notice error', role: 'alert' }, backend.reason) : null,
+            backendPhase ? h('p', { className: `notice${operation.phase === 'failed' || operation.launchError ? ' error' : ''}`, role: operation.phase === 'failed' || operation.launchError ? 'alert' : 'status' }, backendPhase) : null,
+            operation?.running ? h('progress', { value: operation.received, max: operation.total || 1, 'aria-label': t('backendDownloading') }) : null,
+            operation?.running && operation.total ? h('p', { className: 'hint' }, t('backendProgress', { received: (operation.received / 1048576).toFixed(1), total: (operation.total / 1048576).toFixed(1) })) : null,
+            h('div', { className: 'fields' }, field(t('backendPath'), config.magpiePath, (magpiePath) => {
+              update({ magpiePath }); setView((old) => ({ ...old, backend: { ...old.backend, installed: false, version: null, reason: null } }));
+            }, { placeholder: backend?.defaultPath || t('backendDefault'), disabled: busy || operation?.running })),
+            h('p', { className: 'hint' }, t('backendPathHint')),
+            backend?.path ? h('p', { className: 'hint backend-path' }, backend.path) : null),
+          h('section', { className: 'plugin-update', 'aria-label': t('updateTitle') }, renderUpdateSection({ ...updater.model,
+            blocked: dirty || modelBusy || operation?.running,
+            blockedHint: dirty ? t('updateSaveFirst') : t('updateWait'),
+          }, updater.actions, t)),
+        ],
+      };
+
+      return h('section', { className: 'dsm-mp', 'aria-busy': busy },
+        header, tabs,
+        h('div', { className: 'panel', role: 'tabpanel', id: 'dsm-mp-panel', 'aria-labelledby': `dsm-mp-tab-${tab}` }, ...panels[tab]()),
+        h('footer', { className: 'foot' },
+          notice ? h('p', { className: `notice${notice.error ? ' error' : ''}`, role: notice.error ? 'alert' : 'status' }, notice.text) : null,
+          !view.editable ? h('p', { className: 'error' }, t('readOnly')) : null,
+          h('div', { className: 'bar spread' },
+            h('span', { className: `state${dirty ? ' dirty' : ''}` }, t(dirty ? 'unsaved' : 'savedState')),
+            h('div', { className: 'bar' }, button(t(dirty ? 'discard' : 'reload'), reload), button(t(busy ? 'saving' : 'save'), save, { className: 'primary', disabled: busy || !view.editable })))),
       );
     }
 

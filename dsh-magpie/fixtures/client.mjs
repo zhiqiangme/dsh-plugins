@@ -23,7 +23,10 @@ export function clientHarness(initial, fetchImpl = async () => { throw new Error
     ...(layout ? { inject: (_names, run) => run({ layout, effect: (run) => run() }) } : {}),
   };
   module.apply(ctx);
-  return { module, registration, states, get styles() { return styleTags.map((node) => node.textContent); }, cards, dictionaries, render: () => { index = 0; return module.ModelsCard({ t }); } };
+  const render = () => { index = 0; return module.ModelsCard({ t }); };
+  // 切换卡片标签页：标签状态保存在 states 中，之后的 render 都停留在该页。
+  const tab = (label) => nodes(render(), (node) => node.props.role === 'tab' && node.children.includes(label))[0].props.onClick();
+  return { module, registration, states, get styles() { return styleTags.map((node) => node.textContent); }, cards, dictionaries, render, tab };
 }
 
 export function nodes(tree, predicate, found = []) {
@@ -33,3 +36,6 @@ export function nodes(tree, predicate, found = []) {
 }
 export const button = (tree, label) => nodes(tree, (node) => node.type === 'button' && node.children.includes(label))[0];
 export const field = (tree, label) => nodes(tree, (node) => node.type === 'label' && node.children[0] === label)[0]?.children[1];
+// 设置行里的开关或分段选择按 aria-label 查找；choose 返回分段里指定选项的按钮。
+export const control = (tree, label) => nodes(tree, (node) => node.props?.['aria-label'] === label)[0];
+export const choose = (tree, label, option) => nodes(control(tree, label), (node) => node.type === 'button' && node.children.includes(option))[0];

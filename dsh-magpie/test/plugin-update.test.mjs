@@ -16,7 +16,8 @@ function setup(overrides = {}, fetchImpl, options) {
   client.states.splice(9, 7, model.version, model.market, model.operation, model.target, model.busy ?? false, model.notice, model.restart);
   return client;
 }
-const section = (client) => nodes(client.render(), (n) => n.props.className === 'plugin-update')[0];
+// 插件更新在「更新」标签页。
+const section = (client) => { client.tab('更新'); return nodes(client.render(), (n) => n.props.className === 'plugin-update')[0]; };
 const text = (tree) => Array.isArray(tree) ? tree.map(text).join('|') : typeof tree === 'string' ? tree : tree?.children ? text(tree.children) : '';
 function render(overrides = {}, callbacks = actions) {
   const client = clientHarness();
@@ -41,6 +42,7 @@ test('自身更新独立显示版本；缺少市场、本地安装或桌面托�
 
 test('模型草稿及 Magpie 程序操作阻止自身更新，进行中的插件更新阻止编辑及保存', () => {
   const client = setup();
+  client.tab('模型');
   field(client.render(), '显示名称').props.onChange({ target: { value: '待保存' } });
   assert.equal(button(section(client), '更新到 v26.10.23').props.disabled, true);
   assert.match(text(section(client)), /请先保存或放弃模型更改/);
@@ -49,6 +51,7 @@ test('模型草稿及 Magpie 程序操作阻止自身更新，进行中的插件
   assert.equal(button(section(client), '更新到 v26.10.23').props.disabled, true);
   client.states[0].backend = undefined;
   client.states[11] = { operationId: 'boot-1', state: 'running', progress: { percent: 42, detail: 'resolved 3' } };
+  client.tab('模型');
   assert.equal(field(client.render(), '显示名称').props.disabled, true);
   assert.equal(button(client.render(), '处理中…').props.disabled, true);
   assert.match(text(section(client)), /42%.*resolved 3/);

@@ -230,3 +230,14 @@ test('开关即时修改只接受白名单字段，不校验版本号也不带�
   // 新版本号可直接用于后续保存。
   assert.equal((await host.manager.handle({ action: 'save', revision: off.revision, config: off.config })).saved, true);
 });
+
+test('网关状态检查不报错：应答为 Magpie 时在线，失败或身份不符时未连接', async () => {
+  const backend = { describe: async () => ({}), settings: () => ({ available: false }) };
+  let reply = async () => ({ ok: true, json: async () => ({ name: 'magpie', version: '0.1.9' }) });
+  const host = setup({ backend, fetchImpl: (...args) => reply(...args) });
+  assert.deepEqual((await host.manager.handle({ action: 'status' })).gateway, { online: true, version: '0.1.9' });
+  reply = async () => ({ ok: true, json: async () => ({ name: 'other' }) });
+  assert.deepEqual((await host.manager.handle({ action: 'status' })).gateway, { online: false });
+  reply = async () => { throw new TypeError('fetch failed'); };
+  assert.deepEqual((await host.manager.handle({ action: 'status' })).gateway, { online: false });
+});

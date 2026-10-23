@@ -3,6 +3,9 @@ import { credential, findEntry, catalogModels, requestGateway, syncModels } from
 import { PROVIDER_NAMES, keepOrderIndexes, sortModelIndexes } from './names.js';
 import { MagpieBackend } from './backend.js';
 
+// 本机网关正常时几十毫秒内应答；状态检查会定时重复，超时设短免得卡片长时间显示“检查中”。
+const STATUS_TIMEOUT = 2_000;
+
 export function hostService(ctx, name, usable = (value) => value !== undefined) {
   const candidates = [];
   try { candidates.push(ctx?.[name]); } catch { /* 宿主服务可能尚未挂载。 */ }
@@ -88,6 +91,15 @@ export class ModelManager {
       if (body.action === 'backend-install') this.backend.install(path, { lightweight });
       if (body.action === 'backend-open') await this.backend.open(path, { lightweight });
       return { ok: true, backend: await this.backend.describe(path), magpieSettings: this.backend.settings?.() };
+    }
+    if (body.action === 'status') {
+      // 卡片标题处的网关状态：短超时，读不到就算未连接，不报错。
+      const config = this.current();
+      try {
+        const key = await credential(this.credentials, this.env, config.baseURL);
+        const hello = await requestGateway(config.baseURL, '/api/hello', key, this.fetch, STATUS_TIMEOUT);
+        return { ok: true, gateway: hello?.name === 'magpie' ? { online: true, version: hello.version ?? null } : { online: false } };
+      } catch { return { ok: true, gateway: { online: false } }; }
     }
     if (body.action === 'magpie-settings') {
       // 直接写 Magpie 自己的设置，不属于插件配置，也不需要版本号。

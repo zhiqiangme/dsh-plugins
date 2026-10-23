@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { resolveConfig } from '../lib/config.js';
 import { PROVIDER_NAMES, sortModelIndexes as serverSort } from '../lib/names.js';
-import { clientHarness, button, field, nodes } from '../fixtures/client.mjs';
+import { clientHarness, button, choose, control, field, nodes } from '../fixtures/client.mjs';
 
 const view = (config = {}) => ({ ok: true, config: resolveConfig(config), revision: 'revision-one', providerNames: PROVIDER_NAMES, nativeProviders: ['magpie'], editable: true, keyConfigured: false, keyWritable: true });
 const response = (body, status = 200) => ({ ok: status === 200, status, json: async () => body });
@@ -36,7 +36,7 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
   assert.ok(button(client.render(), '按供应商排序'));
 });
 
-test('开关和下拉改完立即保存，只提交该项；未保存的连接设置与模型草稿保留，后续保存使用新版本号', async () => {
+test('开关和选项改完立即保存，只提交该项；未保存的连接设置与模型草稿保留，后续保存使用新版本号', async () => {
   const calls = [];
   let saved = resolveConfig({ models: [{ id: 'a/one' }] });
   const client = clientHarness(view(saved), async (_url, options) => {
@@ -45,29 +45,38 @@ test('开关和下拉改完立即保存，只提交该项；未保存的连接�
     saved = resolveConfig(body.action === 'patch' ? { ...saved, ...body.patch } : body.config);
     return response({ ...view(saved), revision: `revision-${calls.length + 1}`, ...(body.patch?.syncEnabled !== undefined || body.action === 'save' ? { sync: { ok: true, count: 1 } } : {}) });
   });
-  const toggle = (label) => nodes(client.render(), (n) => n.type === 'label' && n.children.includes(label))[0].children[0];
-  // 先留一份未保存的连接设置草稿。
+  const toggle = (label) => control(client.render(), label);
+  // 先在连接页留一份未保存的草稿。
+  client.tab('连接');
   field(client.render(), 'Magpie 网关地址').props.onChange({ target: { value: 'http://127.0.0.1:4000' } });
   assert.equal(client.states[1], true);
-  assert.equal(toggle('退出 DSH 时同时关闭 Magpie').props.checked, false);
-  await toggle('退出 DSH 时同时关闭 Magpie').props.onChange({ target: { checked: true } });
+  client.tab('偏好');
+  assert.equal(toggle('退出 DSH 时关闭 Magpie').props.checked, false);
+  assert.equal(toggle('退出 DSH 时关闭 Magpie').props.role, 'switch');
+  await toggle('退出 DSH 时关闭 Magpie').props.onChange({ target: { checked: true } });
   assert.deepEqual(calls[0], { action: 'patch', patch: { closeOnExit: true } });
-  assert.equal(toggle('退出 DSH 时同时关闭 Magpie').props.checked, true);
-  assert.equal(field(client.render(), 'Magpie 网关地址').props.value, 'http://127.0.0.1:4000', '草稿保留');
+  assert.equal(toggle('退出 DSH 时关闭 Magpie').props.checked, true);
   assert.equal(client.states[1], true, '草稿仍待保存');
   assert.equal(client.states[0].revision, 'revision-2');
-  // 开机启动、自动轻量模式默认勾选，取消即保存。
-  assert.equal(toggle('启动 DSH 时自动打开 Magpie').props.checked, true);
-  await toggle('启动 DSH 时自动打开 Magpie').props.onChange({ target: { checked: false } });
+  // 开机启动、自动轻量模式默认开启，关闭即保存。
+  assert.equal(toggle('启动 DSH 时打开 Magpie').props.checked, true);
+  await toggle('启动 DSH 时打开 Magpie').props.onChange({ target: { checked: false } });
   assert.deepEqual(calls[1].patch, { autoStart: false });
-  assert.equal(toggle('自动开启 Magpie 轻量模式').props.checked, true);
-  await toggle('自动开启 Magpie 轻量模式').props.onChange({ target: { checked: false } });
+  assert.equal(toggle('自动开启轻量模式').props.checked, true);
+  await toggle('自动开启轻量模式').props.onChange({ target: { checked: false } });
   assert.deepEqual(calls[2].patch, { autoLightweight: false });
-  await field(client.render(), '侧边栏入口').props.onChange({ target: { value: 'always' } });
+  assert.equal(choose(client.render(), '侧边栏入口', '自动').props['aria-checked'], true);
+  // 点当前选项不发请求。
+  assert.equal(choose(client.render(), '侧边栏入口', '自动').props.onClick(), undefined);
+  await choose(client.render(), '侧边栏入口', '显示').props.onClick();
   assert.deepEqual(calls[3].patch, { sidebarEntry: 'always' });
-  await toggle('同步所选模型到 DSH').props.onChange({ target: { checked: true } });
+  assert.equal(choose(client.render(), '侧边栏入口', '显示').props['aria-checked'], true);
+  client.tab('模型');
+  await toggle('同步到 DSH').props.onChange({ target: { checked: true } });
   assert.deepEqual(calls[4].patch, { syncEnabled: true });
   // 保存并同步带上最新版本号和全部即时项，连接草稿一起提交。
+  client.tab('连接');
+  assert.equal(field(client.render(), 'Magpie 网关地址').props.value, 'http://127.0.0.1:4000', '草稿保留');
   await button(client.render(), '保存并同步').props.onClick();
   assert.equal(calls[5].action, 'save');
   assert.equal(calls[5].revision, 'revision-6');
@@ -83,17 +92,17 @@ test('防止休眠直接写入 Magpie 设置；没有设置文件时禁用；打
     if (body.action === 'magpie-settings') return response({ ok: true, magpieSettings: { available: true, lightweight: true, keepAwake: body.keepAwake } });
     return response({ ok: true, backend: { supported: true, installed: true, version: '0.1.2' }, magpieSettings: { available: true, lightweight: true, keepAwake: 'off' } });
   });
-  assert.equal(field(client.render(), '防止休眠').props.disabled, true);
+  client.tab('偏好');
+  assert.equal(choose(client.render(), '防止休眠', '开启').props.disabled, true);
   await button(client.render(), '打开 Magpie 界面').props.onClick();
   assert.deepEqual(calls[0], { action: 'backend-open', magpiePath: '' });
   assert.equal(client.states[3].text, '已打开 Magpie 窗口。');
-  assert.equal(field(client.render(), '防止休眠').props.disabled, false);
-  await field(client.render(), '防止休眠').props.onChange({ target: { value: 'display' } });
+  assert.equal(choose(client.render(), '防止休眠', '关闭').props['aria-checked'], true);
+  await choose(client.render(), '防止休眠', '屏幕也常亮').props.onClick();
   assert.deepEqual(calls[1], { action: 'magpie-settings', keepAwake: 'display' });
-  assert.equal(field(client.render(), '防止休眠').props.value, 'display');
+  assert.equal(choose(client.render(), '防止休眠', '屏幕也常亮').props['aria-checked'], true);
   assert.equal(client.states[1], false, '不产生待保存改动');
 });
-
 test('添加、编辑、调整顺序、取消勾选、删除通过卡片实际事件更新待保存清单', () => {
   const client = clientHarness(view({ models: [{ id: 'first' }] }));
   button(client.render(), '手动添加模型').props.onClick();
@@ -180,6 +189,7 @@ test('保存冲突保留草稿，显示错误，不静默重新载入覆盖', as
 test('provider 同步失败与清单保存成功分别显示，凭据输入不回显', async () => {
   const initial = view({ models: [{ id: 'saved' }] });
   const client = clientHarness(initial, async () => response({ ...initial, saved: true, sync: { ok: false, reason: '服务未就绪' } }));
+  client.tab('连接');
   field(client.render(), '网关 Key').props.onChange({ target: { value: 'sensitive' } });
   await button(client.render(), '保存并同步').props.onClick();
   assert.equal(client.states[1], false);
@@ -190,8 +200,10 @@ test('provider 同步失败与清单保存成功分别显示，凭据输入不�
 
 test('Key 为只读或配置服务未就绪时相应控件禁用', () => {
   const client = clientHarness({ ...view(), keyWritable: false, editable: false });
+  client.tab('连接');
   assert.equal(field(client.render(), '网关 Key').props.disabled, true);
   assert.equal(button(client.render(), '保存并同步').props.disabled, true);
+  client.tab('模型');
   assert.equal(button(client.render(), '从 Magpie 同步').props.disabled, true);
 });
 
@@ -441,6 +453,7 @@ test('程序更新请求仅携带目标路径，保留模型草稿、勾选和�
     return response({ ok: true, backend: { ...backend, latest: { version: '0.1.2' }, operation: body.action === 'backend-install' ? { id: 'job', phase: 'downloading', path: backend.path, running: true, received: 5, total: 10 } : null } });
   });
   field(client.render(), '显示名称').props.onChange({ target: { value: '尚未保存' } });
+  client.tab('更新');
   field(client.render(), 'Magpie 程序路径').props.onChange({ target: { value: customPath } });
   await button(client.render(), '检查更新').props.onClick();
   assert.deepEqual(requests[0], { action: 'backend-check', magpiePath: customPath });
@@ -459,6 +472,7 @@ test('程序更新请求仅携带目标路径，保留模型草稿、勾选和�
 
 test('已安装程序显示升级，最新版本和不支持的平台禁用入口，失败原因可见', () => {
   const client = clientHarness({ ...view(), backend: { supported: true, installed: true, version: '0.1.1', latest: { version: '0.1.2' }, updateAvailable: true } });
+  client.tab('更新');
   assert.equal(button(client.render(), '升级 Magpie').props.disabled, false);
   client.states[0].backend.updateAvailable = false;
   assert.equal(button(client.render(), '升级 Magpie').props.disabled, true);
@@ -537,8 +551,10 @@ test('宿主声明侧栏槽位时注册整页和入口行；保存模型后自�
   assert.deepEqual([rows()[0].meta.id, rows()[0].meta.order, rows()[0].meta.label()], ['dsh-magpie', 2, 'Magpie']);
   assert.equal(rows()[0].component, client.module.MagpieGlyph);
 
-  const select = () => field(client.render(), '侧边栏入口');
-  assert.equal(select().props.value, 'auto');
+  const option = (label) => choose(client.render(), '侧边栏入口', label);
+  client.tab('偏好');
+  assert.equal(option('自动').props['aria-checked'], true);
+  client.tab('模型');
   button(client.render(), '手动添加模型').props.onClick();
   client.states[0] = { ...client.states[0], config: { ...client.states[0].config, models: [{ ...model, enabled: true, input: ['text'], reasoningEfforts: [] }] } };
   // 草稿不影响入口，保存后才按已保存清单隐藏。
@@ -547,10 +563,11 @@ test('宿主声明侧栏槽位时注册整页和入口行；保存模型后自�
   assert.equal(posts[0].config.sidebarEntry, 'auto');
   assert.equal(rows().length, 0);
 
-  await select().props.onChange({ target: { value: 'always' } });
+  client.tab('偏好');
+  await option('显示').props.onClick();
   assert.deepEqual(posts[1], { action: 'patch', patch: { sidebarEntry: 'always' } });
   assert.equal(rows().length, 1);
-  await select().props.onChange({ target: { value: 'never' } });
+  await option('隐藏').props.onClick();
   assert.equal(rows().length, 0);
 });
 
@@ -575,4 +592,26 @@ test('正在查看 Magpie 页面时保存模型不收起入口，离开后再隐
   active = null;
   for (const listener of listeners) listener();
   assert.equal(rows().length, 0);
+});
+
+test('标题显示网关与程序状态，程序状态可跳到更新页；标签页切换内容，模型页显示数量', () => {
+  const client = clientHarness({ ...view({ models: [{ id: 'a/one' }, { id: 'b/two' }] }), backend: { supported: true, installed: true, version: '0.1.1', latest: { version: '0.1.2' }, updateAvailable: true } });
+  const chips = () => nodes(client.render(), (n) => n.props.className?.split(' ').includes('chip'));
+  const label = (node) => node.children.flat().map((c) => typeof c === 'string' ? c : c?.children?.join('') ?? '').join('');
+  assert.match(label(chips()[0]), /正在检查网关/);
+  // 网关状态在更新区块之后的状态位。
+  client.states[17] = { online: true, version: '0.1.1' };
+  assert.equal(chips()[0].props.className, 'chip ok');
+  assert.match(label(chips()[0]), /网关在线 0\.1\.1/);
+  client.states[17] = { online: false };
+  assert.match(label(chips()[0]), /网关未连接/);
+  assert.match(label(chips()[1]), /Magpie 0\.1\.1.*可升级到 0\.1\.2/);
+  const tabs = () => nodes(client.render(), (n) => n.props.role === 'tab');
+  assert.deepEqual(tabs().map((n) => n.props['aria-selected']), [true, false, false, false]);
+  assert.equal(tabs()[0].children[1].children[0], 2);
+  assert.ok(tabs()[3].children[2], '有可升级版本时更新页带标记');
+  chips()[1].props.onClick();
+  assert.deepEqual(tabs().map((n) => n.props['aria-selected']), [false, false, false, true]);
+  assert.ok(button(client.render(), '升级 Magpie'));
+  assert.equal(button(client.render(), '从 Magpie 同步'), undefined);
 });
