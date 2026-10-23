@@ -205,3 +205,28 @@ test('手动排过序时，全量同步保留卡片上的顺序，新模型按�
   const automatic = await host.manager.handle({ action: 'sync-catalog', revision: result.revision, config: { ...result.config, manualOrder: false } });
   assert.deepEqual(automatic.config.models.map((m) => m.id), ['p/alpha', 'p/new-a', 'p/new-b', 'p/zeta']);
 });
+
+test('开关即时修改只接受白名单字段，不校验版本号也不带入草稿；同步开关改完立即重写分组', async () => {
+  let lightweight = 0;
+  // 替身程序管理：不读写真实的 Magpie 设置。
+  const backend = { describe: async () => ({}), settings: () => ({ available: false }), ensureLightweight: () => { lightweight++; } };
+  const host = setup({ backend });
+  const before = await host.manager.describe();
+  await host.manager.handle({ action: 'save', revision: before.revision, config });
+  await assert.rejects(host.manager.handle({ action: 'patch', patch: { models: [] } }), /只能直接修改/);
+  await assert.rejects(host.manager.handle({ action: 'patch', patch: {} }), /只能直接修改/);
+  await assert.rejects(host.manager.handle({ action: 'patch', patch: { sidebarEntry: 'hidden' } }), /侧边栏入口/);
+  const patched = await host.manager.handle({ action: 'patch', patch: { closeOnExit: true, sidebarEntry: 'never' } });
+  assert.equal(patched.sync, undefined);
+  assert.equal(host.own.options.config.closeOnExit, true);
+  assert.equal(host.own.options.config.sidebarEntry, 'never');
+  assert.equal(host.own.options.config.models[0].id, 'manual/unlisted', '清单不受影响');
+  assert.equal(host.manager.config.closeOnExit, true);
+  await host.manager.handle({ action: 'patch', patch: { autoLightweight: true } });
+  assert.equal(lightweight, 1);
+  const off = await host.manager.handle({ action: 'patch', patch: { syncEnabled: false } });
+  assert.equal(off.sync.ok, true);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID], undefined);
+  // 新版本号可直接用于后续保存。
+  assert.equal((await host.manager.handle({ action: 'save', revision: off.revision, config: off.config })).saved, true);
+});

@@ -36,12 +36,13 @@ test('检查版本不安装；下载完成后程序、版本和可核验清单�
 });
 
 test('下载或升级完成后启动 Magpie；已在运行不重复启动，启动失败不影响安装结果', async (t) => {
-  const { backend, launches } = backendFixture(t);
+  const { backend, launches, launchArgs } = backendFixture(t);
   backend.install();
   const installed = await finish(backend);
   assert.equal(installed.phase, 'installed');
   assert.equal(installed.launched, true);
   assert.deepEqual(launches, [backend.paths.exe]);
+  assert.deepEqual(launchArgs, [[]], '首次下载打开窗口供配置');
   // 已是最新时不下载也不启动。
   backend.install();
   assert.equal((await finish(backend)).phase, 'up-to-date');
@@ -83,8 +84,8 @@ test('升级指定已有路径，只替换程序并保留旧版备份、邻近�
   assert.equal(existsSync(backend.paths.exe), false);
 });
 
-test('相同或更新版本不降级，运行中的程序拒绝升级且不下载', async (t) => {
-  const { backend } = backendFixture(t);
+test('相同或更新版本不降级；升级运行中的程序时下载校验完再退出它，替换后在后台重新启动', async (t) => {
+  const { backend, stops, launchArgs } = backendFixture(t);
   seed(backend, '0.1.3');
   let downloads = 0;
   const fetchImpl = backend.fetchImpl;
@@ -93,11 +94,19 @@ test('相同或更新版本不降级，运行中的程序拒绝升级且不下�
   assert.equal((await finish(backend)).phase, 'up-to-date');
   assert.equal(downloads, 0);
   seed(backend, '0.1.1');
-  backend.isRunning = async () => true;
+  let running = true;
+  const phases = [];
+  backend.isRunning = async () => running;
+  backend.stop = async (path) => { phases.push(backend.operation.phase); stops.push(path); running = false; };
   backend.install();
-  assert.match((await finish(backend)).reason, /正在运行/);
-  assert.equal(readFileSync(backend.paths.exe, 'utf8'), 'magpie 0.1.1');
-  assert.equal(downloads, 0);
+  const done = await finish(backend);
+  assert.equal(done.phase, 'updated');
+  assert.equal(done.stopped, true);
+  assert.equal(downloads, 1, '下载在退出 Magpie 之前完成');
+  assert.deepEqual(phases, ['stopping']);
+  assert.deepEqual(stops, [backend.paths.exe]);
+  assert.equal(readFileSync(backend.paths.exe, 'utf8'), 'magpie 0.1.2');
+  assert.deepEqual(launchArgs, [['tray']], '升级后只在托盘启动');
 });
 
 test('错误哈希、下载中断和暂存程序版本不符均保留旧文件且清理锁', async (t) => {
@@ -177,7 +186,7 @@ test('非 Windows 下载入口不可用，模型管理所需状态仍能读取',
   assert.throws(() => backend.install(), /Windows/);
 });
 
-test('连续升级仅保留该目标最近三个旧版本，下载后重新启动会拒绝替换', async (t) => {
+test('连续升级仅保留该目标最近三个旧版本，无法退出运行中的程序时不替换', async (t) => {
   const { backend } = backendFixture(t);
   seed(backend);
   for (const version of ['0.1.2', '0.1.3', '0.1.4', '0.1.5']) {
@@ -186,12 +195,61 @@ test('连续升级仅保留该目标最近三个旧版本，下载后重新启�
     assert.equal((await finish(backend)).phase, 'updated');
   }
   assert.equal(readdirSync(backend.paths.versions).length, 3);
-  let checks = 0;
-  backend.isRunning = async () => ++checks > 1;
+  // 结束进程后仍在运行（例如权限不足）：不替换，也不额外再启动一个。
+  const launched = [];
+  backend.isRunning = async () => true;
+  backend.launch = async (_path, args) => { launched.push(args); };
   backend.fetchImpl = releaseFixture('0.1.6').fetchImpl;
   backend.install();
-  assert.match((await finish(backend)).reason, /正在运行/);
+  assert.match((await finish(backend)).reason, /未能退出/);
   assert.equal(readFileSync(backend.paths.exe, 'utf8'), 'magpie 0.1.5');
+  assert.deepEqual(launched, []);
+});
+
+test('退出 Magpie 后升级失败时，在后台重新打开原程序', async (t) => {
+  const { backend, launchArgs } = backendFixture(t);
+  seed(backend, '0.1.1');
+  let running = true;
+  backend.isRunning = async () => running;
+  // 退出后取消操作，模拟替换前失败。
+  backend.stop = async () => { running = false; backend.controller.abort(); };
+  backend.install();
+  assert.equal((await finish(backend)).phase, 'failed');
+  assert.equal(readFileSync(backend.paths.exe, 'utf8'), 'magpie 0.1.1');
+  assert.deepEqual(launchArgs, [['tray']]);
+});
+
+test('读写 Magpie 设置：只改轻量模式和防止休眠，其余字段保留；没有设置文件时不代写', async (t) => {
+  const { backend } = backendFixture(t);
+  assert.equal(backend.settings().available, false);
+  assert.throws(() => backend.updateSettings({ keepAwake: 'on' }), /先打开一次 Magpie/);
+  assert.equal(backend.ensureLightweight(), true);
+  assert.equal(existsSync(backend.paths.settings), false);
+  mkdirSync(dirname(backend.paths.settings), { recursive: true });
+  writeFileSync(backend.paths.settings, JSON.stringify({ theme: 'dark', keepAwake: true, keepAwakeDisplay: true }));
+  assert.deepEqual({ ...backend.settings(), path: undefined }, { available: true, path: undefined, lightweight: false, keepAwake: 'display' });
+  backend.ensureLightweight();
+  assert.equal(backend.updateSettings({ keepAwake: 'on' }).keepAwake, 'on');
+  // Magpie 以 omitempty 保存，关闭的开关写成缺省字段。
+  assert.deepEqual(JSON.parse(readFileSync(backend.paths.settings, 'utf8')), { theme: 'dark', keepAwake: true, lightweight: true });
+  assert.equal(backend.updateSettings({ keepAwake: 'off', lightweight: false }).keepAwake, 'off');
+  assert.deepEqual(JSON.parse(readFileSync(backend.paths.settings, 'utf8')), { theme: 'dark' });
+  assert.throws(() => backend.updateSettings({ keepAwake: 'always' }), /防止休眠/);
+  assert.throws(() => backend.updateSettings({ lightweight: 'yes' }), /轻量模式/);
+});
+
+test('打开 Magpie 界面不带参数启动（单实例会唤出已在托盘运行的窗口），未下载或未验证时拒绝', async (t) => {
+  const { backend, launchArgs } = backendFixture(t);
+  await assert.rejects(backend.open(), /尚未下载/);
+  mkdirSync(dirname(backend.paths.exe), { recursive: true });
+  writeFileSync(backend.paths.exe, 'not magpie');
+  await assert.rejects(backend.open(), /not magpie/);
+  seed(backend, '0.1.1');
+  mkdirSync(dirname(backend.paths.settings), { recursive: true });
+  writeFileSync(backend.paths.settings, '{}');
+  assert.deepEqual(await backend.open(undefined, { lightweight: true }), { pid: 4321 });
+  assert.deepEqual(launchArgs, [[]]);
+  assert.equal(backend.settings().lightweight, true);
 });
 
 test('手动检查重新探测原文件并清除上次失败状态，不沿用瞬时探测错误', async (t) => {

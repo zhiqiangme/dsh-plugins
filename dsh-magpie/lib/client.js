@@ -8,13 +8,13 @@ window.__ModuleLoader__.load({
     const namespace = 'settings.dsh-magpie';
     const path = '/plugins/dsh-magpie/models';
     const zh = {
-      title: 'Magpie 模型管理', description: '可以手动编辑；从 Magpie 同步会全量覆盖当前清单，并立即保存和更新 DSH。',
+      title: 'Magpie 模型管理', description: '开关和下拉改完立即生效；连接设置和模型清单改完点击「保存并同步」。从 Magpie 同步会全量覆盖当前清单，并立即保存和更新 DSH。',
       loading: '正在读取配置…', reload: '重新载入', discard: '放弃更改并重新载入', connection: '连接设置',
       url: 'Magpie 网关地址', protocol: 'API 协议', key: '网关 Key', keyHint: '本机可留空；远程网关需要有效 Key。已保存时留空表示沿用。',
       keySaved: '已保存 Key', keyEmpty: '使用本机标识', keyReadonly: 'Key 由环境变量提供，只读',
       check: '检查连接', connected: '已连接 Magpie {version}', catalog: '从 Magpie 同步',
       mirrored: '已按 Magpie 当前目录覆盖保存，DSH 分组现有 {count} 个模型。',
-      sync: '同步所选模型到 DSH', syncHint: '关闭同步或取消全部勾选，保存后移除“Magpie”分组。',
+      sync: '同步所选模型到 DSH', syncHint: '改完立即生效，关闭即移除“Magpie”分组；取消全部模型勾选则在保存并同步后移除。',
       native: '当前还有 Magpie 原生分组。这里保存到独立的“Magpie”分组（ID 为 dsh-magpie），原分组仍可使用。',
       count: '{selected} / {total} 个模型已勾选', search: '搜索名称或 ID', add: '手动添加模型',
       sortModel: '按模型排序', sortProvider: '按供应商排序',
@@ -34,15 +34,21 @@ window.__ModuleLoader__.load({
       backendDefault: '留空使用插件独立目录', backendCheck: '检查更新', backendDownload: '下载 Magpie', backendUpgrade: '升级 Magpie',
       backendLatest: '最新版本：{version}', backendCurrent: '当前版本：{version}', backendUpToDate: '已是最新版本或更新',
       backendChecking: '正在检查版本…', backendDownloading: '正在下载…', backendVerifying: '正在校验程序…', backendInstalling: '正在替换程序…',
-      backendInstalled: 'Magpie {version} 已下载并启动。', backendUpdated: '已升级到 Magpie {version} 并重新启动。', backendStarting: '正在启动 Magpie…',
+      backendInstalled: 'Magpie {version} 已下载并打开。', backendUpdated: '已升级到 Magpie {version}，并在后台启动。', backendStarting: '正在启动 Magpie…', backendStopping: '正在退出运行中的 Magpie…',
       backendAlreadyRunning: 'Magpie {version} 已就绪，程序已在运行，未重复启动。', backendLaunchFailed: 'Magpie {version} 已就绪，但启动失败：{reason}。请从程序路径手动启动。',
       backendProgress: '已下载 {received} / {total} MiB', backendFailed: '操作失败：{reason}',
       autoStart: '启动 DSH 时自动打开 Magpie',
-      autoStartHint: '保存后下次启动 DSH 生效。仅本机地址；本机没有任何 Magpie 在运行时，打开程序路径中的 Magpie。',
+      autoStartHint: '仅本机地址。DSH 启动时若本机没有 Magpie 在运行，在后台（托盘）启动程序路径中的 Magpie，不弹出窗口；需要界面时点「打开 Magpie 界面」。',
+      autoLightweight: '自动开启 Magpie 轻量模式',
+      autoLightweightHint: '插件启动 Magpie 前和 DSH 启动时，把 Magpie 的轻量模式设为开启：窗口关闭一分钟后释放界面内存，网关和后台任务照常运行。取消勾选后插件不再改动这项设置。',
+      keepAwake: '防止休眠', keepAwakeOff: '关闭', keepAwakeOn: '开启', keepAwakeDisplay: '屏幕也常亮',
+      keepAwakeHint: '在 Magpie 运行任务时让电脑保持唤醒。改动直接写入 Magpie 的设置，与 Magpie「设置 › 常规」中的同名选项相同。',
+      magpieSettingsMissing: '还没有 Magpie 设置文件，打开一次 Magpie 后可用。',
+      open: '打开 Magpie 界面', opened: '已打开 Magpie 窗口。',
       closeOnExit: '退出 DSH 时同时关闭 Magpie',
-      closeOnExitHint: '保存后生效。结束本机 Magpie（包括托盘）；优先使用指定程序路径，未指定时识别本机网关或插件独立目录。停用、更新插件不会触发。',
+      closeOnExitHint: '结束本机 Magpie（包括托盘）；优先使用指定程序路径，未指定时识别本机网关或插件独立目录。停用、更新插件不会触发。',
       sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动：已配置模型后隐藏', sidebarAlways: '始终显示', sidebarNever: '始终隐藏',
-      sidebarEntryHint: '保存后生效。入口位于左上角「插件」一栏，点击打开本页面。自动模式下清单没有模型时显示，保存至少一个模型后隐藏；正在查看的 Magpie 页面离开后才收起入口。',
+      sidebarEntryHint: '入口位于左上角「插件」一栏，点击打开本页面。自动模式下清单没有模型时显示，保存至少一个模型后隐藏；正在查看的 Magpie 页面离开后才收起入口。',
       updateTitle: '插件更新', updateChecking: '正在检查更新…', updateCheck: '检查更新',
       updateCheckFailed: '检查更新失败：{reason}', updateCurrent: '当前运行版本：', updateLatestVersion: 'npm 最新版本：',
       updateUpToDate: '已是最新', updateAvailable: '有新版本', updatePendingRestart: '等待重启', updatePendingRefresh: '等待刷新',
@@ -59,13 +65,13 @@ window.__ModuleLoader__.load({
       restartNow: '立即重启 DSH', restarting: '正在重启 DSH…', restartFailed: '未能确认重启：{reason}',
     };
     const en = {
-      title: 'Magpie models', description: 'Edit manually, or sync from Magpie to replace the entire list, save it and update DSH immediately.',
+      title: 'Magpie models', description: 'Switches and menus apply at once; click “Save and sync” after editing the connection or the model list. Syncing from Magpie replaces the entire list, saves it and updates DSH immediately.',
       loading: 'Loading configuration…', reload: 'Reload', discard: 'Discard edits and reload', connection: 'Connection',
       url: 'Magpie gateway URL', protocol: 'API protocol', key: 'Gateway key', keyHint: 'Optional on this machine; required for a remote gateway. Leave blank to keep the saved key.',
       keySaved: 'Key saved', keyEmpty: 'Using local identity', keyReadonly: 'The environment supplies a read-only key',
       check: 'Check connection', connected: 'Connected to Magpie {version}', catalog: 'Sync from Magpie',
       mirrored: 'Replaced and saved the list from Magpie. The DSH group now has {count} models.',
-      sync: 'Sync selected models to DSH', syncHint: 'Turning sync off or deselecting all models removes the “Magpie” group when saved.',
+      sync: 'Sync selected models to DSH', syncHint: 'Applies at once: turning it off removes the “Magpie” group. Deselecting every model removes it after Save and sync.',
       native: 'Magpie native groups are also configured. This list uses its own “Magpie” group (ID dsh-magpie); existing groups remain available.',
       count: '{selected} / {total} models selected', search: 'Search names or IDs', add: 'Add a model',
       sortModel: 'Sort by model', sortProvider: 'Sort by provider',
@@ -85,15 +91,21 @@ window.__ModuleLoader__.load({
       backendDefault: 'Leave blank for the plugin directory', backendCheck: 'Check for updates', backendDownload: 'Download Magpie', backendUpgrade: 'Update Magpie',
       backendLatest: 'Latest: {version}', backendCurrent: 'Current: {version}', backendUpToDate: 'Up to date or newer',
       backendChecking: 'Checking version…', backendDownloading: 'Downloading…', backendVerifying: 'Verifying executable…', backendInstalling: 'Replacing executable…',
-      backendInstalled: 'Magpie {version} downloaded and started.', backendUpdated: 'Updated to Magpie {version} and restarted it.', backendStarting: 'Starting Magpie…',
+      backendInstalled: 'Magpie {version} downloaded and opened.', backendUpdated: 'Updated to Magpie {version} and started it in the background.', backendStarting: 'Starting Magpie…', backendStopping: 'Quitting the running Magpie…',
       backendAlreadyRunning: 'Magpie {version} is ready and already running; not started again.', backendLaunchFailed: 'Magpie {version} is ready but could not start: {reason}. Launch it from the executable path.',
       backendProgress: 'Downloaded {received} / {total} MiB', backendFailed: 'Operation failed: {reason}',
       autoStart: 'Open Magpie when DSH starts',
-      autoStartHint: 'Applies from the next DSH start after saving. Local addresses only; opens the Magpie at the executable path when no Magpie is running on this machine.',
+      autoStartHint: 'Local addresses only. When DSH starts and no Magpie is running on this machine, starts the Magpie at the executable path in the background (tray only, no window). Use “Open Magpie” when you need its window.',
+      autoLightweight: 'Turn on Magpie lightweight mode',
+      autoLightweightHint: 'Before the plugin starts Magpie and when DSH starts, turns on Magpie’s lightweight mode: about a minute after its window closes the page memory is released, while the gateway and background tasks keep running. Unticked, the plugin leaves that setting alone.',
+      keepAwake: 'Keep awake', keepAwakeOff: 'Off', keepAwakeOn: 'On', keepAwakeDisplay: 'Screen on too',
+      keepAwakeHint: 'Keeps the computer awake while Magpie runs tasks. Written straight into Magpie’s settings; the same option as Magpie’s Settings › General.',
+      magpieSettingsMissing: 'Magpie has no settings file yet. Open Magpie once to use this.',
+      open: 'Open Magpie', opened: 'Opened the Magpie window.',
       closeOnExit: 'Close Magpie when DSH exits',
-      closeOnExitHint: 'Save to apply. Ends local Magpie, including its tray process. Uses the configured executable path, or detects the local gateway or plugin directory. Disabling or updating the plugin does not trigger this.',
+      closeOnExitHint: 'Ends local Magpie, including its tray process. Uses the configured executable path, or detects the local gateway or plugin directory. Disabling or updating the plugin does not trigger this.',
       sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto: hide once models are configured', sidebarAlways: 'Always show', sidebarNever: 'Always hide',
-      sidebarEntryHint: 'Save to apply. The entry sits with Plugins at the top of the sidebar and opens this page. In auto mode it shows while the list has no models and hides once at least one model is saved; an open Magpie page keeps its entry until you leave it.',
+      sidebarEntryHint: 'The entry sits with Plugins at the top of the sidebar and opens this page. In auto mode it shows while the list has no models and hides once at least one model is saved; an open Magpie page keeps its entry until you leave it.',
       updateTitle: 'Plugin update', updateChecking: 'Checking for updates…', updateCheck: 'Check for updates',
       updateCheckFailed: 'Update check failed: {reason}', updateCurrent: 'Running version: ', updateLatestVersion: 'Latest on npm: ',
       updateUpToDate: 'Up to date', updateAvailable: 'Update available', updatePendingRestart: 'Restart pending', updatePendingRefresh: 'Reload pending',
@@ -635,8 +647,25 @@ window.__ModuleLoader__.load({
       // 安装成功后按启动结果给出提示；启动失败不影响安装结果。
       const finished = (key) => operation.launchError ? t('backendLaunchFailed', { version: operation.version, reason: operation.launchError })
         : operation.alreadyRunning ? t('backendAlreadyRunning', { version: operation.version }) : t(key, { version: operation.version });
-      const backendPhase = operation ? ({ checking: t('backendChecking'), downloading: t('backendDownloading'), verifying: t('backendVerifying'), installing: t('backendInstalling'), starting: t('backendStarting'),
+      const backendPhase = operation ? ({ checking: t('backendChecking'), stopping: t('backendStopping'), downloading: t('backendDownloading'), verifying: t('backendVerifying'), installing: t('backendInstalling'), starting: t('backendStarting'),
         installed: finished('backendInstalled'), updated: finished('backendUpdated'), 'up-to-date': t('backendUpToDate'), failed: t('backendFailed', { reason: operation.reason }) })[operation.phase] : '';
+      // 开关和下拉立即保存，只采纳这几项与新的版本号；卡片里未保存的连接设置和模型草稿保留。
+      const applyNow = (patch) => perform(async () => {
+        const result = await request({ action: 'patch', patch });
+        publishConfig(result.config);
+        setView((old) => ({ ...result, config: { ...old.config, ...patch } }));
+        if (result.sync && !result.sync.ok) setNotice({ error: true, text: t('saveFailed', { reason: result.sync.reason }) });
+      });
+      const setKeepAwake = (keepAwake) => perform(async () => {
+        const result = await request({ action: 'magpie-settings', keepAwake });
+        setView((old) => ({ ...old, magpieSettings: result.magpieSettings }));
+      });
+      const openMagpie = () => perform(async () => {
+        const result = await request({ action: 'backend-open', magpiePath: config.magpiePath || '' });
+        setView((old) => ({ ...old, backend: result.backend, magpieSettings: result.magpieSettings }));
+        setNotice({ text: t('opened') });
+      });
+      const magpieSettings = view.magpieSettings;
       const syncCatalog = () => perform(async () => {
         const result = await request({ action: 'sync-catalog', config, revision: view.revision, apiKey: key || undefined });
         publishConfig(result.config); setView(result); setDirty(false); setKey(''); setSearch(''); setExpanded(new Set());
@@ -693,17 +722,27 @@ window.__ModuleLoader__.load({
       return h('section', { className: 'dsm-mp', 'aria-busy': busy },
         h('div', { className: 'bar spread' }, h('h3', null, t('title')), h('span', { className: 'muted' }, t(dirty ? 'unsaved' : 'savedState'))),
         h('p', { className: 'muted' }, t('description')),
+        h('div', { className: 'bar' }, button(t('open'), openMagpie, { disabled: busy || operation?.running || backend?.supported === false || !backend?.installed || !backend?.version })),
         h('div', { className: 'section' }, h('label', null, h('input', { type: 'checkbox', checked: config.autoStart !== false,
           disabled: busy || !view.editable || backend?.supported === false,
-          onChange: (e) => update({ autoStart: e.target.checked }),
+          onChange: (e) => applyNow({ autoStart: e.target.checked }),
         }), ' ', t('autoStart')), h('p', { className: 'muted' }, t('autoStartHint'))),
         h('div', { className: 'section' }, h('label', null, h('input', { type: 'checkbox', checked: config.closeOnExit === true,
           disabled: busy || !view.editable || backend?.supported === false,
-          onChange: (e) => update({ closeOnExit: e.target.checked }),
+          onChange: (e) => applyNow({ closeOnExit: e.target.checked }),
         }), ' ', t('closeOnExit')), h('p', { className: 'muted' }, t('closeOnExitHint'))),
-        h('div', { className: 'section' }, h('div', { className: 'fields' }, h('label', { className: 'field' }, t('sidebarEntry'),
-          h('select', { value: config.sidebarEntry ?? 'auto', disabled: busy || !view.editable, onChange: (e) => update({ sidebarEntry: e.target.value }) },
+        h('div', { className: 'section' }, h('label', null, h('input', { type: 'checkbox', checked: config.autoLightweight !== false,
+          disabled: busy || !view.editable || backend?.supported === false,
+          onChange: (e) => applyNow({ autoLightweight: e.target.checked }),
+        }), ' ', t('autoLightweight')), h('p', { className: 'muted' }, t('autoLightweightHint'))),
+        h('div', { className: 'section' }, h('div', { className: 'fields' },
+          h('label', { className: 'field' }, t('keepAwake'),
+            h('select', { value: magpieSettings?.keepAwake ?? 'off', disabled: busy || !magpieSettings?.available, onChange: (e) => setKeepAwake(e.target.value) },
+              ...[['off', 'keepAwakeOff'], ['on', 'keepAwakeOn'], ['display', 'keepAwakeDisplay']].map(([value, label]) => h('option', { key: value, value }, t(label))))),
+          h('label', { className: 'field' }, t('sidebarEntry'),
+          h('select', { value: config.sidebarEntry ?? 'auto', disabled: busy || !view.editable, onChange: (e) => applyNow({ sidebarEntry: e.target.value }) },
             ...Object.entries(SIDEBAR_MODES).map(([value, label]) => h('option', { key: value, value }, t(label)))))),
+        h('p', { className: 'muted' }, magpieSettings?.available ? t('keepAwakeHint') : t('magpieSettingsMissing')),
         h('p', { className: 'muted' }, t('sidebarEntryHint'))),
         view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
         h('details', { className: 'section backend' }, h('summary', null, t('backendTitle'), ' · ', backend?.version || t(backend?.installed ? 'backendUnknown' : 'backendMissing')),
@@ -729,7 +768,7 @@ window.__ModuleLoader__.load({
             field(t('key'), key, (value) => { setKey(value); setDirty(true); }, { type: 'password', autoComplete: 'new-password', disabled: busy || !view.keyWritable, placeholder: t(view.keyConfigured ? 'keySaved' : 'keyEmpty') })),
           h('p', { className: 'muted' }, t(view.keyWritable ? 'keyHint' : 'keyReadonly')),
           button(t('check'), () => perform(async () => { const result = await request({ action: 'check', baseURL: config.baseURL, apiKey: key || undefined }); setNotice({ text: t('connected', { version: result.version }) }); }))),
-        h('div', { className: 'section' }, h('label', null, h('input', { type: 'checkbox', checked: config.syncEnabled, disabled: busy, onChange: (e) => update({ syncEnabled: e.target.checked }) }), ' ', t('sync')), h('p', { className: 'muted' }, t('syncHint'))),
+        h('div', { className: 'section' }, h('label', null, h('input', { type: 'checkbox', checked: config.syncEnabled, disabled: busy || !view.editable, onChange: (e) => applyNow({ syncEnabled: e.target.checked }) }), ' ', t('sync')), h('p', { className: 'muted' }, t('syncHint'))),
         h('div', { className: 'bar spread section' }, h('strong', null, t('count', { selected: rows.filter((m) => m.enabled).length, total: rows.length })), h('div', { className: 'bar' },
           button(t('add'), () => { update({ models: [...rows, { id: '', name: '', enabled: true, input: ['text'], reasoningEfforts: [] }] }); setExpanded((old) => new Set([...old, rows.length])); }), button(t('catalog'), syncCatalog, { disabled: busy || !view.editable }))),
         h('div', { className: 'bar section' }, h('input', { className: 'search', type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: search, onChange: (e) => setSearch(e.target.value) }),

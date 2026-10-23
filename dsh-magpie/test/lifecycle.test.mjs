@@ -110,11 +110,28 @@ const refused = async () => { throw new TypeError('fetch failed', { cause: Objec
 test('开机启动默认开启；本机未运行 Magpie 时启动已下载的程序', async (t) => {
   assert.equal(resolveConfig().autoStart, true);
   assert.throws(() => resolveConfig({ autoStart: 'yes' }), /必须是布尔/);
-  const { manager, backend, launches } = startupManager(t);
+  const { manager, backend, launches, launchArgs } = startupManager(t);
   writeMagpie(backend.paths.exe);
+  mkdirSync(join(backend.paths.settings, '..'), { recursive: true });
+  writeFileSync(backend.paths.settings, JSON.stringify({ theme: 'system' }));
   const result = await autoStartMagpie(manager, { platform: 'win32', fetchImpl: refused, findRunning: async () => false });
   assert.equal(result.state, 'started');
   assert.deepEqual(launches, [backend.paths.exe]);
+  assert.deepEqual(launchArgs, [['tray']], '开机只在托盘启动，不弹窗口');
+  assert.equal(backend.settings().lightweight, true, '默认开启 Magpie 轻量模式');
+});
+
+test('关闭自动轻量模式后不改动 Magpie 设置；已在运行时仍按开关写入', async (t) => {
+  const { manager, backend } = startupManager(t, { autoLightweight: false });
+  writeMagpie(backend.paths.exe);
+  mkdirSync(join(backend.paths.settings, '..'), { recursive: true });
+  writeFileSync(backend.paths.settings, '{}');
+  const opts = { platform: 'win32', fetchImpl: refused, findRunning: async () => true };
+  assert.equal((await autoStartMagpie(manager, opts)).state, 'running');
+  assert.equal(backend.settings().lightweight, false);
+  manager.config = resolveConfig();
+  assert.equal((await autoStartMagpie(manager, opts)).state, 'running');
+  assert.equal(backend.settings().lightweight, true);
 });
 
 test('已有 Magpie 在运行、端口被占用、远程地址、关闭开关或未下载时不启动', async (t) => {

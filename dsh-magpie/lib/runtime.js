@@ -1,4 +1,4 @@
-import { KEY_REF, LOCAL_KEY, PACKAGE_NAME, PLUGIN_ID, object, resolveConfig, revision } from './config.js';
+import { INSTANT_FIELDS, KEY_REF, LOCAL_KEY, PACKAGE_NAME, PLUGIN_ID, object, resolveConfig, revision } from './config.js';
 import { credential, findEntry, catalogModels, requestGateway, syncModels } from './models.js';
 import { PROVIDER_NAMES, keepOrderIndexes, sortModelIndexes } from './names.js';
 import { MagpieBackend } from './backend.js';
@@ -40,7 +40,7 @@ export class ModelManager {
     const llm = findEntry(this.editor, '@deepseek-ai/dsh-llm-pi-ai');
     return {
       ok: true, config, revision: revision(config), lastSync: this.lastSync, providerNames: PROVIDER_NAMES,
-      backend: await this.backend.describe(config.magpiePath),
+      backend: await this.backend.describe(config.magpiePath), magpieSettings: this.backend.settings?.(),
       keyConfigured: Boolean(this.env[KEY_REF] || (saved?.value && saved.value !== LOCAL_KEY)),
       keyWritable: !this.env[KEY_REF] && (await this.credentials?.describe?.(KEY_REF))?.writable !== false,
       editable: Boolean(findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID)),
@@ -62,13 +62,38 @@ export class ModelManager {
       throw error;
     }
   }
+  /** 开关和下拉改完即生效：只改这些字段，不校验版本号，也不带上卡片里未保存的连接设置和模型草稿。 */
+  async patch(raw) {
+    const patch = object(raw);
+    const keys = Object.keys(patch);
+    if (!keys.length || keys.some((key) => !INSTANT_FIELDS.includes(key))) throw new Error('只能直接修改开关和下拉设置');
+    const entry = findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID);
+    if (!entry || typeof this.editor?.edit !== 'function') throw new Error('宿主 configEditor 尚未就绪，无法保存');
+    let config;
+    await this.editor.edit(entry, (current) => {
+      config = resolveConfig({ ...resolveConfig(current), ...patch });
+      return { ...object(current), ...config };
+    });
+    this.config = config;
+    if (patch.autoLightweight === true) this.backend.ensureLightweight?.();
+    // 同步开关决定 DSH 是否保留 Magpie 分组，改完立即按已保存清单重写。
+    const sync = keys.includes('syncEnabled') ? await this.sync(config) : undefined;
+    return { ...await this.describe(), saved: true, ...(sync ? { sync } : {}) };
+  }
   async handle(body) {
-    if (['backend-status', 'backend-check', 'backend-install'].includes(body.action)) {
+    if (['backend-status', 'backend-check', 'backend-install', 'backend-open'].includes(body.action)) {
       const path = body.magpiePath ?? this.current().magpiePath;
+      const lightweight = this.current().autoLightweight;
       if (body.action === 'backend-check') await this.backend.check(path);
-      if (body.action === 'backend-install') this.backend.install(path);
-      return { ok: true, backend: await this.backend.describe(path) };
+      if (body.action === 'backend-install') this.backend.install(path, { lightweight });
+      if (body.action === 'backend-open') await this.backend.open(path, { lightweight });
+      return { ok: true, backend: await this.backend.describe(path), magpieSettings: this.backend.settings?.() };
     }
+    if (body.action === 'magpie-settings') {
+      // 直接写 Magpie 自己的设置，不属于插件配置，也不需要版本号。
+      return { ok: true, magpieSettings: this.backend.updateSettings({ lightweight: body.lightweight, keepAwake: body.keepAwake }) };
+    }
+    if (body.action === 'patch') return this.enqueue(() => this.patch(body.patch));
     if (body.action === 'check') {
       const config = resolveConfig({ ...this.current(), baseURL: body.baseURL ?? this.current().baseURL });
       const key = await credential(this.credentials, this.env, config.baseURL, body.apiKey);

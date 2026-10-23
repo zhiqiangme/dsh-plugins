@@ -31,9 +31,12 @@ export async function autoStartMagpie(manager, { platform = process.platform, fe
   const local = await backend.local(path);
   if (!local.installed) return { state: 'not-installed', path };
   if (!local.version) return { state: 'unverified', path, reason: local.reason };
+  // 已在运行时也写入：运行中的 Magpie 保存设置前会重读文件，不会覆盖这次改动。
+  if (config.autoLightweight) backend.ensureLightweight();
   if (await portBusy(config.baseURL, fetchImpl) || await findRunning(path)) return { state: 'running', path };
   if (manager.disposed || backend.pending) return { state: 'busy' };
-  return { state: 'started', path, pid: await backend.launch(path) };
+  // 只在托盘启动，不弹窗口；需要界面时由卡片的「打开 Magpie 界面」唤出同一进程的窗口。
+  return { state: 'started', path, pid: await backend.launch(path, ['tray']) };
 }
 
 export function registerAutoStart(ctx, manager, { start = autoStartMagpie } = {}) {
