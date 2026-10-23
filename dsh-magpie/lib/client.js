@@ -196,9 +196,9 @@ window.__ModuleLoader__.load({
       .dsm-mp button{border:1px solid var(--mp-border);border-radius:8px;padding:5px 12px;background:transparent;color:inherit;font:inherit;line-height:20px;cursor:pointer;white-space:nowrap}
       .dsm-mp button:hover:not(:disabled){background:var(--mp-fill)}.dsm-mp button:disabled{color:var(--mp-dimmed);cursor:default}
       .dsm-mp button:focus-visible,.dsm-mp input:focus-visible,.dsm-mp select:focus-visible{outline:2px solid var(--mp-accent);outline-offset:1px}
-      /* DSH 的 brand-primary 在深色主题接近白色，主按钮用宿主的反色配对，两种主题都清楚。 */
-      .dsm-mp button.primary{background:var(--dsw-alias-brand-primary,#0f1115);border-color:transparent;color:var(--dsw-alias-brand-primary-invert,#f9fafb);font-weight:500}
-      .dsm-mp button.primary:hover:not(:disabled){background:var(--dsw-alias-brand-primary,#0f1115);opacity:.86}.dsm-mp button.primary:disabled{background:var(--mp-fill);color:var(--mp-dimmed)}
+      /* 沿用 DSH 自家主按钮的配色令牌（深色主题为浅底深字）。宿主的 brand-primary-invert 与 brand-primary 同值，不能当文字色。 */
+      .dsm-mp button.primary{background:var(--dsw-alias-button-primary-fill,#0f1115);border-color:transparent;color:var(--dsw-alias-label-primary-foreground,#fff);font-weight:500}
+      .dsm-mp button.primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#43454a)}.dsm-mp button.primary:disabled{background:var(--mp-fill);color:var(--mp-dimmed)}
       .dsm-mp button.ghost{border-color:transparent;padding:3px 8px;color:var(--mp-muted)}.dsm-mp button.ghost:hover:not(:disabled){color:var(--mp-fg)}.dsm-mp button.danger{color:var(--mp-error)}
       .dsm-mp input:not([type=checkbox]),.dsm-mp select{width:100%;min-width:0;padding:6px 10px;border:1px solid var(--mp-border);border-radius:8px;background:transparent;color:inherit;font:inherit;line-height:20px}
       .dsm-mp select option{background:var(--mp-bg);color:var(--mp-fg)}.dsm-mp input::placeholder{color:var(--mp-faint)}
