@@ -41,6 +41,8 @@ window.__ModuleLoader__.load({
       autoStartHint: '保存后下次启动 DSH 生效。仅本机地址；本机没有任何 Magpie 在运行时，打开程序路径中的 Magpie。',
       closeOnExit: '退出 DSH 时同时关闭 Magpie',
       closeOnExitHint: '保存后生效。结束本机 Magpie（包括托盘）；优先使用指定程序路径，未指定时识别本机网关或插件独立目录。停用、更新插件不会触发。',
+      sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动：已配置模型后隐藏', sidebarAlways: '始终显示', sidebarNever: '始终隐藏',
+      sidebarEntryHint: '保存后生效。入口位于左上角「插件」一栏，点击打开本页面。自动模式下清单没有模型时显示，保存至少一个模型后隐藏；正在查看的 Magpie 页面离开后才收起入口。',
       updateTitle: '插件更新', updateChecking: '正在检查更新…', updateCheck: '检查更新',
       updateCheckFailed: '检查更新失败：{reason}', updateCurrent: '当前运行版本：', updateLatestVersion: 'npm 最新版本：',
       updateUpToDate: '已是最新', updateAvailable: '有新版本', updatePendingRestart: '等待重启', updatePendingRefresh: '等待刷新',
@@ -90,6 +92,8 @@ window.__ModuleLoader__.load({
       autoStartHint: 'Applies from the next DSH start after saving. Local addresses only; opens the Magpie at the executable path when no Magpie is running on this machine.',
       closeOnExit: 'Close Magpie when DSH exits',
       closeOnExitHint: 'Save to apply. Ends local Magpie, including its tray process. Uses the configured executable path, or detects the local gateway or plugin directory. Disabling or updating the plugin does not trigger this.',
+      sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto: hide once models are configured', sidebarAlways: 'Always show', sidebarNever: 'Always hide',
+      sidebarEntryHint: 'Save to apply. The entry sits with Plugins at the top of the sidebar and opens this page. In auto mode it shows while the list has no models and hides once at least one model is saved; an open Magpie page keeps its entry until you leave it.',
       updateTitle: 'Plugin update', updateChecking: 'Checking for updates…', updateCheck: 'Check for updates',
       updateCheckFailed: 'Update check failed: {reason}', updateCurrent: 'Running version: ', updateLatestVersion: 'Latest on npm: ',
       updateUpToDate: 'Up to date', updateAvailable: 'Update available', updatePendingRestart: 'Restart pending', updatePendingRefresh: 'Reload pending',
@@ -117,6 +121,27 @@ window.__ModuleLoader__.load({
     // 自身更新可能重新挂载卡片；记录任务以便恢复进度，bootId 防止串到宿主重启前的任务。
     const OPERATION_STORAGE_KEY = 'dsh-magpie:update-operation';
     const FORCEABLE_FAILURES = new Set(['RELEASE_TOO_FRESH', 'VERSION_UNCHANGED']);
+    // 与 dshmarket 相同的宿主侧栏契约：sidebar.panellist 提供入口行，keyed main 槽位提供整页。
+    const PANEL_ID = 'dsh-magpie';
+    // 宿主「插件」为 0、「自动化任务」为 10，dshmarket「插件市场」占 1；Magpie 排在它们之间。
+    const PANEL_ORDER = 2;
+    const SIDEBAR_MODES = { auto: 'sidebarAuto', always: 'sidebarAlways', never: 'sidebarNever' };
+    // 客户端可能先于服务端路由就绪；读取已保存配置失败时短暂重试，仍失败则不显示入口。
+    const CONFIG_RETRIES = 5;
+    const CONFIG_RETRY_MS = 2000;
+    // 卡片在插件设置和侧栏页面各自挂载；读取或保存后经此通知侧栏按已保存的配置重新判断入口。
+    const savedConfig = { value: undefined, listeners: new Set() };
+    function publishConfig(config) {
+      savedConfig.value = config;
+      for (const listener of savedConfig.listeners) listener();
+    }
+    /** 正在查看的页面不收起入口，避免保存后侧栏没有选中项；离开后再按设置判断。配置未知时不显示。 */
+    function sidebarVisible(config, active) {
+      if (active) return true;
+      if (!config) return false;
+      const mode = config.sidebarEntry ?? 'auto';
+      return mode === 'always' || (mode === 'auto' && !config.models?.length);
+    }
 
     async function versionRequest(url) {
       const response = await fetch(url, { cache: 'no-store' });
@@ -141,6 +166,8 @@ window.__ModuleLoader__.load({
       .dsm-mp .search{flex:1;min-width:160px}.dsm-mp .foot{margin-top:16px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2,#dce1eb)}
       .dsm-mp .backend .bar{margin-top:10px}.dsm-mp .backend-path,.dsm-mp .backend .error{overflow-wrap:anywhere}.dsm-mp .backend progress{display:block;width:100%;height:8px;margin-top:10px;accent-color:var(--dsw-alias-label-primary,#202635)}
       .dsm-mp .plugin-update{margin-top:20px;padding-top:16px;border-top:1px solid var(--dsw-alias-border-l2,#dce1eb)}.dsm-mp .plugin-update p{overflow-wrap:anywhere}.dsm-mp .plugin-update-title{font-weight:600}
+      /* 侧栏整页：顶部留出宿主标题栏，内容最宽 960px 居中，与插件市场页面一致。 */
+      .dsm-mp-page{box-sizing:border-box;height:100%;overflow-y:auto;padding:calc(28px + var(--dsh-frame-top-clearance,0px)) max(clamp(16px,4vw,48px),calc((100% - 960px) / 2)) 32px}
       @media(max-width:600px){.dsm-mp{padding:14px}.dsm-mp .fields{grid-template-columns:minmax(0,1fr)}.dsm-mp .search{flex-basis:100%}.dsm-mp .model-badges{display:none}.dsm-mp .model-select{flex:1}.dsm-mp .model-actions{margin-left:auto}}
     `;
 
@@ -569,7 +596,7 @@ window.__ModuleLoader__.load({
       const failure = (error) => ({ error: true, text: error?.code === 'INVALID_JSON' ? `${t('invalidJson')}（${error.message}）` : error.message });
       useEffect(() => {
         let active = true;
-        request().then((value) => { if (active) setView(value); }).catch((error) => { if (active) setNotice(failure(error)); });
+        request().then((value) => { publishConfig(value.config); if (active) setView(value); }).catch((error) => { if (active) setNotice(failure(error)); });
         return () => { active = false; };
       }, []);
       const operation = view?.backend?.operation;
@@ -590,7 +617,7 @@ window.__ModuleLoader__.load({
         try { await run(); } catch (error) { setNotice(failure(error)); }
         finally { setBusy(false); }
       };
-      const reload = () => perform(async () => { setView(await request()); setDirty(false); setKey(''); setExpanded(new Set()); });
+      const reload = () => perform(async () => { const value = await request(); publishConfig(value.config); setView(value); setDirty(false); setKey(''); setExpanded(new Set()); });
       const button = (text, click, extra = {}) => h('button', { type: 'button', disabled: busy, onClick: click, ...extra }, text);
       if (!view) return h('section', { className: 'dsm-mp' }, h('h3', null, t('title')), notice ? h('p', { className: 'notice error', role: 'alert' }, notice.text) : h('p', null, t('loading')), button(t('reload'), reload));
       const config = view.config;
@@ -612,13 +639,13 @@ window.__ModuleLoader__.load({
         installed: finished('backendInstalled'), updated: finished('backendUpdated'), 'up-to-date': t('backendUpToDate'), failed: t('backendFailed', { reason: operation.reason }) })[operation.phase] : '';
       const syncCatalog = () => perform(async () => {
         const result = await request({ action: 'sync-catalog', config, revision: view.revision, apiKey: key || undefined });
-        setView(result); setDirty(false); setKey(''); setSearch(''); setExpanded(new Set());
+        publishConfig(result.config); setView(result); setDirty(false); setKey(''); setSearch(''); setExpanded(new Set());
         dragSource.current = null; setDrag(null);
         setNotice({ error: !result.sync.ok, text: result.sync.ok ? t('mirrored', { count: result.sync.count }) : t('saveFailed', { reason: result.sync.reason }) });
       });
       const save = () => perform(async () => {
         const result = await request({ action: 'save', config, revision: view.revision, apiKey: key || undefined });
-        setView(result); setDirty(false); setKey('');
+        publishConfig(result.config); setView(result); setDirty(false); setKey('');
         setNotice({ error: !result.sync.ok, text: result.sync.ok ? t('saved', { count: result.sync.count }) : t('saveFailed', { reason: result.sync.reason }) });
       });
       const visible = rows.map((row, index) => ({ row, index })).filter(({ row }) => `${row.id} ${labelFor(row)}`.toLowerCase().includes(search.toLowerCase()));
@@ -674,6 +701,10 @@ window.__ModuleLoader__.load({
           disabled: busy || !view.editable || backend?.supported === false,
           onChange: (e) => update({ closeOnExit: e.target.checked }),
         }), ' ', t('closeOnExit')), h('p', { className: 'muted' }, t('closeOnExitHint'))),
+        h('div', { className: 'section' }, h('div', { className: 'fields' }, h('label', { className: 'field' }, t('sidebarEntry'),
+          h('select', { value: config.sidebarEntry ?? 'auto', disabled: busy || !view.editable, onChange: (e) => update({ sidebarEntry: e.target.value }) },
+            ...Object.entries(SIDEBAR_MODES).map(([value, label]) => h('option', { key: value, value }, t(label)))))),
+        h('p', { className: 'muted' }, t('sidebarEntryHint'))),
         view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
         h('details', { className: 'section backend' }, h('summary', null, t('backendTitle'), ' · ', backend?.version || t(backend?.installed ? 'backendUnknown' : 'backendMissing')),
           h('div', { className: 'fields' }, field(t('backendPath'), config.magpiePath, (magpiePath) => {
@@ -744,6 +775,59 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function MagpiePage(props) {
+      return h('div', { className: 'dsm-mp-page' }, h(ModelsCard, props));
+    }
+    // 宿主侧栏图标为单色，按 currentColor 跟随选中和主题；鸟身挖空腹部与眼睛，取自插件图标轮廓。
+    function MagpieGlyph({ size = 16 } = {}) {
+      return h('svg', { width: size, height: size, viewBox: '8 8 52 52', fill: 'currentColor', 'aria-hidden': true },
+        h('path', { fillRule: 'evenodd', d: 'm12 50 12-21c0-9 5-16 13-16 7 0 12 5 12 12l8 5-10 3c-3 9-9 14-18 10L12 54zM28 28c0 7 3 13 9 15 5-2 8-6 10-11-7 3-12 1-19-4zM43 23a2 2 0 1 1-4 0a2 2 0 1 1 4 0z' }));
+    }
+
+    /** 侧栏入口行按设置与已保存清单显示；整页随宿主支持侧栏页面时常驻，入口隐藏时只是无法从侧栏进入。 */
+    function registerSidebar(ctx, t) {
+      let supported = false, disposed = false, layout, offRow, offPanel, attempts = 0;
+      const off = (dispose) => { if (typeof dispose === 'function') dispose(); };
+      const decide = () => {
+        if (!supported || disposed) return;
+        const show = sidebarVisible(savedConfig.value, layout?.panelInfo.getSnapshot().activePanelId === PANEL_ID);
+        if (show && !offRow) {
+          offRow = ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: PANEL_ORDER, label: () => t('sidebarLabel'), locale: namespace }, MagpieGlyph) ?? true;
+        } else if (!show && offRow) {
+          off(offRow); offRow = undefined;
+        }
+      };
+      const loadConfig = () => request().then((value) => {
+        // 卡片已发布过更新的结果时不用这次读取覆盖。
+        if (savedConfig.value === undefined) publishConfig(value.config);
+      }, () => { if (!disposed && ++attempts < CONFIG_RETRIES) setTimeout(loadConfig, CONFIG_RETRY_MS); });
+      // 旧版宿主没有侧栏页面，不会声明该槽位；此时只保留插件设置里的卡片。
+      ctx.slots.inject('sidebar.panellist', () => {
+        off(offRow); off(offPanel); offRow = undefined;
+        supported = true;
+        offPanel = ctx.slots.register({ name: 'main', key: PANEL_ID, locale: namespace, inject: () => ({ t }) }, MagpiePage);
+        decide();
+        if (savedConfig.value === undefined && attempts === 0) loadConfig();
+      });
+      ctx.effect(() => { savedConfig.listeners.add(decide); return () => savedConfig.listeners.delete(decide); }, 'dsh-magpie: sidebar config');
+      if (typeof ctx.inject === 'function') {
+        ctx.inject(['layout'], (scoped) => {
+          layout = scoped.layout;
+          scoped.effect(() => {
+            const unsubscribe = layout.panelInfo.subscribe(decide);
+            decide();
+            return () => { off(unsubscribe); layout = undefined; };
+          }, 'dsh-magpie: sidebar active panel');
+        });
+      }
+      ctx.effect(() => () => {
+        disposed = true;
+        // 先离开本页面再撤下整页，避免主区域停在已不存在的面板上。
+        if (layout?.panelInfo.getSnapshot().activePanelId === PANEL_ID) layout.selectPanel(null);
+        off(offRow); off(offPanel); offRow = offPanel = undefined;
+      }, 'dsh-magpie: sidebar');
+    }
+
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-magpie: locale');
       const t = ctx.locale.bind(namespace);
@@ -753,7 +837,8 @@ window.__ModuleLoader__.load({
       for (const [slot, key] of [['plugins.bundle.config', '@zhiqiangme/dsh-magpie'], ['plugins.row.config', '@zhiqiangme/dsh-magpie#dsh-magpie']]) {
         ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, locale: namespace, inject: () => ({ t }) }, ModelsCard));
       }
+      registerSidebar(ctx, t);
     }
-    return { name: 'dsh-magpie-client', inject: ['slots', 'locale'], apply, ModelsCard, moveModel, displayModelName, sortModelIndexes, renderUpdateSection, zh, en };
+    return { name: 'dsh-magpie-client', inject: ['slots', 'locale'], apply, ModelsCard, MagpiePage, MagpieGlyph, sidebarVisible, moveModel, displayModelName, sortModelIndexes, renderUpdateSection, zh, en };
   },
 });

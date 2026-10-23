@@ -470,3 +470,79 @@ test('已是模型顺序但标记为手动时，按模型排序只清除标记�
   assert.equal(client.states[0].config.manualOrder, false);
   assert.equal(client.states[1], true);
 });
+
+test('侧栏入口显示规则：自动模式仅在没有模型时显示，固定模式不看清单，正在查看时保留，配置未知不显示', () => {
+  const { sidebarVisible } = clientHarness(view()).module;
+  const model = { id: 'openai/gpt-5', name: 'GPT-5' };
+  assert.equal(sidebarVisible(undefined, false), false);
+  assert.equal(sidebarVisible(undefined, true), true);
+  assert.equal(sidebarVisible(resolveConfig({}), false), true);
+  assert.equal(sidebarVisible(resolveConfig({ models: [model] }), false), false);
+  assert.equal(sidebarVisible(resolveConfig({ models: [model] }), true), true);
+  assert.equal(sidebarVisible(resolveConfig({ sidebarEntry: 'always', models: [model] }), false), true);
+  assert.equal(sidebarVisible(resolveConfig({ sidebarEntry: 'never' }), false), false);
+  assert.equal(resolveConfig({}).sidebarEntry, 'auto');
+  assert.throws(() => resolveConfig({ sidebarEntry: 'hidden' }), /侧边栏入口/);
+});
+
+test('宿主声明侧栏槽位时注册整页和入口行；保存模型后自动隐藏，改为始终显示或隐藏随保存生效', async () => {
+  const model = { id: 'openai/gpt-5', name: 'GPT-5' };
+  const posts = [];
+  const client = clientHarness(view(), async (_url, options) => {
+    if (options?.method !== 'POST') return response(view());
+    const body = JSON.parse(options.body);
+    posts.push(body);
+    return response({ ...view(body.config), sync: { ok: true, count: body.config.models.length } });
+  }, { sidebar: true });
+  const page = client.cards.find((x) => x.meta.name === 'main');
+  assert.equal(page.meta.key, 'dsh-magpie');
+  assert.equal(page.component, client.module.MagpiePage);
+  // 读到已保存配置前不显示入口。
+  assert.equal(client.cards.some((x) => x.meta.name === 'sidebar.panellist'), false);
+  await new Promise((done) => setImmediate(done));
+  const rows = () => client.cards.filter((x) => x.meta.name === 'sidebar.panellist' && !x.disposed);
+  assert.equal(rows().length, 1);
+  assert.deepEqual([rows()[0].meta.id, rows()[0].meta.order, rows()[0].meta.label()], ['dsh-magpie', 2, 'Magpie']);
+  assert.equal(rows()[0].component, client.module.MagpieGlyph);
+
+  const select = () => field(client.render(), '侧边栏入口');
+  assert.equal(select().props.value, 'auto');
+  button(client.render(), '手动添加模型').props.onClick();
+  client.states[0] = { ...client.states[0], config: { ...client.states[0].config, models: [{ ...model, enabled: true, input: ['text'], reasoningEfforts: [] }] } };
+  // 草稿不影响入口，保存后才按已保存清单隐藏。
+  assert.equal(rows().length, 1);
+  await button(client.render(), '保存并同步').props.onClick();
+  assert.equal(posts[0].config.sidebarEntry, 'auto');
+  assert.equal(rows().length, 0);
+
+  select().props.onChange({ target: { value: 'always' } });
+  await button(client.render(), '保存并同步').props.onClick();
+  assert.equal(posts[1].config.sidebarEntry, 'always');
+  assert.equal(rows().length, 1);
+  select().props.onChange({ target: { value: 'never' } });
+  await button(client.render(), '保存并同步').props.onClick();
+  assert.equal(rows().length, 0);
+});
+
+test('正在查看 Magpie 页面时保存模型不收起入口，离开后再隐藏', async () => {
+  const listeners = new Set();
+  let active = null;
+  const layout = { panelInfo: { getSnapshot: () => ({ activePanelId: active }), subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); } }, selectPanel: (id) => { active = id; } };
+  const model = { id: 'openai/gpt-5', name: 'GPT-5', enabled: true, input: ['text'], reasoningEfforts: [] };
+  const client = clientHarness(view(), async (_url, options) => {
+    if (options?.method !== 'POST') return response(view());
+    const body = JSON.parse(options.body);
+    return response({ ...view(body.config), sync: { ok: true, count: 1 } });
+  }, { sidebar: true, layout });
+  await new Promise((done) => setImmediate(done));
+  const rows = () => client.cards.filter((x) => x.meta.name === 'sidebar.panellist' && !x.disposed);
+  active = 'dsh-magpie';
+  for (const listener of listeners) listener();
+  client.states[0] = { ...client.states[0], config: { ...client.states[0].config, models: [model] } };
+  client.states[1] = true;
+  await button(client.render(), '保存并同步').props.onClick();
+  assert.equal(rows().length, 1);
+  active = null;
+  for (const listener of listeners) listener();
+  assert.equal(rows().length, 0);
+});

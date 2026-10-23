@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-export function clientHarness(initial, fetchImpl = async () => { throw new Error('unexpected fetch'); }, { sessionStorage } = {}) {
+export function clientHarness(initial, fetchImpl = async () => { throw new Error('unexpected fetch'); }, { sessionStorage, sidebar = false, layout } = {}) {
   let registration, index = 0;
   const styleTags = [], states = [initial, false, false, null, '', ''], cards = [], dictionaries = [];
   const React = {
@@ -18,7 +18,9 @@ export function clientHarness(initial, fetchImpl = async () => { throw new Error
   const ctx = {
     effect: (run) => run(),
     locale: { register: (_ns, dicts) => { dictionaries.push(dicts); }, bind: () => t },
-    slots: { inject: (_name, run) => run(), register: (meta, component) => { cards.push({ meta, component }); } },
+    // 默认模拟没有侧栏页面的旧宿主；sidebar 为 true 时声明 sidebar.panellist 槽位。
+    slots: { inject: (name, run) => { if (name !== 'sidebar.panellist' || sidebar) run(); }, register: (meta, component) => { const card = { meta, component, disposed: false }; cards.push(card); return () => { card.disposed = true; }; } },
+    ...(layout ? { inject: (_names, run) => run({ layout, effect: (run) => run() }) } : {}),
   };
   module.apply(ctx);
   return { module, registration, states, get styles() { return styleTags.map((node) => node.textContent); }, cards, dictionaries, render: () => { index = 0; return module.ModelsCard({ t }); } };
