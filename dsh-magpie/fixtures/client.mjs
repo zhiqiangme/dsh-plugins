@@ -8,6 +8,7 @@ export function clientHarness(initial, fetchImpl = async () => { throw new Error
     useState: (fallback) => { const i = index++; if (!(i in states)) states[i] = fallback; return [states[i], (value) => { states[i] = typeof value === 'function' ? value(states[i]) : value; }]; },
     useRef: (fallback) => { const i = index++; if (!(i in states)) states[i] = { current: fallback }; return states[i]; },
     useEffect() {},
+    useLayoutEffect() {},
     useCallback: (callback) => callback,
   };
   const window = { sessionStorage, __ModuleLoader__: { load: (value) => { registration = value; } } };

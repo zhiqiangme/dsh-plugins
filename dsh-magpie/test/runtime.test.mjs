@@ -241,3 +241,20 @@ test('网关状态检查不报错：应答为 Magpie 时在线，失败或身份
   reply = async () => { throw new TypeError('fetch failed'); };
   assert.deepEqual((await host.manager.handle({ action: 'status' })).gateway, { online: false });
 });
+
+test('默认排序读取 Magpie 目录顺序且不改清单；选了目录顺序后全量同步沿用该顺序', async () => {
+  const catalog = { data: [{ id: 'p/zeta' }, { id: 'p/new-b' }, { id: 'p/alpha' }] };
+  const host = setup({ fetchImpl: async (url) => ({ ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie' } : catalog }) });
+  const initial = await host.manager.describe();
+  await host.manager.handle({ action: 'save', revision: initial.revision, config });
+  assert.deepEqual((await host.manager.handle({ action: 'catalog-order' })).ids, ['p/zeta', 'p/new-b', 'p/alpha']);
+  assert.equal(host.own.options.config.models[0].id, 'manual/unlisted', '只读，不改清单');
+  const current = await host.manager.describe();
+  const result = await host.manager.handle({ action: 'sync-catalog', revision: current.revision, config: { ...current.config, catalogOrder: true } });
+  assert.deepEqual(result.config.models.map((m) => m.id), ['p/zeta', 'p/new-b', 'p/alpha']);
+  assert.equal(result.config.catalogOrder, true);
+  // 手动顺序优先于目录顺序。
+  const { resolveConfig } = await import('../lib/config.js');
+  assert.equal(resolveConfig({ manualOrder: true, catalogOrder: true }).catalogOrder, false);
+  assert.throws(() => resolveConfig({ catalogOrder: 'yes' }), /目录顺序/);
+});

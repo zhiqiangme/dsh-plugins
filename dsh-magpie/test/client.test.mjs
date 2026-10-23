@@ -9,18 +9,22 @@ const view = (config = {}) => ({ ok: true, config: resolveConfig(config), revisi
 const response = (body, status = 200) => ({ ok: status === 200, status, json: async () => body });
 const handles = (tree) => nodes(tree, (n) => n.props.className === 'model-drag');
 const modelRows = (tree) => nodes(tree, (n) => n.props.className?.split(' ').includes('model'));
-function dragEvent(after = false) {
+// 拖放事件替身：count 行、每行高 38、行距 2，指针落在第 slot 个空隙（0 为第一行之前，count 为最后一行之后）。
+function dragEvent(slot = 0, count = 0) {
+  const children = Array.from({ length: count }, (_v, i) => ({ offsetTop: i * 40, offsetHeight: 38 }));
   return {
-    clientY: after ? 45 : 15, prevented: false,
+    clientY: slot * 40 + 5, prevented: false,
     preventDefault() { this.prevented = true; },
     dataTransfer: { setData() {}, setDragImage() {} },
-    currentTarget: { getBoundingClientRect: () => ({ top: 10, height: 40 }) },
+    currentTarget: { getBoundingClientRect: () => ({ top: 0 }), children, contains: () => false, closest: (selector) => selector === '.model-list' ? { children } : null },
   };
 }
+const list = (tree) => nodes(tree, (n) => n.props.className?.split(' ').includes('model-list'))[0];
 function dragModel(client, from, to, after = false) {
-  handles(client.render())[from].props.onDragStart(dragEvent());
-  modelRows(client.render())[to].props.onDragOver(dragEvent(after));
-  modelRows(client.render())[to].props.onDrop(dragEvent(after));
+  const count = modelRows(client.render()).length;
+  handles(client.render())[from].props.onDragStart(dragEvent(0, count));
+  list(client.render()).props.onDragOver(dragEvent(to + Number(after), count));
+  list(client.render()).props.onDrop(dragEvent(to + Number(after), count));
 }
 
 test('客户端模块、两个卡片入口和中英字典符合宿主契约', () => {
@@ -284,15 +288,20 @@ test('搜索时拖动使用完整清单的位置，隐藏条目保持相对顺�
 test('外部拖放、取消拖动及原位放下均不改变顺序或产生未保存改动', () => {
   const client = clientHarness(view({ models: [{ id: 'a' }, { id: 'b' }] }));
   const original = client.states[0].config.models;
-  const foreign = dragEvent();
-  modelRows(client.render())[1].props.onDragOver(foreign);
-  modelRows(client.render())[1].props.onDrop(foreign);
+  const foreign = dragEvent(1, 2);
+  list(client.render()).props.onDragOver(foreign);
+  list(client.render()).props.onDrop(foreign);
   assert.equal(foreign.prevented, false);
-  handles(client.render())[0].props.onDragStart(dragEvent());
-  modelRows(client.render())[1].props.onDragOver(dragEvent(true));
-  assert.match(modelRows(client.render())[1].props.className, /drop-after/);
+  handles(client.render())[0].props.onDragStart(dragEvent(0, 2));
+  list(client.render()).props.onDragOver(dragEvent(2, 2));
+  // 拖到末尾：被拖的行下移到落点（越过下一行 38），下一行上移让出被拖行连同行距的 40。
+  assert.match(modelRows(client.render())[0].props.className, /dragging/);
+  assert.match(list(client.render()).props.className, /sorting/);
+  assert.deepEqual(modelRows(client.render()).map((n) => n.props.style?.transform), ['translateY(38px)', 'translateY(-40px)']);
   handles(client.render())[0].props.onDragEnd();
-  modelRows(client.render())[1].props.onDrop(dragEvent());
+  // 取消后先滑回原位，再清除拖动状态。
+  assert.deepEqual(modelRows(client.render()).map((n) => n.props.style), [undefined, undefined]);
+  list(client.render()).props.onDrop(dragEvent(1, 2));
   dragModel(client, 0, 0, true);
   assert.equal(client.states[0].config.models, original);
   assert.equal(client.states[1], false);
@@ -313,8 +322,8 @@ test('处理期间或仅一个模型时禁用手柄，草稿变化后拒绝过�
   client.states[2] = false;
   handles(client.render())[0].props.onDragStart(dragEvent());
   button(client.render(), '手动添加模型').props.onClick();
-  const stale = dragEvent();
-  modelRows(client.render())[1].props.onDrop(stale);
+  const stale = dragEvent(1, 3);
+  list(client.render()).props.onDrop(stale);
   assert.equal(stale.prevented, false);
   assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['a', 'b', '']);
 });
@@ -614,4 +623,54 @@ test('标题显示网关与程序状态，程序状态可跳到更新页；标�
   assert.deepEqual(tabs().map((n) => n.props['aria-selected']), [false, false, false, true]);
   assert.ok(button(client.render(), '升级 Magpie'));
   assert.equal(button(client.render(), '从 Magpie 同步'), undefined);
+});
+
+test('默认排序按 Magpie 目录顺序排列，目录外的模型保持相对顺序排在后面；完整清单记为目录顺序，搜索时只算手动', async () => {
+  const requests = [];
+  const ids = ['p/c', 'p/a', 'p/b'];
+  const client = clientHarness(view({ models: ['p/a', 'local/x', 'p/b', 'p/c', 'local/y'].map((id) => ({ id })) }), async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return response({ ok: true, ids });
+  });
+  const hint = () => nodes(client.render(), (n) => n.type === 'p' && n.children.includes(client.module.zh.catalogOrder)).length;
+  assert.equal(hint(), 0);
+  await button(client.render(), '默认排序').props.onClick();
+  assert.deepEqual(requests[0], { action: 'catalog-order', baseURL: 'http://127.0.0.1:3425' });
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['p/c', 'p/a', 'p/b', 'local/x', 'local/y']);
+  assert.deepEqual([client.states[0].config.catalogOrder, client.states[0].config.manualOrder], [true, false]);
+  assert.equal(client.states[1], true);
+  assert.equal(hint(), 1);
+  // 再按模型排序回到自动（名称）顺序。
+  button(client.render(), '按模型排序').props.onClick();
+  assert.deepEqual([client.states[0].config.catalogOrder, client.states[0].config.manualOrder], [false, false]);
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'p/' } });
+  await button(client.render(), '默认排序').props.onClick();
+  // 按模型排序后为 a、b、c、x、y；只重排可见的 p/ 三项，local 两项位置不动。
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['p/c', 'p/a', 'p/b', 'local/x', 'local/y']);
+  assert.deepEqual([client.states[0].config.catalogOrder, client.states[0].config.manualOrder], [false, true]);
+});
+
+test('默认排序读取失败时显示原因，不改草稿', async () => {
+  const client = clientHarness(view({ models: [{ id: 'p/b' }, { id: 'p/a' }] }), async () => response({ ok: false, reason: 'connect ECONNREFUSED' }, 502));
+  const before = client.states[0].config.models;
+  await button(client.render(), '默认排序').props.onClick();
+  assert.equal(client.states[0].config.models, before);
+  assert.match(client.states[3].text, /ECONNREFUSED/);
+  assert.equal(client.states[1], false);
+});
+
+test('拖动手柄可用上下方向键移动，搜索时跳过隐藏模型，首尾不再移动', () => {
+  const client = clientHarness(view({ models: ['a', 'hidden', 'b', 'c'].map((id) => ({ id })) }));
+  const key = (index, value) => { const event = { key: value, prevented: false, preventDefault() { this.prevented = true; } }; handles(client.render())[index].props.onKeyDown(event); return event; };
+  assert.equal(key(0, 'ArrowUp').prevented, false);
+  assert.equal(key(0, 'ArrowDown').prevented, true);
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['hidden', 'a', 'b', 'c']);
+  assert.equal(client.states[0].config.manualOrder, true);
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'b' } });
+  // 只剩 b 可见：没有相邻的可见模型。
+  assert.equal(key(0, 'ArrowUp').prevented, false);
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: '' } });
+  key(3, 'ArrowUp');
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['hidden', 'a', 'c', 'b']);
+  assert.equal(key(0, 'Enter').prevented, false);
 });

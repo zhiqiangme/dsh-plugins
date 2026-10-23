@@ -4,7 +4,7 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react');
     const h = React.createElement;
-    const { useState, useEffect, useRef, useCallback } = React;
+    const { useState, useEffect, useLayoutEffect, useRef, useCallback } = React;
     const namespace = 'settings.dsh-magpie';
     const path = '/plugins/dsh-magpie/models';
     const zh = {
@@ -17,12 +17,14 @@ window.__ModuleLoader__.load({
       sync: '同步到 DSH', syncHint: '勾选的模型按顺序写入 DSH 的“Magpie”分组；关闭即移除该分组。',
       native: '当前还有 Magpie 原生分组。这里保存到独立的“Magpie”分组（ID 为 dsh-magpie），原分组仍可使用。',
       count: '{selected} / {total} 个模型已勾选', search: '搜索名称或 ID', add: '手动添加模型',
+      sortDefault: '默认排序', sortDefaultHint: '按 Magpie 目录的顺序排列（需要 Magpie 正在运行）；对完整清单排序后，从 Magpie 同步也沿用该顺序',
+      catalogOrder: '当前为 Magpie 目录顺序：从 Magpie 同步会沿用 Magpie 的顺序。',
       sortModel: '按模型排序', sortProvider: '按供应商排序',
       sortModelHint: '对当前搜索结果按模型名称升序排列；对完整清单排序会恢复同步后自动排序', sortProviderHint: '对当前搜索结果按供应商简称、模型名称升序排列',
-      manualOrder: '当前为手动顺序：从 Magpie 同步会保留现有顺序，新模型排在末尾。不搜索时点击「按模型排序」可恢复自动排序。',
+      manualOrder: '当前为手动顺序：从 Magpie 同步会保留现有顺序，新模型排在末尾。不搜索时点击「默认排序」或「按模型排序」可恢复自动排序。',
       all: '全选', none: '取消全选', empty: '清单为空。添加模型，或从正在运行的 Magpie 同步。',
       noMatch: '没有匹配的模型。', id: '完整模型 ID', modelName: '显示名称', nameHint: '留空使用模型 ID',
-      selected: '同步此模型', drag: '拖动调整 {name} 的顺序', remove: '删除', details: '能力与参数',
+      selected: '同步此模型', drag: '拖动或按 ↑↓ 键调整 {name} 的顺序', remove: '删除', details: '能力与参数',
       expand: '展开 {name} 的详细配置', collapse: '收起 {name} 的详细配置', newModel: '新模型',
       context: '上下文窗口', output: '最大输出 token', vision: '支持图片输入', efforts: '思考档位（逗号分隔）',
       effortHint: '可用 off、minimal、low、medium、high、xhigh、max；留空表示不声明', unspecified: '不指定', save: '保存并同步', saving: '处理中…',
@@ -79,12 +81,14 @@ window.__ModuleLoader__.load({
       sync: 'Sync to DSH', syncHint: 'Ticked models go into the DSH “Magpie” group in this order; turning this off removes the group.',
       native: 'Magpie native groups are also configured. This list uses its own “Magpie” group (ID dsh-magpie); existing groups remain available.',
       count: '{selected} / {total} models selected', search: 'Search names or IDs', add: 'Add a model',
+      sortDefault: 'Default order', sortDefaultHint: 'Order as Magpie lists them (Magpie must be running); after sorting the full list, syncing from Magpie keeps that order',
+      catalogOrder: 'Magpie order: syncing from Magpie keeps the order Magpie lists them in.',
       sortModel: 'Sort by model', sortProvider: 'Sort by provider',
       sortModelHint: 'Sort matching models by name, ascending; sorting the full list restores automatic ordering after sync', sortProviderHint: 'Sort matching models by short provider name, then model name, ascending',
-      manualOrder: 'Manual order: syncing from Magpie keeps the current order and adds new models at the end. Clear the search and click “Sort by model” to restore automatic ordering.',
+      manualOrder: 'Manual order: syncing from Magpie keeps the current order and adds new models at the end. Clear the search and click “Default order” or “Sort by model” to restore automatic ordering.',
       all: 'Select all', none: 'Deselect all', empty: 'The list is empty. Add models or sync from a running Magpie.',
       noMatch: 'No matching models.', id: 'Full model ID', modelName: 'Display name', nameHint: 'Defaults to model ID',
-      selected: 'Sync this model', drag: 'Drag to reorder {name}', remove: 'Delete', details: 'Capabilities and limits',
+      selected: 'Sync this model', drag: 'Drag, or press ↑ ↓, to reorder {name}', remove: 'Delete', details: 'Capabilities and limits',
       expand: 'Expand details for {name}', collapse: 'Collapse details for {name}', newModel: 'New model',
       context: 'Context window', output: 'Max output tokens', vision: 'Image input', efforts: 'Reasoning levels (comma-separated)',
       effortHint: 'Use off, minimal, low, medium, high, xhigh or max; leave blank to declare none', unspecified: 'Unspecified', save: 'Save and sync', saving: 'Working…',
@@ -153,6 +157,13 @@ window.__ModuleLoader__.load({
     const CONFIG_RETRY_MS = 2000;
     // 标题处的网关状态定时刷新；本机请求很轻，15 秒足够反映 Magpie 被打开或关闭。
     const STATUS_POLL_MS = 15000;
+    // 模型行的稳定 key：草稿里同一模型换了对象（编辑、勾选）也沿用原 key，排序动画才能认出是同一行。
+    const rowKeys = new WeakMap();
+    let nextRowKey = 0;
+    const keyOf = (row) => { if (!rowKeys.has(row)) rowKeys.set(row, `m${++nextRowKey}`); return rowKeys.get(row); };
+    const keepKey = (previous, next) => { rowKeys.set(next, keyOf(previous)); return next; };
+    // 排序后各行滑到新位置的时长；拖动中让位的过渡写在样式里，两者保持一致。
+    const REORDER_MS = 200;
     const TABS = [['models', 'tabModels'], ['connection', 'tabConnection'], ['preferences', 'tabPreferences'], ['updates', 'tabUpdates']];
     // 卡片在插件设置和侧栏页面各自挂载；读取或保存后经此通知侧栏按已保存的配置重新判断入口。
     const savedConfig = { value: undefined, listeners: new Set() };
@@ -232,7 +243,11 @@ window.__ModuleLoader__.load({
       .dsm-mp .model-header{display:flex;align-items:center;gap:6px;padding:5px 8px;min-width:0;min-height:40px}.dsm-mp .model-select{display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer}
       .dsm-mp .model-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dsm-mp .model input[type=checkbox]{margin:0;flex:none}
       .dsm-mp .model-drag{padding:3px;flex:none;border-color:transparent;background:transparent;cursor:grab;line-height:1;color:var(--mp-faint)}.dsm-mp .model-drag:active{cursor:grabbing}.dsm-mp .model-drag svg{display:block;width:16px;height:20px;pointer-events:none}
-      .dsm-mp .model.dragging{opacity:.45}.dsm-mp .model.drop-before{border-top-color:var(--mp-accent)}.dsm-mp .model.drop-after{border-bottom-color:var(--mp-accent)}
+      .dsm-mp .model-list{position:relative}.dsm-mp .model-list.sorting .model{transition:transform .2s cubic-bezier(.2,.8,.2,1)}
+      .dsm-mp .model-list.sorting .model:hover:not(.dragging){background:transparent}
+      .dsm-mp .model.dragging{position:relative;z-index:1;border-style:dashed;border-color:var(--mp-accent);background:color-mix(in srgb,var(--mp-accent) 8%,transparent)}
+      .dsm-mp .model.dragging>*{opacity:.35}
+      @media(prefers-reduced-motion:reduce){.dsm-mp .model-list.sorting .model{transition:none}}
       .dsm-mp .model-toggle{padding:4px 6px;line-height:1;border-color:transparent;background:transparent;flex:none;color:var(--mp-faint)}.dsm-mp .model-toggle svg{display:block;width:16px;height:16px;transition:transform .15s}.dsm-mp .model-toggle[aria-expanded=true] svg{transform:rotate(90deg)}
       .dsm-mp .model-badges{display:flex;gap:6px;margin-left:auto;flex:none}.dsm-mp .badge{padding:0 6px;border-radius:4px;background:var(--mp-fill);color:var(--mp-muted);font-size:11px;line-height:18px;white-space:nowrap}
       .dsm-mp .model-actions{display:flex;gap:4px;flex:none;margin-left:auto}.dsm-mp .model-badges+.model-actions{margin-left:4px}.dsm-mp .model-actions button{padding:2px 8px;border-color:transparent;font-size:12px}
@@ -674,6 +689,23 @@ window.__ModuleLoader__.load({
       const updater = useUpdater(t);
       const [tab, setTab] = useState('models');
       const [gateway, setGateway] = useState(null);
+      const listRef = useRef(null);
+      const positions = useRef(new Map());
+      // 排序、增删、展开或筛选后，各行从原来的位置滑到新位置（FLIP）。
+      // 位置用 offsetTop 加拖动让位的位移，不受页面滚动影响；拖动进行中由样式过渡负责，不在这里动画。
+      useLayoutEffect(() => {
+        const list = listRef.current;
+        if (!list) { positions.current = new Map(); return; }
+        const next = new Map();
+        for (const node of list.children) next.set(node.dataset.key, node.offsetTop + Number(node.dataset.shift || 0));
+        const still = list.classList.contains('sorting') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        if (!still) for (const node of list.children) {
+          const before = positions.current.get(node.dataset.key);
+          const delta = before === undefined ? 0 : before - next.get(node.dataset.key);
+          if (Math.abs(delta) >= 1) node.animate?.([{ transform: `translateY(${delta}px)` }, { transform: 'translateY(0)' }], { duration: REORDER_MS, easing: 'cubic-bezier(.2,.8,.2,1)' });
+        }
+        positions.current = next;
+      });
       const busy = modelBusy || updater.model.busy || isActiveOperation(updater.model.operation);
       const failure = (error) => ({ error: true, text: error?.code === 'INVALID_JSON' ? `${t('invalidJson')}（${error.message}）` : error.message });
       useEffect(() => {
@@ -715,7 +747,7 @@ window.__ModuleLoader__.load({
       const update = (patch) => { setView((v) => ({ ...v, config: { ...v.config, ...patch } })); setDirty(true); };
       const rows = config.models;
       const labelFor = (row) => displayModelName(row, view.providerNames) || t('newModel');
-      const updateRow = (index, patch) => update({ models: rows.map((row, i) => i === index ? { ...row, ...patch } : row) });
+      const updateRow = (index, patch) => update({ models: rows.map((row, i) => i === index ? keepKey(row, { ...row, ...patch }) : row) });
       const field = (label, value, change, options = {}) => h('label', { className: 'field' }, label, h('input', { value: value ?? '', disabled: busy, onChange: (e) => change(e.target.value), ...options }));
       const backend = view.backend;
       const backendAction = (action) => perform(async () => {
@@ -758,41 +790,72 @@ window.__ModuleLoader__.load({
       });
       const visible = rows.map((row, index) => ({ row, index })).filter(({ row }) => `${row.id} ${labelFor(row)}`.toLowerCase().includes(search.toLowerCase()));
       const visibleIndexes = new Set(visible.map(({ index }) => index));
-      const selectVisible = (enabled) => update({ models: rows.map((m, i) => visibleIndexes.has(i) ? { ...m, enabled } : m) });
-      // manualOrder 决定「从 Magpie 同步」是否保留现有顺序：拖动、按供应商排序、只排部分搜索结果都算手动；
-      // 对完整清单按模型排序则恢复自动排序。顺序没变但标记变化时也需要保存。
-      const reorder = (order, manualOrder) => {
+      const selectVisible = (enabled) => update({ models: rows.map((m, i) => visibleIndexes.has(i) ? keepKey(m, { ...m, enabled }) : m) });
+      // 排序模式决定「从 Magpie 同步」的顺序：model 按模型名称（默认）、catalog 沿用 Magpie 目录、manual 保留现有顺序。
+      // 拖动、按供应商排序、只排部分搜索结果都算手动；对完整清单按模型或默认排序则恢复对应的自动顺序。
+      const orderMode = config.manualOrder ? 'manual' : config.catalogOrder ? 'catalog' : 'model';
+      const reorder = (order, mode) => {
         const same = order.every((index, i) => index === i);
-        // 原位放下不算排序；旧配置没有该字段时按自动排序处理。
-        if (same && (manualOrder === true || (config.manualOrder === true) === manualOrder)) return;
-        update({ ...(same ? {} : { models: order.map((index) => rows[index]) }), manualOrder });
+        // 原位放下不算排序；顺序没变但模式变化时也需要保存。
+        if (same && (mode === 'manual' || orderMode === mode)) return;
+        update({ ...(same ? {} : { models: order.map((index) => rows[index]) }), manualOrder: mode === 'manual', catalogOrder: mode === 'catalog' });
         if (!same) setExpanded((old) => new Set([...old].map((i) => order.indexOf(i))));
       };
-      const move = (index, target) => reorder(moveModel(rows.map((_row, i) => i), index, target), true);
-      const sort = (mode) => {
-        if (busy || visible.length < 2) return;
+      const move = (index, target) => reorder(moveModel(rows.map((_row, i) => i), index, target), 'manual');
+      // 只替换匹配条目所在的位置，隐藏模型原位置不动；sorted 是可见条目的新排列。
+      const applySorted = (sorted, mode) => {
         const order = rows.map((_row, i) => i);
-        const sorted = sortModelIndexes(visible.map(({ row }) => row), mode, view.providerNames);
-        // 只替换匹配条目所在的位置，隐藏模型原位置不动；展开状态跟随同一个模型。
         visible.forEach(({ index }, i) => { order[index] = visible[sorted[i]].index; });
-        reorder(order, mode !== 'model' || visible.length !== rows.length);
+        reorder(order, visible.length === rows.length ? mode : 'manual');
         dragSource.current = null; setDrag(null);
       };
-      const endDrag = () => { dragSource.current = null; setDrag(null); };
-      const dropPosition = (event, index) => {
-        const rect = event.currentTarget.getBoundingClientRect();
-        return { index, after: event.clientY >= rect.top + rect.height / 2 };
+      const sort = (mode) => {
+        if (busy || visible.length < 2) return;
+        applySorted(sortModelIndexes(visible.map(({ row }) => row), mode, view.providerNames), mode === 'model' ? 'model' : 'manual');
+      };
+      // 默认排序：按 Magpie 当前目录的顺序；目录里没有的（手动添加等）保持原相对顺序排在后面。
+      const sortDefault = () => perform(async () => {
+        const { ids } = await request({ action: 'catalog-order', baseURL: config.baseURL, apiKey: key || undefined });
+        const rank = new Map(ids.map((id, i) => [id, i]));
+        const position = (i) => rank.get(visible[i].row.id) ?? ids.length;
+        applySorted(visible.map((_v, i) => i).sort((a, b) => position(a) - position(b) || a - b), 'catalog');
+      });
+      // 拖动：其它行实时让出空位（样式过渡），松手后各行已在目标位置，直接换成新顺序。
+      // 落点按列表里各行未位移的布局位置计算，让位的位移不会反过来改变落点。
+      const slotAt = (event) => {
+        const y = event.clientY - event.currentTarget.getBoundingClientRect().top;
+        const slot = [...event.currentTarget.children].findIndex((node) => y < node.offsetTop + node.offsetHeight / 2);
+        return slot < 0 ? event.currentTarget.children.length : slot;
+      };
+      // 正常放下后浏览器仍会触发 dragend，此时已无拖动；取消拖动则先让各行滑回原位再清除状态。
+      const endDrag = () => {
+        const cancelled = dragSource.current !== null;
+        dragSource.current = null;
+        if (!cancelled) return setDrag(null);
+        setDrag((old) => old ? { ...old, slot: undefined, ending: true } : null);
+        setTimeout(() => setDrag((old) => old?.ending ? null : old), REORDER_MS);
       };
       // 只接受本卡片手柄发起的拖动；外部文本、另一张卡片及已过期的草稿不能触发排序。
       const canDrop = () => !busy && dragSource.current?.rows === rows;
-      const drop = (event, index) => {
-        if (!canDrop()) return;
-        event.preventDefault();
+      const dropAt = (slot) => {
         const source = dragSource.current.index;
-        const { after } = dropPosition(event, index);
-        const slot = index + Number(after);
-        move(source, slot > source ? slot - 1 : slot);
-        endDrag();
+        dragSource.current = null; setDrag(null);
+        // 落在自己原来的位置（上下两侧的空隙）不算移动，搜索时也不会挪动夹在中间的隐藏模型。
+        const at = visible.findIndex(({ index }) => index === source);
+        if (slot === at || slot === at + 1) return;
+        const target = visible[Math.min(slot, visible.length - 1)].index + Number(slot >= visible.length);
+        move(source, target > source ? target - 1 : target);
+      };
+      const sourceAt = drag ? visible.findIndex(({ index }) => index === drag.source) : -1;
+      // 拖动中每行的位移：被拖的行移到落点，途经的行向反方向让出它的高度。
+      const shiftOf = (position) => {
+        const slot = drag?.slot, sizes = drag?.sizes ?? [];
+        if (sourceAt < 0 || slot === undefined) return 0;
+        const span = (from, to) => sizes.slice(from, to).reduce((sum, size) => sum + size, 0);
+        if (position === sourceAt) return slot > sourceAt ? span(sourceAt + 1, slot) : -span(slot, sourceAt);
+        if (slot > sourceAt + 1 && position > sourceAt && position < slot) return -(sizes[sourceAt] ?? 0);
+        if (slot < sourceAt && position >= slot && position < sourceAt) return sizes[sourceAt] ?? 0;
+        return 0;
       };
       const remove = (index) => {
         update({ models: rows.filter((_m, i) => i !== index) });
@@ -833,11 +896,19 @@ window.__ModuleLoader__.load({
       id === 'models' ? h('span', { className: 'count' }, rows.length) : null,
       id === 'updates' && (backend?.updateAvailable || pluginUpdate) ? h('span', { className: 'mark', 'aria-hidden': true }) : null)));
 
-      const modelList = h('div', { className: 'model-list' }, ...visible.map(({ row: model, index }) => h('div', {
-        className: `model${expanded.has(index) ? ' expanded' : ''}${drag?.source === index ? ' dragging' : ''}${drag?.index === index ? (drag.after ? ' drop-after' : ' drop-before') : ''}`, key: index,
-        onDragOver: (event) => { if (!canDrop()) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDrag({ source: dragSource.current.index, ...dropPosition(event, index) }); },
-        onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDrag((old) => old ? { source: old.source } : null); },
-        onDrop: (event) => drop(event, index),
+      const modelList = h('div', {
+        className: `model-list${drag ? ' sorting' : ''}`, ref: listRef,
+        onDragOver: (event) => {
+          if (!canDrop()) return;
+          event.preventDefault(); event.dataTransfer.dropEffect = 'move';
+          const slot = slotAt(event), { index: source, sizes } = dragSource.current;
+          setDrag((old) => old?.slot === slot && !old.ending ? old : { source, sizes, slot });
+        },
+        onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDrag((old) => old ? { ...old, slot: undefined } : null); },
+        onDrop: (event) => { if (!canDrop()) return; event.preventDefault(); dropAt(slotAt(event)); },
+      }, ...visible.map(({ row: model, index }, position) => { const shift = shiftOf(position); return h('div', {
+        className: `model${expanded.has(index) ? ' expanded' : ''}${drag?.source === index ? ' dragging' : ''}`, key: keyOf(model),
+        'data-key': keyOf(model), 'data-shift': shift || undefined, style: shift ? { transform: `translateY(${shift}px)` } : undefined,
       },
         h('div', { className: 'model-header' },
           button(h('svg', { viewBox: '0 0 16 20', fill: 'currentColor', 'aria-hidden': true }, ...[5, 10, 15].flatMap((cy) => [5, 11].map((cx) => h('circle', { key: `${cx}-${cy}`, cx, cy, r: 1.4 })))), undefined, {
@@ -845,10 +916,22 @@ window.__ModuleLoader__.load({
             title: t('drag', { name: labelFor(model) }), 'aria-label': t('drag', { name: labelFor(model) }),
             onDragStart: (event) => {
               if (busy || rows.length < 2) { event.preventDefault(); return; }
-              dragSource.current = { index, rows }; setDrag({ source: index });
+              // 各可见行连同行距的高度，供让位计算；拖动期间布局不变，开始时量一次即可。
+              const items = [...(event.currentTarget.closest?.('.model-list')?.children ?? [])];
+              const sizes = items.map((node, i) => items[i + 1] ? items[i + 1].offsetTop - node.offsetTop : node.offsetHeight);
+              const current = dragSource.current = { index, rows, sizes };
               event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', model.id);
-              event.dataTransfer.setDragImage?.(event.currentTarget.parentElement, 20, 20);
+              event.dataTransfer.setDragImage?.(event.currentTarget.closest?.('.model') ?? event.currentTarget.parentElement, 20, 20);
+              // 浏览器在 dragstart 之后才截取拖动图像；占位样式推迟一帧，免得拖出去的图像也是半透明的。
+              setTimeout(() => { if (dragSource.current === current) setDrag((old) => old ?? { source: index, sizes }); }, 0);
             }, onDragEnd: endDrag,
+            onKeyDown: (event) => {
+              if (busy || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+              const neighbor = visible[visible.findIndex((item) => item.index === index) + (event.key === 'ArrowUp' ? -1 : 1)];
+              if (!neighbor) return;
+              event.preventDefault();
+              move(index, neighbor.index);
+            },
           }),
           h('label', { className: 'model-select', title: model.id }, h('input', { type: 'checkbox', checked: model.enabled, disabled: busy, onChange: (e) => updateRow(index, { enabled: e.target.checked }) }), h('span', { className: 'model-name' }, labelFor(model))),
           button(h('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true }, h('path', { d: 'm6 3 5 5-5 5', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })), () => setExpanded((old) => { const next = new Set(old); if (next.has(index)) next.delete(index); else next.add(index); return next; }), { className: 'model-toggle', 'aria-expanded': expanded.has(index), 'aria-controls': `dsm-mp-details-${index}`, 'aria-label': t(expanded.has(index) ? 'collapse' : 'expand', { name: labelFor(model) }) }),
@@ -860,7 +943,7 @@ window.__ModuleLoader__.load({
             field(t('context'), model.contextWindow, (contextWindow) => updateRow(index, { contextWindow }), { type: 'number', min: 1, placeholder: t('unspecified') }),
             field(t('output'), model.maxTokens, (maxTokens) => updateRow(index, { maxTokens }), { type: 'number', min: 1, placeholder: t('unspecified') }),
             field(t('efforts'), model.effortText ?? model.reasoningEfforts.join(', '), (value) => updateRow(index, { effortText: value, reasoningEfforts: value.split(/[,，]/).map((x) => x.trim().toLowerCase()).filter(Boolean) }), { placeholder: t('effortHint') }),
-            h('label', null, h('input', { type: 'checkbox', disabled: busy, checked: model.input.includes('image'), onChange: (e) => updateRow(index, { input: e.target.checked ? ['text', 'image'] : ['text'] }) }), t('vision')))))));
+            h('label', null, h('input', { type: 'checkbox', disabled: busy, checked: model.input.includes('image'), onChange: (e) => updateRow(index, { input: e.target.checked ? ['text', 'image'] : ['text'] }) }), t('vision'))))); }));
 
       const panels = {
         models: () => [
@@ -875,9 +958,10 @@ window.__ModuleLoader__.load({
             h('div', { className: 'list-actions' },
               button(t('all'), () => selectVisible(true), { className: 'ghost' }), button(t('none'), () => selectVisible(false), { className: 'ghost' }),
               h('span', { className: 'divider', 'aria-hidden': true }),
+              button(t('sortDefault'), sortDefault, { className: 'ghost', title: t('sortDefaultHint'), disabled: busy || visible.length < 2 }),
               button(t('sortModel'), () => sort('model'), { className: 'ghost', title: t('sortModelHint'), disabled: busy || visible.length < 2 }),
               button(t('sortProvider'), () => sort('provider'), { className: 'ghost', title: t('sortProviderHint'), disabled: busy || visible.length < 2 }))),
-          config.manualOrder && rows.length ? h('p', { className: 'hint' }, t('manualOrder')) : null,
+          rows.length && orderMode !== 'model' ? h('p', { className: 'hint' }, t(orderMode === 'manual' ? 'manualOrder' : 'catalogOrder')) : null,
           !rows.length ? h('p', { className: 'empty' }, t('empty')) : !visible.length ? h('p', { className: 'empty' }, t('noMatch')) : null,
           modelList,
         ],
