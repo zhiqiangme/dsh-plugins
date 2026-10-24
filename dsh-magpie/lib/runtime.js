@@ -65,8 +65,8 @@ export class ModelManager {
       throw error;
     }
   }
-  /** 开关和下拉改完即生效：只改这些字段，不校验版本号，也不带上卡片里未保存的连接设置和模型草稿。 */
-  async patch(raw) {
+  /** 开关和下拉改完即生效：只改这些字段，不带上卡片里未保存的连接设置和模型草稿。 */
+  async patch(raw, expected) {
     const patch = object(raw);
     const keys = Object.keys(patch);
     if (!keys.length || keys.some((key) => !INSTANT_FIELDS.includes(key))) throw new Error('只能直接修改开关和下拉设置');
@@ -74,6 +74,8 @@ export class ModelManager {
     if (!entry || typeof this.editor?.edit !== 'function') throw new Error('宿主 configEditor 尚未就绪，无法保存');
     let config;
     await this.editor.edit(entry, (current) => {
+      // 返回的新版本号会用于后续保存，不能让旧草稿借即时开关绕过冲突检查。
+      this.assertRevision(expected, resolveConfig(current));
       config = resolveConfig({ ...resolveConfig(current), ...patch });
       return { ...object(current), ...config };
     });
@@ -81,7 +83,8 @@ export class ModelManager {
     if (patch.autoLightweight === true) this.backend.ensureLightweight?.();
     // 同步开关决定 DSH 是否保留 Magpie 分组，改完立即按已保存清单重写。
     const sync = keys.includes('syncEnabled') ? await this.sync(config) : undefined;
-    return { ...await this.describe(), saved: true, ...(sync ? { sync } : {}) };
+    // describe 等待期间可能又有其它页面保存；只返回本次锁内写入的配置及版本给草稿续用。
+    return { ...await this.describe(), config, revision: revision(config), saved: true, ...(sync ? { sync } : {}) };
   }
   async handle(body) {
     if (['backend-status', 'backend-check', 'backend-install', 'backend-open'].includes(body.action)) {
@@ -113,7 +116,7 @@ export class ModelManager {
       // 直接写 Magpie 自己的设置，不属于插件配置，也不需要版本号。
       return { ok: true, magpieSettings: this.backend.updateSettings({ lightweight: body.lightweight, keepAwake: body.keepAwake }) };
     }
-    if (body.action === 'patch') return this.enqueue(() => this.patch(body.patch));
+    if (body.action === 'patch') return this.enqueue(() => this.patch(body.patch, body.revision));
     if (body.action === 'check') {
       const config = resolveConfig({ ...this.current(), baseURL: body.baseURL ?? this.current().baseURL });
       const key = await credential(this.credentials, this.env, config.baseURL, body.apiKey);

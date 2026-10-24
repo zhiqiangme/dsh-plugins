@@ -121,7 +121,7 @@ Magpie 也有完全无界面的 `magpie serve`（只运行网关，没有托盘�
 ## 配置边界与 Key
 
 - 固定插件行 ID 和 provider ID 都是 `dsh-magpie`，不会修改 Magpie 原生的 `magpie` / `magpie-responses` / `magpie-anthropic` 分组、其它 provider、默认模型或其它 profile。
-- 模型写入经宿主 `configEditor`，按锁内最新配置合并；已被其他配置占用的同名 provider 拒绝覆盖。两个页面同时编辑时，旧页面保存返回冲突，避免覆盖刚保存的清单。
+- 模型写入经宿主 `configEditor`，按锁内最新配置合并；已被其他配置占用的同名 provider 拒绝覆盖。两个页面同时编辑时，旧页面保存或修改即时开关、选项均返回冲突并保留草稿，需要重新载入后操作，避免覆盖刚保存的清单。
 - 模型列表默认空，同步默认关闭。手动点击「从 Magpie 同步」才读取上游目录；普通保存和插件启动沿用已保存清单，不定时读取上游目录。
 - 本机 loopback 使用官方约定的 `magpie-dsh` 标识；它会写入凭据供 DSH 调用，但不算已保存的 Key，切到远程 Magpie 时也不会发出。远程 Magpie 需要有效的 gateway key；卡片保存到 DSH 凭据库的 `DSH_MAGPIE_API_KEY`，配置中只保存引用，状态接口不返回 Key。环境变量同名值优先且只读；输入框留空沿用已保存值。
 - 调用协议可选 Chat Completions、Responses、Anthropic Messages；前两者使用 Magpie 地址下的 `/v1/`，Anthropic 使用根地址。修改协议或地址后保存会同步更新 provider。

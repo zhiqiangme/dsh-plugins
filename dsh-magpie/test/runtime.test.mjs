@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ModelManager } from '../lib/runtime.js';
-import { KEY_REF, PROVIDER_ID } from '../lib/config.js';
+import { KEY_REF, PROVIDER_ID, resolveConfig, revision } from '../lib/config.js';
 import { apply } from '../lib/index.js';
 import { fakeHost } from '../fixtures/host.mjs';
 import { MagpieBackend } from '../lib/backend.js';
@@ -46,6 +46,46 @@ test('同时保存串行核对版本，只有一个相同版本的修改可生�
   const results = await Promise.allSettled(['a', 'b'].map((id) => host.manager.handle({ action: 'save', revision: view.revision, config: { models: [{ id }] } })));
   assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
   assert.equal(results.find((r) => r.status === 'rejected').reason.status, 409);
+});
+
+test('即时开关在锁内拒绝过期或缺失的版本，不改配置、分组或 Magpie 设置', async () => {
+  let lightweight = 0;
+  const backend = { describe: async () => ({}), settings: () => ({ available: false }), ensureLightweight: () => { lightweight++; } };
+  const host = setup({ backend });
+  const initial = await host.manager.describe();
+  await host.manager.handle({ action: 'save', revision: initial.revision, config });
+  const latest = structuredClone([host.own.options.config, host.llm.options.config, [...host.keys]]);
+  for (const revision of [initial.revision, undefined]) {
+    await assert.rejects(host.manager.handle({ action: 'patch', revision, patch: { autoLightweight: true, syncEnabled: false } }), (error) => error.status === 409);
+    assert.deepEqual([host.own.options.config, host.llm.options.config, [...host.keys]], latest);
+  }
+  // 模拟通过其它编辑入口在 configEditor 取得锁之前写入，版本必须在 change 回调里核对。
+  const current = await host.manager.describe();
+  const edit = host.editor.edit.bind(host.editor);
+  host.editor.edit = (entry, change) => {
+    host.own.options.config = { ...host.own.options.config, models: [{ id: 'changed-under-lock' }] };
+    return edit(entry, change);
+  };
+  await assert.rejects(host.manager.handle({ action: 'patch', revision: current.revision, patch: { autoLightweight: true } }), (error) => error.status === 409);
+  assert.equal(host.own.options.config.models[0].id, 'changed-under-lock');
+  assert.equal(lightweight, 0);
+});
+
+test('即时开关返回本次写入的版本，不借用写入后其它页面的新版本', async () => {
+  const backend = { describe: async () => ({}), settings: () => ({ available: false }) };
+  const host = setup({ backend });
+  const initial = await host.manager.describe();
+  const edit = host.editor.edit.bind(host.editor);
+  host.editor.edit = async (entry, change) => {
+    await edit(entry, change);
+    host.own.options.config = { ...host.own.options.config, models: [{ id: 'other-page-after-patch' }] };
+  };
+  const result = await host.manager.handle({ action: 'patch', revision: initial.revision, patch: { closeOnExit: true } });
+  const patched = resolveConfig({ ...initial.config, closeOnExit: true });
+  assert.deepEqual(result.config, patched);
+  assert.equal(result.revision, revision(patched));
+  assert.equal(host.own.options.config.models[0].id, 'other-page-after-patch');
+  await assert.rejects(host.manager.handle({ action: 'save', revision: result.revision, config: result.config }), (error) => error.status === 409);
 });
 
 test('模型清单已保存但同步失败时如实返回，可修复后再同步', async () => {
@@ -206,25 +246,25 @@ test('手动排过序时，全量同步保留卡片上的顺序，新模型按�
   assert.deepEqual(automatic.config.models.map((m) => m.id), ['p/alpha', 'p/new-a', 'p/new-b', 'p/zeta']);
 });
 
-test('开关即时修改只接受白名单字段，不校验版本号也不带入草稿；同步开关改完立即重写分组', async () => {
+test('开关即时修改只接受白名单字段和当前版本，不带入草稿；同步开关改完立即重写分组', async () => {
   let lightweight = 0;
   // 替身程序管理：不读写真实的 Magpie 设置。
   const backend = { describe: async () => ({}), settings: () => ({ available: false }), ensureLightweight: () => { lightweight++; } };
   const host = setup({ backend });
   const before = await host.manager.describe();
-  await host.manager.handle({ action: 'save', revision: before.revision, config });
-  await assert.rejects(host.manager.handle({ action: 'patch', patch: { models: [] } }), /只能直接修改/);
-  await assert.rejects(host.manager.handle({ action: 'patch', patch: {} }), /只能直接修改/);
-  await assert.rejects(host.manager.handle({ action: 'patch', patch: { sidebarEntry: 'hidden' } }), /侧边栏入口/);
-  const patched = await host.manager.handle({ action: 'patch', patch: { closeOnExit: true, sidebarEntry: 'never' } });
+  const saved = await host.manager.handle({ action: 'save', revision: before.revision, config });
+  await assert.rejects(host.manager.handle({ action: 'patch', revision: saved.revision, patch: { models: [] } }), /只能直接修改/);
+  await assert.rejects(host.manager.handle({ action: 'patch', revision: saved.revision, patch: {} }), /只能直接修改/);
+  await assert.rejects(host.manager.handle({ action: 'patch', revision: saved.revision, patch: { sidebarEntry: 'hidden' } }), /侧边栏入口/);
+  const patched = await host.manager.handle({ action: 'patch', revision: saved.revision, patch: { closeOnExit: true, sidebarEntry: 'never' } });
   assert.equal(patched.sync, undefined);
   assert.equal(host.own.options.config.closeOnExit, true);
   assert.equal(host.own.options.config.sidebarEntry, 'never');
   assert.equal(host.own.options.config.models[0].id, 'manual/unlisted', '清单不受影响');
   assert.equal(host.manager.config.closeOnExit, true);
-  await host.manager.handle({ action: 'patch', patch: { autoLightweight: true } });
+  const lightweightResult = await host.manager.handle({ action: 'patch', revision: patched.revision, patch: { autoLightweight: true } });
   assert.equal(lightweight, 1);
-  const off = await host.manager.handle({ action: 'patch', patch: { syncEnabled: false } });
+  const off = await host.manager.handle({ action: 'patch', revision: lightweightResult.revision, patch: { syncEnabled: false } });
   assert.equal(off.sync.ok, true);
   assert.equal(host.llm.options.config.providers[PROVIDER_ID], undefined);
   // 新版本号可直接用于后续保存。

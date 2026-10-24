@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { resolveConfig } from '../lib/config.js';
 import { PROVIDER_NAMES, sortModelIndexes as serverSort } from '../lib/names.js';
+import { ModelManager } from '../lib/runtime.js';
 import { clientHarness, button, choose, control, field, nodes } from '../fixtures/client.mjs';
+import { fakeHost } from '../fixtures/host.mjs';
 
 const view = (config = {}) => ({ ok: true, config: resolveConfig(config), revision: 'revision-one', providerNames: PROVIDER_NAMES, nativeProviders: ['magpie'], editable: true, keyConfigured: false, keyWritable: true });
 const response = (body, status = 200) => ({ ok: status === 200, status, json: async () => body });
@@ -58,7 +60,7 @@ test('开关和选项改完立即保存，只提交该项；未保存的连接�
   assert.equal(toggle('退出 DSH 时关闭 Magpie').props.checked, false);
   assert.equal(toggle('退出 DSH 时关闭 Magpie').props.role, 'switch');
   await toggle('退出 DSH 时关闭 Magpie').props.onChange({ target: { checked: true } });
-  assert.deepEqual(calls[0], { action: 'patch', patch: { closeOnExit: true } });
+  assert.deepEqual(calls[0], { action: 'patch', patch: { closeOnExit: true }, revision: 'revision-one' });
   assert.equal(toggle('退出 DSH 时关闭 Magpie').props.checked, true);
   assert.equal(client.states[1], true, '草稿仍待保存');
   assert.equal(client.states[0].revision, 'revision-2');
@@ -86,6 +88,40 @@ test('开关和选项改完立即保存，只提交该项；未保存的连接�
   assert.equal(calls[5].revision, 'revision-6');
   assert.equal(calls[5].config.baseURL, 'http://127.0.0.1:4000');
   assert.deepEqual([calls[5].config.closeOnExit, calls[5].config.autoStart, calls[5].config.autoLightweight, calls[5].config.sidebarEntry, calls[5].config.syncEnabled], [true, false, false, 'always', true]);
+});
+
+test('旧页面切换即时开关后仍拒绝保存，保留草稿和其它页面的新清单', async (t) => {
+  for (const dirty of [false, true]) await t.test(dirty ? '有未保存草稿' : '未编辑旧清单', async () => {
+    const host = fakeHost({ models: [{ id: 'old-model' }] });
+    const backend = { describe: async () => ({}), settings: () => ({ available: false }) };
+    const manager = new ModelManager(host.ctx, host.own.options.config, { env: {}, backend });
+    const initial = await manager.describe();
+    const client = clientHarness(initial, async (_url, options) => {
+      try { return response(await manager.handle(JSON.parse(options.body))); }
+      catch (error) { return response({ ok: false, reason: error.message }, error.status ?? 400); }
+    });
+    if (dirty) {
+      client.tab('连接');
+      field(client.render(), 'Magpie 网关地址').props.onChange({ target: { value: 'http://127.0.0.1:4000' } });
+      field(client.render(), '网关 Key').props.onChange({ target: { value: 'draft-key' } });
+    }
+    const draft = structuredClone(client.states[0].config);
+    await manager.handle({ action: 'save', revision: initial.revision, config: { ...initial.config, models: [{ id: 'other-page-model' }] } });
+    const latest = structuredClone(host.own.options.config);
+    client.tab('偏好');
+    await control(client.render(), '退出 DSH 时关闭 Magpie').props.onChange({ target: { checked: true } });
+    assert.match(client.states[3]?.text ?? '', /其它页面/);
+    assert.equal(client.states[0].revision, initial.revision, '不能把最新版本号套到旧草稿上');
+    assert.deepEqual(client.states[0].config, draft);
+    assert.equal(client.states[1], dirty);
+    assert.equal(client.states[4], dirty ? 'draft-key' : '');
+    assert.deepEqual(host.own.options.config, latest, '冲突时开关也不写入');
+    await button(client.render(), '保存并同步').props.onClick();
+    assert.match(client.states[3]?.text ?? '', /其它页面/);
+    assert.deepEqual(client.states[0].config, draft);
+    assert.deepEqual(host.own.options.config, latest);
+    assert.equal(host.keys.size, 0);
+  });
 });
 
 test('防止休眠直接写入 Magpie 设置；没有设置文件时禁用；打开 Magpie 界面按当前程序路径请求', async () => {
@@ -574,7 +610,7 @@ test('宿主声明侧栏槽位时注册整页和入口行；保存模型后自�
 
   client.tab('偏好');
   await option('显示').props.onClick();
-  assert.deepEqual(posts[1], { action: 'patch', patch: { sidebarEntry: 'always' } });
+  assert.deepEqual(posts[1], { action: 'patch', patch: { sidebarEntry: 'always' }, revision: 'revision-one' });
   assert.equal(rows().length, 1);
   await option('隐藏').props.onClick();
   assert.equal(rows().length, 0);

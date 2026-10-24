@@ -762,7 +762,7 @@ window.__ModuleLoader__.load({
         installed: finished('backendInstalled'), updated: finished('backendUpdated'), 'up-to-date': t('backendUpToDate'), failed: t('backendFailed', { reason: operation.reason }) })[operation.phase] : '';
       // 开关和下拉立即保存，只采纳这几项与新的版本号；卡片里未保存的连接设置和模型草稿保留。
       const applyNow = (patch) => perform(async () => {
-        const result = await request({ action: 'patch', patch });
+        const result = await request({ action: 'patch', patch, revision: view.revision });
         publishConfig(result.config);
         setView((old) => ({ ...result, config: { ...old.config, ...patch } }));
         if (result.sync && !result.sync.ok) setNotice({ error: true, text: t('saveFailed', { reason: result.sync.reason }) });
