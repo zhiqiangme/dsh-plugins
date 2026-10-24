@@ -37,10 +37,11 @@ import { resolvePluginConfig } from './config.js';
 import { gatewayDriver } from './gateway.js';
 import { hubKeyHooks } from './hub.js';
 import { syncModels } from './models.js';
+import { modelSyncBlockReason } from './model-sync-guard.js';
 import { createModelResync } from './resync.js';
 import { createRecovery } from './recovery.js';
 import { ManagedService, isFile } from './services.js';
-import { configEditorOf, credentialsOf, registerPanelRoutes } from './web.js';
+import { configEditorOf, credentialsOf, hostService, registerPanelRoutes } from './web.js';
 
 /** 插件名（日志前缀）。 */
 export const name = 'dsh-autostart-workbuddy';
@@ -89,8 +90,9 @@ export function apply(ctx, config) {
   );
 
   // 定时器与面板刷新共用同步器，避免并发写入，并共用模型移除的确认状态。
+  const syncBlocker = () => modelSyncBlockReason(hostService(ctx, 'agents', (candidate) => typeof candidate?.list === 'function'));
   const resync = createModelResync({
-    resolved, logger, env: hostEnv, name,
+    resolved, logger, env: hostEnv, name, syncBlocker,
     editor: () => configEditorOf(ctx), credentials: () => credentialsOf(ctx),
   });
   const recovery = createRecovery({ service, resolved, logger, onRecovered: () => resync.tick() });
@@ -126,7 +128,7 @@ export function apply(ctx, config) {
 
   // 模型列表同步：等后端就绪后再拉 `/v1/models`，经宿主 configEditor 写进 llm-pi-ai（见 lib/models.js）。
   // 同样不 await：拉取可能耗时数十秒，不能拖住插件树加载。
-  if (!notInstalled) syncAfterStartup(ctx, startup, resolved, hostEnv, logger);
+  if (!notInstalled) syncAfterStartup(ctx, startup, resolved, hostEnv, logger, syncBlocker);
 
   // 启动流程落地后才开始计时，第一轮不会和启动同步撞在一起。没装后端时也排上：
   // 用户之后在面板里装好并拉起后端，定时同步会接手；后端不在时每轮只探测 /healthz 就跳过。
@@ -261,7 +263,7 @@ async function start(service, logger) {
  * 后端没起来就跳过：此时 `/v1/models` 不可信，保持 profile 里现有的清单更好。
  * 同步结果只记日志——模型列表没更新不该影响 DSH 启动（下一次启动会再试）。
  */
-function syncAfterStartup(ctx, startup, resolved, hostEnv, logger) {
+function syncAfterStartup(ctx, startup, resolved, hostEnv, logger, syncBlocker) {
   if (!resolved.models.enabled) return;
 
   startup
@@ -277,6 +279,7 @@ function syncAfterStartup(ctx, startup, resolved, hostEnv, logger) {
         editor: configEditorOf(ctx),
         credentials: credentialsOf(ctx),
         env: hostEnv,
+        syncBlocker,
       });
     })
     .then((result) => {
@@ -285,6 +288,8 @@ function syncAfterStartup(ctx, startup, resolved, hostEnv, logger) {
         logger.info(`[${name}] 模型列表已同步 ${result.entries.length} 个模型 → ${result.documentPath}${result.created ? '（已补建 provider）' : ''}`);
       } else if (result.state === 'unchanged') {
         logger.info(`[${name}] 模型列表已是最新（${result.entries.length} 个模型）`);
+      } else if (result.state === 'busy') {
+        logger.info(`[${name}] ${result.reason}`);
       } else if (result.state !== 'disabled' && result.state !== 'dry-run') {
         logger.warn(`[${name}] 模型列表未同步：${result.reason ?? result.state}`);
       }

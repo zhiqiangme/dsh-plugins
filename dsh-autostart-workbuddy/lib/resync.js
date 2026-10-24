@@ -6,6 +6,7 @@
  * 沿用它的保护：空列表不清空、白名单里已不存在的 id 直接滤掉、只在有变化时写；另外：
  *   - 后端健康探针（wb2api 的 `/healthz` / hub 的 `/health`）不通，或账号池暂无可用账号（此时目录不可信）时整轮跳过；
  *   - 移除模型要连续两轮确认（removalGuard），避免一次上游抖动把模型删掉又加回来。
+ *   - 任一对话正在运行时延后整轮同步，空闲后的下一轮再拉取最新目录。
  *
  * 网关密钥：syncModels 每轮会调 ensureProxyCredential，它只读凭据库，值已在（且不是占位值）就不写，
  * 所以定时同步不会每轮重写 WORKBUDDY_PROXY_KEY；推迟写入的那一轮连读都不读。
@@ -20,6 +21,7 @@
 
 import { gatewayDriver } from './gateway.js';
 import { syncModels } from './models.js';
+import { modelSyncBlocked } from './model-sync-guard.js';
 
 /** 探 hub 当前出口的间隔：探的是本机 /health（不鉴权、hub 不记日志），几秒一次的开销可以忽略。 */
 export const REALM_POLL_MS = 5_000;
@@ -46,11 +48,12 @@ export function healthTarget(baseURL, spec) {
  * @param {Function} [options.sync]  测试替身：默认 syncModels
  * @param {string} [options.name]    日志前缀
  * @param {number} [options.realmPollMs] 测试用：探 hub 出口的间隔
+ * @param {() => string | undefined} [options.syncBlocker] 宿主运行状态检查；返回原因时禁止自动同步
  */
 export function createModelResync(options) {
   const {
     resolved, logger, editor, credentials, env = process.env, probe = gatewayDriver(options.resolved).probe, sync = syncModels,
-    name = 'dsh-autostart-workbuddy', realmPollMs = REALM_POLL_MS,
+    name = 'dsh-autostart-workbuddy', realmPollMs = REALM_POLL_MS, syncBlocker,
   } = options;
   const removalGuard = { missing: new Set() };
   // 只有 hub 一次只服务一个出口；wb2api 两个出口同时列出，不需要盯。
@@ -86,6 +89,11 @@ export function createModelResync(options) {
   async function runOnce() {
     const models = resolved.models;
     if (!models?.enabled) return { state: 'disabled' };
+    const blocked = modelSyncBlocked(syncBlocker);
+    if (blocked) {
+      note('info', blocked.reason);
+      return blocked;
+    }
 
     const health = await probe(healthTarget(models.baseURL, resolved.spec));
     // 双区域的固定分组不看看板出口，不能用当前出口的账号状态挡住另一组目录。
@@ -102,7 +110,7 @@ export function createModelResync(options) {
       logger.info(`[${name}] hub 出口从 ${syncedRealm} 切到 ${health.realm}，按新出口同步模型列表`);
     }
     const result = await sync({
-      spec: resolved.spec, models, editor: editor(), credentials: credentials(), env,
+      spec: resolved.spec, models, editor: editor(), credentials: credentials(), env, syncBlocker,
       removalGuard: realmSwitched ? undefined : removalGuard,
       // 区域分组不随看板出口变化，切换那一轮也照常要两轮确认。
       regionGuard: removalGuard,
@@ -113,7 +121,7 @@ export function createModelResync(options) {
     if (result.state === 'updated') {
       lastNote = undefined;
       logger.info(`[${name}] 定时同步：模型列表已更新为 ${result.entries.length} 个模型 → ${result.documentPath}`);
-    } else if (result.state === 'deferred') {
+    } else if (result.state === 'deferred' || result.state === 'busy') {
       note('info', `定时同步：${result.reason}`);
     } else if (result.state === 'unchanged') {
       lastNote = undefined;
@@ -162,6 +170,7 @@ export function createModelResync(options) {
   async function checkRealm() {
     const models = resolved.models;
     if (stopped || !models?.enabled || models.hubDual || !(models.resyncIntervalMs > 0)) return;
+    if (modelSyncBlocked(syncBlocker)) return;
     const health = await probe(healthTarget(models.baseURL, resolved.spec)).catch(() => undefined);
     if (stopped || !health?.ok || typeof health.realm !== 'string') return;
     // 还不知道 DSH 是按哪个出口同步的（插件刚启动，启动同步不经过这里）：以现在为准。
@@ -182,7 +191,9 @@ export function createModelResync(options) {
       return;
     }
     attemptedRealm = health.realm;
-    await tick();
+    const result = await tick();
+    // 运行状态在探针/拉目录期间可能变化；延后不算已经尝试过新出口，空闲后仍需及时补同步。
+    if (result.state === 'busy') attemptedRealm = undefined;
   }
 
   function scheduleRealm() {

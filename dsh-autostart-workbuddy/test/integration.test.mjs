@@ -40,6 +40,7 @@ function freePort() {
 
 /** 最小 Cordis Context 替身：收集 effect 的 disposer，记录日志；services 供 ctx.get 软取。 */
 function fakeContext(services = {}, { removableHooks = true } = {}) {
+  services = { agents: { list: () => [] }, ...services };
   const disposers = [];
   const lines = [];
   const updateHooks = [];
@@ -230,6 +231,44 @@ test('开启模型同步后：apply 会在后端就绪后经 configEditor 写进
   assert.deepEqual(Object.keys(workbuddy.models[0].reasoningEfforts), ['low', 'high', 'max'], '默认给低/高/最大三档');
   assert.equal(workbuddy.apiKeyEnv, 'WORKBUDDY_WB2API_KEY', '凭据引用随当前后端维护');
   assert.deepEqual(editor.edits.map((edit) => edit.id), ['llm-pi-ai'], '只编辑 llm-pi-ai 那一行');
+});
+
+test('宿主有运行中的对话时，启动和面板刷新均不改模型，空闲后刷新恢复同步', async (t) => {
+  const server = createHttpServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(req.url === '/healthz'
+      ? { service: 'workbuddy2api', healthy: 1, total: 1 }
+      : { data: [{ id: 'cn:alpha', name: 'Alpha' }, { id: 'global:beta', name: 'Beta' }] }));
+  });
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(done); }));
+  const port = server.address().port;
+  const editor = createFakeConfigEditor(profileRows());
+  const agent = { status: 'running' };
+  const routes = [];
+  const ctx = fakeContext({ configEditor: editor, agents: { list: () => [{ status: 'idle' }, agent] }, webServer: { register: (route) => { routes.push(route); return () => {}; } } });
+  t.after(() => ctx.disposeAll());
+  apply(ctx, fakeServiceConfig(port, {
+    backend: { enabled: false, autoUpdate: false },
+    models: { enabled: true, apiKey: 'test-key', timeoutMs: 5_000, resyncIntervalMs: 0 },
+  }));
+  assert.ok(await waitForLog(ctx, '有对话正在运行'), ctx.lines.join('\n'));
+  assert.equal(editor.edits.length, 0, '启动同步也必须遵守运行保护');
+  const refresh = async () => {
+    const response = { writeHead(status) { this.status = status; }, end(body) { this.body = JSON.parse(body); } };
+    await routes.find((route) => route.path === MODELS_PATH).handler({
+      method: 'POST', headers: { host: '127.0.0.1', 'content-type': 'application/json' }, socket: { remoteAddress: '127.0.0.1' },
+      async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify({ action: 'refresh' })); },
+    }, response);
+    assert.equal(response.status, 200);
+    return response.body;
+  };
+  assert.equal((await refresh()).sync.state, 'busy');
+  assert.equal(editor.edits.length, 0, '面板打开/刷新不能绕过保护');
+  agent.status = 'idle';
+  assert.equal((await refresh()).sync.state, 'deferred');
+  assert.equal((await refresh()).sync.state, 'updated');
+  assert.deepEqual(editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((m) => m.id), ['cn:alpha', 'global:beta']);
 });
 
 test('宿主没有 configEditor 时：只跳过模型同步并记日志，后端照常拉起', async (t) => {

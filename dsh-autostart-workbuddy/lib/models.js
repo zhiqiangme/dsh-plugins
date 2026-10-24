@@ -24,6 +24,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { isFile, resolveDshHome } from './services.js';
 import { applyModelRules, hasModelRules } from './model-rules.js';
+import { assertModelSyncIdle, modelSyncBlocked, ModelSyncBusyError } from './model-sync-guard.js';
 
 /** llm-pi-ai 的包名：按包名找 Loader 条目，profile 里的行 id 可能被用户改过。 */
 export const LLM_PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
@@ -137,13 +138,15 @@ function dropDualProviders(config, provider) {
  * 双区域合并到原 provider；带区域前缀的 id 经本插件转发，HUB 始终收到裸 id。
  * 旧区域 provider 只删除本插件创建的两项，其它 provider 和凭据不动。
  */
-async function syncHubDual({ spec, models, editor, credentials, env, dryRun, regionGuard }) {
+async function syncHubDual({ spec, models, editor, credentials, env, dryRun, regionGuard, syncBlocker }) {
   const target = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE });
   if (!target) return { state: 'skipped', reason: `DSH 里没有可编辑的 ${LLM_PI_AI_PACKAGE} 条目` };
   const baseURL = typeof models.hubProxyBaseURL === 'function' ? models.hubProxyBaseURL() : models.hubProxyBaseURL;
   if (!baseURL) return { state: 'skipped', reason: '宿主模型路由尚未就绪，请稍后重试' };
   const fetched = await fetchHubRegions({ models, credentials, env });
   if (!fetched.ok) return { state: 'failed', reason: fetched.reason };
+  const blocked = modelSyncBlocked(syncBlocker);
+  if (blocked) return blocked;
   const documentPath = editor.documentPath;
   const groups = fetched.regions.map((region) => ({ ...region, name: dualProviderName(models.provider, region.realm), entries: planModelEntries(region.models, models) }));
   if (groups.some((group) => group.models.length === 0)) return { state: 'skipped', reason: '某个区域返回空目录，保留现有列表', documentPath };
@@ -178,8 +181,12 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
   const planned = plan(target.options?.config ?? {});
   const changed = !isDeepStrictEqual(planned, target.options?.config);
   if (dryRun) return { state: changed ? 'dry-run' : 'unchanged', entries, realm: 'dual', documentPath };
-  try { if (changed) await editor.edit(target, plan); }
-  catch (error) { return { state: 'failed', reason: error.message, documentPath }; }
+  try {
+    if (changed) await editor.edit(target, (current) => {
+      assertModelSyncIdle(syncBlocker);
+      return plan(current);
+    });
+  } catch (error) { return { state: error instanceof ModelSyncBusyError ? 'busy' : 'failed', reason: error.message, documentPath }; }
   const credential = await ensureProxyCredential({ credentials, ref: providerKeyRef(planned, models.provider), apiKey: await resolveModelApiKey(models, env, credentials), managed: providerKeyRef(planned, models.provider) === GATEWAY_KEY_REFS[models.gateway] });
   return { state: changed ? 'updated' : 'unchanged', entries, credential, realm: 'dual', documentPath };
 }
@@ -660,6 +667,7 @@ export function readPluginModelsConfig(text, entryId = 'dsh-autostart-workbuddy'
  * @param {{ missing?: Set<string> }} [options.removalGuard] 定时同步传入：移除模型需连续两轮确认（见 confirmRemovals）
  * @param {{ regions?: object }} [options.regionGuard] 双区域分组的移除确认；默认与 removalGuard 同一个对象。
  *   看板切出口那一轮跟随分组不做确认，但区域分组不受切换影响，仍要确认，所以分开传。
+ * @param {() => string | undefined} [options.syncBlocker] 自动同步调用方传入；在开始、拉目录后与持锁写入前检查
  */
 export async function syncModels(options) {
   const { models, editor } = options;
@@ -668,13 +676,15 @@ export async function syncModels(options) {
   if (typeof editor?.edit !== 'function') {
     return { state: 'skipped', reason: '宿主没有 configEditor 服务，无法写入模型列表' };
   }
+  const blocked = modelSyncBlocked(options.syncBlocker);
+  if (blocked) return blocked;
   if (!models.hubDual) return syncFollowProvider(options);
   return syncHubDual({ ...options, regionGuard: options.regionGuard ?? options.removalGuard });
 }
 
 /** 单区域跟随看板出口，并移除本插件旧版建的区域分组。 */
 async function syncFollowProvider(options) {
-  const { spec, models, editor, credentials, env = process.env, dryRun = false, removalGuard } = options;
+  const { spec, models, editor, credentials, env = process.env, dryRun = false, removalGuard, syncBlocker } = options;
   const documentPath = editor.documentPath;
 
   const target = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE });
@@ -688,6 +698,8 @@ async function syncFollowProvider(options) {
     timeoutMs: models.timeoutMs,
   });
   if (!fetched.ok) return { state: 'failed', reason: fetched.reason, documentPath };
+  const blocked = modelSyncBlocked(syncBlocker);
+  if (blocked) return blocked;
 
   // 上游故障时面板会返回空列表（还带负缓存），此时绝不能把已有配置清空。
   if (fetched.models.length === 0) {
@@ -740,13 +752,14 @@ async function syncFollowProvider(options) {
   let written = planned.config;
   try {
     await editor.edit(target, (current) => {
+      assertModelSyncIdle(syncBlocker);
       const next = singlePlan(current);
       created = next.created;
       written = next.config;
       return next.config;
     });
   } catch (error) {
-    return { state: 'failed', reason: error instanceof Error ? error.message : String(error), entries, documentPath };
+    return { state: error instanceof ModelSyncBusyError ? 'busy' : 'failed', reason: error instanceof Error ? error.message : String(error), entries, documentPath };
   }
   const credential = await ensureProxyCredential({
     credentials, ref: providerKeyRef(written, models.provider), apiKey, managed: providerKeyRef(written, models.provider) === GATEWAY_KEY_REFS[models.gateway],

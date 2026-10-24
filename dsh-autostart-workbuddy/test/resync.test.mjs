@@ -32,7 +32,7 @@ async function serve(t, backend) {
  * 已经过一次启动同步的 profile（与真实运行顺序一致：启动同步不带移除确认，之后才轮到定时同步）。
  * credentials 默认是空凭据库：启动同步会补一次 WORKBUDDY_WB2API_KEY。
  */
-async function setup(t, { probe = READY, credentials = createFakeCredentials() } = {}) {
+async function setup(t, { probe = READY, credentials = createFakeCredentials(), syncBlocker } = {}) {
   const backend = { models: [ALPHA, BETA], hits: 0 };
   const url = await serve(t, backend);
   const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true, apiKey: 'gw-key', baseURL: url } }, { PATH: '' });
@@ -40,10 +40,58 @@ async function setup(t, { probe = READY, credentials = createFakeCredentials() }
   assert.equal((await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} })).state, 'updated');
   backend.hits = 0;
   const logger = memoryLogger();
-  const resync = createModelResync({ resolved, logger, env: {}, probe, editor: () => editor, credentials: () => credentials });
+  const resync = createModelResync({ resolved, logger, env: {}, probe, syncBlocker, editor: () => editor, credentials: () => credentials });
   const ids = () => editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((model) => model.id);
   return { backend, resolved, editor, credentials, logger, resync, ids };
 }
+
+test('运行中的对话阻止反复刷新、增删和重排，空闲后才继续两轮移除确认', async (t) => {
+  let busy = true;
+  const { backend, editor, credentials, logger, resync, ids } = await setup(t, { syncBlocker: () => busy ? '对话正在运行' : undefined });
+  const edits = editor.edits.length;
+  const sets = credentials.sets.length;
+  backend.models = [BETA, { id: 'cn:gamma', name: 'Gamma' }];
+  for (let i = 0; i < 3; i++) assert.equal((await resync.tick()).state, 'busy');
+  assert.deepEqual(ids(), [ALPHA.id, BETA.id]);
+  assert.equal(backend.hits, 0);
+  assert.equal(editor.edits.length, edits);
+  assert.equal(credentials.sets.length, sets);
+  assert.equal(logger.lines.length, 1, '同一运行状态不重复刷日志');
+  assert.deepEqual([...resync.removalGuard.missing], [], '运行中的轮次不累计移除确认');
+
+  busy = false;
+  assert.equal((await resync.tick()).state, 'deferred');
+  assert.equal((await resync.tick()).state, 'updated');
+  assert.deepEqual(ids(), [BETA.id, 'cn:gamma']);
+});
+
+test('出口切换在对话运行中延后，空闲后出口检测仍会补同步', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let busy = false;
+  let realm = 'intl';
+  const calls = [];
+  const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true } }, {});
+  const resync = createModelResync({
+    resolved, logger: memoryLogger(), editor: () => undefined, credentials: () => undefined,
+    realmPollMs: 5, syncBlocker: () => busy ? '对话正在运行' : undefined,
+    probe: async () => ({ ok: true, servable: true, realm }),
+    sync: async () => { calls.push(realm); return { state: 'unchanged', realm }; },
+  });
+  t.after(() => resync.stop());
+  const poll = async () => { t.mock.timers.tick(5); for (let i = 0; i < 5; i++) await new Promise((done) => setImmediate(done)); };
+  resync.start();
+  await poll();
+  busy = true;
+  realm = 'cn';
+  await poll();
+  await poll();
+  assert.deepEqual(calls, []);
+  assert.equal(resync.status.realm, 'intl');
+  busy = false;
+  await poll();
+  assert.deepEqual(calls, ['cn']);
+  assert.equal(resync.status.realm, 'cn');
+});
 
 test('双区域定时同步不被看板当前出口的空账号池挡住', async () => {
   const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, hubDual: true } }, {});

@@ -192,7 +192,7 @@ window.__ModuleLoader__.load({
       save: '保存',
       saveSync: '保存并同步',
       syncEnabled: '同步到 DSH 模型列表',
-      syncHint: '开启后，打开或刷新此列表会同步到 DSH；后台默认每分钟自动同步。',
+      syncHint: '开启后，打开或刷新此列表会同步到 DSH；后台默认每分钟检查，有对话运行时延后到空闲后同步。',
       saving: '保存中…',
       count: '后端共 {total} 个模型，已勾选 {picked} 个',
       vision: '视觉',
@@ -337,7 +337,7 @@ window.__ModuleLoader__.load({
       save: 'Save',
       saveSync: 'Save and sync',
       syncEnabled: 'Sync to the DSH model list',
-      syncHint: 'When enabled, opening or refreshing this list syncs it to DSH; background sync runs every minute by default.',
+      syncHint: 'When enabled, opening or refreshing this list syncs it to DSH. Background checks run every minute; automatic sync waits until all conversations are idle.',
       saving: 'Saving…',
       count: '{total} models on the backend, {picked} selected',
       vision: 'vision',
@@ -1128,6 +1128,8 @@ window.__ModuleLoader__.load({
           setPhase('ready');
           if (['failed', 'skipped', 'not-ready'].includes(payload.sync?.state)) {
             setNotice({ kind: 'error', text: payload.sync.reason ?? payload.sync.state });
+          } else if (payload.sync?.state === 'busy') {
+            setNotice({ kind: 'ok', text: payload.sync.reason });
           }
         } catch (error) {
           setMeta({});
