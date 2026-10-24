@@ -31,6 +31,34 @@ test('保存手工清单不拉 Magpie 目录，重建实例后仍保留', async 
   assert.equal(result.providerNames.workbuddy, 'WorkBuddy');
 });
 
+test('清空程序路径后普通保存和全量同步均恢复默认目录，保留其它配置', async (t) => {
+  for (const action of ['save', 'sync-catalog']) await t.test(action, async () => {
+    const magpiePath = join(process.cwd(), 'previous-magpie.exe');
+    const defaultPath = join(process.cwd(), 'fixture-default', 'magpie.exe');
+    const host = fakeHost({ magpiePath, models: [{ id: 'manual-model' }], extraSetting: 'keep' });
+    const backend = { describe: async (path) => ({ path: path || defaultPath }), settings: () => ({ available: false }) };
+    const fetchImpl = async (url) => ({ ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie' } : { data: [{ id: 'catalog-model' }] } });
+    const options = { env: {}, backend, fetchImpl };
+    const manager = new ModelManager(host.ctx, host.own.options.config, options);
+    const initial = await manager.describe();
+    const result = await manager.handle({ action, revision: initial.revision, config: { ...initial.config, magpiePath: '' } });
+    assert.equal(result.saved, true);
+    assert.equal(result.sync.ok, true);
+    assert.equal(Object.hasOwn(host.own.options.config, 'magpiePath'), false);
+    assert.equal(result.config.magpiePath, undefined);
+    assert.equal(result.backend.path, defaultPath);
+    assert.equal(host.own.options.config.extraSetting, 'keep');
+    assert.equal(result.config.models[0].id, action === 'save' ? 'manual-model' : 'catalog-model');
+    const reopened = new ModelManager(host.ctx, host.own.options.config, options);
+    const reloaded = await reopened.describe();
+    assert.equal(reloaded.backend.path, defaultPath);
+    assert.equal(reloaded.revision, result.revision);
+    const patched = await reopened.handle({ action: 'patch', revision: reloaded.revision, patch: { closeOnExit: true } });
+    assert.equal(patched.backend.path, defaultPath, '后续即时设置不能带回旧路径');
+    assert.equal(Object.hasOwn(host.own.options.config, 'magpiePath'), false);
+  });
+});
+
 test('两个页面保存时拒绝过期版本，保留新清单和凭据', async () => {
   const host = setup();
   const initial = await host.manager.describe();

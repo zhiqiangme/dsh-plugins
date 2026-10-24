@@ -154,7 +154,10 @@ export class ModelManager {
       // 在宿主锁内核对版本，旧页面不能覆盖其它页面刚保存的模型清单。
       await this.editor.edit(entry, (raw) => {
         this.assertRevision(body.revision, resolveConfig(raw));
-        return { ...object(raw), ...config };
+        const next = { ...object(raw), ...config };
+        // 空路径在规范化配置中会被省略，合并时必须主动清除旧的自定义路径。
+        if (!config.magpiePath) delete next.magpiePath;
+        return next;
       });
       this.config = config;
       if (key) {
