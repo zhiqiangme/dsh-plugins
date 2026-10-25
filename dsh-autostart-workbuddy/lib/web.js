@@ -44,6 +44,7 @@ import {
   LLM_PI_AI_PACKAGE,
   findConfigEntry,
   modelDisplayName,
+  missingSelectedModels,
   panelApiKey,
   scopedSelection,
   selectionKey,
@@ -250,6 +251,12 @@ export async function describeModels({ spec, models, editor, env = process.env, 
     vision: model.supports_images === true,
     selected: selected.has(model.id),
   }));
+  const previous = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config?.providers?.[models.provider]?.models ?? [];
+  const names = new Map(previous.map((entry) => [selectionKey({ id: entry.id, realm: fetched.realm }), entry.name]));
+  // 缺席项仍可取消勾选；不伪造倍率、视觉或上下文能力，也不把它算成后端提供的模型。
+  for (const id of missingSelectedModels(fetched.models, only, models.hubDual ? undefined : fetched.realm)) {
+    rows.push({ id, label: names.get(id) || id, price: null, selected: true, unavailable: true });
+  }
 
   return {
     ok: true,

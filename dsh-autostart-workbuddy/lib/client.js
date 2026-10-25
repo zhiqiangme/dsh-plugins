@@ -195,6 +195,8 @@ window.__ModuleLoader__.load({
       syncHint: '开启后，打开或刷新此列表会同步到 DSH；后台默认每分钟检查，有对话运行时延后到空闲后同步。',
       saving: '保存中…',
       count: '后端共 {total} 个模型，已勾选 {picked} 个',
+      modelUnavailable: '目录暂缺',
+      missingSelected: '后端目录暂未列出部分已选模型。勾选记录仍保留；若这些模型已在 DSH 中，将暂缓更新清单。你可以取消勾选后保存，也可以等待目录恢复。',
       vision: '视觉',
       emptyBackend: '后端没有返回任何模型。',
       emptyHint: '一个都没勾 = 同步后端全部模型（白名单留空的既有语义）。',
@@ -340,6 +342,8 @@ window.__ModuleLoader__.load({
       syncHint: 'When enabled, opening or refreshing this list syncs it to DSH. Background checks run every minute; automatic sync waits until all conversations are idle.',
       saving: 'Saving…',
       count: '{total} models on the backend, {picked} selected',
+      modelUnavailable: 'Missing from catalog',
+      missingSelected: 'Some selected models are missing from the backend catalog. Selections are kept; if these models are already in DSH, updating the list is deferred. Uncheck and save to remove them, or wait for the catalog to recover.',
       vision: 'vision',
       emptyBackend: 'The backend returned no models.',
       emptyHint: 'Selecting nothing means “sync every backend model” (the existing meaning of an empty allow-list).',
@@ -517,8 +521,8 @@ window.__ModuleLoader__.load({
       const max = options.maxCredits === '' || options.maxCredits == null ? null : Number(options.maxCredits);
       const list = sortRows(rows).filter((row) => (!query || `${row.label} ${row.id}`.toLowerCase().includes(query)) &&
         (!options.region || options.region === 'all' || row.id.startsWith(`${options.region}:`)) &&
-        (!options.freeOnly || price(row) === 0) && (!options.visionOnly || row.vision) &&
-        (max === null || (price(row) !== null && Number.isFinite(price(row)) && price(row) <= max)));
+        (row.unavailable || ((!options.freeOnly || price(row) === 0) && (!options.visionOnly || row.vision) &&
+        (max === null || (price(row) !== null && Number.isFinite(price(row)) && price(row) <= max)))));
       if (options.sort === 'name') list.sort((a, b) => a.label.localeCompare(b.label));
       if (options.sort === 'credits') list.sort((a, b) => (price(a) ?? Infinity) - (price(b) ?? Infinity));
       return list;
@@ -1128,7 +1132,7 @@ window.__ModuleLoader__.load({
           setPhase('ready');
           if (['failed', 'skipped', 'not-ready'].includes(payload.sync?.state)) {
             setNotice({ kind: 'error', text: payload.sync.reason ?? payload.sync.state });
-          } else if (payload.sync?.state === 'busy') {
+          } else if (['busy', 'deferred'].includes(payload.sync?.state)) {
             setNotice({ kind: 'ok', text: payload.sync.reason });
           }
         } catch (error) {
@@ -1467,11 +1471,14 @@ window.__ModuleLoader__.load({
           ...[['freeOnly', 'ruleFree'], ['visionOnly', 'ruleVision']].map(([key, label]) => h('label', { key }, h('input', { type: 'checkbox', checked: meta.rules?.[key] === true, disabled: Boolean(saving || backendBusy), onChange: (e) => setRule(key, e.target.checked) }), t(label))),
           h('input', { type: 'number', min: 0, step: 'any', placeholder: t('ruleMax'), 'aria-label': t('ruleMax'), value: meta.rules?.maxCredits ?? '', disabled: Boolean(saving || backendBusy), onChange: (e) => setRule('maxCredits', e.target.value === '' ? null : Number(e.target.value)) })));
         body.push(h('p', { key: 'ruleHint', className: 'dsm-wb-hint' }, t('ruleHint')));
+        if (rows.some((row) => row.unavailable && picked.has(row.id))) {
+          body.push(h('p', { key: 'missingSelected', className: 'dsm-wb-hint', role: 'status' }, t('missingSelected')));
+        }
         body.push(
           h(
             'div',
             { key: 'toolbar', className: 'dsm-wb-toolbar' },
-            h('span', { className: 'dsm-wb-count' }, t('count', { total: sorted.length, picked: sorted.filter((row) => picked.has(row.id)).length })),
+            h('span', { className: 'dsm-wb-count' }, t('count', { total: sorted.filter((row) => !row.unavailable).length, picked: sorted.filter((row) => picked.has(row.id)).length })),
             h(
               'button',
               {
@@ -1538,7 +1545,7 @@ window.__ModuleLoader__.load({
                     formatTokens(row.contextWindow)
                       ? h('span', { className: 'dsm-wb-tag' }, formatTokens(row.contextWindow))
                       : null,
-                    h(
+                    row.unavailable ? h('span', { className: 'dsm-wb-tag' }, t('modelUnavailable')) : h(
                       'span',
                       { className: `dsm-wb-credits${row.credits === 'Free' ? ' dsm-wb-credits-free' : ''}` },
                       `x${row.credits}`,

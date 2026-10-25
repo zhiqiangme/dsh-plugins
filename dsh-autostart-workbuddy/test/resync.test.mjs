@@ -159,15 +159,15 @@ test('上游抖动：缺席一轮又回来的模型不会被删，确认状态�
   assert.equal(editor.edits.length, edits);
 });
 
-test('CN 模型因网络故障移除后，恢复的下一轮自动补回且不改变白名单', async (t) => {
+test('已选 CN 模型持续缺席也不移除，恢复后更新元数据且不改变白名单', async (t) => {
   const { backend, resolved, editor, resync, ids } = await setup(t);
   resolved.models.only = [ALPHA.id, BETA.id];
   backend.models = [BETA];
   assert.equal((await resync.tick()).state, 'deferred');
-  assert.equal((await resync.tick()).state, 'updated');
-  assert.deepEqual(ids(), [BETA.id]);
+  assert.equal((await resync.tick()).state, 'deferred');
+  assert.deepEqual(ids(), [ALPHA.id, BETA.id]);
 
-  backend.models = [ALPHA, BETA];
+  backend.models = [{ ...ALPHA, name: 'Alpha recovered' }, BETA];
   assert.equal((await resync.tick()).state, 'updated');
   assert.deepEqual(ids(), [ALPHA.id, BETA.id]);
   assert.deepEqual(resolved.models.only, [ALPHA.id, BETA.id]);
@@ -400,7 +400,7 @@ test('hub 切出口：下一轮立即按新出口的那组勾选重写 DSH，不
 
   // 同一出口里的上游抖动照旧要两轮确认。
   hub.models.cn = [{ id: 'flash', name: 'Flash', credits: 'x0.11' }];
-  assert.equal((await resync.tick()).state, 'skipped', 'minimax 暂时不在：白名单里 cn 只有它，过滤后为空则不写');
+  assert.equal((await resync.tick()).state, 'deferred', '已选 minimax 暂时不在：保留现有清单');
   hub.realm = 'intl';
   assert.equal((await resync.tick()).state, 'updated');
   assert.deepEqual(listed(), ['flash|Flash GL Free', 'gpt-5.5|GPT-5.5 GL 1'], '切回来恢复 GL 那一组');

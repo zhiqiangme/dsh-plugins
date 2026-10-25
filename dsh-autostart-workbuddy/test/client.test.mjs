@@ -204,6 +204,33 @@ test('模型筛选按搜索、区域、免费、视觉与倍率组合，保留�
   assert.deepEqual(module.filterRows(rows, { sort: 'credits' }).map((x) => x.id), ['global:beta', 'cn:alpha', 'cn:unknown']);
 });
 
+test('目录缺席项可见且能取消，不伪报倍率或后端模型数量', async () => {
+  const missing = { id: 'cn:kimi-k3.1-pro', label: 'Kimi K3.1 Pro CN 0.97', selected: true, unavailable: true, price: null };
+  const only = ['cn:alpha', missing.id];
+  const states = ['ready', [...ROWS, missing], { enabled: true, savedEnabled: true, only }, '', new Set(only), new Set(only), false, undefined];
+  const requests = [];
+  const app = boot(states, { fetchImpl: async (_path, options) => {
+    if (options.body) requests.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ ok: true, enabled: true, only: ['cn:alpha'], models: ROWS, sync: { state: 'updated', count: 1 } }) };
+  } });
+  let tree = app.renderCard();
+  const text = collectText(tree).join('\n');
+  assert.match(text, /目录暂缺/);
+  assert.match(text, /后端共 2 个模型，已勾选 2 个/);
+  assert.match(text, /若这些模型已在 DSH 中，将暂缓更新清单/);
+  assert.doesNotMatch(text, /xundefined|xnull/);
+  const row = collectByType(tree, 'label').find((node) => node.props.title === missing.id);
+  collectByType(row, 'input')[0].props.onChange();
+  tree = app.renderCard();
+  assert.doesNotMatch(collectText(tree).join('\n'), /若这些模型已在 DSH 中，将暂缓更新清单/);
+  await button(collectByType(tree, 'button'), '保存并同步').props.onClick();
+  assert.deepEqual(requests[0].only, ['cn:alpha']);
+
+  assert.deepEqual(app.module.filterRows([missing], { freeOnly: true, visionOnly: true, maxCredits: 0 }).map((row) => row.id), [missing.id], '缺席不是符合规则，但必须仍能取消');
+  assert.deepEqual(app.module.filterRows([missing], { region: 'global' }), []);
+  assert.deepEqual(app.module.filterRows([missing], { query: 'other' }), []);
+});
+
 test('实时刷新保留跨区域勾选草稿、取消项与未保存的开关和规则', () => {
   const { module } = boot();
   const next = module.mergeLiveSnapshot({
@@ -250,6 +277,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
+    'modelUnavailable', 'missingSelected',
     'emptyFiltered', 'recoveryOff', 'recoveryExternal',
     'accountOverview', 'balanceOverview', 'balanceUnknown', 'balanceUnsupported', 'balanceUnavailable', 'balanceHint', 'balanceUpdated',
     'hubFollowKey',

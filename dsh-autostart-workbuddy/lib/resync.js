@@ -5,7 +5,7 @@
  * 但 DSH 不重启时 profile 里仍留着旧条目，用户选中它的请求都会失败。这里按低频间隔复用 syncModels，
  * 沿用它的保护：空列表不清空、白名单里已不存在的 id 直接滤掉、只在有变化时写；另外：
  *   - 后端健康探针（wb2api 的 `/healthz` / hub 的 `/health`）不通，或账号池暂无可用账号（此时目录不可信）时整轮跳过；
- *   - 移除模型要连续两轮确认（removalGuard），避免一次上游抖动把模型删掉又加回来。
+ *   - 已选且已有的模型缺席时保留清单；其余移除需两轮确认，HUB 的同批缓存或降级目录不累计确认。
  *   - 任一对话正在运行时延后整轮同步，空闲后的下一轮再拉取最新目录。
  *
  * 网关密钥：syncModels 每轮会调 ensureProxyCredential，它只读凭据库，值已在（且不是占位值）就不写，
@@ -107,6 +107,7 @@ export function createModelResync(options) {
     if (realmSwitched) {
       // 上个出口的缺席记录对新出口没有意义，清掉，免得之后切回来时被误当成"已确认过一轮"。
       removalGuard.missing = new Set();
+      removalGuard.catalogAt = undefined;
       logger.info(`[${name}] hub 出口从 ${syncedRealm} 切到 ${health.realm}，按新出口同步模型列表`);
     }
     const result = await sync({

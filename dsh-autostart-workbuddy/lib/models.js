@@ -150,6 +150,17 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
   const documentPath = editor.documentPath;
   const groups = fetched.regions.map((region) => ({ ...region, name: dualProviderName(models.provider, region.realm), entries: planModelEntries(region.models, models) }));
   if (groups.some((group) => group.models.length === 0)) return { state: 'skipped', reason: '某个区域返回空目录，保留现有列表', documentPath };
+  const previousIds = (config, group) => {
+    const prefix = REALM_KEY_PREFIXES[group.realm];
+    const ids = providerModelIds(config, models.provider).filter((id) => id.startsWith(prefix)).map((id) => id.slice(prefix.length));
+    if (ownsDualProvider(config?.providers?.[group.name], group.realm)) ids.push(...providerModelIds(config, group.name));
+    return [...new Set(ids)];
+  };
+  const verifySelection = (config) => {
+    for (const group of groups) assertSelectedModelsPresent(previousIds(config, group), group.models, models, group.realm);
+  };
+  try { verifySelection(target.options?.config); }
+  catch (error) { if (error instanceof IncompleteModelCatalogError) return catalogDeferred(error, 'dual', documentPath); throw error; }
   for (const group of groups) {
     if (!group.entries.length && (!hasModelRules(models.rules) || !selectModels(group.models, models.only).length)) return { state: 'skipped', reason: '某个区域按白名单过滤后为空，保留现有列表', documentPath };
   }
@@ -160,16 +171,14 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     let deferred = false;
     for (const group of groups) {
       const guard = regionGuard.regions[group.realm] ??= { missing: new Set() };
-      const prefix = group.realm === 'cn' ? 'cn:' : 'global:';
-      const previous = providerModelIds(target.options?.config, models.provider).filter((id) => id.startsWith(prefix)).map((id) => id.slice(prefix.length));
-      previous.push(...providerModelIds(target.options?.config, group.name));
-      if (!confirmRemovals(guard, [...new Set(previous)], group.entries.map((entry) => entry.id)).ok) deferred = true;
+      if (!confirmRemovals(guard, previousIds(target.options?.config, group), group.entries.map((entry) => entry.id), group.catalog).ok) deferred = true;
     }
-    if (deferred) return { state: 'deferred', reason: '区域目录中的模型需连续两轮缺席后移除', realm: 'dual', documentPath };
+    if (deferred) return { state: 'deferred', reason: '区域目录缺项，等待新的可靠目录再次确认后再移除', realm: 'dual', documentPath };
   }
   const entries = groups.flatMap((group) => group.entries.map((entry) => ({ ...entry, id: selectionKey({ id: entry.id, realm: group.realm }) })));
   const plan = (current) => {
     const config = plainObject(current);
+    verifySelection(config);
     const conflicted = dualProviderConflict(config, models.provider);
     if (conflicted) throw new Error(`provider ${conflicted} 已被占用`);
     const sharedRef = proxyCredentialRef(models);
@@ -186,7 +195,10 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
       assertModelSyncIdle(syncBlocker);
       return plan(current);
     });
-  } catch (error) { return { state: error instanceof ModelSyncBusyError ? 'busy' : 'failed', reason: error.message, documentPath }; }
+  } catch (error) {
+    if (error instanceof IncompleteModelCatalogError) return catalogDeferred(error, 'dual', documentPath);
+    return { state: error instanceof ModelSyncBusyError ? 'busy' : 'failed', reason: error.message, documentPath };
+  }
   const credential = await ensureProxyCredential({ credentials, ref: providerKeyRef(planned, models.provider), apiKey: await resolveModelApiKey(models, env, credentials), managed: providerKeyRef(planned, models.provider) === GATEWAY_KEY_REFS[models.gateway] });
   return { state: changed ? 'updated' : 'unchanged', entries, credential, realm: 'dual', documentPath };
 }
@@ -293,6 +305,40 @@ export function scopedSelection(only = [], gateway) {
     }
   }
   return out;
+}
+
+/** 只报告当前出口的显式勾选；空白名单和另一区域的勾选不表示本轮目录缺项。 */
+export function missingSelectedModels(catalog, only = [], realm, exclude = []) {
+  const present = new Set(catalog.flatMap((model) => [model.id, selectionKey(model)]));
+  const prefix = REALM_KEY_PREFIXES[realm];
+  const excluded = new Set(exclude);
+  return [...new Set(only)].filter((id) => {
+    const region = regionPrefixOf(id);
+    const bare = region ? id.slice(region.length) : id;
+    return (!prefix || !region || region === prefix) && !present.has(id) &&
+      !excluded.has(id) && !(prefix && excluded.has(bare));
+  });
+}
+
+class IncompleteModelCatalogError extends Error {
+  constructor(missing) {
+    super(`后端目录暂缺已选模型 ${missing.join(', ')}，保留现有列表；如需移除，请取消勾选后保存`);
+    this.missing = missing;
+  }
+}
+
+/**
+ * HUB 的备用 UA 也会返回 HTTP 200 的缩水目录，甚至连续多批都缺同一个新模型。
+ * 已明确选择并成功同步过的模型不能据此判定下架；只保护已有条目，不凭空生成模型元数据。
+ */
+function assertSelectedModelsPresent(currentIds, catalog, models, realm) {
+  const current = new Set(currentIds.flatMap((id) => [id, selectionKey({ id, realm })]));
+  const missing = missingSelectedModels(catalog, models.only, realm, models.exclude).filter((id) => current.has(id));
+  if (missing.length) throw new IncompleteModelCatalogError(missing);
+}
+
+function catalogDeferred(error, realm, documentPath) {
+  return { state: 'deferred', reason: error.message, missing: error.missing, realm, documentPath };
 }
 
 /** 展示名：`<上游名> <CN|GL> <倍率>`；上游名已带同款后缀时不重复追加。 */
@@ -428,14 +474,30 @@ export function providerModelIds(config, providerName) {
  *
  * 面板的模型列表来自上游，上游抖动或某个域（cn / global）临时拉取失败时 `/v1/models`
  * 可能短暂少一批模型；只看一次就删，会把用户正在用的模型从 DSH 里抹掉，下一轮再加回来。
- * 连续两轮缺席才算真的下架。guard 是调用方持有的可变状态（{ missing: Set }），每轮按本轮结果覆盖。
+ * 显式选择的已有模型由 assertSelectedModelsPresent 另外保护。跟随全部时要求两轮缺席；
+ * HUB 提供来源后，只接受两个不同时间戳的远程目录，缓存和降级结果不能确认下架。
+ * guard 由调用方持有，保存缺席集合与最近的目录时间戳。
  *
  * @returns {{ ok: boolean, missing: string[] }} ok=false 表示本轮应推迟写入
  */
-export function confirmRemovals(guard, currentIds, nextIds) {
+export function confirmRemovals(guard, currentIds, nextIds, catalog) {
   const next = new Set(nextIds);
   const missing = currentIds.filter((id) => !next.has(id));
   const previous = guard.missing instanceof Set ? guard.missing : new Set();
+  // HUB 的目录缓存为 300s；每分钟重读同一 fetched_at 不是一次新的下架证据。
+  // 文件缓存、内置表等降级来源也不能确认移除，更不能替上一批远程结果背书。
+  if (catalog) {
+    if (catalog.source !== 'remote' || !(catalog.fetched_at > 0)) {
+      guard.missing = new Set();
+      guard.catalogAt = undefined;
+      return { ok: missing.length === 0, missing };
+    }
+    if (guard.catalogAt !== undefined && catalog.fetched_at <= guard.catalogAt) {
+      guard.missing = new Set(missing.filter((id) => previous.has(id)));
+      return { ok: missing.length === 0, missing };
+    }
+    guard.catalogAt = catalog.fetched_at;
+  }
   guard.missing = new Set(missing);
   return { ok: missing.every((id) => previous.has(id)), missing };
 }
@@ -520,7 +582,12 @@ export async function fetchModels(options = {}) {
     .filter((model) => model && typeof model.id === 'string' && model.id.trim())
     // 条目自己带了 realm 就不覆盖；只给 hub 这种"出口写在顶层"的应答补上。
     .map((model) => (realm && model.realm === undefined ? { ...model, realm } : model));
-  return { ok: true, url, models, realm };
+  // 只透传同步确认所需的来源字段，不把任意后端元数据带到配置或面板。
+  const catalog = payload?.catalog && typeof payload.catalog === 'object' ? {
+    source: typeof payload.catalog.source === 'string' ? payload.catalog.source : undefined,
+    fetched_at: Number.isFinite(payload.catalog.fetched_at) ? payload.catalog.fetched_at : undefined,
+  } : undefined;
+  return { ok: true, url, models, realm, ...(catalog ? { catalog } : {}) };
 }
 
 /** profile 的 cordis.patch.yml：优先显式配置，其次 DSH_PROFILE_DIR，最后 DSH_HOME/DSH_PROFILE 拼出来。 */
@@ -708,6 +775,9 @@ async function syncFollowProvider(options) {
 
   // hub 的当前出口（应答顶层的 realm）；wb2api 没有这一项。定时同步靠它认出"出口切换了"。
   const realm = fetched.realm;
+  const verifySelection = (config) => assertSelectedModelsPresent(providerModelIds(config, models.provider), fetched.models, models, realm);
+  try { verifySelection(target.options?.config); }
+  catch (error) { if (error instanceof IncompleteModelCatalogError) return catalogDeferred(error, realm, documentPath); throw error; }
   const entries = planModelEntries(fetched.models, models);
   if (entries.length === 0 && (!hasModelRules(models.rules) || !selectModels(fetched.models, models.only).length)) {
     return { state: 'skipped', reason: '按 only/exclude 过滤后没有可写的模型', realm, documentPath };
@@ -715,14 +785,15 @@ async function syncFollowProvider(options) {
 
   // 推迟时连密钥也不碰：本轮什么都不写，下一轮确认后照常补。
   if (removalGuard) {
-    const removal = confirmRemovals(removalGuard, providerModelIds(target.options?.config, models.provider), entries.map((entry) => entry.id));
+    const removal = confirmRemovals(removalGuard, providerModelIds(target.options?.config, models.provider), entries.map((entry) => entry.id), fetched.catalog);
     if (!removal.ok) {
-      return { state: 'deferred', reason: `后端暂未提供 ${removal.missing.join(', ')}，下一轮仍缺席再移除`, missing: removal.missing, entries, realm, documentPath };
+      return { state: 'deferred', reason: `后端暂未提供 ${removal.missing.join(', ')}，等待新的可靠目录再次确认后再移除`, missing: removal.missing, entries, realm, documentPath };
     }
   }
 
   const skeleton = providerSkeleton(models, spec);
   const singlePlan = (config) => {
+    verifySelection(config);
     const planned = withProviderModels(config, models.provider, entries, skeleton);
     let cleaned = dropDualProviders(planned.config, models.provider);
     // 地址和凭据必须与刚验证过的后端一致；401 时旧代码跳过整个计划，残留 HUB 地址又会引发 405。
@@ -759,6 +830,7 @@ async function syncFollowProvider(options) {
       return next.config;
     });
   } catch (error) {
+    if (error instanceof IncompleteModelCatalogError) return catalogDeferred(error, realm, documentPath);
     return { state: error instanceof ModelSyncBusyError ? 'busy' : 'failed', reason: error instanceof Error ? error.message : String(error), entries, documentPath };
   }
   const credential = await ensureProxyCredential({

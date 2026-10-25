@@ -204,6 +204,9 @@ for (const enabled of [true, false]) {
     upstream = [beta];
     await resync.tick();
     await resync.tick();
+    assert.deepEqual(ids(), only, '缺席的已选模型仍保留');
+    // 模拟升级前已被旧版本删掉的条目，验证目录恢复后仍能补回。
+    editor.entry('llm-pi-ai').options.config.providers.workbuddy.models = editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.filter((model) => model.id === beta.id);
     assert.deepEqual(ids(), [beta.id]);
     const edits = editor.edits.length;
     const keyWrites = credentials.sets.length;
