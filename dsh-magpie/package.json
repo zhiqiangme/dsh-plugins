@@ -1,6 +1,6 @@
 {
   "name": "@zhiqiangme/dsh-magpie",
-  "version": "26.10.23",
+  "version": "26.10.25",
   "description": "在 DSH 中管理 Magpie 模型列表，支持编辑排序、全量同步，以及 Magpie 程序下载升级。",
   "keywords": ["dsh", "dsh-plugin", "magpie"],
   "author": "zhiqiangme",
