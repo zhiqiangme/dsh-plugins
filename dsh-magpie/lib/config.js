@@ -15,7 +15,7 @@ export const REASONING_LEVELS = Object.freeze(['off', 'minimal', 'low', 'medium'
 // 侧边栏入口：auto 只在清单还没有模型时显示，引导首次配置；always / never 固定显示或隐藏。
 export const SIDEBAR_MODES = Object.freeze(['auto', 'always', 'never']);
 // 卡片上的开关和下拉改完即保存；连接设置与模型清单仍走「保存并同步」。
-export const INSTANT_FIELDS = Object.freeze(['autoStart', 'closeOnExit', 'autoLightweight', 'sidebarEntry', 'syncEnabled']);
+export const INSTANT_FIELDS = Object.freeze(['autoStart', 'autoUpdate', 'closeOnExit', 'autoLightweight', 'sidebarEntry', 'syncEnabled']);
 export const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 
 export function gatewayURL(value = DEFAULT_URL) {
@@ -79,6 +79,7 @@ export function resolveConfig(raw = {}) {
   if (value.syncEnabled !== undefined && typeof value.syncEnabled !== 'boolean') throw new Error('同步开关必须是布尔值');
   if (value.closeOnExit !== undefined && typeof value.closeOnExit !== 'boolean') throw new Error('退出时关闭 Magpie 开关必须是布尔值');
   if (value.autoStart !== undefined && typeof value.autoStart !== 'boolean') throw new Error('启动时打开 Magpie 开关必须是布尔值');
+  if (value.autoUpdate !== undefined && typeof value.autoUpdate !== 'boolean') throw new Error('自动更新 Magpie 开关必须是布尔值');
   if (value.autoLightweight !== undefined && typeof value.autoLightweight !== 'boolean') throw new Error('自动开启轻量模式开关必须是布尔值');
   if (value.manualOrder !== undefined && typeof value.manualOrder !== 'boolean') throw new Error('手动排序标记必须是布尔值');
   if (value.catalogOrder !== undefined && typeof value.catalogOrder !== 'boolean') throw new Error('目录顺序标记必须是布尔值');
@@ -88,7 +89,7 @@ export function resolveConfig(raw = {}) {
   if (new Set(models.map((x) => x.id)).size !== models.length) throw new Error('模型 ID 不能重复');
   const magpiePath = value.magpiePath === undefined || value.magpiePath === '' ? '' : text(value.magpiePath, 'Magpie 程序路径', 1024);
   if (magpiePath && (!isAbsolute(magpiePath) || !/\.exe$/i.test(magpiePath))) throw new Error('Magpie 程序路径必须是 exe 文件的绝对路径');
-  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled === true, closeOnExit: value.closeOnExit === true, autoStart: value.autoStart !== false, autoLightweight: value.autoLightweight !== false, manualOrder: value.manualOrder === true, catalogOrder: value.catalogOrder === true && value.manualOrder !== true, sidebarEntry: value.sidebarEntry ?? 'auto', models, ...(magpiePath ? { magpiePath } : {}) };
+  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled === true, closeOnExit: value.closeOnExit === true, autoStart: value.autoStart !== false, autoUpdate: value.autoUpdate !== false, autoLightweight: value.autoLightweight !== false, manualOrder: value.manualOrder === true, catalogOrder: value.catalogOrder === true && value.manualOrder !== true, sidebarEntry: value.sidebarEntry ?? 'auto', models, ...(magpiePath ? { magpiePath } : {}) };
 }
 
 export function revision(config) {

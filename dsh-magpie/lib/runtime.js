@@ -2,6 +2,7 @@ import { INSTANT_FIELDS, KEY_REF, LOCAL_KEY, PACKAGE_NAME, PLUGIN_ID, object, re
 import { credential, findEntry, catalogModels, requestGateway, syncModels } from './models.js';
 import { PROVIDER_NAMES, keepOrderIndexes, sortModelIndexes } from './names.js';
 import { MagpieBackend } from './backend.js';
+import { conversationBlock } from './auto-update.js';
 
 // 本机网关正常时几十毫秒内应答；状态检查会定时重复，超时设短免得卡片长时间显示“检查中”。
 const STATUS_TIMEOUT = 2_000;
@@ -25,6 +26,7 @@ export class ModelManager {
   }
   get editor() { return hostService(this.ctx, 'configEditor'); }
   get credentials() { return hostService(this.ctx, 'credentials'); }
+  conversationBlock() { return conversationBlock(hostService(this.ctx, 'agents')); }
   current() {
     const entry = findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID);
     return entry ? resolveConfig(entry.options.config) : this.config;
@@ -91,7 +93,7 @@ export class ModelManager {
       const path = body.magpiePath ?? this.current().magpiePath;
       const lightweight = this.current().autoLightweight;
       if (body.action === 'backend-check') await this.backend.check(path);
-      if (body.action === 'backend-install') this.backend.install(path, { lightweight });
+      if (body.action === 'backend-install') this.backend.install(path, { lightweight, guard: () => this.conversationBlock() });
       if (body.action === 'backend-open') await this.backend.open(path, { lightweight });
       return { ok: true, backend: await this.backend.describe(path), magpieSettings: this.backend.settings?.() };
     }

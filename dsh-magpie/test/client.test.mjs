@@ -90,6 +90,32 @@ test('开关和选项改完立即保存，只提交该项；未保存的连接�
   assert.deepEqual([calls[5].config.closeOnExit, calls[5].config.autoStart, calls[5].config.autoLightweight, calls[5].config.sidebarEntry, calls[5].config.syncEnabled], [true, false, false, 'always', true]);
 });
 
+test('自动更新开关在更新页即时保存，等待期间也能关闭，保留未保存草稿', async () => {
+  const host = fakeHost({ models: [{ id: 'saved-model' }] });
+  const operation = { id: 'auto', phase: 'waiting-idle', running: true, received: 12, total: 12 };
+  const backend = { describe: async () => ({ supported: true, installed: true, operation }), settings: () => ({ available: false }) };
+  const manager = new ModelManager(host.ctx, {}, { env: {}, backend });
+  const client = clientHarness(await manager.describe(), async (_url, options) => response(await manager.handle(JSON.parse(options.body))));
+  client.tab('连接');
+  field(client.render(), 'Magpie 网关地址').props.onChange({ target: { value: 'http://127.0.0.1:4000' } });
+  client.tab('更新');
+  const toggle = () => control(client.render(), '自动更新 Magpie 程序');
+  assert.equal(toggle().props.checked, true);
+  assert.equal(toggle().props.disabled, false);
+  assert.match(JSON.stringify(client.render()), /等待所有对话空闲后升级/);
+  assert.equal(button(client.render(), '检查更新').props.disabled, true);
+  await toggle().props.onChange({ target: { checked: false } });
+  assert.equal(host.own.options.config.autoUpdate, false);
+  assert.equal(client.states[0].config.baseURL, 'http://127.0.0.1:4000');
+  assert.equal(client.states[1], true);
+  assert.deepEqual(host.own.options.config.models.map((m) => m.id), ['saved-model']);
+  assert.equal(toggle().props.checked, false);
+  for (const [phase, message] of [['waiting-status', '无法确认对话状态'], ['cooling-down', '发布未满 30 分钟'], ['invalid-release-date', '无法确认版本发布时间'], ['cancelled', '自动升级已取消']]) {
+    Object.assign(operation, { phase, eligibleAt: Date.parse('2026-10-25T00:30:00Z') });
+    assert.ok(JSON.stringify(client.render()).includes(message));
+  }
+});
+
 test('旧页面切换即时开关后仍拒绝保存，保留草稿和其它页面的新清单', async (t) => {
   for (const dirty of [false, true]) await t.test(dirty ? '有未保存草稿' : '未编辑旧清单', async () => {
     const host = fakeHost({ models: [{ id: 'old-model' }] });

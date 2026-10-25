@@ -39,6 +39,10 @@ window.__ModuleLoader__.load({
       backendInstalled: 'Magpie {version} 已下载并打开。', backendUpdated: '已升级到 Magpie {version}，并在后台启动。', backendStarting: '正在启动 Magpie…', backendStopping: '正在退出运行中的 Magpie…',
       backendAlreadyRunning: 'Magpie {version} 已就绪，程序已在运行，未重复启动。', backendLaunchFailed: 'Magpie {version} 已就绪，但启动失败：{reason}。请从程序路径手动启动。',
       backendProgress: '已下载 {received} / {total} MiB', backendFailed: '操作失败：{reason}',
+      autoUpdate: '自动更新 Magpie 程序',
+      autoUpdateHint: '每 5 分钟检查，正式版发布满 30 分钟后下载校验；所有 DSH 对话空闲后升级并在托盘重启。仅更新已安装的本机程序。',
+      backendWaitingIdle: '下载校验完成，等待所有对话空闲后升级…', backendWaitingStatus: '下载校验完成，暂时无法确认对话状态，等待后重试…',
+      backendCooling: '新版本发布未满 30 分钟，将在 {time} 后自动下载。', backendInvalidDate: '无法确认版本发布时间，已跳过自动升级。', backendCancelled: '自动升级已取消，现有程序保持不变。',
       autoStart: '启动 DSH 时打开 Magpie',
       autoStartHint: '仅本机地址。没有 Magpie 在运行时在托盘启动，不弹出窗口。',
       autoLightweight: '自动开启轻量模式',
@@ -103,6 +107,10 @@ window.__ModuleLoader__.load({
       backendInstalled: 'Magpie {version} downloaded and opened.', backendUpdated: 'Updated to Magpie {version} and started it in the background.', backendStarting: 'Starting Magpie…', backendStopping: 'Quitting the running Magpie…',
       backendAlreadyRunning: 'Magpie {version} is ready and already running; not started again.', backendLaunchFailed: 'Magpie {version} is ready but could not start: {reason}. Launch it from the executable path.',
       backendProgress: 'Downloaded {received} / {total} MiB', backendFailed: 'Operation failed: {reason}',
+      autoUpdate: 'Automatically update Magpie',
+      autoUpdateHint: 'Checks every 5 minutes. Downloads and verifies stable releases after 30 minutes, then updates and restarts in the tray when all DSH conversations are idle. Existing local installations only.',
+      backendWaitingIdle: 'Download verified. Waiting for all conversations to become idle…', backendWaitingStatus: 'Download verified. Conversation status is unavailable; waiting to retry…',
+      backendCooling: 'Release is less than 30 minutes old. Automatic download is eligible after {time}.', backendInvalidDate: 'Release publication time is unavailable; automatic update skipped.', backendCancelled: 'Automatic update cancelled. Existing executable unchanged.',
       autoStart: 'Open Magpie when DSH starts',
       autoStartHint: 'Local addresses only. Starts it in the tray, without a window, when no Magpie is running.',
       autoLightweight: 'Turn on lightweight mode',
@@ -257,6 +265,7 @@ window.__ModuleLoader__.load({
       .dsm-mp .backend .bar{margin-top:12px}.dsm-mp .backend-path{overflow-wrap:anywhere}.dsm-mp .backend progress{display:block;width:100%;height:6px;margin-top:10px;accent-color:var(--mp-accent)}
       .dsm-mp .plugin-update p{margin-top:8px;overflow-wrap:anywhere}.dsm-mp .plugin-update-title{font-size:14px;font-weight:600;margin-right:auto}
       .dsm-mp .foot{position:sticky;bottom:0;z-index:1;padding:12px 20px;border-top:1px solid var(--mp-border);border-radius:0 0 12px 12px;background:var(--mp-bg)}
+      .dsm-mp .foot[data-docked]{position:fixed;bottom:0;z-index:10;border-radius:0;border-left:1px solid var(--mp-border);border-right:1px solid var(--mp-border)}
       .dsm-mp .foot .notice{margin:0 0 10px}.dsm-mp .foot .error:not(.notice){margin:0 0 10px}
       .dsm-mp .state{display:inline-flex;align-items:center;gap:8px;color:var(--mp-muted)}.dsm-mp .state::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--mp-ok)}
       .dsm-mp .state.dirty{color:var(--mp-fg);font-weight:500}.dsm-mp .state.dirty::before{background:var(--mp-warn)}
@@ -691,6 +700,37 @@ window.__ModuleLoader__.load({
       const [gateway, setGateway] = useState(null);
       const listRef = useRef(null);
       const positions = useRef(new Map());
+      const cardRef = useRef(null);
+      const footerSpaceRef = useRef(null);
+      // 宿主滚动区可能带底部留白；直接贴窗口底边，横向跟随卡片，原位留出实际高度。
+      useLayoutEffect(() => {
+        const card = cardRef.current, space = footerSpaceRef.current, footer = space?.firstElementChild;
+        if (!card || !footer) return;
+        let frame;
+        const align = () => {
+          const rect = card.getBoundingClientRect();
+          footer.dataset.docked = '';
+          footer.style.left = `${rect.left}px`;
+          footer.style.width = `${rect.width}px`;
+          footer.style.visibility = rect.width > 0 && rect.bottom > 0 && rect.top < window.innerHeight ? '' : 'hidden';
+          space.style.height = `${footer.getBoundingClientRect().height}px`;
+        };
+        const queue = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(align); };
+        const observer = new ResizeObserver(queue);
+        observer.observe(card);
+        observer.observe(footer);
+        window.addEventListener('resize', queue);
+        window.addEventListener('scroll', queue, true);
+        align();
+        return () => {
+          observer.disconnect(); cancelAnimationFrame(frame);
+          window.removeEventListener('resize', queue);
+          window.removeEventListener('scroll', queue, true);
+          delete footer.dataset.docked;
+          for (const key of ['left', 'width', 'visibility']) footer.style[key] = '';
+          space.style.height = '';
+        };
+      }, [Boolean(view)]);
       // 排序、增删、展开或筛选后，各行从原来的位置滑到新位置（FLIP）。
       // 位置用 offsetTop 加拖动让位的位移，不受页面滚动影响；拖动进行中由样式过渡负责，不在这里动画。
       useLayoutEffect(() => {
@@ -726,6 +766,21 @@ window.__ModuleLoader__.load({
         }, 1000);
         return () => { active = false; clearInterval(timer); };
       }, [operation?.id, operation?.running]);
+      // Discover background operations even if the card was already open when they started.
+      useEffect(() => {
+        if (operation?.running) return;
+        let active = true, fetching = false;
+        const timer = setInterval(async () => {
+          if (fetching) return;
+          fetching = true;
+          try {
+            const result = await request({ action: 'backend-status', magpiePath: view?.config?.magpiePath || '' });
+            if (active) setView((old) => old ? { ...old, backend: result.backend } : old);
+          } catch { /* Next poll retries; model drafts remain intact. */ }
+          finally { fetching = false; }
+        }, STATUS_POLL_MS);
+        return () => { active = false; clearInterval(timer); };
+      }, [operation?.running, view?.config?.magpiePath]);
       // 网关状态按已保存的地址检查；保存或程序操作结束后重新检查。
       useEffect(() => {
         let active = true;
@@ -759,6 +814,7 @@ window.__ModuleLoader__.load({
       const finished = (key) => operation.launchError ? t('backendLaunchFailed', { version: operation.version, reason: operation.launchError })
         : operation.alreadyRunning ? t('backendAlreadyRunning', { version: operation.version }) : t(key, { version: operation.version });
       const backendPhase = operation ? ({ checking: t('backendChecking'), stopping: t('backendStopping'), downloading: t('backendDownloading'), verifying: t('backendVerifying'), installing: t('backendInstalling'), starting: t('backendStarting'),
+        'waiting-idle': t('backendWaitingIdle'), 'waiting-status': t('backendWaitingStatus'), 'cooling-down': t('backendCooling', { time: new Date(operation.eligibleAt).toLocaleString() }), 'invalid-release-date': t('backendInvalidDate'), cancelled: t('backendCancelled'),
         installed: finished('backendInstalled'), updated: finished('backendUpdated'), 'up-to-date': t('backendUpToDate'), failed: t('backendFailed', { reason: operation.reason }) })[operation.phase] : '';
       // 开关和下拉立即保存，只采纳这几项与新的版本号；卡片里未保存的连接设置和模型草稿保留。
       const applyNow = (patch) => perform(async () => {
@@ -988,6 +1044,7 @@ window.__ModuleLoader__.load({
             (sidebarEntry) => applyNow({ sidebarEntry }), busy || !view.editable),
         ],
         updates: () => [
+          toggle(t('autoUpdate'), t('autoUpdateHint'), config.autoUpdate !== false, (autoUpdate) => applyNow({ autoUpdate }), busy || !view.editable),
           h('section', { className: 'block backend' },
             h('div', { className: 'bar spread' }, h('h4', null, t('backendTitle')),
               h('div', { className: 'bar' },
@@ -1015,15 +1072,15 @@ window.__ModuleLoader__.load({
         ],
       };
 
-      return h('section', { className: 'dsm-mp', 'aria-busy': busy },
+      return h('section', { className: 'dsm-mp', 'aria-busy': busy, ref: cardRef },
         header, tabs,
         h('div', { className: 'panel', role: 'tabpanel', id: 'dsm-mp-panel', 'aria-labelledby': `dsm-mp-tab-${tab}` }, ...panels[tab]()),
-        h('footer', { className: 'foot' },
+        h('div', { className: 'foot-space', ref: footerSpaceRef }, h('footer', { className: 'foot' },
           notice ? h('p', { className: `notice${notice.error ? ' error' : ''}`, role: notice.error ? 'alert' : 'status' }, notice.text) : null,
           !view.editable ? h('p', { className: 'error' }, t('readOnly')) : null,
           h('div', { className: 'bar spread' },
             h('span', { className: `state${dirty ? ' dirty' : ''}` }, t(dirty ? 'unsaved' : 'savedState')),
-            h('div', { className: 'bar' }, button(t(dirty ? 'discard' : 'reload'), reload), button(t(busy ? 'saving' : 'save'), save, { className: 'primary', disabled: busy || !view.editable })))),
+            h('div', { className: 'bar' }, button(t(dirty ? 'discard' : 'reload'), reload), button(t(busy ? 'saving' : 'save'), save, { className: 'primary', disabled: busy || !view.editable }))))),
       );
     }
 

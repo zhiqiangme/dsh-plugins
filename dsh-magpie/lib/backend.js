@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { compareVersions, downloadRelease, fetchRelease, formatError, sha256, versionOf } from './release.js';
 
 const exec = promisify(execFile);
@@ -81,8 +82,8 @@ export const KEEP_AWAKE_MODES = Object.freeze(['off', 'on', 'display']);
 
 /** 与 WB 一样把程序、备份和缓存放在 DSH home，绝不把 Magpie 的账号目录随程序搬走。 */
 export class MagpieBackend {
-  constructor({ env = process.env, platform = process.platform, arch = process.arch, fetchImpl = fetch, probe = probeVersion, isRunning = runningWindows, launch = launchDetached, stop = stopWindows, retryDelayMs } = {}) {
-    Object.assign(this, { env, platform, arch, fetchImpl, probe, isRunning, launch, stop, retryDelayMs });
+  constructor({ env = process.env, platform = process.platform, arch = process.arch, fetchImpl = fetch, probe = probeVersion, isRunning = runningWindows, launch = launchDetached, stop = stopWindows, retryDelayMs, idlePollMs = 5_000 } = {}) {
+    Object.assign(this, { env, platform, arch, fetchImpl, probe, isRunning, launch, stop, retryDelayMs, idlePollMs });
     this.paths = backendPaths(env); this.latest = null; this.operation = null; this.pending = null; this.disposed = false; this.versions = new Map();
   }
   get supported() { return this.platform === 'win32' && ['x64', 'arm64'].includes(this.arch); }
@@ -161,11 +162,11 @@ export class MagpieBackend {
     try { this.latest = await work; controller.signal.throwIfAborted(); return await this.describe(path); }
     finally { if (this.pending === work) this.pending = null; }
   }
-  install(value, { lightweight = false } = {}) {
+  install(value, options = {}) {
     this.assertReady(); const path = targetPath(value, this.paths);
     const controller = this.controller = new AbortController();
-    this.operation = { id: randomUUID(), path, phase: 'checking', running: true, received: 0, total: 0 };
-    const work = this.pending = Promise.resolve().then(() => this.apply(path, controller.signal, { lightweight }));
+    this.operation = { id: randomUUID(), path, phase: 'checking', running: true, automatic: options.automatic === true, received: 0, total: 0 };
+    const work = this.pending = Promise.resolve().then(() => this.apply(path, controller.signal, options));
     work.then((result) => { this.operation = { ...this.operation, ...result, phase: result.state, running: false }; }, (error) => { this.operation = { ...this.operation, phase: 'failed', running: false, reason: formatError(error) }; }).finally(() => { if (this.pending === work) this.pending = null; });
     return { ...this.operation };
   }
@@ -185,24 +186,48 @@ export class MagpieBackend {
     return () => rmSync(lock, { force: true });
   }
   /** 替换前退出运行中的目标程序；下载和校验期间不打断，尽量缩短网关不可用的时间。 */
-  async stopRunning(path) {
-    if (!isFile(path) || !await this.isRunning(path)) return false;
+  async stopRunning(path, signal, guard) {
+    // Query processes first, then recheck conversations immediately before issuing the stop.
+    // Keep the verified staged executable while busy, without repeated downloads/probes.
+    let running;
+    for (;;) {
+      signal?.throwIfAborted();
+      let blocked = guard?.();
+      if (!blocked) {
+        running = isFile(path) && await this.isRunning(path);
+        signal?.throwIfAborted();
+        blocked = guard?.();
+      }
+      if (blocked === 'cancelled') return null;
+      if (!blocked) break;
+      this.operation.phase = blocked;
+      await sleep(this.idlePollMs, undefined, { signal });
+    }
+    if (!running) return false;
     this.operation.phase = 'stopping';
     await this.stop(path);
     if (await this.isRunning(path)) throw new Error('未能退出正在运行的 Magpie，现有程序未更改；请手动退出 Magpie（包括托盘）后重试');
     return true;
   }
-  async apply(path, signal, { lightweight = false } = {}) {
+  async apply(path, signal, { lightweight = false, automatic = false, minimumAgeMs = 0, now = Date.now, guard } = {}) {
     signal.throwIfAborted();
     const unlock = this.acquireLock();
     let staged;
     try {
       const before = await this.local(path, signal);
+      if (automatic && !before.installed) return { state: 'cancelled' };
       if (before.installed && !before.version) throw new Error(before.reason || '现有文件未能验证为 Magpie，未覆盖');
       targetPath(path, this.paths);
       const initialHash = before.installed ? sha256(readFileSync(path)) : null;
       this.latest = await fetchRelease({ env: this.env, arch: this.arch, fetchImpl: this.fetchImpl, signal });
       if (before.version && compareVersions(before.version, this.latest.version) >= 0) return { state: 'up-to-date', version: before.version };
+      if (minimumAgeMs > 0) {
+        const published = typeof this.latest.publishedAt === 'string' ? Date.parse(this.latest.publishedAt) : NaN;
+        if (!Number.isFinite(published)) return { state: 'invalid-release-date' };
+        const eligibleAt = published + minimumAgeMs;
+        if (now() < eligibleAt) return { state: 'cooling-down', eligibleAt };
+      }
+      if (guard?.() === 'cancelled') return { state: 'cancelled' };
       this.operation.phase = 'downloading';
       const download = await downloadRelease(this.latest, { fetchImpl: this.fetchImpl, signal, partialDir: join(this.paths.cache, 'downloads'), retryDelayMs: this.retryDelayMs, onProgress: (received, total) => Object.assign(this.operation, { received, total }) });
       signal.throwIfAborted();
@@ -212,7 +237,8 @@ export class MagpieBackend {
       writeFileSync(staged, download.bytes, { flag: 'wx' });
       if (versionOf(await this.probe(staged, signal)) !== this.latest.version) throw new Error('下载程序版本与 Release 不符，现有程序未更改');
       signal.throwIfAborted();
-      const stopped = await this.stopRunning(path);
+      const stopped = await this.stopRunning(path, signal, before.installed ? guard : undefined);
+      if (stopped === null) return { state: 'cancelled' };
       try {
         signal.throwIfAborted();
         targetPath(path, this.paths);
