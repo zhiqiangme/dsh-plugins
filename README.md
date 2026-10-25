@@ -132,7 +132,8 @@ CI 使用 GitHub 托管 runner、Node 24、npm ≥11.5.1，以及 `id-token: wri
 
 发布脚本位于 [scripts/release.mjs](scripts/release.mjs)，只依赖 Node、Git、npm；使用仓库自带测试验证发布决策与失败恢复，
 测试过程不调用真实 npm / GitHub 发布接口。自动 tag 和 npm 发布在同一次工作流内完成，避免 `GITHUB_TOKEN`
-创建 tag 后不会再触发 tag push 工作流的问题。每个包独立生成正式 Release，重跑保留已有 Release 的草案或正式状态，不设置整个仓库的 “Latest release”。
+创建 tag 后不会再触发 tag push 工作流的问题。每个包独立生成正式 Release，新建的 Release 会设为整个仓库的 “Latest release”（即最后一次发布的包）；
+重跑保留已有 Release 的草案或正式状态，也不改动 Latest。
 
 ## 参与开发
 

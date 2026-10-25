@@ -264,8 +264,9 @@ export async function publishRelease({ cwd, plugin: id, sha }, {
     }
     const release = await api(`releases/tags/${tag}`, { allowMissing: true });
     if (!release) {
-      // npm 核对通过后直接创建正式 Release；多插件共用仓库，不抢占整个仓库的 Latest。
-      await api('releases', { method: 'POST', body: { tag_name: tag, target_commitish: sha, name: tag, body, draft: false, make_latest: 'false' } });
+      // npm 核对通过后直接创建正式 Release，并显式设为仓库 Latest：多插件共用仓库，
+      // 默认的 legacy 规则按语义化版本比较 tag，不同插件的版本号互不可比，会让 Latest 停在旧插件上。
+      await api('releases', { method: 'POST', body: { tag_name: tag, target_commitish: sha, name: tag, body, draft: false, make_latest: 'true' } });
     } else if (release.prerelease) {
       throw new Error(`${tag} 已有 prerelease，请先核对 GitHub Release 状态`);
     }

@@ -255,7 +255,7 @@ test('发布顺序：先锁定 tag，再发 npm，核对成功后创建 Release'
   assert.deepEqual(context.calls, ['pack', 'tag', 'npm', 'release', 'cleanup']);
   assert.match(context.state.release.body, /dsh plugin --profile desktop add @zhiqiangme\/dsh-autostart-workbuddy@26\.10\.15/);
   assert.equal(context.state.release.draft, false);
-  assert.equal(context.state.release.make_latest, 'false');
+  assert.equal(context.state.release.make_latest, 'true');
   assert.equal(result.draft, false);
 });
 
