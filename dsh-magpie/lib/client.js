@@ -264,7 +264,7 @@ window.__ModuleLoader__.load({
       .dsm-mp .versions{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:8px;color:var(--mp-muted)}.dsm-mp .versions strong{color:var(--mp-fg);font-weight:500}
       .dsm-mp .backend .bar{margin-top:12px}.dsm-mp .backend-path{overflow-wrap:anywhere}.dsm-mp .backend progress{display:block;width:100%;height:6px;margin-top:10px;accent-color:var(--mp-accent)}
       .dsm-mp .plugin-update p{margin-top:8px;overflow-wrap:anywhere}.dsm-mp .plugin-update-title{font-size:14px;font-weight:600;margin-right:auto}
-      .dsm-mp .foot{position:sticky;bottom:0;z-index:1;padding:12px 20px;border-top:1px solid var(--mp-border);border-radius:0 0 12px 12px;background:var(--mp-bg)}
+      .dsm-mp .foot{position:relative;z-index:1;padding:12px 20px;border-top:1px solid var(--mp-border);border-radius:0 0 12px 12px;background:var(--mp-bg)}
       .dsm-mp .foot[data-docked]{position:fixed;bottom:0;z-index:10;border-radius:0;border-left:1px solid var(--mp-border);border-right:1px solid var(--mp-border)}
       .dsm-mp .foot .notice{margin:0 0 10px}.dsm-mp .foot .error:not(.notice){margin:0 0 10px}
       .dsm-mp .state{display:inline-flex;align-items:center;gap:8px;color:var(--mp-muted)}.dsm-mp .state::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--mp-ok)}
@@ -702,18 +702,23 @@ window.__ModuleLoader__.load({
       const positions = useRef(new Map());
       const cardRef = useRef(null);
       const footerSpaceRef = useRef(null);
-      // 宿主滚动区可能带底部留白；直接贴窗口底边，横向跟随卡片，原位留出实际高度。
+      // 优先留在卡片末尾；原位置放不下时才贴窗口底边，并保留原位高度供滚动归位。
       useLayoutEffect(() => {
         const card = cardRef.current, space = footerSpaceRef.current, footer = space?.firstElementChild;
         if (!card || !footer) return;
         let frame;
         const align = () => {
+          // 先恢复自然布局再测量，避免用悬浮后的坐标判断，或沿用提示换行前的高度。
+          delete footer.dataset.docked;
+          for (const key of ['left', 'width', 'visibility']) footer.style[key] = '';
+          space.style.height = '';
           const rect = card.getBoundingClientRect();
+          const natural = footer.getBoundingClientRect();
+          if (natural.bottom <= window.innerHeight || rect.width <= 0 || rect.bottom <= 0 || rect.top >= window.innerHeight) return;
+          space.style.height = `${natural.height}px`;
           footer.dataset.docked = '';
           footer.style.left = `${rect.left}px`;
           footer.style.width = `${rect.width}px`;
-          footer.style.visibility = rect.width > 0 && rect.bottom > 0 && rect.top < window.innerHeight ? '' : 'hidden';
-          space.style.height = `${footer.getBoundingClientRect().height}px`;
         };
         const queue = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(align); };
         const observer = new ResizeObserver(queue);
