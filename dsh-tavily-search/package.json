@@ -1,6 +1,6 @@
 {
   "name": "@zhiqiangme/dsh-tavily-search",
-  "version": "26.10.18",
+  "version": "26.10.28",
   "description": "用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内同时提供旧版 Messages 与新版 Search API 的搜索接口（127.0.0.1:8787），API Key 存在 DSH 凭据库。",
   "keywords": [
     "dsh",
