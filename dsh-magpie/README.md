@@ -33,7 +33,7 @@ npm 发布后可用 `dsh plugin --profile desktop add @zhiqiangme/dsh-magpie`。
 
 「更新」页下半部分的「插件更新」管理 `@zhiqiangme/dsh-magpie` 的版本，与上半部分的「Magpie 程序」分开。
 
-- 显示当前运行版本与 npm 最新版本。沿用 WB 插件的检查机制，由宿主并行查询 npm 官方源和 npmmirror，取成功响应中的最高版本；成功结果缓存十分钟，点击「检查更新」可强制刷新。
+- 显示当前运行版本与 npm 最新版本。由宿主并行查询 npm 官方源和 npmmirror，取成功响应中的最高版本；成功结果缓存十分钟，点击「检查更新」可强制刷新。
 - 一键更新按宿主接口在不在选择途径，不写死 DSH 版本号，插件不自行执行包管理器或改写 profile：
   - **官方接口**（DSH 的 `pluginManager` 有 `listVersions/updateBundle`）：先用 `listBundles` 核对本插件的 `updatable`，再用 `listVersions` 选最新的兼容、未弃用正式版，把精确版本和同一注册表交给 `updateBundle`。兼容性检查、锁、安装与失败时恢复旧版都归宿主；卡片展示核对、卸载、安装、恢复阶段，只有实际安装版本等于目标版本才显示成功，恢复失败或连接中断会提示去「插件」页核对。
   - **dshmarket 兜底**：已核对的 DSH `0.2.1-rc.3`（目前最新的发布版）还没有 `listVersions/updateBundle`，这时检测到支持公开更新 API v1 的 dshmarket、且本插件从 npm / git 安装，就交给 dshmarket（传纯包名，由市场解析版本），显示进度、失败原因及实际安装版本；仅在发布冷却期或版本未变的失败之后提供「强制更新」。任务记在 sessionStorage，卡片重新挂载或插件热重载后接着轮询。
