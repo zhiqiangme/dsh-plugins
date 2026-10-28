@@ -11,6 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { webcrypto } from 'node:crypto';
 
 const SOURCE = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
 /** 宿主按 npm 包名登记客户端模块、寻址插件页卡片；行 id 则沿用改作用域包之前的名字。 */
@@ -19,10 +20,10 @@ const ROW_ID = 'dsh-autostart-workbuddy';
 const NAMESPACE = 'settings.dsh-autostart-workbuddy';
 
 /** 把 bundle 放进沙箱执行，拿回它注册进 __ModuleLoader__ 的 registration 与注入的样式。 */
-function loadBundle({ fetchImpl = globalThis.fetch } = {}) {
+function loadBundle({ fetchImpl = globalThis.fetch, crypto = webcrypto, clipboard, sessionStorage } = {}) {
   let registration;
   const styles = [];
-  const window = { __ModuleLoader__: { load: (value) => { registration = value; } } };
+  const window = { __ModuleLoader__: { load: (value) => { registration = value; } }, crypto, navigator: { clipboard }, sessionStorage };
   const document = {
     querySelector: () => null,
     createElement: () => ({ dataset: {}, textContent: '' }),
@@ -40,8 +41,9 @@ function makeReact(states, effects) {
   let index = 0;
   return {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
-    useState: () => {
+    useState: (initial) => {
       const slot = index++;
+      if (states[slot] === undefined) states[slot] = typeof initial === 'function' ? initial() : initial;
       return [states[slot], (value) => { states[slot] = typeof value === 'function' ? value(states[slot]) : value; }];
     },
     beginRender: () => { index = 0; },
@@ -113,10 +115,11 @@ function interpolate(value, params) {
  * @param {unknown[]} states 组件渲染时 useState 按顺序返回的值
  * @param {{ withPrimitives?: boolean }} [options] withPrimitives=false 时模拟宿主组件不可用
  */
-function boot(states = [], { withPrimitives = true, fetchImpl, effects } = {}) {
-  const { registration, styles } = loadBundle({ fetchImpl });
+function boot(states = [], { withPrimitives = true, fetchImpl, effects, crypto, clipboard, sessionStorage, $on } = {}) {
+  const { registration, styles } = loadBundle({ fetchImpl, crypto, clipboard, sessionStorage });
   const dicts = new Map();
   const cards = [];
+  const events = new Map();
   const React = makeReact(states, effects);
 
   /** 替身 primitives：只提供 Modal，渲染成普通 div 便于断言内容。 */
@@ -132,6 +135,7 @@ function boot(states = [], { withPrimitives = true, fetchImpl, effects } = {}) {
   });
 
   const ctx = {
+    remote: { $on: $on ?? ((event, listener) => { events.set(event, listener); return () => events.delete(event); }) },
     effect: (factory) => factory(),
     locale: {
       register: (ns, dict) => {
@@ -144,7 +148,7 @@ function boot(states = [], { withPrimitives = true, fetchImpl, effects } = {}) {
     slots: {
       inject: (name, callback) => callback(),
       register: (spec, component) => {
-        cards.push({ spec, component });
+        cards.push({ spec, component: (props) => component({ ...spec.inject(), ...props }) });
         return () => {};
       },
     },
@@ -153,6 +157,7 @@ function boot(states = [], { withPrimitives = true, fetchImpl, effects } = {}) {
   module.apply(ctx);
   return {
     module,
+    events,
     dicts,
     cards,
     renderCard: () => {
@@ -172,7 +177,9 @@ const ROWS = [
 test('bundle 契约：模块名、注入的服务名、两个 slot 的 key', () => {
   const { module, cards } = boot();
   assert.equal(module.name, 'dsh-autostart-workbuddy-client');
-  assert.deepEqual(module.inject, ['slots', 'locale']);
+  assert.deepEqual(module.inject, ['slots', 'locale', 'remote']);
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.ok(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-api-remotes'));
   assert.equal(typeof module.apply, 'function');
   assert.equal(cards.length, 2);
 
@@ -309,6 +316,9 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'updatePendingRestart', 'updateProgress', 'updateRefreshHint',
     'updateRestartHint', 'updateRolledBack', 'updateRunning', 'updateStartFailed', 'updateSucceeded',
     'updateTitle', 'updateTooFresh', 'updateUpToDate',
+    'updateCheckingTarget', 'updateManagerFailed', 'updateRestoreFailed', 'updateNoCompatible', 'updateNotUpdatable',
+    'updatePinnedInstall', 'updatePinnedHint', 'updateCopySpec', 'updateSpecCopied', 'updateSpecCopyFailed',
+    'updateUnknown', 'updateRemoving', 'updateInstalling', 'updateRestoring',
     // 后端自动更新
     'autoUpdateDrifted', 'autoUpdateError', 'autoUpdateFailed', 'autoUpdateHint', 'autoUpdateLabel', 'autoUpdateLast',
     'autoUpdatePending', 'autoUpdateRolledBack', 'autoUpdateUnavailable', 'autoUpdateUnknown', 'autoUpdateWaiting',
@@ -706,10 +716,12 @@ function buttonLabels(tree) {
   return collectByType(tree, 'button').map((node) => collectText(node).join(''));
 }
 
-/** 卡片 13 个 state + useUpdater 的 7 个之后，才是「复制访问密钥」的 state。 */
+const button = (buttons, label) => buttons.find((node) => collectText(node).join('') === label);
+
+/** 卡片 13 个 state + useUpdater 的 2 个之后，才是「复制访问密钥」的 state。 */
 function panelKeyStates(panelKey) {
   const backend = { exeExists: true, version: { tag: 'v1.13.0', revision: 'd'.repeat(40) }, history: [] };
-  return [...backendStates(backend), ...Array(7).fill(undefined), panelKey];
+  return [...backendStates(backend), ...Array(2).fill(undefined), panelKey];
 }
 
 test('复制访问密钥：按钮挨着面板链接；复制成功给提示，剪贴板不可用时显示原文供手动复制', () => {
@@ -843,9 +855,9 @@ test('卸载二次确认：未点开时不出现确认界面', () => {
 
 // ---- 后端网关切换 ----
 
-/** 卡片 13 个 state + useUpdater 7 个 + 复制密钥 1 个之后，才是「切换网关」的 state。 */
+/** 卡片 13 个 state + useUpdater 2 个 + 复制密钥 1 个之后，才是「切换网关」的 state。 */
 function gatewayStates(backend, gatewaySwitch, { confirming } = {}) {
-  return [...backendStates(backend, { confirming }), ...Array(7).fill(undefined), undefined, gatewaySwitch];
+  return [...backendStates(backend, { confirming }), ...Array(2).fill(undefined), undefined, gatewaySwitch];
 }
 
 function hubKeyForm(app) {
@@ -957,31 +969,22 @@ test('后端网关（hub）：给出模型 id 与出口的说明；卸载确认�
 
 // ---- 插件自身更新区 ----
 
-/** 「插件更新」区块的基准状态：有新版本、装了市场、没有进行中的任务。 */
-function updateModel(overrides = {}) {
-  return {
-    version: { phase: 'ready', ok: true, currentVersion: '26.10.11', latestVersion: '26.10.12', updateAvailable: true },
-    market: { phase: 'ready', restartSupported: false, endpoints: {} },
-    operation: undefined,
-    target: undefined,
-    busy: false,
-    notice: undefined,
-    restart: undefined,
-    ...overrides,
-  };
+function collect(node, predicate, out = []) {
+  if (!node || typeof node !== 'object') return out;
+  if (Array.isArray(node)) {
+    for (const item of node) collect(item, predicate, out);
+    return out;
+  }
+  if (predicate(node)) out.push(node);
+  if (Array.isArray(node.children)) collect(node.children, predicate, out);
+  return out;
 }
+
+const buttons = (tree) => collect(tree, (node) => node.type === 'button');
+const buttonByLabel = (tree, label) => buttons(tree).find((node) => collectText(node.children).join('') === label);
 
 const noop = () => {};
-const updateActions = { checkUpdate: noop, startUpdate: noop, restart: noop };
-
-/** 渲染更新区并给出文本与按钮。 */
-function renderUpdate(model, actions = updateActions) {
-  const { module, t } = boot();
-  const section = module.renderUpdateSection(model, actions, t);
-  return { section, text: collectText(section).join('|'), buttons: collectByType(section, 'button') };
-}
-
-const button = (buttons, label) => buttons.find((node) => collectText(node).join('') === label);
+const actions = { checkUpdate: noop, startUpdate: noop, restart: noop, copyInstallSpec: noop };
 
 test('插件更新区：首屏（hooks 状态尚未就绪）显示检查中，且排在后端版本区之后', () => {
   const { cards, t } = boot(backendStates({ exeExists: true, version: { tag: 'v1.13.0' }, history: [] }));
@@ -995,153 +998,675 @@ test('插件更新区：首屏（hooks 状态尚未就绪）显示检查中，�
   );
 });
 
-test('插件更新区：有新版本且装了市场 → 两个版本号与"更新到"按钮', () => {
-  const started = [];
-  const { text, buttons } = renderUpdate(updateModel(), { ...updateActions, startUpdate: (force) => started.push(force) });
-  assert.match(text, /当前运行版本：\|v26\.10\.11/);
-  assert.match(text, /npm 最新版本：\|v26\.10\.12/);
-  assert.match(text, /有新版本/);
-  const update = button(buttons, '更新到 v26.10.12');
-  assert.equal(update.props.disabled, false);
-  update.props.onClick();
-  assert.deepEqual(started, [false], '普通更新不带 force');
-});
+function updateModel(overrides = {}) {
+  return {
+    version: { phase: 'ready', ok: true, currentVersion: '26.10.11', latestVersion: '26.10.12', updateAvailable: true },
+    manager: { phase: 'ready', candidate: '26.10.12', registry: 'https://registry.npmjs.org/', installedVersion: '26.10.11' },
+    market: { phase: 'idle' },
+    busy: false,
+    ...overrides,
+  };
+}
 
-test('插件更新区：没装市场 → 只提示，没有更新按钮', () => {
-  const { text, buttons } = renderUpdate(updateModel({ market: { phase: 'absent' } }));
-  assert.equal(button(buttons, '更新到 v26.10.12'), undefined);
-  assert.match(text, /dshmarket/);
-  assert.ok(button(buttons, '检查更新'));
-});
+/** 旧宿主（没有官方更新接口）退回 dshmarket 时的基准状态：装了市场、从 npm 安装。 */
+function marketModel(overrides = {}) {
+  return updateModel({
+    manager: { phase: 'unsupported', local: false, managed: false, installedVersion: '26.10.11' },
+    market: { phase: 'ready', restartSupported: false, endpoints: {}, source: 'npm', updatable: true },
+    ...overrides,
+  });
+}
 
-test('插件更新区：已是最新 / 检查失败', () => {
-  const latest = renderUpdate(
-    updateModel({ version: { phase: 'ready', ok: true, currentVersion: '26.10.12', latestVersion: '26.10.12', updateAvailable: false } }),
-  );
-  assert.match(latest.text, /已是最新/);
-  assert.equal(latest.buttons.length, 1, '只剩"检查更新"');
+const VERSION_ROUTE = '/plugins/dsh-autostart-workbuddy/version';
+const OPERATION_KEY = 'dsh-autostart-workbuddy:update-operation';
+const UP_TO_DATE = { phase: 'ready', ok: true, currentVersion: '26.10.12', latestVersion: '26.10.12', updateAvailable: false };
+const text = (tree) => collectText(tree).join('|');
+const pinnedOf = (tree) => collect(tree, (node) => node.type === 'details' && node.props.key === 'pinnedInstall')[0];
+const hasUpdateButton = (tree) => buttons(tree).some((node) => collectText(node.children).join('').startsWith('更新到'));
+/** 让挂起的 promise 链跑完（setImmediate 不在 mock.timers 的接管范围内）。 */
+const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-  const failed = renderUpdate(updateModel({ version: { phase: 'error', currentVersion: '26.10.11', reason: '连不上注册表' } }));
-  assert.match(failed.text, /检查更新失败：连不上注册表/);
-  assert.match(failed.text, /当前运行版本：\|v26\.10\.11/);
-  assert.equal(button(failed.buttons, '检查更新').props.disabled, false);
-});
+function memoryStorage(initial = {}) {
+  const data = new Map(Object.entries(initial));
+  return {
+    getItem: (key) => (data.has(key) ? data.get(key) : null),
+    setItem: (key, value) => data.set(key, String(value)),
+    removeItem: (key) => data.delete(key),
+  };
+}
 
-test('插件更新区：进行中显示进度，按钮全部禁用', () => {
-  const { text, buttons } = renderUpdate(
-    updateModel({ operation: { operationId: 'b-update-1', state: 'running', progress: { percent: 40, detail: 'Progress: resolved 3' } } }),
-  );
-  assert.match(text, /正在更新… 40%/);
-  assert.match(text, /Progress: resolved 3/);
-  assert.ok(buttons.every((node) => node.props.disabled === true));
-});
+/** rc.3 的插件管理器：listBundles 带安装来源，没有 listVersions / updateBundle。 */
+function legacyManager(extra = {}) {
+  const bundle = { name: PACKAGE_NAME, version: '26.10.11', source: `${PACKAGE_NAME}@26.10.11`, availability: 'profile', official: false, ...extra };
+  return { bundle, manager: { listBundles: async () => ({ ok: true, value: [bundle] }) } };
+}
 
-test('插件更新区：成功后按 restartRequired 提示重启；市场支持重启时才给重启按钮', () => {
-  const operation = { state: 'succeeded', installedVersion: '26.10.12', outcome: { restartRequired: true } };
-  const desktop = renderUpdate(updateModel({ operation, target: '26.10.12' }));
-  assert.match(desktop.text, /已更新到 v26\.10\.12。 重启 DSH 后生效。/);
-  assert.equal(button(desktop.buttons, '立即重启 DSH'), undefined, '桌面版的重启归桌面壳管');
-  assert.doesNotMatch(desktop.text, /注意：装上的是/);
+/** dshmarket 公开更新 API v1 的替身；ops 依次作为每次任务查询的答复，用完答 404（任务已不在）。 */
+function fakeMarket({ source = 'npm', bootId = 'b', restartSupported = false, submit, ops = [] } = {}) {
+  const posted = [];
+  const handle = (path, options) => {
+    if (path === '/dsh-market/api/v1/capabilities') {
+      return { status: 200, body: { schema: 'dsh-market/update-api/v1', features: { update: true }, bootId, restart: { supported: restartSupported } } };
+    }
+    if (path.startsWith('/dsh-market/api/v1/updates?name=')) return { status: 200, body: { package: { source } } };
+    if (path === '/dsh-market/api/v1/updates' && options.method === 'POST') {
+      posted.push(JSON.parse(options.body));
+      return submit ?? { status: 202, body: { operation: { operationId: `${bootId}-1`, state: 'running' } } };
+    }
+    if (path.startsWith('/dsh-market/api/v1/operations?operationId=')) return ops.shift() ?? { status: 404 };
+    if (path === '/dsh-market/api/v1/restart') return { status: 202, body: {} };
+    return { status: 404 };
+  };
+  return { posted, handle };
+}
 
-  const web = renderUpdate(updateModel({ operation, target: '26.10.12', market: { phase: 'ready', restartSupported: true } }));
-  assert.ok(button(web.buttons, '立即重启 DSH'));
-});
-
-test('插件更新区：成功后徽章显示"等待重启/等待刷新"，且不再给"更新到"按钮', () => {
-  // 更新成功后当前运行版本仍是旧版，单看版本号会永远说"有新版本"并留着更新按钮，
-  // 再点只会重装同一版。徽章要改口，按钮要收走。
-  const restart = renderUpdate(
-    updateModel({ operation: { state: 'succeeded', installedVersion: '26.10.12', outcome: { restartRequired: true } }, target: '26.10.12' }),
-  );
-  assert.match(restart.text, /等待重启/);
-  assert.doesNotMatch(restart.text, /有新版本/);
-  assert.equal(button(restart.buttons, '更新到 v26.10.12'), undefined);
-  assert.ok(button(restart.buttons, '检查更新'), '重新检查仍然可用');
-
-  const refresh = renderUpdate(
-    updateModel({ operation: { state: 'succeeded', installedVersion: '26.10.12', outcome: { refreshRequired: true } }, target: '26.10.12' }),
-  );
-  assert.match(refresh.text, /等待刷新/);
-  assert.equal(button(refresh.buttons, '更新到 v26.10.12'), undefined);
-
-  const live = renderUpdate(
-    updateModel({ operation: { state: 'succeeded', installedVersion: '26.10.12', outcome: {} }, target: '26.10.12' }),
-  );
-  assert.match(live.text, /已是最新/);
-  assert.doesNotMatch(live.text, /等待重启/);
-});
-
-test('插件更新区：成功后重新检查发现更高版本，恢复徽章和可用的更新按钮', async () => {
-  for (const outcome of [{ restartRequired: true }, { refreshRequired: true }, {}]) {
-    const model = updateModel({
-      operation: { state: 'succeeded', installedVersion: '26.10.12', outcome },
-      target: '26.10.12',
-    });
-    const requests = [];
-    const { renderCard } = boot([
-      ...backendStates({}),
-      model.version, model.market, model.operation, model.target, model.busy, model.notice, model.restart,
-    ], {
-      fetchImpl: async (path, options) => {
-        requests.push({ path, method: options.method });
-        return {
-          ok: true,
-          json: async () => ({ ok: true, currentVersion: '26.10.11', latestVersion: '26.10.13', updateAvailable: true }),
-        };
+/**
+ * 直接驱动共享更新器：manager 缺省是带官方更新接口的新宿主；market 缺省不存在（capabilities 答 404）。
+ * version 是 version 路由的答复，测试可以改它模拟 npm 上出了新版。
+ */
+function updaterHarness({ manager, result, versions, bundle, crypto, version, market, sessionStorage } = {}) {
+  const calls = [];
+  const events = new Map();
+  const versionPayload = version ?? { ...updateModel().version };
+  const fetcher = async (path, options = {}) => {
+    calls.push(['fetch', path, options.method ?? 'GET']);
+    if (path.startsWith(VERSION_ROUTE)) {
+      assert.match(path, /^\/plugins\/dsh-autostart-workbuddy\/version(?:\?force=1)?$/);
+      return { ok: true, status: 200, json: async () => versionPayload };
+    }
+    const answer = market ? market.handle(path, options) : { status: 404 };
+    return {
+      ok: answer.status < 300,
+      status: answer.status,
+      json: async () => {
+        if (answer.body === undefined) throw new SyntaxError('Unexpected token < in JSON');
+        return answer.body;
       },
-    });
-    const section = () => collectByType(renderCard(), 'div').find((node) => node.props.key === 'pluginUpdate');
-    assert.equal(button(collectByType(section(), 'button'), '更新到 v26.10.12'), undefined);
+    };
+  };
+  const { module } = boot([], { fetchImpl: fetcher, crypto, sessionStorage });
+  const remote = {
+    $on: (event, listener) => { events.set(event, listener); return () => events.delete(event); },
+    pluginManager: manager ?? {
+      listBundles: async () => ({ ok: true, value: [bundle ?? { name: PACKAGE_NAME, version: '26.10.11', source: PACKAGE_NAME + '@26.10.11', availability: 'profile', updatable: true }] }),
+      listVersions: async (name, options) => {
+        calls.push(['listVersions', name, options]);
+        return { ok: true, value: versions ?? { status: 'listed', installed: '26.10.11', registry: 'https://registry.example/', versions: [
+          { version: '26.10.12', bundle: true, prerelease: false, tags: ['latest'] },
+        ] } };
+      },
+      updateBundle: async (...args) => {
+        calls.push(['updateBundle', ...args]);
+        return typeof result === 'function' ? result(...args) : { ok: true, value: result ?? {
+          from: '26.10.11', to: '26.10.12', step: 'install',
+          result: { changed: true, application: 'restart-required', version: '26.10.12' },
+        } };
+      },
+    },
+  };
+  return { module, updater: module.createPluginUpdater(remote), remote, calls, events, versionPayload };
+}
 
-    button(collectByType(section(), 'button'), '检查更新').props.onClick();
-    await new Promise((resolve) => setImmediate(resolve));
+const fetched = (calls) => calls.filter((call) => call[0] === 'fetch').map((call) => call[1]);
 
-    const tree = section();
-    const text = collectText(tree).join('|');
-    assert.deepEqual(requests, [{ path: '/plugins/dsh-autostart-workbuddy/version?force=1', method: 'GET' }]);
-    assert.match(text, /有新版本/);
-    assert.doesNotMatch(text, /等待重启|等待刷新|已是最新/);
-    assert.equal(button(collectByType(tree, 'button'), '更新到 v26.10.13')?.props.disabled, false);
-    assert.match(text, /已更新到 v26\.10\.12/, '保留上次更新结果，不靠清空任务恢复入口');
+test('官方更新：宿主没有更新接口或取不到管理器时退回 dshmarket；市场不在时不提交任何更新', async () => {
+  for (const variant of ['none', 'legacy', 'throws']) {
+    const h = updaterHarness({ manager: variant === 'legacy' ? legacyManager().manager : {} });
+    if (variant === 'throws') {
+      // 宿主没有 remote.pluginManager 命名空间时，cordis 取值直接抛错
+      Object.defineProperty(h.remote, 'pluginManager', { get: () => { throw new Error('cannot get property without inject'); } });
+    }
+    await h.updater.check();
+    const snapshot = h.updater.getSnapshot();
+    assert.equal(snapshot.manager.phase, 'unsupported');
+    assert.equal(snapshot.market.phase, 'absent');
+    assert.equal(snapshot.version.latestVersion, '26.10.12');
+    await h.updater.startUpdate();
+    assert.deepEqual(fetched(h.calls), [VERSION_ROUTE, '/dsh-market/api/v1/capabilities']);
+    assert.equal(h.calls.some((call) => call[0] !== 'fetch'), false);
+    await h.updater.check(true);
+    assert.ok(fetched(h.calls).includes(`${VERSION_ROUTE}?force=1`));
   }
 });
 
-test('插件更新区：装上的版本低于目标时警告并允许重试；高于目标不警告也不重复更新', () => {
-  const below = renderUpdate(updateModel({ target: '26.10.12', operation: { state: 'succeeded', installedVersion: '26.10.11', outcome: {} } }));
-  assert.match(below.text, /注意：装上的是 v26\.10\.11，不是预期的 v26\.10\.12/);
-  assert.match(below.text, /有新版本/);
-  assert.doesNotMatch(below.text, /已是最新/);
-  assert.equal(button(below.buttons, '更新到 v26.10.12')?.props.disabled, false);
-  const above = renderUpdate(updateModel({ target: '26.10.12', operation: { state: 'succeeded', installedVersion: '26.10.13', outcome: {} } }));
-  assert.doesNotMatch(above.text, /注意：装上的是/);
-  assert.match(above.text, /已是最新/);
-  assert.equal(button(above.buttons, '更新到 v26.10.12'), undefined);
+test('官方更新：明确版本和查询注册表传给宿主，重复点击只提交一次，进度按 requestId 隔离', async () => {
+  let finish;
+  const h = updaterHarness({ result: () => new Promise(resolve => { finish = resolve; }) });
+  await h.updater.check();
+  const first = h.updater.startUpdate();
+  assert.equal(h.updater.startUpdate(), first);
+  await flush();
+  const call = h.calls.find(c => c[0] === 'updateBundle');
+  assert.equal(call[1], PACKAGE_NAME);
+  assert.equal(call[2], '26.10.12');
+  assert.deepEqual(Object.keys(call[3]).sort(), ['registry', 'requestId']);
+  assert.equal(call[3].registry, 'https://registry.example/');
+  assert.match(call[3].requestId, /^[0-9a-f-]{36}$/);
+  const emit = h.events.get('plugin-manager/update-state');
+  emit({ requestId: 'other', step: 'restoring' });
+  assert.equal(h.updater.getSnapshot().operation.step, 'checking');
+  emit({ requestId: call[3].requestId, step: 'installing' });
+  assert.equal(h.updater.getSnapshot().operation.step, 'installing');
+  finish({ ok: true, value: { from: '26.10.11', to: '26.10.12', step: 'install',
+    result: { application: 'restart-required', version: '26.10.12' } } });
+  await first;
+  assert.equal(h.updater.getSnapshot().operation.state, 'succeeded');
+  assert.equal(h.updater.getSnapshot().operation.outcome.restartRequired, true);
+  assert.equal(h.updater.getSnapshot().manager.candidate, undefined);
+  assert.equal(h.events.size, 0);
+  assert.equal(h.calls.filter(c => c[0] === 'updateBundle').length, 1);
+  assert.equal(h.calls.some((c) => c[1]?.startsWith?.('/dsh-market/')), false, '有官方接口时不探测市场');
 });
 
-test('插件更新区：发布冷却期 / 版本未变时给"强制更新"，其它失败不给', () => {
+test('官方更新：卡片取消订阅不取消宿主操作，新卡片能读共享进度与结果', async () => {
+  let finish;
+  const h = updaterHarness({ result: () => new Promise(resolve => { finish = resolve; }) });
+  await h.updater.check();
+  let observed = 0;
+  const off = h.updater.subscribe(() => observed++);
+  const pending = h.updater.startUpdate();
+  off();
+  await flush();
+  assert.equal(h.updater.getSnapshot().busy, true);
+  const seen = observed;
+  finish({ ok: true, value: { from: '26.10.11', to: '26.10.12', step: 'install', result: { application: 'applied', version: '26.10.12' } } });
+  await pending;
+  assert.equal(observed, seen);
+  assert.equal(h.updater.getSnapshot().operation.state, 'succeeded');
+});
+
+test('官方更新：非安全 HTTP 页面没有 randomUUID 时仍能提交合法请求 ID', async () => {
+  const h = updaterHarness({ crypto: { getRandomValues: value => webcrypto.getRandomValues(value) } });
+  await h.updater.check();
+  await h.updater.startUpdate();
+  const call = h.calls.find(c => c[0] === 'updateBundle');
+  assert.match(call[3].requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.equal(h.updater.getSnapshot().operation.state, 'succeeded');
+});
+
+test('官方更新：本地、托管及不可更新安装不查询可用版本，也不提交更新', async () => {
+  for (const extra of [{ source: 'file:D:/source', updatable: false }, { official: true, availability: 'installation', updatable: false }, { updatable: false }]) {
+    const h = updaterHarness({ bundle: { name: PACKAGE_NAME, version: '26.10.11', ...extra } });
+    await h.updater.check();
+    assert.equal(h.updater.getSnapshot().manager.phase, 'blocked');
+    await h.updater.startUpdate();
+    assert.deepEqual(h.calls.map(c => c[0]), ['fetch']);
+  }
+});
+
+test('官方更新：跳过不兼容、弃用、预发布、非 bundle 版本，采用宿主兼容正式版', async () => {
+  const versions = { status: 'listed', installed: '26.10.11', registry: null, versions: [
+    { version: '27.1.1', bundle: true, prerelease: false, incompatible: {} },
+    { version: '26.11.2', bundle: true, prerelease: false, deprecated: 'retired' },
+    { version: '26.11.1-rc.1', bundle: true, prerelease: true },
+    { version: '26.10.31', bundle: false, prerelease: false },
+    { version: '26.10.12', bundle: true, prerelease: false },
+  ] };
+  const h = updaterHarness({ versions });
+  await h.updater.check();
+  assert.equal(h.updater.getSnapshot().manager.candidate, '26.10.12');
+  versions.versions.pop();
+  await h.updater.check(true);
+  assert.equal(h.updater.getSnapshot().manager.candidate, undefined);
+  await h.updater.startUpdate();
+  assert.equal(h.calls.some(c => c[0] === 'updateBundle'), false);
+});
+
+test('官方更新：版本列表按已装版本缓存；npm 已是最新时不列，「检查更新」照样去列', async () => {
+  const listed = (h) => h.calls.filter((call) => call[0] === 'listVersions').length;
+  const h = updaterHarness();
+  await h.updater.check();
+  await h.updater.check();
+  assert.equal(listed(h), 1, '重新挂载复用缓存，不在宿主上再跑一串 pnpm view');
+  await h.updater.check(true);
+  assert.equal(listed(h), 2);
+
+  const quiet = updaterHarness({ version: { ...UP_TO_DATE, currentVersion: '26.10.11', latestVersion: '26.10.11' } });
+  await quiet.updater.check();
+  assert.equal(listed(quiet), 0);
+  assert.equal(quiet.updater.getSnapshot().manager.phase, 'ready');
+  assert.equal(quiet.updater.getSnapshot().manager.candidate, undefined);
+  await quiet.updater.check(true);
+  assert.equal(listed(quiet), 1);
+  assert.equal(quiet.updater.getSnapshot().manager.candidate, '26.10.12', 'npm 落后于宿主注册表时，手动检查仍能找到新版本');
+  await quiet.updater.check();
+  assert.equal(listed(quiet), 1);
+  assert.equal(quiet.updater.getSnapshot().manager.candidate, '26.10.12', '缓存期内重新挂载不丢掉刚查到的版本');
+});
+
+test('官方更新：查询失败与不支持分开显示，恢复连接后可以重新检查', async () => {
+  const versions = { status: 'refused', problem: 'network', reason: 'offline' };
+  const h = updaterHarness({ versions });
+  await h.updater.check();
+  assert.equal(h.updater.getSnapshot().manager.phase, 'error');
+  assert.equal(h.updater.getSnapshot().manager.reason, 'offline');
+  await h.updater.startUpdate();
+  assert.equal(h.calls.some(c => c[0] === 'updateBundle'), false);
+  Object.assign(versions, { status: 'listed', installed: '26.10.11', versions: [], registry: null });
+  await h.updater.check();
+  assert.equal(h.updater.getSnapshot().manager.phase, 'ready');
+});
+
+test('官方更新：失败、取消、回滚成功、回滚失败、版本不符与连接中断不会误报成功', async () => {
+  const failed = { application: 'failed', error: { diagnostic: 'install failed' } };
+  const cases = [
+    [{ from: '26.10.11', step: 'install', result: failed }, 'failed'],
+    [{ from: '26.10.11', step: 'install', result: { application: 'cancelled' } }, 'cancelled'],
+    [{ from: '26.10.11', step: 'install', result: failed, restore: { application: 'applied', version: '26.10.11' } }, 'rolled-back'],
+    [{ from: '26.10.11', step: 'install', result: failed, restore: failed }, 'failed'],
+    [{ from: '26.10.11', step: 'install', result: { application: 'applied', version: '26.10.10' } }, 'failed'],
+    [{ from: '26.10.11', step: 'remove', result: { application: 'applied', version: '26.10.12' } }, 'failed'],
+  ];
+  for (const [result, state] of cases) {
+    const h = updaterHarness({ result });
+    await h.updater.check();
+    await h.updater.startUpdate();
+    assert.equal(h.updater.getSnapshot().operation.state, state);
+    assert.equal(h.updater.getSnapshot().busy, false);
+    if (result.restore?.application === 'failed') assert.equal(h.updater.getSnapshot().operation.restoreFailure, 'install failed');
+  }
+  for (const result of [async () => { throw new Error('connection reset'); }, async () => ({ ok: false, error: { message: 'host lost' } })]) {
+    const h = updaterHarness({ result });
+    await h.updater.check();
+    await h.updater.startUpdate();
+    assert.equal(h.updater.getSnapshot().operation.unknown, true);
+    assert.equal(h.updater.getSnapshot().operation.state, 'failed');
+  }
+});
+
+test('官方更新：重新检查以实际安装版本为准，不沿用外部重装之前的成功状态', async () => {
+  const bundle = { name: PACKAGE_NAME, version: '26.10.11', updatable: true };
+  const versions = { status: 'listed', installed: '26.10.11', registry: null, versions: [
+    { version: '26.10.12', bundle: true, prerelease: false },
+  ] };
+  const h = updaterHarness({ bundle, versions });
+  await h.updater.check();
+  await h.updater.startUpdate();
+  bundle.version = versions.installed = '26.10.12';
+  versions.versions = [];
+  await h.updater.check();
+  assert.equal(h.updater.getSnapshot().operation.state, 'succeeded');
+  bundle.version = versions.installed = '26.10.11';
+  versions.versions = [{ version: '26.10.12', bundle: true, prerelease: false }];
+  await h.updater.check();
+  assert.equal(h.updater.getSnapshot().operation, undefined);
+  assert.equal(h.updater.getSnapshot().manager.candidate, '26.10.12');
+});
+
+test('官方更新：插件管理器广播变更时静默重读；宿主不认识该事件也不影响卡片注册', async () => {
+  const h = updaterHarness();
+  await h.updater.check();
+  const pending = h.updater.refresh();
+  assert.equal(h.updater.getSnapshot().version.phase, 'ready', '静默重读不把区块切成"正在检查"');
+  assert.equal(h.updater.getSnapshot().manager.phase, 'ready');
+  await pending;
+  assert.equal(h.updater.getSnapshot().manager.candidate, '26.10.12');
+
+  const { events } = boot();
+  assert.equal(typeof events.get('plugin-manager/changed'), 'function');
+  const original = console.warn;
+  console.warn = () => {};
+  try {
+    const { cards } = boot([], { $on: (event) => {
+      if (event === 'plugin-manager/changed') throw new Error('unknown event');
+      return () => {};
+    } });
+    assert.equal(cards.length, 2);
+  } finally {
+    console.warn = original;
+  }
+});
+
+test('市场兜底：探测市场与安装来源，提交纯包名，按任务轮询到完成', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const storage = memoryStorage();
+  const market = fakeMarket({ ops: [
+    { status: 200, body: { operation: { state: 'running', progress: { percent: 40, detail: 'resolved 3' } } } },
+    { status: 200, body: { operation: { state: 'succeeded', installedVersion: '26.10.12', outcome: { restartRequired: true } } } },
+  ] });
+  const h = updaterHarness({ manager: legacyManager().manager, market, sessionStorage: storage });
+  await h.updater.check();
+  const { phase, source, updatable } = h.updater.getSnapshot().market;
+  assert.deepEqual({ phase, source, updatable }, { phase: 'ready', source: 'npm', updatable: true });
+
+  await h.updater.startUpdate();
+  // 市场的公开 v1 API 只接受纯包名，不能拼 @版本
+  assert.deepEqual(market.posted, [{ packageName: PACKAGE_NAME }]);
+  assert.equal(h.updater.getSnapshot().operation.channel, 'market');
+  assert.equal(h.updater.getSnapshot().target, '26.10.12');
+  assert.deepEqual(JSON.parse(storage.getItem(OPERATION_KEY)), { operationId: 'b-1', target: '26.10.12' });
+
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(h.updater.getSnapshot().operation.progress.percent, 40);
+  assert.equal(h.updater.getSnapshot().operation.operationId, 'b-1');
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(h.updater.getSnapshot().operation.state, 'succeeded');
+  assert.equal(storage.getItem(OPERATION_KEY), null);
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(fetched(h.calls).filter((path) => path.includes('/operations?')).length, 2, '任务结束后不再轮询');
+});
+
+test('市场兜底：热重载后按 bootId 接着轮询，查不到任务时提示已结束；DSH 重启过的旧记录丢弃；卸载后停止轮询', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const stored = (operationId) => memoryStorage({ [OPERATION_KEY]: JSON.stringify({ operationId, target: '26.10.12' }) });
+
+  const storage = stored('b-7');
+  const h = updaterHarness({ manager: {}, market: fakeMarket(), sessionStorage: storage });
+  await h.updater.check();
+  assert.deepEqual(h.updater.getSnapshot().operation, { channel: 'market', operationId: 'b-7', state: 'running' });
+  assert.equal(h.updater.getSnapshot().target, '26.10.12');
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(h.updater.getSnapshot().operation.state, 'lost');
+  assert.equal(storage.getItem(OPERATION_KEY), null);
+
+  const restarted = stored('old-7');
+  const h2 = updaterHarness({ manager: {}, market: fakeMarket(), sessionStorage: restarted });
+  await h2.updater.check();
+  assert.equal(h2.updater.getSnapshot().operation, undefined);
+  assert.equal(restarted.getItem(OPERATION_KEY), null);
+
+  const h3 = updaterHarness({ manager: {}, market: fakeMarket(), sessionStorage: stored('b-8') });
+  await h3.updater.check();
+  h3.updater.dispose();
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(fetched(h3.calls).some((path) => path.includes('/operations?')), false);
+});
+
+test('市场兜底：本地 / 托管安装不提交；force 只在显式选择时带上；提交被拒时记下原因；Web 版可请市场重启', async () => {
+  for (const source of ['linked', 'generation']) {
+    const market = fakeMarket({ source });
+    const h = updaterHarness({ manager: {}, market });
+    await h.updater.check();
+    assert.equal(h.updater.getSnapshot().market.updatable, false);
+    await h.updater.startUpdate();
+    assert.deepEqual(market.posted, []);
+  }
+  // 插件列表说是本地目录安装时，即便市场答不上来源也不提交
+  const local = fakeMarket();
+  const hl = updaterHarness({ manager: legacyManager({ source: 'file:D:/source' }).manager, market: local });
+  await hl.updater.check();
+  await hl.updater.startUpdate();
+  assert.deepEqual(local.posted, []);
+
+  const forced = fakeMarket();
+  const hf = updaterHarness({ manager: {}, market: forced });
+  await hf.updater.check();
+  await hf.updater.startUpdate(true);
+  assert.deepEqual(forced.posted, [{ packageName: PACKAGE_NAME, force: true }]);
+  hf.updater.dispose();
+
+  const busy = fakeMarket({ submit: { status: 409, body: { failure: { message: '已有更新在进行' } } } });
+  const hb = updaterHarness({ manager: {}, market: busy });
+  await hb.updater.check();
+  await hb.updater.startUpdate();
+  assert.equal(hb.updater.getSnapshot().startFailure, '已有更新在进行');
+  assert.equal(hb.updater.getSnapshot().busy, false);
+  await hb.updater.check(true);
+  assert.equal(hb.updater.getSnapshot().startFailure, undefined);
+
+  const hw = updaterHarness({ manager: {}, market: fakeMarket({ restartSupported: true }) });
+  await hw.updater.check();
+  assert.equal(hw.updater.getSnapshot().market.restartSupported, true);
+  await hw.updater.restart();
+  assert.deepEqual(hw.updater.getSnapshot().restart, { phase: 'done' });
+  assert.ok(hw.calls.some((call) => call[1] === '/dsh-market/api/v1/restart' && call[2] === 'POST'));
+});
+
+test('市场兜底：成功后重新检查发现更高版本，恢复徽章和可用的更新按钮，保留上次结果', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { bundle, manager } = legacyManager();
+  const market = fakeMarket({ ops: [
+    { status: 200, body: { operation: { state: 'succeeded', installedVersion: '26.10.12', outcome: { restartRequired: true } } } },
+  ] });
+  const h = updaterHarness({ manager, market });
+  const { t: translate } = boot();
+  const view = () => render(h.module.renderUpdateSection(h.updater.getSnapshot(), actions, translate));
+  await h.updater.check();
+  await h.updater.startUpdate();
+  t.mock.timers.tick(1000);
+  await flush();
+  bundle.version = '26.10.12';
+  assert.match(text(view()), /等待重启/);
+  assert.equal(hasUpdateButton(view()), false, '更新成功后再点只会重装同一版');
+
+  h.versionPayload.latestVersion = '26.10.13';
+  await h.updater.check(true);
+  const tree = view();
+  assert.match(text(tree), /有新版本/);
+  assert.doesNotMatch(text(tree), /等待重启|等待刷新|已是最新/);
+  assert.equal(buttonByLabel(tree, '更新到 v26.10.13')?.props.disabled, false);
+  assert.match(text(tree), /已更新到 v26\.10\.12/, '保留上次更新结果，不靠清空任务恢复入口');
+});
+
+test('插件更新 UI：官方接口只给宿主确认的兼容正式版；本地、托管与不可更新安装不给按钮，也不给指定版本安装', () => {
+  const { module, t } = boot();
+  const view = (overrides) => render(module.renderUpdateSection(updateModel(overrides), actions, t));
+  const current = view();
+  assert.ok(buttonByLabel(current, '更新到 v26.10.12'));
+  assert.match(text(current), /当前运行版本：\|v26\.10\.11/);
+  assert.match(text(current), /npm 最新版本：\|v26\.10\.12/);
+  assert.equal(pinnedOf(current), undefined);
+  for (const [manager, hint] of [
+    [{ phase: 'blocked', local: true }, /从本地目录安装/],
+    [{ phase: 'blocked', managed: true }, /由 DSH 统一管理/],
+    [{ phase: 'blocked' }, /不支持更新此安装/],
+    [{ phase: 'ready' }, /暂未提供可更新的兼容正式版/],
+    [{ phase: 'ready', candidate: '26.10.11', installedVersion: '26.10.11' }, /暂未提供可更新的兼容正式版/],
+  ]) {
+    const tree = view({ manager });
+    assert.equal(hasUpdateButton(tree), false);
+    assert.match(text(tree), hint);
+    assert.equal(pinnedOf(tree), undefined, '官方已给出结论时不建议绕过它的更新资格');
+  }
+  const failed = view({ manager: { phase: 'error', reason: 'offline' } });
+  assert.match(text(failed), /官方插件管理器检查失败：offline/);
+  assert.equal(pinnedOf(failed).props.open, false);
+});
+
+test('插件更新 UI：已是最新时不显示"为什么不能一键更新"的说明', () => {
+  const { module, t } = boot();
+  const view = (overrides) => render(module.renderUpdateSection(updateModel(overrides), actions, t));
+  for (const overrides of [
+    { manager: { phase: 'unsupported' }, market: { phase: 'absent' } },
+    { manager: { phase: 'blocked', local: true } },
+    { manager: { phase: 'blocked', managed: true } },
+    { manager: { phase: 'blocked' } },
+    { manager: { phase: 'ready' } },
+  ]) {
+    const unavailable = (tree) => collect(tree, (node) => node.props.key === 'unavailable');
+    assert.equal(unavailable(view(overrides)).length, 1);
+    const latest = view({ ...overrides, version: UP_TO_DATE });
+    assert.equal(unavailable(latest).length, 0);
+    assert.equal(pinnedOf(latest), undefined);
+    assert.match(text(latest), /已是最新/);
+  }
+});
+
+test('插件更新 UI：官方更新显示宿主阶段、重启提示与恢复失败；不给强制更新和重启按钮', () => {
+  const { module, t } = boot();
+  const view = (overrides) => render(module.renderUpdateSection(updateModel(overrides), actions, t));
+  const running = view({ busy: true, operation: { channel: 'official', state: 'running', step: 'restoring' } });
+  assert.match(text(running), /正在恢复旧版本/);
+  assert.equal(buttonByLabel(running, '检查更新').props.disabled, true);
+  const done = view({ operation: { channel: 'official', state: 'succeeded', installedVersion: '26.10.12', outcome: { restartRequired: true } } });
+  assert.match(text(done), /等待重启/);
+  assert.match(text(done), /重启 DSH 后生效/);
+  assert.equal(hasUpdateButton(done), false);
+  const rolledBack = view({ operation: { channel: 'official', state: 'rolled-back', installedVersion: '26.10.11', failure: { message: 'install error' }, outcome: {} } });
+  assert.match(text(rolledBack), /更新失败：install error 更新已回滚，插件保持在 v26\.10\.11。/);
+  const failed = view({ operation: { channel: 'official', state: 'failed', failure: { message: 'install error' }, restoreFailure: 'offline', unknown: true } });
+  assert.match(text(failed), /恢复旧版本失败：offline/);
+  assert.match(text(failed), /未能确认更新结果/);
+  for (const tree of [running, done, rolledBack, failed]) {
+    assert.equal(buttonByLabel(tree, '立即重启 DSH'), undefined);
+    assert.equal(buttonByLabel(tree, '强制更新'), undefined);
+  }
+});
+
+test('官方更新 UI：npm latest 滞后不隐藏官方新版本；两处卡片共享更新器', () => {
+  const { module, t, cards } = boot();
+  assert.equal(cards[0].spec.inject().api.updater, cards[1].spec.inject().api.updater);
+  const tree = render(module.renderUpdateSection(updateModel({ version: {
+    phase: 'ready', currentVersion: '26.10.11', latestVersion: '26.10.11', updateAvailable: false,
+  } }), actions, t));
+  assert.match(text(tree), /有新版本/);
+  assert.ok(buttonByLabel(tree, '更新到 v26.10.12'));
+});
+
+test('插件更新 UI：已是最新 / 检查失败', () => {
+  const { module, t } = boot();
+  const latest = render(module.renderUpdateSection(updateModel({ version: UP_TO_DATE, manager: { phase: 'ready', installedVersion: '26.10.12' } }), actions, t));
+  assert.match(text(latest), /已是最新/);
+  assert.equal(hasUpdateButton(latest), false);
+
+  const failed = render(module.renderUpdateSection(updateModel({ version: { phase: 'error', currentVersion: '26.10.11', reason: '连不上注册表' } }), actions, t));
+  assert.match(text(failed), /检查更新失败：连不上注册表/);
+  assert.match(text(failed), /当前运行版本：\|v26\.10\.11/);
+  assert.equal(buttonByLabel(failed, '检查更新').props.disabled, false);
+});
+
+test('市场兜底 UI：装了市场 → 按 npm 最新版给按钮，普通更新不带 force；没装市场只提示并展开指定版本安装', () => {
+  const { module, t } = boot();
   const started = [];
-  const fresh = renderUpdate(
-    updateModel({ operation: { state: 'failed', failure: { code: 'RELEASE_TOO_FRESH', message: 'x' } } }),
-    { ...updateActions, startUpdate: (force) => started.push(force) },
-  );
-  assert.match(fresh.text, /发布冷却期/);
-  button(fresh.buttons, '强制更新').props.onClick();
-  assert.deepEqual(started, [true]);
+  const tree = render(module.renderUpdateSection(marketModel(), { ...actions, startUpdate: (force) => started.push(force) }, t));
+  const update = buttonByLabel(tree, '更新到 v26.10.12');
+  assert.equal(update.props.disabled, false);
+  update.props.onClick();
+  assert.deepEqual(started, [false], '普通更新不带 force');
+  assert.equal(pinnedOf(tree).props.open, false, '有一键更新时指定版本安装收起');
 
-  const other = renderUpdate(updateModel({ operation: { state: 'failed', failure: { code: 'UPDATE_FAILED', message: 'pnpm 退出码 1' } } }));
-  assert.match(other.text, /更新失败：pnpm 退出码 1/);
-  assert.equal(button(other.buttons, '强制更新'), undefined);
+  const absent = render(module.renderUpdateSection(marketModel({ market: { phase: 'absent' } }), actions, t));
+  assert.equal(hasUpdateButton(absent), false);
+  assert.match(text(absent), /dshmarket/);
+  const input = collect(pinnedOf(absent), (node) => node.type === 'input')[0];
+  assert.equal(pinnedOf(absent).props.open, true);
+  assert.equal(input.props.value, `${PACKAGE_NAME}@26.10.12`);
+  assert.equal(input.props.readOnly, true);
+  let selected = false;
+  input.props.onFocus({ currentTarget: { select: () => { selected = true; } } });
+  assert.equal(selected, true);
 });
 
-test('插件更新区：本地目录安装（file:）→ 不给更新按钮，说明怎么更新', () => {
-  const market = { phase: 'ready', restartSupported: false, endpoints: {}, source: 'linked', updatable: false };
-  const linked = renderUpdate(updateModel({ market }));
-  assert.equal(button(linked.buttons, '更新到 v26.10.12'), undefined, 'dshmarket 会拒绝本地安装，按钮点了也只会失败');
-  assert.match(linked.text, /本地目录（file:）/);
-  assert.ok(button(linked.buttons, '检查更新'));
+test('市场兜底 UI：进行中显示百分比与摘要，按钮全部禁用，不给指定版本安装', () => {
+  const { module, t } = boot();
+  const tree = render(module.renderUpdateSection(marketModel({ operation: {
+    channel: 'market', operationId: 'b-update-1', state: 'running', progress: { percent: 40, detail: 'Progress: resolved 3' },
+  } }), actions, t));
+  assert.match(text(tree), /正在更新… 40%/);
+  assert.match(text(tree), /Progress: resolved 3/);
+  assert.equal(buttonByLabel(tree, '检查更新').props.disabled, true);
+  assert.equal(buttonByLabel(tree, '正在更新…').props.disabled, true);
+  assert.equal(pinnedOf(tree), undefined);
+});
 
-  assert.match(renderUpdate(updateModel({ market: { ...market, source: 'generation' } })).text, /DSH 桌面端统一管理/);
-  assert.ok(button(renderUpdate(updateModel({ market: { ...market, source: 'npm', updatable: true } })).buttons, '更新到 v26.10.12'));
+test('市场兜底 UI：成功后按 restartRequired / refreshRequired 改徽章与提示；市场支持重启时才给重启按钮', () => {
+  const { module, t } = boot();
+  const view = (outcome, market) => render(module.renderUpdateSection(marketModel({
+    operation: { channel: 'market', state: 'succeeded', installedVersion: '26.10.12', outcome },
+    target: '26.10.12',
+    ...(market ? { market } : {}),
+  }), actions, t));
+  const desktop = view({ restartRequired: true });
+  assert.match(text(desktop), /已更新到 v26\.10\.12。 重启 DSH 后生效。/);
+  assert.match(text(desktop), /等待重启/);
+  assert.doesNotMatch(text(desktop), /有新版本|注意：装上的是/);
+  assert.equal(hasUpdateButton(desktop), false);
+  assert.equal(buttonByLabel(desktop, '立即重启 DSH'), undefined, '桌面版的重启归桌面壳管');
+
+  const web = view({ restartRequired: true }, { phase: 'ready', restartSupported: true, endpoints: {}, source: 'npm', updatable: true });
+  assert.ok(buttonByLabel(web, '立即重启 DSH'));
+
+  const refresh = view({ refreshRequired: true });
+  assert.match(text(refresh), /等待刷新/);
+  assert.match(text(refresh), /刷新页面后生效/);
+  assert.match(text(view({})), /已是最新/);
+});
+
+test('市场兜底 UI：装上的版本低于目标时警告并允许重试；高于目标不警告也不重复更新', () => {
+  const { module, t } = boot();
+  const view = (installedVersion) => render(module.renderUpdateSection(marketModel({
+    target: '26.10.12',
+    operation: { channel: 'market', state: 'succeeded', installedVersion, outcome: {} },
+  }), actions, t));
+  const below = view('26.10.11');
+  assert.match(text(below), /注意：装上的是 v26\.10\.11，不是预期的 v26\.10\.12/);
+  assert.match(text(below), /有新版本/);
+  assert.equal(buttonByLabel(below, '更新到 v26.10.12')?.props.disabled, false);
+  assert.equal(pinnedOf(below).props.open, true, '装上的仍低于最新版时展开指定版本安装');
+
+  const above = view('26.10.13');
+  assert.doesNotMatch(text(above), /注意：装上的是/);
+  assert.match(text(above), /已是最新/);
+  assert.equal(hasUpdateButton(above), false);
+});
+
+test('市场兜底 UI：发布冷却期 / 版本未变时给"强制更新"并展开指定版本安装，其它失败不给', () => {
+  const { module, t } = boot();
+  const started = [];
+  for (const code of ['RELEASE_TOO_FRESH', 'VERSION_UNCHANGED']) {
+    const tree = render(module.renderUpdateSection(
+      marketModel({ operation: { channel: 'market', state: 'failed', failure: { code, message: 'x' } } }),
+      { ...actions, startUpdate: (force) => started.push(force) },
+      t,
+    ));
+    buttonByLabel(tree, '强制更新').props.onClick();
+    assert.equal(pinnedOf(tree).props.open, true);
+    if (code === 'RELEASE_TOO_FRESH') assert.match(text(tree), /发布冷却期/);
+  }
+  assert.deepEqual(started, [true, true]);
+
+  const other = render(module.renderUpdateSection(marketModel({ operation: { channel: 'market', state: 'failed', failure: { code: 'UPDATE_FAILED', message: 'pnpm 退出码 1' } } }), actions, t));
+  assert.match(text(other), /更新失败：pnpm 退出码 1/);
+  assert.equal(buttonByLabel(other, '强制更新'), undefined);
+});
+
+test('市场兜底 UI：本地目录 / 桌面托管安装 → 不给更新按钮与指定版本安装，说明怎么更新', () => {
+  const { module, t } = boot();
+  const view = (overrides) => render(module.renderUpdateSection(marketModel(overrides), actions, t));
+  const market = { phase: 'ready', restartSupported: false, endpoints: {}, updatable: false };
+  for (const [overrides, hint] of [
+    [{ market: { ...market, source: 'linked' } }, /从本地目录安装/],
+    [{ market: { ...market, source: 'generation' } }, /由 DSH 统一管理/],
+    [{ manager: { phase: 'unsupported', local: true } }, /从本地目录安装/],
+  ]) {
+    const tree = view(overrides);
+    assert.equal(hasUpdateButton(tree), false, 'dshmarket 会拒绝这类安装，按钮点了也只会失败');
+    assert.match(text(tree), hint);
+    assert.equal(pinnedOf(tree), undefined);
+    assert.ok(buttonByLabel(tree, '检查更新'));
+  }
+});
+
+test('市场兜底 UI：任务丢失、启动失败与重启失败都有提示', () => {
+  const { module, t } = boot();
+  const tree = render(module.renderUpdateSection(marketModel({
+    operation: { channel: 'market', state: 'lost' },
+    startFailure: 'HTTP 409',
+    restart: { phase: 'error', reason: 'HTTP 500' },
+  }), actions, t));
+  assert.match(text(tree), /上次的更新任务已经结束或 DSH 已重启/);
+  assert.match(text(tree), /没能开始更新：HTTP 409/);
+  assert.match(text(tree), /重启失败：HTTP 500/);
+});
+
+test('指定版本安装：版本规格校验与卡片复制动作，剪贴板失败时保留手动复制', async () => {
+  const { module } = boot();
+  assert.equal(module.pinnedInstallSpec('v26.10.17'), PACKAGE_NAME + '@26.10.17');
+  assert.equal(module.pinnedInstallSpec('27.1.1-rc.1+build.2'), `${PACKAGE_NAME}@27.1.1-rc.1+build.2`);
+  for (const value of [undefined, 'latest', '^26.10.17', '26.10.17.1', 'https://example.com/pkg.tgz', '26.10.17 --force']) assert.equal(module.pinnedInstallSpec(value), undefined);
+  for (const clipboard of [{ writeText: async value => { assert.equal(value, PACKAGE_NAME + '@26.10.12'); } }, undefined]) {
+    const update = marketModel({ market: { phase: 'absent' } });
+    // 13 个模型/后端状态之后，是共享插件更新快照和复制提示。
+    const app = boot([...backendStates({}), update, undefined], { clipboard });
+    const view = () => render(app.renderCard());
+    await buttonByLabel(view(), '复制包名和版本').props.onClick();
+    assert.match(text(view()), clipboard ? /已复制/ : /手动复制/);
+  }
 });
 
 test('后端网关：选择区自成一块（有自己的容器），与「后端版本」标题行分开', () => {
