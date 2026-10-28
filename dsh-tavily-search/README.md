@@ -28,7 +28,7 @@ DSH 网页搜索 ─ 旧版 POST /v1/messages ─────┐
 | --- | --- | --- |
 | **API Key** | 可添加多个 Tavily API Key（最多 10 个），逐个列出、各自单独删除（删除前二次确认）；列表只显示末 4 位用于辨认，从不回显完整值 | 写入 / 删除走 DSH 凭据库（`remote.credentials`），与内置「网页搜索」页同一条路；列表走宿主半侧路由 `/plugins/dsh-tavily-search/keys` |
 | **网页搜索接入** | 显示当前搜索通道与接口地址；未接入时一键把**当前通道**的接口地址改成本插件的端点、凭据引用改成本插件的占位凭据，已接入时可恢复默认；只改了接口地址的接入显示「待修复」。新版开关打开时接的是 `web-deepseek-api` 的 Search API 基础地址，并把抓取提供方从 `deepseek-fetch-api` 改回本地 HTTP（本插件只做搜索，见下文） | 开关关闭时读 `configForms.get('web-search-deepseek')`（Messages 接口地址）；打开时读 `configForms.get('web-deepseek-api')`（Search API 基础地址）；提供方选择读 `configForms.get('web')`；占位凭据走 `remote.credentials` |
-| **插件更新** | 显示当前运行版本与 npm 最新版本；装了 [dshmarket](https://www.npmjs.com/package/dshmarket) 时一键更新并显示进度，没装时只提示有新版本 | 版本检查走宿主半侧路由 `/plugins/dsh-tavily-search/version`（同时问 npm 官方源与 npmmirror，取较高者，缓存 10 分钟）；更新走 dshmarket 的公开更新 API v1 |
+| **插件更新** | 显示当前运行版本与 npm 最新版本；支持官方更新接口的 DSH 可一键更新到兼容正式版，旧版提供手动安装指引 | npm 版本检查走宿主路由 `/plugins/dsh-tavily-search/version`；更新资格、版本与注册表由官方 `pluginManager.listBundles/listVersions` 确定，安装走 `updateBundle` |
 | **搜索接口** | 显示 `127.0.0.1:8787/v1` 的状态（运行中 / 外部实例 / 端口被占用 / 启动失败）；「测试搜索」按 DSH 的请求形状真打一次 | 宿主半侧路由 `/plugins/dsh-tavily-search/status`、`/test` |
 | **清除插件数据** | 卸载本插件前点一下：二次确认后删除卡片里保存的全部 Tavily API Key，并把网页搜索里本插件写的接口地址与凭据引用恢复为 DSH 默认（卸载后 `127.0.0.1:8787` 没人监听，不恢复的话网页搜索会失败）。环境变量等只读来源的 key 只提示、不删。没有可清的内容时整块不显示 | 删 key 走 `remote.credentials.unset`，恢复走 `configForms.get('web-search-deepseek')`，与上面两块同一条路 |
 
@@ -57,15 +57,18 @@ DSH 网页搜索 ─ 旧版 POST /v1/messages ─────┐
   卡片同时显示「待修复」，点「修复接入」即可改回本地 HTTP。
 - 配了 `shimApiKey` 时，接入后在内置网页搜索页的 API Key 栏填同一个值（写进占位凭据）；卡片再次接入不会覆盖它。
 - 密钥输入框用宿主的 `SettingsSecretField`（与内置网页搜索页同款）；宿主组件拿不到时退回自带的同款输入框。
-- 一键更新不自己跑 pnpm：DSH 自带的插件管理器不支持升级已安装的插件，本插件把更新交给 dshmarket，
-  由它处理 profile 锁、文件占用、回滚与版本核对。桌面版更新完成后要**重启 DSH** 才会换上新代码
-  （桌面版的重启归桌面壳管，卡片不提供重启按钮）。新版本刚发布时可能被 pnpm 的发布冷却期挡下，卡片会给出「强制更新」。
-- 有新版本时还可展开「按指定版本安装」，复制当前查到的 `@zhiqiangme/dsh-tavily-search@版本号`。
-  冷却期 / 版本未变导致更新失败，或实际安装版本仍低于最新版时，这块说明自动展开。**先复制**，再去 DSH「插件」页卸载，
-  在「添加插件」里粘贴完整规格安装；不必清除插件数据，API Key 与搜索配置继续保留。指定版本避免 `latest` 在发布观察期内选到旧版。
-  该入口也可用于未安装 dshmarket 的情况；本地源码与桌面托管安装仍沿用各自的更新方式。
-- 一键更新只对从 npm 安装的情况有效。从本地目录（`file:`）装时 dshmarket 拒绝更新（`locally linked plugins update from their checkout`），
-  卡片会先向 dshmarket 查询安装来源，这种情况下不显示更新按钮，改为提示：拉取新代码后重新安装，或改为从 npm 安装。
+- 一键更新使用 DSH 官方 `pluginManager` Remote 接口，不再依赖第三方市场。插件不执行 pnpm，也不自行卸载后重装。
+  官方管理器负责兼容性检查、锁、安装与失败时恢复旧版；卡片展示检查、卸载、安装、恢复阶段，并按结果提示是否需要重启。
+  只有实际安装版本等于目标版本才显示成功；恢复失败或连接中断会明确提示检查实际安装状态。
+- 更新前通过 `listBundles` 检查本插件的 `updatable`，通过 `listVersions` 选择最新的兼容、未弃用正式版，
+  将精确版本及同一注册表传给 `updateBundle`。市场索引是否收录本插件不影响更新。
+- 按宿主接口能力判断是否支持更新，不写死最低版本号。已核对的 DSH `0.2.1-rc.3` 尚无 `listVersions/updateBundle`，
+  该版本保留 npm 版本检查，提示“当前 DSH 版本暂不支持插件内更新”。官方接口可用后无需安装额外市场插件。
+- 旧宿主有新版本时，可在“按指定版本安装”中复制 `@zhiqiangme/dsh-tavily-search@版本号`，
+  然后到 DSH“插件”页卸载并在“添加插件”中粘贴。不要清除插件数据，API Key 与搜索配置继续保留；安装后按宿主提示重启。
+- 本地 `file:/link:` 安装请更新源码并重新运行安装脚本；宿主托管或其他不具备更新资格的安装不显示一键更新。
+- 同一插件页面中的卡片共享更新任务，切换页面不重复提交。官方接口没有更新任务回查接口，整页刷新或插件热重载后，
+  卡片重新读取运行版本与实际安装状态，不恢复旧市场的轮询任务，也不把未知结果显示为成功。
 
 ## 行为
 
@@ -101,7 +104,7 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search@26.10.18
 跨年时主版本号会变。更多说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从-npm-安装推荐)。
 上面的 `26.10.18` 是示例；实际使用卡片查到的 npm 最新版，或运行 `npm view @zhiqiangme/dsh-tavily-search version` 查询。
 命令行 `add 包名@版本` 可更新已有依赖；DSH 图形界面则按其安装流程先卸载再添加。
-卡片的一键更新保持 dshmarket 的公开 API 契约：传纯包名，由市场解析并固定版本，不能给 `packageName` 拼接 `@版本`。
+卡片的一键更新调用官方 `updateBundle(包名, 精确版本, { registry, requestId })`；命令行更新方式保持不变。
 
 从源码安装：克隆[仓库](https://github.com/zhiqiangme/dsh-plugins)后双击根目录的 `install-plugins.cmd`，
 按提示选择插件和 profile（说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从源码安装)），完成后重启 DSH 生效。
