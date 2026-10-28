@@ -10,8 +10,6 @@
 | WorkBuddy2API Hub（默认） | `127.0.0.1:7863` | profile 里 `workbuddy` provider 的上游（`http://127.0.0.1:7863/v1/`） |
 | WorkBuddy Panel（`wb2api.exe`，可选） | `127.0.0.1:7863` | 同上；与 hub 用同一个端口，同一时刻只跑其中一个 |
 
-同一仓库里还有 Tavily 联网搜索插件 [@zhiqiangme/dsh-tavily-search](https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-tavily-search)：两个插件各自独立开关，任何一个出问题都不影响另一个。
-
 ## 行为
 
 - **随 DSH 启动**：插件加载后在后台拉起服务，不阻塞 DSH 启动。
