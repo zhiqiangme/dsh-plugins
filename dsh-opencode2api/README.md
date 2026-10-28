@@ -1,6 +1,6 @@
 # @zhiqiangme/dsh-opencode2api
 
-让 [opencode2api](https://github.com/jasonxu114514/opencode2api) 随 DSH 启动，沿用本仓库 WorkBuddy 插件的结构。
+让 [opencode2api](https://github.com/jasonxu114514/opencode2api) 随 DSH 启动。
 默认托管独立的 Windows 程序；也可在卡片中切换到 [TiaraBasori/OpenCode2API](https://github.com/TiaraBasori/OpenCode2API) 第二后端，两者无需 Docker 或全局安装 OpenCode CLI。
 
 ## 使用
@@ -190,4 +190,4 @@ node lib/sync-cli.js           # 预览模型规划，不写 profile
 真实 Windows 后端测试可设置 `OPENCODE2API_TEST_EXE` 后运行 `test/native-smoke.test.mjs`；上游被替换为本地假服务，不消耗真实模型额度。
 后端不可达时保留原模型配置；403 / 401 等 HTTP 状态会显示为错误，不能据此把空结果写回模型列表。
 
-插件代码采用 [MIT](LICENSE)，由本仓库的 WorkBuddy 插件适配而来；独立下载的原后端 jasonxu114514/opencode2api 使用 GPL-3.0-or-later，TiaraBasori/OpenCode2API 使用 MIT，OpenCode 运行时遵循其自身许可。本 npm 包不包含这些上游程序。
+插件代码采用 [MIT](LICENSE)；独立下载的原后端 jasonxu114514/opencode2api 使用 GPL-3.0-or-later，TiaraBasori/OpenCode2API 使用 MIT，OpenCode 运行时遵循其自身许可。本 npm 包不包含这些上游程序。
