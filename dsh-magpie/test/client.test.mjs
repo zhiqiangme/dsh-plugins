@@ -671,10 +671,10 @@ test('标题显示网关与程序状态，程序状态可跳到更新页；标�
   const label = (node) => node.children.flat().map((c) => typeof c === 'string' ? c : c?.children?.join('') ?? '').join('');
   assert.match(label(chips()[0]), /正在检查网关/);
   // 网关状态在更新区块之后的状态位。
-  client.states[17] = { online: true, version: '0.1.1' };
+  client.states[11] = { online: true, version: '0.1.1' };
   assert.equal(chips()[0].props.className, 'chip ok');
   assert.match(label(chips()[0]), /网关在线 0\.1\.1/);
-  client.states[17] = { online: false };
+  client.states[11] = { online: false };
   assert.match(label(chips()[0]), /网关未连接/);
   assert.match(label(chips()[1]), /Magpie 0\.1\.1.*可升级到 0\.1\.2/);
   const tabs = () => nodes(client.render(), (n) => n.props.role === 'tab');

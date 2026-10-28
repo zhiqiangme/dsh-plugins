@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-export function clientHarness(initial, fetchImpl = async () => { throw new Error('unexpected fetch'); }, { sessionStorage, sidebar = false, layout } = {}) {
+export function clientHarness(initial, fetchImpl = async () => { throw new Error('unexpected fetch'); }, { sessionStorage, sidebar = false, layout, remote = { $on: () => () => {} }, crypto = globalThis.crypto } = {}) {
   let registration, index = 0;
   const styleTags = [], states = [initial, false, false, null, '', ''], cards = [], dictionaries = [];
   const React = {
@@ -11,23 +11,27 @@ export function clientHarness(initial, fetchImpl = async () => { throw new Error
     useLayoutEffect() {},
     useCallback: (callback) => callback,
   };
-  const window = { sessionStorage, __ModuleLoader__: { load: (value) => { registration = value; } } };
+  const window = { sessionStorage, crypto, __ModuleLoader__: { load: (value) => { registration = value; } } };
   const document = { querySelector: () => null, createElement: () => ({ dataset: {} }), head: { appendChild: (node) => styleTags.push(node) } };
   new Function('window', 'document', 'fetch', readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'))(window, document, fetchImpl);
   const module = registration.factory((id) => { if (id === 'react') return React; throw new Error(`Unexpected dependency ${id}`); });
   const t = (key, values) => module.zh[key].replace(/\{(\w+)\}/g, (m, k) => values?.[k] ?? m);
   const ctx = {
     effect: (run) => run(),
+    // 默认模拟没有官方插件管理器的旧宿主：remote 上只有事件订阅。
+    remote,
     locale: { register: (_ns, dicts) => { dictionaries.push(dicts); }, bind: () => t },
     // 默认模拟没有侧栏页面的旧宿主；sidebar 为 true 时声明 sidebar.panellist 槽位。
     slots: { inject: (name, run) => { if (name !== 'sidebar.panellist' || sidebar) run(); }, register: (meta, component) => { const card = { meta, component, disposed: false }; cards.push(card); return () => { card.disposed = true; }; } },
     ...(layout ? { inject: (_names, run) => run({ layout, effect: (run) => run() }) } : {}),
   };
   module.apply(ctx);
-  const render = () => { index = 0; return module.ModelsCard({ t }); };
+  // 卡片与侧栏页面共用 apply 建的插件更新器，渲染时照宿主那样从注册信息里取。
+  const { pluginUpdater } = cards[0].meta.inject();
+  const render = () => { index = 0; return module.ModelsCard({ t, pluginUpdater }); };
   // 切换卡片标签页：标签状态保存在 states 中，之后的 render 都停留在该页。
   const tab = (label) => nodes(render(), (node) => node.props.role === 'tab' && node.children.includes(label))[0].props.onClick();
-  return { module, registration, states, get styles() { return styleTags.map((node) => node.textContent); }, cards, dictionaries, render, tab };
+  return { module, registration, states, get styles() { return styleTags.map((node) => node.textContent); }, cards, dictionaries, render, tab, pluginUpdater };
 }
 
 export function nodes(tree, predicate, found = []) {
