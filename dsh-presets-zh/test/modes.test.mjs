@@ -21,6 +21,12 @@ test('四组设置均使用宿主可编辑引用，空配置默认全部启用�
   }
 })
 
+test('预设列表按 order 排序，order 与设置页顺序一致且排在旧极简提示词之后', () => {
+  // 宿主 Agent 预设页按 order 升序、再按 id 排序，注册顺序不影响显示。
+  const orders = configuredModes().map(mode => mode.definition.order)
+  assert.deepEqual(orders, [6, 7, 8, 9])
+})
+
 test('提示词、名称和开关独立配置，副本修改不会污染快照或其他模式', () => {
   const options = { standard: { name: '工作模式', prompt: '遵循项目规范。', enabled: false }, creation: { description: '' } }
   const modes = configuredModes(Config(options))

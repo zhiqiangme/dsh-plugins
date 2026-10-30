@@ -1,6 +1,6 @@
 {
   "id": "minimal-zh",
-  "order": 6,
+  "order": 8,
   "plugins": [
     {
       "id": "persona",

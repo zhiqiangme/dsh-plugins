@@ -1,6 +1,6 @@
 {
   "id": "ptc-zh-test",
-  "order": 8,
+  "order": 7,
   "plugins": [
     {
       "id": "persona",
