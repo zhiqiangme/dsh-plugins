@@ -28,6 +28,7 @@
   "files": [
     "lib",
     "icons",
+    "locale/*.json",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -36,7 +37,8 @@
       "default": "./lib/index.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "dsh": {
     "bundle": {
