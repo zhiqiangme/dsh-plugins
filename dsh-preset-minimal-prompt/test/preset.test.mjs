@@ -93,7 +93,7 @@ test('planning / compaction / delegation 分组配置完整', () => {
 
 test('bundle patch 只挂载插件自身，预设由代码注册', () => {
   const patch = readFileSync(join(root, 'cordis.patch.yml'), 'utf8')
-  assert.match(patch, /- id: dsh-preset-minimal-prompt\n\s+name: '@zhiqiangme\/dsh-preset-minimal-prompt'/)
+  assert.match(patch, /- id: dsh-preset-minimal-prompt\r?\n\s+name: '@zhiqiangme\/dsh-preset-minimal-prompt'/)
   assert.doesNotMatch(patch, /^\s+name:\s*['"]@deepseek-ai\/dsh-agent-preset/m)
 })
 
