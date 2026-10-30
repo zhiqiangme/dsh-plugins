@@ -6,9 +6,6 @@ import { fileURLToPath } from 'node:url'
 
 import { PRESET } from '../lib/preset.js'
 import { apply, inject, name } from '../lib/index.js'
-import { configuredModes } from '../lib/modes.js'
-
-const onlyMinimal = { standard: { enabled: false }, ptc: { enabled: false }, creation: { enabled: false } }
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const row = (id) => PRESET.plugins.find((plugin) => plugin.id === id)
@@ -78,7 +75,7 @@ test('planning / compaction / delegation 分组配置完整', () => {
   assert.equal(planning.group, true)
   assert.equal(planning.isolate.planMode, true)
   assert.equal(planning.config[0].id, 'plan-mode')
-  assert.match(planning.config[0].config.section, /你当前处于规划模式/)
+  assert.match(planning.config[0].config.section, /You are in plan mode/)
 
   const compaction = row('compaction')
   assert.equal(compaction.isolate.compaction, true)
@@ -143,38 +140,38 @@ function fakeContext({ entries = [], presets = [], loader = true } = {}) {
 test('没有现成声明时自动注册，并在卸载时释放', async () => {
   const fake = fakeContext()
   await apply(fake.ctx)
-  assert.deepEqual(fake.registered, configuredModes().map(mode => mode.definition))
+  assert.deepEqual(fake.registered, [PRESET])
   assert.equal(fake.effects.length, 1)
   const disposer = fake.effects[0]()
   await disposer()
-  assert.deepEqual(fake.disposers, configuredModes().map(mode => mode.definition.id))
+  assert.deepEqual(fake.disposers, ['minimal-prompt'])
 })
 
 test('profile 已有同名声明时跳过注册', async () => {
   const fake = fakeContext({
     entries: [{ disabled: false, options: { name: '@deepseek-ai/dsh-agent-preset', config: { id: 'minimal-prompt' } } }],
   })
-  await apply(fake.ctx, onlyMinimal)
+  await apply(fake.ctx)
   assert.deepEqual(fake.registered, [])
-  assert.equal(fake.effects.length, 1)
+  assert.equal(fake.effects.length, 0)
 })
 
 test('声明行被禁用时仍由插件注册', async () => {
   const fake = fakeContext({
     entries: [{ disabled: true, options: { name: '@deepseek-ai/dsh-agent-preset', config: { id: 'minimal-prompt' } } }],
   })
-  await apply(fake.ctx, onlyMinimal)
+  await apply(fake.ctx)
   assert.deepEqual(fake.registered, [PRESET])
 })
 
 test('注册表里已有同 id 时跳过注册', async () => {
   const fake = fakeContext({ presets: [{ id: 'minimal-prompt' }] })
-  await apply(fake.ctx, onlyMinimal)
+  await apply(fake.ctx)
   assert.deepEqual(fake.registered, [])
 })
 
 test('loader entries 不可用时退回注册表检查并注册', async () => {
   const fake = fakeContext({ loader: false })
-  await apply(fake.ctx, onlyMinimal)
+  await apply(fake.ctx)
   assert.deepEqual(fake.registered, [PRESET])
 })

@@ -33,7 +33,7 @@ jobs:
           package-manager-cache: false
       # 预设插件使用宿主同款配置 schema；测试前安装其锁定的 peer 依赖。
       - name: Install preset test dependencies
-        working-directory: dsh-preset-minimal-prompt
+        working-directory: dsh-presets-zh
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Test repository scripts
         run: node --test scripts/test/*.test.mjs
@@ -45,6 +45,9 @@ jobs:
         run: node --test test/*.test.mjs
       - name: Test Minimal Prompt
         working-directory: dsh-preset-minimal-prompt
+        run: node --test test/*.test.mjs
+      - name: Test Chinese Presets
+        working-directory: dsh-presets-zh
         run: node --test test/*.test.mjs
       # 两个后端插件的路径和进程测试遵循 Windows 契约。
       - name: Test WorkBuddy

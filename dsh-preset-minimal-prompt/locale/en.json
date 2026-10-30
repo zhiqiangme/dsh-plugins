@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Chinese Agent Presets",
-    "description": "Configure Minimal Prompt, Chinese Standard, Chinese PTC and Chinese Creation independently."
+    "title": "Minimal Prompt",
+    "description": "Simplify the system prompt and optional host context, retain standard tools, AGENTS.md and Skills, and localize generated notices into Chinese."
   }
 }

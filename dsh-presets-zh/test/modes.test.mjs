@@ -12,8 +12,8 @@ const data = file => JSON.parse(readFileSync(new URL(`../lib/${file}`, import.me
 
 test('四组设置均使用宿主可编辑引用，空配置默认全部启用且不改变内部 id', () => {
   const config = Config({})
-  assert.deepEqual(MODES.map(mode => mode.key), ['minimalPrompt', 'standard', 'ptc', 'creation'])
-  assert.deepEqual(configuredModes(config).map(mode => mode.definition.id), ['minimal-prompt', 'standard-zh-test', 'ptc-zh-test', 'cordis-zh-test'])
+  assert.deepEqual(MODES.map(mode => mode.key), ['minimal', 'standard', 'ptc', 'creation'])
+  assert.deepEqual(configuredModes(config).map(mode => mode.definition.id), ['minimal-zh', 'standard-zh-test', 'ptc-zh-test', 'cordis-zh-test'])
   for (const { key } of MODES) {
     assert.equal(Config.dict[key].meta.volatile, true)
     assert.equal(config[key].get().enabled, true)
@@ -117,7 +117,7 @@ test('保存开关和提示词只更新对应模式，其他模式不重注册�
   assert.equal(fake.records.has('standard-zh-test'), false)
   assert.equal(fake.records.get('ptc-zh-test').name, '批量处理')
   assert.equal(row(fake.records.get('ptc-zh-test'), 'persona').config.prefix, '请完成批量任务。')
-  assert.deepEqual(fake.registered, ['minimal-prompt', 'standard-zh-test', 'ptc-zh-test', 'cordis-zh-test', 'ptc-zh-test'])
+  assert.deepEqual(fake.registered, ['minimal-zh', 'standard-zh-test', 'ptc-zh-test', 'cordis-zh-test', 'ptc-zh-test'])
   updateVolatile(config.standard, Config({}).standard)
   await fake.hooks.get('loader/volatile-update')()
   assert.equal(fake.records.has('standard-zh-test'), true)
@@ -129,6 +129,6 @@ test('同 id 外部声明只占用该模式，不阻止其他三个模式注册'
   const fake = host()
   fake.ctx.loader.entries = () => [{ options: { name: '@deepseek-ai/dsh-agent-preset', config: { id: 'ptc-zh-test' } } }]
   await apply(fake.ctx)
-  assert.deepEqual(fake.registered, ['minimal-prompt', 'standard-zh-test', 'cordis-zh-test'])
+  assert.deepEqual(fake.registered, ['minimal-zh', 'standard-zh-test', 'cordis-zh-test'])
   await fake.cleanup()
 })

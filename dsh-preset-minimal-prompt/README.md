@@ -1,107 +1,139 @@
-# 中文模式预设
+# @zhiqiangme/dsh-preset-minimal-prompt
 
-包名与安装别名保持不变：`@zhiqiangme/dsh-preset-minimal-prompt` / `minimal-prompt`。
+给 DSH 自动新增 **「极简提示词」**（preset id `minimal-prompt`）：使用中文极简系统提示词；保留标准工具、AGENTS.md 和 Skills。可选宿主上下文与内置极简模式一样关闭，工作区、技能、时间与模型切换的已知自动说明在写入会话日志前中文化。
 
-一个插件提供四种模式，在 DSH「插件 → 中文模式预设」里分别配置开关、显示名称、描述和系统提示词。修改后点击「保存设置」，无需手工改 YAML。
+装上插件后不需要手动改 `cordis.patch.yml`，插件加载时会自动向 Agent preset 注册表注册这个模式。
 
-| 模式 | 内部 ID | 能力 |
-| --- | --- | --- |
-| 极简提示词 | `minimal-prompt` | 中文极简系统提示词，保留标准工具、AGENTS.md 与 Skills；不附加标准模式的长篇系统操作说明 |
-| 中文标准 | `standard-zh-test` | 保留标准工具与完整操作说明，将已知系统说明汉化 |
-| 中文 PTC | `ptc-zh-test` | 使用 `run_code` 编排工具调用，汉化 SDK 说明，完整保留动态工具声明与类型 |
-| 中文创造 | `cordis-zh-test` | 保留 Cordis 检查、预设编写技能与插件管理能力，汉化已知操作说明 |
+## 这个模式是什么
 
-三个中文完整模式保留先前本机测试使用的 ID，显示名称不再带“测试”，已有对话仍可找到原预设。四种模式默认全部启用；插件不会更改 DSH 的新会话默认模式。
+| 内容 | 来源 |
+| --- | --- |
+| 系统提示词（system message） | 固定为 `你是一名乐于助人的软件工程助手。` |
+| 工具 | 标准模式：read / write / edit / glob / grep / pwsh / jobs / schedule / skill / goal / plan / subagent / workflow / todo / web / present 等 |
+| AGENTS.md | 标准模式：由 `agent-instructions` 注入，原文不变，已知的开头说明和首个来源标签中文化 |
+| Skills | 标准模式：`skill-filesystem` + `tool-skill`，含技能目录 |
+| 时间 | 保留真实时间、时区和间隔，自动说明中文化 |
+| 运行时上下文 | 与内置极简模式一致，`includeRuntimeContext: false`；保留宿主标记为 required 的工作目录、团队等事实，省略可选的安装路径、Web 地址、权限说明等 |
+| 沙箱 / 审批 | 仍由宿主按实际策略执行；关闭可选文字说明不改变权限 |
+| 标准系统提示词里的工具说明、团队说明、MCP 说明 | 不写入；`complete: true` 会抑制所有其他 system prompt 段落 |
+
+工具 schema 仍会随工具集完整发送，所以模型知道自己能调用什么；但标准模式系统提示词里的长篇操作说明不会出现。这是“极简提示词 + 标准工具”的预期代价。
 
 ## 安装
 
-先完全退出 DSH（包括托盘），再安装：
+### 从 npm 安装（推荐）
+
+先完全退出 DSH 桌面版（托盘图标也要退出），然后：
 
 ```powershell
 dsh plugin --profile desktop add @zhiqiangme/dsh-preset-minimal-prompt
 ```
 
-本地源码安装在仓库根目录执行：
+重新打开 DSH，插件加载后会自动注册新模式。装到 Web / CLI 时把 `desktop` 换成 `web` / `headless`。
+
+### 从源码安装
+
+在仓库根目录运行：
 
 ```powershell
 .\install-plugins.cmd --action install --plugins minimal-prompt --profiles desktop --yes
 ```
 
-重开 DSH，在插件列表打开「中文模式预设」即可设置四种模式。Web / CLI 安装时将 `desktop` 换为对应 profile。
+或让安装脚本选择“全部”，新插件会出现在列表中。
 
-## 设置与生效范围
+## 安装后的行为
 
-- 四种模式可分别启用或停用，不需要安装四个插件。
-- 每种模式有独立的显示名称、描述、系统提示词；名称和提示词留空时使用默认值。
-- 完整模式的“系统提示词”是角色前缀。工具、团队、MCP 等已知操作说明仍由当前组合动态组装并汉化；极简提示词模式则只使用角色提示词。
-- “恢复此模式默认设置”先填回默认值，点击保存后生效。
-- 保存通过宿主配置表单进行，使用版本检查防止覆盖其他页面较新的设置。遇到冲突可重新载入后编辑。
-- 保存后只更新有变化的预设定义。新会话使用新设置；已有会话保留创建时的组合，可切换模式以使用更新后的定义。停用或卸载也不会改写已有会话历史。
+1. 插件 bundle 的 `cordis.patch.yml` 先挂载插件自身。
+2. `lib/index.js` 在 `agentPresets` 服务就绪后检查是否已经有同 id 的声明式预设。
+3. 没有冲突时调用 `agentPresets.register(PRESET)`，注册「极简提示词」。
+4. 停用插件行或卸载插件时，注册会被释放；之后新建的任务不再提供这个模式。已有会话保留启动时的组合，不受影响。
 
-手写配置仍然支持，示例：
+### 如果已经手动加过 `minimal-prompt`
+
+如果你之前按手工方式往 `cordis.patch.yml` 加过：
 
 ```yaml
-- id: dsh-preset-minimal-prompt
-  config:
-    minimalPrompt:
-      enabled: true
-    standard:
-      enabled: true
-      name: 中文标准
-      prompt: 你是一名乐于助人的软件工程助手。
-    ptc:
-      enabled: true
-    creation:
-      enabled: false
+- insert:
+    - id: preset-minimal-prompt
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: minimal-prompt
+        ...
 ```
 
-这是 profile 的行覆盖片段；安装 bundle 会声明插件行，无需再手工插入第二份。
+插件会检测到这条声明并跳过自动注册，避免同一个 `minimal-prompt` 出现两份（重复 id 会让其中一份显示加载失败）。
 
-## 从本机测试预设迁移
+要让插件接管这个模式：
 
-插件逐个检测同 ID 的声明式预设；遇到重复时将所有权留给既有声明，不覆盖用户配置，也不会阻止其他模式注册。
+1. 删除 `cordis.patch.yml` 里包含 `preset-minimal-prompt` 的那段 `- insert:` 块；
+2. 重启 DSH，或在插件页把本插件停用再启用；
+3. 插件会重新注册并成为该模式的唯一来源。
 
-之前使用过本机附件测试配置的用户，应先备份 profile，再删除 `cordis.patch.yml` 中这些完整标记块，让插件接管：
+## 启用、停用与卸载
 
-- `BEGIN standard-zh-test` 至 `END standard-zh-test`
-- `BEGIN ptc-zh-test` 至 `END ptc-zh-test`
-- `BEGIN cordis-zh-test` 至 `END cordis-zh-test`
+- **停用**：在 DSH 插件页停用 `dsh-preset-minimal-prompt` 行，或设置页禁用对应 bundle。新模式从后续新会话中消失。
+- **卸载**：
 
-若曾手写声明 `minimal-prompt`，同样移除相应声明块。插件不主动修改 profile 或会话文件。迁移完成后不再依赖本机 `plugin-sources` 目录。
+```powershell
+dsh plugin --profile desktop remove @zhiqiangme/dsh-preset-minimal-prompt
+```
 
-## 提示词与能力边界
+卸载后插件编辑过的 profile 配置不会残留（本插件不写 profile 文件）；如果之前有手动声明，手动声明仍然保留。
 
-四种模式都关闭可选宿主上下文，与内置极简模式的 `includeRuntimeContext: false` 一致；宿主标记为 required 的工作目录、团队等运行时事实仍保留。关闭文字说明不改变实际沙箱和审批策略。
+## 和标准模式保持同步
 
-AGENTS.md、Skills 的名称、描述与正文原样保留，仅汉化已知的自动包装说明、时间通知和模型切换通知。工具 API 标识、schema、SDK 声明及用户内容中的宿主字样不会全局替换。
+本插件的 `lib/preset.js` 是 **DSH 标准模式插件列表的快照**，安装时不需要读取 DSH 安装目录。这样它能离线安装、可审计，也不会因为 DSH 升级时文件路径变化而加载失败。
 
-中文创造保留内置技能目录解析表达式，并根据 profileContext 判断插件管理工具是否可用；不写死安装路径，也不会在缺少 profile 服务时强行启用管理工具。
+代价是：DSH 升级后，如果标准模式新增或删除了工具，插件不会自动跟着变。升级 DSH 后可以：
 
-## 升级与维护
+1. 对比新版本 `@deepseek-ai/dsh-web-app/presets/standard.patch.yml` 的 `plugins` 列表；
+2. 更新 `lib/preset.js`，只改 `persona` 为极简配置，其余行保持标准模式；
+3. 运行 `npm test` 和下面的运行时验证。
 
-`lib/preset.js` 和 `lib/presets/*.json` 是已验证预设的工具配置快照。`lib/translations/*.json` 保存已知说明及译文。DSH 升级后，如工具组合或原文发生变化，应对比新版内置预设并同步。
+`test/preset.test.mjs` 会检查关键行是否存在，但不会连接 DSH 安装目录，所以 CI 不需要 DSH。
 
-汉化仅命中已知段落名和原文；未知或变化后的说明原样保留，避免误改。特定宿主身份、源码路径和 Web 界面的系统段落按名称省略。SDK 只替换已知说明前缀，不替换动态代码声明。
+## 运行时验证
 
-这不能保证第三方模型服务始终兼容；此前普通回复、PTC 只读终端调用及创造模式只读检查已在本机通过，偶发连接错误仍可能发生。实际安装插件、修改预设等创造模式写入流程尚未全面验证。
+本仓库的测试不依赖 DSH。需要确认插件在真实 DSH 中能注册时，可以：
+
+1. 在一个测试 profile 中安装本插件；
+2. 启动 Web profile，调用 `agentPresets/list`，确认返回 `minimal-prompt` 且没有 `broken`；
+3. 新建一个 `minimal-prompt` 会话，确认：
+   - system message 是 `你是一名乐于助人的软件工程助手。`；
+   - `request/header.tools` 与同 profile 的 standard 会话一致；
+   - user messages 保留 AGENTS.md 和技能原文，已知框架说明使用中文；
+   - runtime-context 与内置极简模式一样省略可选宿主信息；通用英文标题与 required 事实仍由宿主生成；
+   - 模型切换通知保留切换事实，具体路由继续记录在来源元数据与请求头中。
+
+## 实现说明
+
+- `cordis.patch.yml` 只插入插件自身，不直接插入 preset 声明；这样代码可以先检查 profile 里已有的手写声明，避免重复 id。
+- `lib/index.js` 使用 `ctx.loader.entries()` 检查未禁用的 `@deepseek-ai/dsh-agent-preset` 行，再查一次 `agentPresets.list()`，都没有才注册。
+- `lib/preset.js` 是纯数据对象，不依赖 YAML 解析器或 DSH 内部文件。
+- `lib/context.js` 作为预设内的插件注册公开事件监听器，仅格式化有明确来源且格式已知的自动消息。按 agent 隔离，在进入会话日志之前处理；普通消息和未知格式保持原样。
+- AGENTS.md 正文、技能目录块和技能正文不作内容替换。用户内容中的 DSH 字样仍会发送，工具 schema 也保留原始标识和描述。
+- 平台相关的 shell 行在加载时求值：Windows 启用 `tool-pwsh`，其他平台启用 `tool-bash`。
+- `tool-plugin-manager` 与 `tool-plugin-market` 保持标准模式的默认禁用状态。
+
+## 已知限制
+
+- 调整提示词只能减少不必要的宿主信息，不能证明或保证第三方服务兼容。网络、模型、工具 schema 和历史长度仍可能影响请求。
+- 既有会话里的上下文、压缩摘要和模型切换记录不会被改写。验证新组合请新建会话；旧会话仍可能携带之前的信息。
+- 宿主升级后未知格式的自动消息会原样保留，避免误改用户内容；内置运行时快照的通用英文标题不在本插件的替换范围内。
+
+- 没有客户端 UI；模式卡片由 DSH 的 Agent preset 页面统一展示，显示名称和描述来自 `PRESET`。
+- 预设是标准模式的静态快照；DSH 升级后需要手动同步工具列表。
+- 如果 profile 里已经有同 id 的手写声明，插件会跳过注册而不是覆盖它；需要按上面的步骤移除手写声明。
+- 已有会话不会因为插件安装/停用而改变组合；只有新建会话会读取当前注册表。
 
 ## 开发
 
 ```powershell
 cd dsh-preset-minimal-prompt
-npm ci --ignore-scripts
-npm test
+node --test test/*.test.mjs
 ```
 
-依赖宿主同款 `@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` peer。测试覆盖预设注册、独立设置更新、提示词汉化、SDK 保留、上下文隔离及设置页保存冲突，不需要真实模型账号。
-
-## 停用与卸载
-
-停用整个插件会撤下其拥有的四种预设；也可以仅在插件设置中停用某一种。
-
-```powershell
-dsh plugin --profile desktop remove @zhiqiangme/dsh-preset-minimal-prompt
-```
+只依赖 Node 内置模块和 `@deepseek-ai/cordis` peer；测试使用 fake host，不需要 DSH 或网络。
 
 ## 许可
 

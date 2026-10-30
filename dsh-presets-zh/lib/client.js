@@ -1,12 +1,12 @@
 /* 复用宿主的配置表单、持久化与版本检查，不另建配置文件或 HTTP 写入接口。 */
 window.__ModuleLoader__.load({
-  id: '@zhiqiangme/dsh-preset-minimal-prompt',
+  id: '@zhiqiangme/dsh-presets-zh',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
     const { useEffect, useState, useSyncExternalStore } = React
     const modes = [
-      ['minimalPrompt', '极简提示词'], ['standard', '中文标准'],
+      ['minimal', '中文极简'], ['standard', '中文标准'],
       ['ptc', '中文 PTC'], ['creation', '中文创造'],
     ]
     const fieldStyle = { display: 'block', width: '100%', boxSizing: 'border-box', color: 'inherit', background: 'transparent', border: '1px solid #8886', borderRadius: 6, padding: 8, marginTop: 5 }
@@ -55,8 +55,8 @@ window.__ModuleLoader__.load({
       }
       const readonly = busy || !snapshot.writable
       return h('section', { style: { maxWidth: 900 } },
-        h('h3', null, '中文模式预设'),
-        h('p', { style: { opacity: .75 } }, '分别设置四种模式，修改后点击保存。AGENTS.md 与技能原文保留。'),
+        h('h3', null, '中文预设'),
+        h('p', { style: { opacity: .75 } }, '分别设置四种模式，修改后点击保存。标准、PTC 和创造模式保留 AGENTS.md 与技能原文。'),
         ...modes.map(([key, label]) => h('details', { key, open: true, style: { border: '1px solid #8885', borderRadius: 10, padding: 14, marginBottom: 12 } },
           h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, label),
           h('fieldset', { disabled: readonly, style: { border: 0, padding: '12px 0 0', margin: 0, minWidth: 0 } },
@@ -75,10 +75,10 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
-      const form = ctx.configForms.get('dsh-preset-minimal-prompt')
+      const form = ctx.configForms.get('dsh-presets-zh')
       for (const [slot, key] of [
-        ['plugins.bundle.config', '@zhiqiangme/dsh-preset-minimal-prompt'],
-        ['plugins.row.config', '@zhiqiangme/dsh-preset-minimal-prompt#dsh-preset-minimal-prompt'],
+        ['plugins.bundle.config', '@zhiqiangme/dsh-presets-zh'],
+        ['plugins.row.config', '@zhiqiangme/dsh-presets-zh#dsh-presets-zh'],
       ]) ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, inject: () => ({ form }) }, ModeSettings))
     }
     return { name: 'minimal-prompt-settings', inject: ['slots', 'configForms'], apply, ModeSettings }

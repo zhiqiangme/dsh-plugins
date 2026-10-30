@@ -1,11 +1,10 @@
 import { readFileSync } from 'node:fs'
-import { PRESET } from './preset.js'
 
 const snapshot = (file) => JSON.parse(readFileSync(new URL(`./presets/${file}.json`, import.meta.url), 'utf8'))
 
 // 沿用本机测试预设的 id，已有对话仍能找到同一个组合；显示名称不再带“测试”。
 export const MODES = [
-  { key: 'minimalPrompt', definition: PRESET },
+  { key: 'minimal', definition: snapshot('minimal') },
   { key: 'standard', definition: snapshot('standard') },
   { key: 'ptc', definition: snapshot('ptc') },
   { key: 'creation', definition: snapshot('creation') },

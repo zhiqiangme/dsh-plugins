@@ -1,0 +1,6 @@
+# 本插件只负责挂载自身；四种模式由 lib/index.js 按配置分别注册。
+# 不在 patch 里直接插入 @deepseek-ai/dsh-agent-preset 行，是为了在
+# profile 已有同名手写声明时先检测再跳过，避免重复的 preset id。
+- insert:
+    - id: dsh-presets-zh
+      name: '@zhiqiangme/dsh-presets-zh'

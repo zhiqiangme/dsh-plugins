@@ -1,0 +1,106 @@
+{
+  "id": "minimal-zh",
+  "order": 6,
+  "plugins": [
+    {
+      "id": "persona",
+      "name": "@deepseek-ai/dsh-persona",
+      "config": {
+        "prefix": "你是一名乐于助人的软件工程助手。",
+        "complete": true,
+        "includeRuntimeContext": false
+      }
+    },
+    {
+      "id": "presets-zh-context",
+      "name": "@zhiqiangme/dsh-presets-zh/context"
+    },
+    {
+      "id": "tool-fs",
+      "name": "@deepseek-ai/dsh-tool-fs",
+      "config": {
+        "read": false,
+        "readImage": true,
+        "write": false,
+        "edit": false
+      }
+    },
+    {
+      "id": "compaction",
+      "name": "cordis:group",
+      "group": true,
+      "isolate": {
+        "compaction": true
+      },
+      "config": [
+        {
+          "id": "compaction-basic",
+          "name": "@deepseek-ai/dsh-compaction-basic"
+        },
+        {
+          "id": "command-compact",
+          "name": "@deepseek-ai/dsh-command-compact"
+        }
+      ]
+    },
+    {
+      "id": "persistent-shell",
+      "name": "cordis:group",
+      "group": true,
+      "isolate": {
+        "terminals": true
+      },
+      "config": [
+        {
+          "id": "pty",
+          "name": "@deepseek-ai/dsh-terminal"
+        },
+        {
+          "id": "terminal-bash",
+          "name": "@deepseek-ai/dsh-terminal-bash",
+          "disabled": {
+            "__jsExpr": "process.platform === 'win32'"
+          },
+          "config": {
+            "timeoutMs": 300000
+          }
+        },
+        {
+          "id": "persistent-bash",
+          "name": "@deepseek-ai/dsh-tool-bash-persistent",
+          "disabled": {
+            "__jsExpr": "process.platform === 'win32'"
+          },
+          "config": {
+            "timeoutMs": 300000,
+            "description": "在 Bash 中执行命令。\n* command 参数不需要进行 XML 转义。\n* 网络访问取决于任务环境；存在已配置的镜像或代理时优先使用。\n* Shell 状态会在多次命令调用及与用户的讨论之间保留。\n* 查看文件的指定行范围（如第 10 至 25 行）时，可使用 sed -n 10,25p /path/to/the/file。\n* 避免执行可能产生大量输出的命令。\n* 长时间运行的命令应放到后台，例如 sleep 10 &；服务器也应在后台启动。"
+          }
+        },
+        {
+          "id": "terminal-pwsh",
+          "name": "@deepseek-ai/dsh-terminal-bash",
+          "disabled": {
+            "__jsExpr": "process.platform !== 'win32'"
+          },
+          "config": {
+            "shellDialect": "pwsh",
+            "timeoutMs": 300000
+          }
+        },
+        {
+          "id": "persistent-pwsh",
+          "name": "@deepseek-ai/dsh-tool-pwsh-persistent",
+          "disabled": {
+            "__jsExpr": "process.platform !== 'win32'"
+          },
+          "config": {
+            "timeoutMs": 300000,
+            "description": "在 PowerShell 中执行命令。\n* command 参数不需要进行 XML 转义。\n* 此工具无法访问互联网。\n* Shell 状态会在多次命令调用及与用户的讨论之间保留。\n* 使用 Windows 原生路径（如 C:\\...）和 $env:NAME 环境变量；这是 PowerShell，不是 Bash。\n* 避免执行可能产生大量输出的命令。\n* 长时间运行的命令应放到后台，例如使用 Start-Job，或通过 Start-Process 在后台启动服务器。"
+          }
+        }
+      ]
+    }
+  ],
+  "name": "中文极简",
+  "description": "中文极简系统提示词，仅保留终端、图片读取与上下文压缩。"
+}

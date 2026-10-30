@@ -6,7 +6,7 @@ const translations = new Map(standard.entries.map(entry => [entry.name, entry]))
 const omitted = new Set(standard.omitted)
 const PTC_ONLY = '`run_code` is the only tool you can call directly — a tool call naming any other tool fails. Reach every tool the SDK declares below from inside the program.'
 
-export const name = 'minimal-prompt-translation'
+export const name = 'presets-zh-translation'
 
 /** 只替换命名及原文均匹配的框架说明；未知格式、用户内容和动态工具声明保留。 */
 export function transformAssembly(assembly, { ptc = false } = {}) {

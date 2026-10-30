@@ -1,6 +1,6 @@
 {
   "id": "cordis-zh-test",
-  "order": 8,
+  "order": 9,
   "plugins": [
     {
       "id": "persona",
@@ -12,15 +12,15 @@
       }
     },
     {
-      "id": "minimal-prompt-translation",
-      "name": "@zhiqiangme/dsh-preset-minimal-prompt/prompt",
+      "id": "presets-zh-translation",
+      "name": "@zhiqiangme/dsh-presets-zh/prompt",
       "config": {
         "ptc": false
       }
     },
     {
-      "id": "minimal-prompt-context",
-      "name": "@zhiqiangme/dsh-preset-minimal-prompt/context"
+      "id": "presets-zh-context",
+      "name": "@zhiqiangme/dsh-presets-zh/context"
     },
     {
       "id": "agent-instructions",

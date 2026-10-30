@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "中文模式预设",
-    "description": "极简提示词、中文标准、中文 PTC 与中文创造，四种模式分别设置。"
+    "title": "极简提示词",
+    "description": "精简系统提示词和宿主上下文，保留标准工具、AGENTS.md 与 Skills，自动说明使用中文。"
   }
 }
