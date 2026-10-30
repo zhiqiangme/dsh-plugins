@@ -1,7 +1,7 @@
 {
   "name": "@zhiqiangme/dsh-presets-zh",
   "version": "26.10.30",
-  "description": "提供中文极简、中文标准、中文 PTC 和中文创造四种预设，各模式可独立配置。",
+  "description": "提供中文标准、中文 PTC、中文极简和中文创造四种预设，各模式可独立配置。",
   "keywords": [
     "dsh",
     "deepseek-harness",

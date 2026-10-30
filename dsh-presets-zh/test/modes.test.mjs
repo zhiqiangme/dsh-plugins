@@ -8,12 +8,13 @@ import { apply } from '../lib/index.js'
 import { transformAssembly } from '../lib/prompt.js'
 
 const row = (preset, id) => preset.plugins.find(plugin => plugin.id === id)
+const mode = (modes, key) => modes.find(item => item.key === key)
 const data = file => JSON.parse(readFileSync(new URL(`../lib/${file}`, import.meta.url), 'utf8'))
 
 test('四组设置均使用宿主可编辑引用，空配置默认全部启用且不改变内部 id', () => {
   const config = Config({})
-  assert.deepEqual(MODES.map(mode => mode.key), ['minimal', 'standard', 'ptc', 'creation'])
-  assert.deepEqual(configuredModes(config).map(mode => mode.definition.id), ['minimal-zh', 'standard-zh-test', 'ptc-zh-test', 'cordis-zh-test'])
+  assert.deepEqual(MODES.map(mode => mode.key), ['standard', 'ptc', 'minimal', 'creation'])
+  assert.deepEqual(configuredModes(config).map(mode => mode.definition.id), ['standard-zh-test', 'ptc-zh-test', 'minimal-zh', 'cordis-zh-test'])
   for (const { key } of MODES) {
     assert.equal(Config.dict[key].meta.volatile, true)
     assert.equal(config[key].get().enabled, true)
@@ -23,17 +24,18 @@ test('四组设置均使用宿主可编辑引用，空配置默认全部启用�
 test('提示词、名称和开关独立配置，副本修改不会污染快照或其他模式', () => {
   const options = { standard: { name: '工作模式', prompt: '遵循项目规范。', enabled: false }, creation: { description: '' } }
   const modes = configuredModes(Config(options))
-  assert.equal(modes[1].enabled, false)
-  assert.equal(modes[1].definition.name, '工作模式')
-  assert.equal(row(modes[1].definition, 'persona').config.prefix, '遵循项目规范。')
-  assert.equal(modes[3].definition.description, '')
-  modes[0].definition.plugins.length = 0
-  assert.ok(configuredModes()[0].definition.plugins.length > 0)
-  assert.equal(configuredModes()[1].definition.name, '中文标准')
+  const standard = mode(modes, 'standard')
+  assert.equal(standard.enabled, false)
+  assert.equal(standard.definition.name, '工作模式')
+  assert.equal(row(standard.definition, 'persona').config.prefix, '遵循项目规范。')
+  assert.equal(mode(modes, 'creation').definition.description, '')
+  mode(modes, 'minimal').definition.plugins.length = 0
+  assert.ok(mode(configuredModes(), 'minimal').definition.plugins.length > 0)
+  assert.equal(mode(configuredModes(), 'standard').definition.name, '中文标准')
 })
 
 test('三种完整模式保留规划规则、平台判断及完整提示词，PTC 和创造能力独立', () => {
-  for (const { definition } of MODES.slice(1)) {
+  for (const { definition } of MODES.filter(item => item.key !== 'minimal')) {
     assert.equal(row(definition, 'persona').config.complete, false)
     assert.equal(row(definition, 'persona').config.includeRuntimeContext, false)
     assert.match(row(definition, 'planning').config[0].config.section, /审批渠道不可用或中止/)
@@ -42,10 +44,10 @@ test('三种完整模式保留规划规则、平台判断及完整提示词，PT
     assert.equal(JSON.stringify(definition).includes('file:///'), false)
     assert.equal(JSON.stringify(definition).includes('C:/Users/'), false)
   }
-  const ptc = MODES[2].definition
+  const ptc = mode(MODES, 'ptc').definition
   assert.ok(ptc.plugins.some(plugin => plugin.name === '@deepseek-ai/dsh-agent-tool-presentation' && plugin.config.mode === 'ptc'))
   for (const id of ['workflow-ptc', 'tool-workflow']) assert.equal(row(ptc, 'delegation').config.find(plugin => plugin.id === id).disabled, true)
-  const creation = MODES[3].definition
+  const creation = mode(MODES, 'creation').definition
   assert.equal(row(creation, 'tool-cordis').name, '@deepseek-ai/dsh-tool-cordis')
   assert.match(row(creation, 'skill-filesystem').config.customSkillDirs[0].__jsExpr, /resolve\('@deepseek-ai\/dsh-agent-preset\/package.json'\)/)
   for (const id of ['tool-plugin-manager', 'tool-plugin-market']) assert.deepEqual(row(creation, id).disabled, { __jsExpr: "!ctx.get('profileContext')" })
@@ -117,7 +119,7 @@ test('保存开关和提示词只更新对应模式，其他模式不重注册�
   assert.equal(fake.records.has('standard-zh-test'), false)
   assert.equal(fake.records.get('ptc-zh-test').name, '批量处理')
   assert.equal(row(fake.records.get('ptc-zh-test'), 'persona').config.prefix, '请完成批量任务。')
-  assert.deepEqual(fake.registered, ['minimal-zh', 'standard-zh-test', 'ptc-zh-test', 'cordis-zh-test', 'ptc-zh-test'])
+  assert.deepEqual(fake.registered, ['standard-zh-test', 'ptc-zh-test', 'minimal-zh', 'cordis-zh-test', 'ptc-zh-test'])
   updateVolatile(config.standard, Config({}).standard)
   await fake.hooks.get('loader/volatile-update')()
   assert.equal(fake.records.has('standard-zh-test'), true)
@@ -129,6 +131,6 @@ test('同 id 外部声明只占用该模式，不阻止其他三个模式注册'
   const fake = host()
   fake.ctx.loader.entries = () => [{ options: { name: '@deepseek-ai/dsh-agent-preset', config: { id: 'ptc-zh-test' } } }]
   await apply(fake.ctx)
-  assert.deepEqual(fake.registered, ['minimal-zh', 'standard-zh-test', 'cordis-zh-test'])
+  assert.deepEqual(fake.registered, ['standard-zh-test', 'minimal-zh', 'cordis-zh-test'])
   await fake.cleanup()
 })

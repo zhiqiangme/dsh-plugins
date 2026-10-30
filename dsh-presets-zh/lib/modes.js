@@ -4,9 +4,9 @@ const snapshot = (file) => JSON.parse(readFileSync(new URL(`./presets/${file}.js
 
 // 沿用本机测试预设的 id，已有对话仍能找到同一个组合；显示名称不再带“测试”。
 export const MODES = [
-  { key: 'minimal', definition: snapshot('minimal') },
   { key: 'standard', definition: snapshot('standard') },
   { key: 'ptc', definition: snapshot('ptc') },
+  { key: 'minimal', definition: snapshot('minimal') },
   { key: 'creation', definition: snapshot('creation') },
 ]
 

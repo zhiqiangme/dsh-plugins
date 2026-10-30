@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { MODES } from '../lib/modes.js'
 import { apply, inject, name } from '../lib/index.js'
 
-const minimal = MODES[0].definition
+const minimal = MODES.find(mode => mode.key === 'minimal').definition
 const row = id => minimal.plugins.find(plugin => plugin.id === id)
 
 test('中文极简使用独立 id，保留内置极简的完整能力边界', () => {
@@ -38,7 +38,7 @@ test('新插件不注册旧极简提示词，旧插件已安装不妨碍四种�
     effect: callback => effects.push(callback), loader: { entries: () => [] },
     agentPresets: { list: async () => [{ id: 'minimal-prompt' }], register: async definition => { registered.push(definition.id); return async () => {} } },
   })
-  assert.deepEqual(registered, ['minimal-zh', 'standard-zh-test', 'ptc-zh-test', 'cordis-zh-test'])
+  assert.deepEqual(registered, ['standard-zh-test', 'ptc-zh-test', 'minimal-zh', 'cordis-zh-test'])
   await effects[0]()()
 })
 

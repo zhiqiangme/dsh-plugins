@@ -6,8 +6,8 @@ window.__ModuleLoader__.load({
     const h = React.createElement
     const { useEffect, useState, useSyncExternalStore } = React
     const modes = [
-      ['minimal', '中文极简'], ['standard', '中文标准'],
-      ['ptc', '中文 PTC'], ['creation', '中文创造'],
+      ['standard', '中文标准'], ['ptc', '中文 PTC'],
+      ['minimal', '中文极简'], ['creation', '中文创造'],
     ]
     const fieldStyle = { display: 'block', width: '100%', boxSizing: 'border-box', color: 'inherit', background: 'transparent', border: '1px solid #8886', borderRadius: 6, padding: 8, marginTop: 5 }
 
