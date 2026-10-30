@@ -1,6 +1,6 @@
 # 中文预设
 
-独立包名：`@zhiqiangme/dsh-presets-zh`；安装别名：`presets-zh`。当前仅完成本地实现，尚未发布 npm。
+独立包名：`@zhiqiangme/dsh-presets-zh`；安装别名：`presets-zh`。
 
 一个插件提供四种模式，在 DSH「插件 → 中文预设」里分别配置开关、显示名称、描述和系统提示词。修改后点击「保存设置」，无需手工改 YAML。
 
@@ -15,16 +15,16 @@
 
 ## 安装
 
-源码安装：先完全退出 DSH（包括托盘），在仓库根目录执行：
-
-```powershell
-.\install-plugins.cmd --action install --plugins presets-zh --profiles desktop --yes
-```
-
-发布到 npm 后也可通过包名安装：
+先完全退出 DSH（包括托盘），从 npm 安装：
 
 ```powershell
 dsh plugin --profile desktop add @zhiqiangme/dsh-presets-zh
+```
+
+也可在仓库根目录从源码安装：
+
+```powershell
+.\install-plugins.cmd --action install --plugins presets-zh --profiles desktop --yes
 ```
 
 重开 DSH，在插件列表打开「中文预设」即可设置四种模式。Web / CLI 安装时将 `desktop` 换为对应 profile。
