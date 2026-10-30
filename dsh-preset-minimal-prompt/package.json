@@ -1,7 +1,7 @@
 {
   "name": "@zhiqiangme/dsh-preset-minimal-prompt",
   "version": "26.10.30",
-  "description": "精简系统提示词和宿主上下文，保留标准工具、AGENTS.md 与 Skills，自动说明使用中文。",
+  "description": "提供极简提示词、中文标准、中文 PTC 与中文创造四种模式，可分别设置，保留 AGENTS.md 与 Skills。",
   "keywords": [
     "dsh",
     "deepseek-harness",
@@ -34,6 +34,8 @@
   ],
   "exports": {
     "./context": "./lib/context.js",
+    "./prompt": "./lib/prompt.js",
+    "./client": "./lib/client.js",
     ".": {
       "default": "./lib/index.js"
     },
@@ -42,12 +44,17 @@
     "./locale/*.json": "./locale/*.json"
   },
   "dsh": {
+    "client": {
+      "inject": ["@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-settings"],
+      "platform": "web"
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.4"
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/schemastery": "^3.18.5"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"

@@ -1,0 +1,227 @@
+{
+  "id": "cordis-zh-test",
+  "order": 8,
+  "plugins": [
+    {
+      "id": "persona",
+      "name": "@deepseek-ai/dsh-persona",
+      "config": {
+        "prefix": "你是一名由 {{model}} 模型驱动的编程助手。",
+        "complete": false,
+        "includeRuntimeContext": false
+      }
+    },
+    {
+      "id": "minimal-prompt-translation",
+      "name": "@zhiqiangme/dsh-preset-minimal-prompt/prompt",
+      "config": {
+        "ptc": false
+      }
+    },
+    {
+      "id": "minimal-prompt-context",
+      "name": "@zhiqiangme/dsh-preset-minimal-prompt/context"
+    },
+    {
+      "id": "agent-instructions",
+      "name": "@deepseek-ai/dsh-agent-instructions",
+      "config": {
+        "maxBytes": 65536
+      }
+    },
+    {
+      "id": "time-context",
+      "name": "@deepseek-ai/dsh-time-context"
+    },
+    {
+      "id": "tool-bash",
+      "name": "@deepseek-ai/dsh-tool-bash",
+      "disabled": {
+        "__jsExpr": "process.platform === 'win32'"
+      }
+    },
+    {
+      "id": "tool-pwsh",
+      "name": "@deepseek-ai/dsh-tool-pwsh",
+      "disabled": {
+        "__jsExpr": "process.platform !== 'win32'"
+      }
+    },
+    {
+      "id": "tool-fs",
+      "name": "@deepseek-ai/dsh-tool-fs"
+    },
+    {
+      "id": "tool-fs-search",
+      "name": "@deepseek-ai/dsh-tool-fs-search",
+      "config": {
+        "sampleOverCapGlobResults": false
+      }
+    },
+    {
+      "id": "tool-jobs",
+      "name": "@deepseek-ai/dsh-tool-jobs"
+    },
+    {
+      "id": "tool-schedule",
+      "name": "@deepseek-ai/dsh-tool-schedule"
+    },
+    {
+      "id": "command-goal",
+      "name": "@deepseek-ai/dsh-command-goal"
+    },
+    {
+      "id": "tool-goal",
+      "name": "@deepseek-ai/dsh-tool-goal"
+    },
+    {
+      "id": "planning",
+      "name": "cordis:group",
+      "group": true,
+      "isolate": {
+        "planMode": true
+      },
+      "config": [
+        {
+          "id": "plan-mode",
+          "name": "@deepseek-ai/dsh-plan-mode",
+          "config": {
+            "section": "你当前处于规划模式。用户通过 exit_plan_mode 批准计划或主动切换会话模式前，始终保持规划模式。要求实现的命令式表达只意味着为实现制定计划，不代表立即执行。用户在对话中的一般同意，包括回答澄清问题，均不等于批准计划，也不会结束规划模式；将答复纳入计划后，仍须通过 exit_plan_mode 提交审批。\n\n先探索再制定计划。使用只读查询、搜索、静态分析与检查，根据仓库实际情况形成方案。不得修改或写入文件、改变配置、执行会改写已跟踪文件的格式化或代码生成、提交代码，或开展计划中的实现。优先复用现有函数与惯例。\n\n为保持请求缓存稳定，工具目录在不同模式间保持一致。本规划规则优先于任何暗示可以修改状态的后续工具说明：修改工具仍被列出只是为了保持目录稳定，不代表允许使用。规划阶段不要用 todo_write 跟踪工作；计划提交给 exit_plan_mode，用户批准后才用待办列表跟踪实现。\n\n通过检查自行查明可以发现的事实。仅在信息属于用户选择或存在无法通过检查解决的实质歧义时使用 ask_user_question；可以自行找到代码位置或理解现状时，不要将这些问题交给用户。\n\n让计划充分明确，使另一名工程师无需额外设计决策即可执行：说明目标与验收标准，按子系统组织修改，涵盖公开 API、数据结构与数据流、边界情况、失败模式、测试、验收条件及明确假设。保持简洁且便于审阅。\n\n准备好后调用 exit_plan_mode，提交以 # 标题开头的完整 Markdown 计划。exit_plan_mode 必须是该条助手回复中唯一且最后的工具调用，由它展示计划并请求审批；实现只能从批准后的后续步骤开始。不要将最终计划作为普通回复粘贴，也不要通过普通文字或 ask_user_question 询问是否继续。若审批拒绝，根据反馈修改后重新提交。审批渠道不可用或中止时，保持规划模式，请用户手动切换模式，不能直接实现。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "compaction",
+      "name": "cordis:group",
+      "group": true,
+      "isolate": {
+        "compaction": true,
+        "toolResultPruner": true
+      },
+      "config": [
+        {
+          "id": "compaction-basic",
+          "name": "@deepseek-ai/dsh-compaction-basic"
+        },
+        {
+          "id": "command-compact",
+          "name": "@deepseek-ai/dsh-command-compact"
+        },
+        {
+          "id": "tool-result-pruner",
+          "name": "@deepseek-ai/dsh-compaction-tool-result-pruner",
+          "config": {
+            "thresholdChars": 8192,
+            "headChars": 4096,
+            "tailChars": 1024
+          }
+        }
+      ]
+    },
+    {
+      "id": "delegation",
+      "name": "cordis:group",
+      "group": true,
+      "isolate": {
+        "workflowEngine": true
+      },
+      "config": [
+        {
+          "id": "tool-subagent-control",
+          "name": "@deepseek-ai/dsh-tool-subagent-control"
+        },
+        {
+          "id": "tool-subagent-list-agents",
+          "name": "@deepseek-ai/dsh-tool-subagent-control/list-agents"
+        },
+        {
+          "id": "tool-subagent",
+          "name": "@deepseek-ai/dsh-tool-subagent",
+          "config": {
+            "provider": "spawn",
+            "toolName": "subagent",
+            "modelSelectionSettings": true
+          }
+        },
+        {
+          "id": "tool-subagent-fork",
+          "name": "@deepseek-ai/dsh-tool-subagent",
+          "config": {
+            "provider": "fork",
+            "toolName": "subagent_fork"
+          }
+        },
+        {
+          "id": "workflow-ptc",
+          "name": "@deepseek-ai/dsh-workflow-ptc",
+          "config": {
+            "provider": "spawn"
+          }
+        },
+        {
+          "id": "tool-workflow",
+          "name": "@deepseek-ai/dsh-tool-workflow"
+        }
+      ]
+    },
+    {
+      "id": "tool-ask-user",
+      "name": "@deepseek-ai/dsh-tool-ask-user"
+    },
+    {
+      "id": "tool-todo",
+      "name": "@deepseek-ai/dsh-tool-todo",
+      "config": {
+        "allowParallelInProgress": true
+      }
+    },
+    {
+      "id": "tool-web",
+      "name": "@deepseek-ai/dsh-tool-web",
+      "config": {
+        "fetch": true,
+        "searchTimeoutMs": 60000
+      }
+    },
+    {
+      "id": "tool-cordis",
+      "name": "@deepseek-ai/dsh-tool-cordis"
+    },
+    {
+      "id": "skill-filesystem",
+      "name": "@deepseek-ai/dsh-skill-filesystem",
+      "config": {
+        "customSkillDirs": [
+          {
+            "__jsExpr": "process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')"
+          }
+        ]
+      }
+    },
+    {
+      "id": "tool-skill",
+      "name": "@deepseek-ai/dsh-tool-skill"
+    },
+    {
+      "id": "present",
+      "name": "@deepseek-ai/dsh-tool-present"
+    },
+    {
+      "id": "tool-plugin-manager",
+      "name": "@deepseek-ai/dsh-plugin-manager/tools",
+      "disabled": {
+        "__jsExpr": "!ctx.get('profileContext')"
+      }
+    },
+    {
+      "id": "tool-plugin-market",
+      "name": "@deepseek-ai/dsh-plugin-market/tools",
+      "disabled": {
+        "__jsExpr": "!ctx.get('profileContext')"
+      }
+    }
+  ],
+  "name": "中文创造",
+  "description": "使用中文操作说明，保留 Cordis 检查、预设编写技能及插件管理能力，精简可选宿主信息。"
+}

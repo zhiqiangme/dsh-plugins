@@ -31,7 +31,10 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
-      # 测试使用 Node 内置 runner 和宿主替身，没有安装或构建依赖。
+      # 预设插件使用宿主同款配置 schema；测试前安装其锁定的 peer 依赖。
+      - name: Install preset test dependencies
+        working-directory: dsh-preset-minimal-prompt
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Test repository scripts
         run: node --test scripts/test/*.test.mjs
       - name: Test Tavily Search
