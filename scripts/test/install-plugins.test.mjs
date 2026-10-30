@@ -9,16 +9,16 @@ test('Magpie 可按别名与包名单独选择', () => {
   assert.deepEqual(resolvePlugins(plugin.name, 'install'), [plugin]);
 });
 
-test('Minimal Plus 可按别名与包名单独选择', () => {
-  const [plugin] = resolvePlugins('minimal-plus', 'install');
-  assert.equal(plugin.name, '@zhiqiangme/dsh-preset-minimal-plus');
-  assert.equal(plugin.folder, 'dsh-preset-minimal-plus');
+test('Minimal Prompt 可按别名与包名单独选择', () => {
+  const [plugin] = resolvePlugins('minimal-prompt', 'install');
+  assert.equal(plugin.name, '@zhiqiangme/dsh-preset-minimal-prompt');
+  assert.equal(plugin.folder, 'dsh-preset-minimal-prompt');
   assert.deepEqual(resolvePlugins(plugin.name, 'install'), [plugin]);
 });
 
 test('安装全部跳过停止维护的 OpenCode，显式安装仍可用', () => {
   const active = resolvePlugins('all', 'install');
-  assert.deepEqual(active.map((p) => p.alias), ['workbuddy', 'tavily-search', 'magpie', 'minimal-plus']);
+  assert.deepEqual(active.map((p) => p.alias), ['workbuddy', 'tavily-search', 'magpie', 'minimal-prompt']);
   assert.equal(resolvePlugins('opencode2api', 'install')[0].maintained, false);
 });
 

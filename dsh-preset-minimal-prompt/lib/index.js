@@ -1,6 +1,6 @@
 import { PRESET } from './preset.js'
 
-export const name = 'dsh-preset-minimal-plus'
+export const name = 'dsh-preset-minimal-prompt'
 export const inject = ['agentPresets', 'loader']
 
 /**
@@ -22,7 +22,7 @@ function hasDeclaredPreset(ctx) {
 }
 
 /**
- * 插件加载时自动注册「极简增强模式」。
+ * 插件加载时自动注册「极简提示词」。
  *
  * 注册本身由 agentPresets 服务完成；它返回的 disposer 交给 ctx.effect，
  * 这样停用或卸载插件时，预设会从后续新会话的选择器里消失。已经存在的

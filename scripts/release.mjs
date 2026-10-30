@@ -13,7 +13,7 @@ export const PLUGINS = [
   { id: 'opencode2api', directory: 'dsh-opencode2api', name: '@zhiqiangme/dsh-opencode2api' },
   { id: 'tavily-search', directory: 'dsh-tavily-search', name: '@zhiqiangme/dsh-tavily-search' },
   { id: 'magpie', directory: 'dsh-magpie', name: '@zhiqiangme/dsh-magpie' },
-  { id: 'minimal-plus', directory: 'dsh-preset-minimal-plus', name: '@zhiqiangme/dsh-preset-minimal-plus' },
+  { id: 'minimal-prompt', directory: 'dsh-preset-minimal-prompt', name: '@zhiqiangme/dsh-preset-minimal-prompt' },
 ];
 
 function pluginById(id) {

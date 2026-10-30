@@ -1,9 +1,9 @@
 // Generated from the DSH standard agent preset with the persona replaced by
 // the minimal preset persona. Keep this file in sync when DSH standard tools change.
 export const PRESET = {
-  "id": "minimal-plus",
-  "name": "极简增强模式",
-  "description": "系统提示词与极简模式一致；工具、AGENTS.md、Skills 与运行时上下文与标准模式一致。",
+  "id": "minimal-prompt",
+  "name": "极简提示词",
+  "description": "精简系统提示词，保留标准模式的工具、AGENTS.md、Skills 与运行时上下文。",
   "order": 5,
   "plugins": [
     {

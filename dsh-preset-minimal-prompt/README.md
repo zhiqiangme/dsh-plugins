@@ -1,6 +1,6 @@
-# @zhiqiangme/dsh-preset-minimal-plus
+# @zhiqiangme/dsh-preset-minimal-prompt
 
-给 DSH 自动新增 **「极简增强模式」**（preset id `minimal-plus`）：系统提示词与极简模式一致，工具、AGENTS.md、Skills 和运行时上下文与标准模式一致。
+给 DSH 自动新增 **「极简提示词」**（preset id `minimal-prompt`）：系统提示词与极简模式一致，工具、AGENTS.md、Skills 和运行时上下文与标准模式一致。
 
 装上插件后不需要手动改 `cordis.patch.yml`，插件加载时会自动向 Agent preset 注册表注册这个模式。
 
@@ -24,7 +24,7 @@
 先完全退出 DSH 桌面版（托盘图标也要退出），然后：
 
 ```powershell
-dsh plugin --profile desktop add @zhiqiangme/dsh-preset-minimal-plus
+dsh plugin --profile desktop add @zhiqiangme/dsh-preset-minimal-prompt
 ```
 
 重新打开 DSH，插件加载后会自动注册新模式。装到 Web / CLI 时把 `desktop` 换成 `web` / `headless`。
@@ -34,7 +34,7 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-preset-minimal-plus
 在仓库根目录运行：
 
 ```powershell
-.\install-plugins.cmd --action install --plugins minimal-plus --profiles desktop --yes
+.\install-plugins.cmd --action install --plugins minimal-prompt --profiles desktop --yes
 ```
 
 或让安装脚本选择“全部”，新插件会出现在列表中。
@@ -43,37 +43,37 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-preset-minimal-plus
 
 1. 插件 bundle 的 `cordis.patch.yml` 先挂载插件自身。
 2. `lib/index.js` 在 `agentPresets` 服务就绪后检查是否已经有同 id 的声明式预设。
-3. 没有冲突时调用 `agentPresets.register(PRESET)`，注册「极简增强模式」。
+3. 没有冲突时调用 `agentPresets.register(PRESET)`，注册「极简提示词」。
 4. 停用插件行或卸载插件时，注册会被释放；之后新建的任务不再提供这个模式。已有会话保留启动时的组合，不受影响。
 
-### 如果已经手动加过 `minimal-plus`
+### 如果已经手动加过 `minimal-prompt`
 
 如果你之前按手工方式往 `cordis.patch.yml` 加过：
 
 ```yaml
 - insert:
-    - id: preset-minimal-plus
+    - id: preset-minimal-prompt
       name: '@deepseek-ai/dsh-agent-preset'
       config:
-        id: minimal-plus
+        id: minimal-prompt
         ...
 ```
 
-插件会检测到这条声明并跳过自动注册，避免同一个 `minimal-plus` 出现两份（重复 id 会让其中一份显示加载失败）。
+插件会检测到这条声明并跳过自动注册，避免同一个 `minimal-prompt` 出现两份（重复 id 会让其中一份显示加载失败）。
 
 要让插件接管这个模式：
 
-1. 删除 `cordis.patch.yml` 里包含 `preset-minimal-plus` 的那段 `- insert:` 块；
+1. 删除 `cordis.patch.yml` 里包含 `preset-minimal-prompt` 的那段 `- insert:` 块；
 2. 重启 DSH，或在插件页把本插件停用再启用；
 3. 插件会重新注册并成为该模式的唯一来源。
 
 ## 启用、停用与卸载
 
-- **停用**：在 DSH 插件页停用 `dsh-preset-minimal-plus` 行，或设置页禁用对应 bundle。新模式从后续新会话中消失。
+- **停用**：在 DSH 插件页停用 `dsh-preset-minimal-prompt` 行，或设置页禁用对应 bundle。新模式从后续新会话中消失。
 - **卸载**：
 
 ```powershell
-dsh plugin --profile desktop remove @zhiqiangme/dsh-preset-minimal-plus
+dsh plugin --profile desktop remove @zhiqiangme/dsh-preset-minimal-prompt
 ```
 
 卸载后插件编辑过的 profile 配置不会残留（本插件不写 profile 文件）；如果之前有手动声明，手动声明仍然保留。
@@ -95,8 +95,8 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-preset-minimal-plus
 本仓库的测试不依赖 DSH。需要确认插件在真实 DSH 中能注册时，可以：
 
 1. 在一个测试 profile 中安装本插件；
-2. 启动 Web profile，调用 `agentPresets/list`，确认返回 `minimal-plus` 且没有 `broken`；
-3. 新建一个 `minimal-plus` 会话，确认：
+2. 启动 Web profile，调用 `agentPresets/list`，确认返回 `minimal-prompt` 且没有 `broken`；
+3. 新建一个 `minimal-prompt` 会话，确认：
    - system message 是 `You are a helpful software engineer assistant.`；
    - `request/header.tools` 与同 profile 的 standard 会话一致；
    - user messages 包含 `agent-instructions`、`skill-catalog`、`time-context` 和 `runtime-context`。
@@ -119,7 +119,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-preset-minimal-plus
 ## 开发
 
 ```powershell
-cd dsh-preset-minimal-plus
+cd dsh-preset-minimal-prompt
 node --test test/*.test.mjs
 ```
 

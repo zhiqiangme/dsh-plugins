@@ -11,8 +11,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const row = (id) => PRESET.plugins.find((plugin) => plugin.id === id)
 
 test('预设元数据与极简模式系统提示词', () => {
-  assert.equal(PRESET.id, 'minimal-plus')
-  assert.equal(PRESET.name, '极简增强模式')
+  assert.equal(PRESET.id, 'minimal-prompt')
+  assert.equal(PRESET.name, '极简提示词')
   assert.equal(PRESET.order, 5)
   assert.equal(PRESET.description.includes('AGENTS.md'), true)
   assert.equal(PRESET.description.includes('Skills'), true)
@@ -93,13 +93,13 @@ test('planning / compaction / delegation 分组配置完整', () => {
 
 test('bundle patch 只挂载插件自身，预设由代码注册', () => {
   const patch = readFileSync(join(root, 'cordis.patch.yml'), 'utf8')
-  assert.match(patch, /- id: dsh-preset-minimal-plus\n\s+name: '@zhiqiangme\/dsh-preset-minimal-plus'/)
+  assert.match(patch, /- id: dsh-preset-minimal-prompt\n\s+name: '@zhiqiangme\/dsh-preset-minimal-prompt'/)
   assert.doesNotMatch(patch, /^\s+name:\s*['"]@deepseek-ai\/dsh-agent-preset/m)
 })
 
 test('package.json 声明 bundle patch 与发布所需入口', () => {
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-  assert.equal(manifest.name, '@zhiqiangme/dsh-preset-minimal-plus')
+  assert.equal(manifest.name, '@zhiqiangme/dsh-preset-minimal-prompt')
   assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(manifest.main, 'lib/index.js')
   assert.equal(existsSync(join(root, manifest.main)), true)
@@ -107,7 +107,7 @@ test('package.json 声明 bundle patch 与发布所需入口', () => {
 })
 
 test('插件导出名与注入服务', () => {
-  assert.equal(name, 'dsh-preset-minimal-plus')
+  assert.equal(name, 'dsh-preset-minimal-prompt')
   assert.deepEqual(inject, ['agentPresets', 'loader'])
 })
 
@@ -143,12 +143,12 @@ test('没有现成声明时自动注册，并在卸载时释放', async () => {
   assert.equal(fake.effects.length, 1)
   const disposer = fake.effects[0]()
   await disposer()
-  assert.deepEqual(fake.disposers, ['minimal-plus'])
+  assert.deepEqual(fake.disposers, ['minimal-prompt'])
 })
 
 test('profile 已有同名声明时跳过注册', async () => {
   const fake = fakeContext({
-    entries: [{ disabled: false, options: { name: '@deepseek-ai/dsh-agent-preset', config: { id: 'minimal-plus' } } }],
+    entries: [{ disabled: false, options: { name: '@deepseek-ai/dsh-agent-preset', config: { id: 'minimal-prompt' } } }],
   })
   await apply(fake.ctx)
   assert.deepEqual(fake.registered, [])
@@ -157,14 +157,14 @@ test('profile 已有同名声明时跳过注册', async () => {
 
 test('声明行被禁用时仍由插件注册', async () => {
   const fake = fakeContext({
-    entries: [{ disabled: true, options: { name: '@deepseek-ai/dsh-agent-preset', config: { id: 'minimal-plus' } } }],
+    entries: [{ disabled: true, options: { name: '@deepseek-ai/dsh-agent-preset', config: { id: 'minimal-prompt' } } }],
   })
   await apply(fake.ctx)
   assert.deepEqual(fake.registered, [PRESET])
 })
 
 test('注册表里已有同 id 时跳过注册', async () => {
-  const fake = fakeContext({ presets: [{ id: 'minimal-plus' }] })
+  const fake = fakeContext({ presets: [{ id: 'minimal-prompt' }] })
   await apply(fake.ctx)
   assert.deepEqual(fake.registered, [])
 })
