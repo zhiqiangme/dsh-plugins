@@ -1,6 +1,6 @@
 # @zhiqiangme/dsh-preset-minimal-prompt
 
-给 DSH 自动新增 **「极简提示词」**（preset id `minimal-prompt`）：系统提示词与极简模式一致，工具、AGENTS.md、Skills 和运行时上下文与标准模式一致。
+给 DSH 自动新增 **「极简提示词」**（preset id `minimal-prompt`）：使用中文极简系统提示词；保留标准工具、AGENTS.md 和 Skills。可选宿主上下文与内置极简模式一样关闭，工作区、技能、时间与模型切换的已知自动说明在写入会话日志前中文化。
 
 装上插件后不需要手动改 `cordis.patch.yml`，插件加载时会自动向 Agent preset 注册表注册这个模式。
 
@@ -8,11 +8,13 @@
 
 | 内容 | 来源 |
 | --- | --- |
-| 系统提示词（system message） | 极简模式，固定为 `You are a helpful software engineer assistant.` |
+| 系统提示词（system message） | 固定为 `你是一名乐于助人的软件工程助手。` |
 | 工具 | 标准模式：read / write / edit / glob / grep / pwsh / jobs / schedule / skill / goal / plan / subagent / workflow / todo / web / present 等 |
-| AGENTS.md | 标准模式：由 `agent-instructions` 注入 |
+| AGENTS.md | 标准模式：由 `agent-instructions` 注入，原文不变，已知的开头说明和首个来源标签中文化 |
 | Skills | 标准模式：`skill-filesystem` + `tool-skill`，含技能目录 |
-| 时间 / 运行时上下文 | 标准模式：时间、工作目录、沙箱与审批策略等 |
+| 时间 | 保留真实时间、时区和间隔，自动说明中文化 |
+| 运行时上下文 | 与内置极简模式一致，`includeRuntimeContext: false`；保留宿主标记为 required 的工作目录、团队等事实，省略可选的安装路径、Web 地址、权限说明等 |
+| 沙箱 / 审批 | 仍由宿主按实际策略执行；关闭可选文字说明不改变权限 |
 | 标准系统提示词里的工具说明、团队说明、MCP 说明 | 不写入；`complete: true` 会抑制所有其他 system prompt 段落 |
 
 工具 schema 仍会随工具集完整发送，所以模型知道自己能调用什么；但标准模式系统提示词里的长篇操作说明不会出现。这是“极简提示词 + 标准工具”的预期代价。
@@ -97,19 +99,27 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-preset-minimal-prompt
 1. 在一个测试 profile 中安装本插件；
 2. 启动 Web profile，调用 `agentPresets/list`，确认返回 `minimal-prompt` 且没有 `broken`；
 3. 新建一个 `minimal-prompt` 会话，确认：
-   - system message 是 `You are a helpful software engineer assistant.`；
+   - system message 是 `你是一名乐于助人的软件工程助手。`；
    - `request/header.tools` 与同 profile 的 standard 会话一致；
-   - user messages 包含 `agent-instructions`、`skill-catalog`、`time-context` 和 `runtime-context`。
+   - user messages 保留 AGENTS.md 和技能原文，已知框架说明使用中文；
+   - runtime-context 与内置极简模式一样省略可选宿主信息；通用英文标题与 required 事实仍由宿主生成；
+   - 模型切换通知保留切换事实，具体路由继续记录在来源元数据与请求头中。
 
 ## 实现说明
 
 - `cordis.patch.yml` 只插入插件自身，不直接插入 preset 声明；这样代码可以先检查 profile 里已有的手写声明，避免重复 id。
 - `lib/index.js` 使用 `ctx.loader.entries()` 检查未禁用的 `@deepseek-ai/dsh-agent-preset` 行，再查一次 `agentPresets.list()`，都没有才注册。
 - `lib/preset.js` 是纯数据对象，不依赖 YAML 解析器或 DSH 内部文件。
+- `lib/context.js` 作为预设内的插件注册公开事件监听器，仅格式化有明确来源且格式已知的自动消息。按 agent 隔离，在进入会话日志之前处理；普通消息和未知格式保持原样。
+- AGENTS.md 正文、技能目录块和技能正文不作内容替换。用户内容中的 DSH 字样仍会发送，工具 schema 也保留原始标识和描述。
 - 平台相关的 shell 行在加载时求值：Windows 启用 `tool-pwsh`，其他平台启用 `tool-bash`。
 - `tool-plugin-manager` 与 `tool-plugin-market` 保持标准模式的默认禁用状态。
 
 ## 已知限制
+
+- 调整提示词只能减少不必要的宿主信息，不能证明或保证第三方服务兼容。网络、模型、工具 schema 和历史长度仍可能影响请求。
+- 既有会话里的上下文、压缩摘要和模型切换记录不会被改写。验证新组合请新建会话；旧会话仍可能携带之前的信息。
+- 宿主升级后未知格式的自动消息会原样保留，避免误改用户内容；内置运行时快照的通用英文标题不在本插件的替换范围内。
 
 - 没有客户端 UI；模式卡片由 DSH 的 Agent preset 页面统一展示，显示名称和描述来自 `PRESET`。
 - 预设是标准模式的静态快照；DSH 升级后需要手动同步工具列表。

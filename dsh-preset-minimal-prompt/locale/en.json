@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Minimal Prompt",
-    "description": "Simplify the system prompt while keeping the standard tools, AGENTS.md, Skills and runtime context."
+    "description": "Simplify the system prompt and optional host context, retain standard tools, AGENTS.md and Skills, and localize generated notices into Chinese."
   }
 }

@@ -19,16 +19,17 @@ test('预设元数据与极简模式系统提示词', () => {
 
   const persona = row('persona')
   assert.equal(persona.name, '@deepseek-ai/dsh-persona')
-  assert.equal(persona.config.prefix, 'You are a helpful software engineer assistant.')
+  assert.equal(persona.config.prefix, '你是一名乐于助人的软件工程助手。')
   assert.equal(persona.config.complete, true)
-  // 不写 includeRuntimeContext，沿用默认 true：时间与运行上下文和标准模式一致。
-  assert.equal('includeRuntimeContext' in persona.config, false)
+  // 与内置极简模式一致；宿主仍执行实际权限限制，并保留 required 运行时事实。
+  assert.equal(persona.config.includeRuntimeContext, false)
 })
 
 test('保留标准模式的工具、AGENTS.md、Skills 和上下文插件行', () => {
   const ids = PRESET.plugins.map((plugin) => plugin.id)
   assert.deepEqual(ids, [
     'persona',
+    'minimal-prompt-context',
     'agent-instructions',
     'time-context',
     'tool-bash',

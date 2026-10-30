@@ -1,7 +1,7 @@
 {
   "name": "@zhiqiangme/dsh-preset-minimal-prompt",
   "version": "26.10.30",
-  "description": "精简系统提示词，保留标准模式的工具、AGENTS.md、Skills 与运行时上下文。",
+  "description": "精简系统提示词和宿主上下文，保留标准工具、AGENTS.md 与 Skills，自动说明使用中文。",
   "keywords": [
     "dsh",
     "deepseek-harness",
@@ -33,6 +33,7 @@
     "README.md"
   ],
   "exports": {
+    "./context": "./lib/context.js",
     ".": {
       "default": "./lib/index.js"
     },

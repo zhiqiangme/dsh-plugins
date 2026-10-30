@@ -1,18 +1,23 @@
-// Generated from the DSH standard agent preset with the persona replaced by
-// the minimal preset persona. Keep this file in sync when DSH standard tools change.
+// 标准工具列表的快照；persona 与内置极简模式一样抑制可选宿主上下文。
+// context 行仅将本预设的自动说明中文化，标准工具变更时仍需同步此列表。
 export const PRESET = {
   "id": "minimal-prompt",
   "name": "极简提示词",
-  "description": "精简系统提示词，保留标准模式的工具、AGENTS.md、Skills 与运行时上下文。",
+  "description": "精简系统提示词和宿主上下文，保留标准工具、AGENTS.md 与 Skills，自动说明使用中文。",
   "order": 5,
   "plugins": [
     {
       "id": "persona",
       "name": "@deepseek-ai/dsh-persona",
       "config": {
-        "prefix": "You are a helpful software engineer assistant.",
-        "complete": true
+        "prefix": "你是一名乐于助人的软件工程助手。",
+        "complete": true,
+        "includeRuntimeContext": false
       }
+    },
+    {
+      "id": "minimal-prompt-context",
+      "name": "@zhiqiangme/dsh-preset-minimal-prompt/context"
     },
     {
       "id": "agent-instructions",
