@@ -38,7 +38,7 @@ test('新插件不注册旧极简提示词，旧插件已安装不妨碍四种�
     effect: callback => effects.push(callback), loader: { entries: () => [] },
     agentPresets: { list: async () => [{ id: 'minimal-prompt' }], register: async definition => { registered.push(definition.id); return async () => {} } },
   })
-  assert.deepEqual(registered, ['standard-zh-test', 'ptc-zh-test', 'minimal-zh', 'cordis-zh-test'])
+  assert.deepEqual(registered, ['standard-zh', 'ptc-zh', 'minimal-zh', 'cordis-zh'])
   await effects[0]()()
 })
 

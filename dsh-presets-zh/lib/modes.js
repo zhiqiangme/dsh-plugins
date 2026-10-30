@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 const snapshot = (file) => JSON.parse(readFileSync(new URL(`./presets/${file}.json`, import.meta.url), 'utf8'))
 
-// 沿用本机测试预设的 id，已有对话仍能找到同一个组合；显示名称不再带“测试”。
+// id 为内置模式 id 加 -zh 后缀；已发布后不可再改，否则已有对话找不到对应预设。
 export const MODES = [
   { key: 'standard', definition: snapshot('standard') },
   { key: 'ptc', definition: snapshot('ptc') },

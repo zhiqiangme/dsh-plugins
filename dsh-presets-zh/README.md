@@ -6,12 +6,12 @@
 
 | 模式 | 内部 ID | 能力 |
 | --- | --- | --- |
-| 中文标准 | `standard-zh-test` | 保留标准工具与完整操作说明，将已知系统说明汉化 |
-| 中文 PTC | `ptc-zh-test` | 使用 `run_code` 编排工具调用，汉化 SDK 说明，完整保留动态工具声明与类型 |
+| 中文标准 | `standard-zh` | 保留标准工具与完整操作说明，将已知系统说明汉化 |
+| 中文 PTC | `ptc-zh` | 使用 `run_code` 编排工具调用，汉化 SDK 说明，完整保留动态工具声明与类型 |
 | 中文极简 | `minimal-zh` | 沿用内置极简：持久终端、图片读取与上下文压缩，不自动注入 AGENTS.md 或 Skills |
-| 中文创造 | `cordis-zh-test` | 保留 Cordis 检查、预设编写技能与插件管理能力，汉化已知操作说明 |
+| 中文创造 | `cordis-zh` | 保留 Cordis 检查、预设编写技能与插件管理能力，汉化已知操作说明 |
 
-三个中文完整模式保留先前本机测试使用的 ID，显示名称不再带“测试”，已有对话仍可找到原预设。四种模式默认全部启用；插件不会更改 DSH 的新会话默认模式。
+内部 ID 统一为内置模式 ID 加 `-zh` 后缀。四种模式默认全部启用；插件不会更改 DSH 的新会话默认模式。
 
 ## 安装
 
@@ -61,15 +61,13 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-presets-zh
 
 插件逐个检测同 ID 的声明式预设；遇到重复时将所有权留给既有声明，不覆盖用户配置，也不会阻止其他模式注册。
 
-之前使用过本机附件测试配置的用户，应先备份 profile，再删除 `cordis.patch.yml` 中这些完整标记块，让插件接管：
-
-- `BEGIN standard-zh-test` 至 `END standard-zh-test`
-- `BEGIN ptc-zh-test` 至 `END ptc-zh-test`
-- `BEGIN cordis-zh-test` 至 `END cordis-zh-test`
+早期本机测试版使用 `standard-zh-test`、`ptc-zh-test`、`cordis-zh-test`，正式版已改为 `standard-zh`、`ptc-zh`、`cordis-zh`。
+旧 ID 的对话找不到原预设，切换到对应的新模式即可继续使用。若 `cordis.patch.yml` 中仍有旧测试配置的标记块，先备份 profile，
+再删除 `BEGIN standard-zh-test` 至 `END standard-zh-test` 等三组完整标记块，避免旧预设与插件模式重复出现。
 
 旧的 `@zhiqiangme/dsh-preset-minimal-prompt` 不属于本插件的旧包名，不会被安装脚本移除或迁移。其 `minimal-prompt` 模式独立保留；本插件使用 `minimal-zh`，两者可以同时启用。
 
-从之前“一个插件提供四种模式”的本地版本迁移时，将 standard、ptc、creation 三组设置转到新插件行，三个完整模式 ID 保持不变；中文极简是新模式，不继承旧极简提示词的设置。插件运行时不会主动修改 profile 或会话文件。
+从之前“一个插件提供四种模式”的本地版本迁移时，将 standard、ptc、creation 三组设置转到新插件行；中文极简是新模式，不继承旧极简提示词的设置。插件运行时不会主动修改 profile 或会话文件。
 
 ## 提示词与能力边界
 

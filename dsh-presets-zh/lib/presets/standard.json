@@ -1,5 +1,5 @@
 {
-  "id": "standard-zh-test",
+  "id": "standard-zh",
   "name": "中文标准",
   "description": "中文标准操作说明，精简可选宿主信息，保留标准工具、AGENTS.md、Skills 与动态规划规则。",
   "order": 6,

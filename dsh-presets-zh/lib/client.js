@@ -7,10 +7,10 @@ window.__ModuleLoader__.load({
     const { useEffect, useState, useSyncExternalStore } = React
     // 顺序与 lib/modes.js 的注册顺序一致；客户端是独立浏览器模块，不能直接导入服务端快照。
     const modes = [
-      { key: 'standard', label: '中文标准', id: 'standard-zh-test', glyph: '标', summary: '标准工具与完整操作说明', context: true },
-      { key: 'ptc', label: '中文 PTC', id: 'ptc-zh-test', glyph: 'P', summary: 'run_code 编排批量工具调用', context: true },
+      { key: 'standard', label: '中文标准', id: 'standard-zh', glyph: '标', summary: '标准工具与完整操作说明', context: true },
+      { key: 'ptc', label: '中文 PTC', id: 'ptc-zh', glyph: 'P', summary: 'run_code 编排批量工具调用', context: true },
       { key: 'minimal', label: '中文极简', id: 'minimal-zh', glyph: '简', summary: '终端、读图与上下文压缩', context: false },
-      { key: 'creation', label: '中文创造', id: 'cordis-zh-test', glyph: '创', summary: 'Cordis 检查与插件管理', context: true },
+      { key: 'creation', label: '中文创造', id: 'cordis-zh', glyph: '创', summary: 'Cordis 检查与插件管理', context: true },
     ]
     // 颜色全部取宿主主题变量，跟随明暗主题；回退值只在脱离宿主预览时生效。
     const css = `
