@@ -40,6 +40,9 @@ jobs:
       - name: Test Magpie
         working-directory: dsh-magpie
         run: node --test test/*.test.mjs
+      - name: Test Minimal Plus
+        working-directory: dsh-preset-minimal-plus
+        run: node --test test/*.test.mjs
       # 两个后端插件的路径和进程测试遵循 Windows 契约。
       - name: Test WorkBuddy
         if: runner.os == 'Windows'

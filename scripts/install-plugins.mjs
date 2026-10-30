@@ -37,6 +37,7 @@ const CATALOG = [
   { folder: 'dsh-opencode2api', alias: 'opencode2api', title: 'OpenCode API（停止维护，仅单独安装）', maintained: false, legacy: ['@zhiqiangme/dsh-autostart-opencode2api'], legacyRowIds: ['dsh-autostart-opencode2api'] },
   { folder: 'dsh-tavily-search', alias: 'tavily-search', title: 'Tavily 网页搜索', legacy: ['dsh-tavily-search', 'dsh-autostart-websearch'] },
   { folder: 'dsh-magpie', alias: 'magpie', title: 'Magpie 模型管理', legacy: [] },
+  { folder: 'dsh-preset-minimal-plus', alias: 'minimal-plus', title: '极简增强模式预设', legacy: [] },
 ].map((plugin) => {
   const dir = join(REPO_ROOT, plugin.folder);
   let name = plugin.folder;
@@ -460,7 +461,7 @@ function resolveProfiles(value) {
   return result;
 }
 
-const HELP = `用法：install-plugins.cmd [--action install|uninstall|status] [--plugins all|workbuddy|opencode2api|tavily-search|magpie]
+const HELP = `用法：install-plugins.cmd [--action install|uninstall|status] [--plugins all|workbuddy|opencode2api|tavily-search|magpie|minimal-plus]
                            [--profiles desktop|web|cli|all|<其它 profile 名>] [--yes]
 不带参数时逐项询问；--plugins / --profiles 可用逗号分隔多个值。
 安装 all 仅安装维护中的插件，不包含 opencode2api；卸载和状态 all 仍包含全部。`;

@@ -1,0 +1,56 @@
+{
+  "name": "@zhiqiangme/dsh-preset-minimal-plus",
+  "version": "26.10.30",
+  "description": "给 DSH 自动新增「极简增强模式」：极简系统提示词 + 标准模式工具、AGENTS.md、Skills 与运行时上下文。",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "agent-preset",
+    "minimal-plus"
+  ],
+  "author": "zhiqiangme",
+  "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-preset-minimal-plus#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhiqiangme/dsh-plugins.git",
+    "directory": "dsh-preset-minimal-plus"
+  },
+  "bugs": {
+    "url": "https://github.com/zhiqiangme/dsh-plugins/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "icon": "icons/minimal-plus.svg",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "lib",
+    "icons",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
