@@ -39,6 +39,8 @@ function harness({ accepted = true } = {}) {
     window: { __ModuleLoader__: { load(spec) { registration = spec; module = spec.factory(name => { assert.equal(name, 'react'); return React }) } } },
   })
   module.apply({
+    effect: () => {},
+    remote: {},
     configForms: { get: id => { assert.equal(id, 'dsh-presets-zh'); return form } },
     slots: { inject: (_slot, callback) => callback(), register: (meta, component) => { slots.push({ meta, component }); return () => {} } },
   })

@@ -1,4 +1,5 @@
 import { configuredModes } from './modes.js'
+import { registerVersionRoute } from './web.js'
 export { Config } from './config.js'
 
 export const name = 'dsh-presets-zh'
@@ -30,6 +31,8 @@ function hasDeclaredPreset(ctx, id) {
  * 会话保留启动时的组合，不受影响。
  */
 export async function apply(ctx, config = {}) {
+  // 设置页“插件更新”区块的版本检查；与预设注册互不影响。
+  registerVersionRoute(ctx, { logger: ctx.logger })
   const owned = new Map()
   let closed = false
   let pending = Promise.resolve()
