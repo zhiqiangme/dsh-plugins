@@ -5,6 +5,7 @@ import { clientHarness, button, field, nodes } from '../fixtures/client.mjs';
 import { resolveConfig, PACKAGE_NAME } from '../lib/config.js';
 
 const VERSION_ROUTE = '/plugins/dsh-magpie/version';
+const MARKET_ROUTE = '/dsh-market/api/v1';
 // 卡片里 useUpdater 的状态位：排在模型草稿等 8 个状态与拖动 ref 之后。
 const UPDATE_STATE = 9;
 const version = { phase: 'ready', ok: true, currentVersion: '26.10.22', latestVersion: '26.10.23', updateAvailable: true };
@@ -42,7 +43,7 @@ function legacyManager(extra = {}) {
   return { bundle, manager: { listBundles: async () => ({ ok: true, value: [bundle] }) } };
 }
 
-function updaterHarness({ manager, result, versions, bundle, crypto, version: payload, sessionStorage, initial } = {}) {
+function updaterHarness({ manager, result, versions, bundle, crypto, version: payload, sessionStorage, initial, market } = {}) {
   const calls = [];
   const events = new Map();
   const versionPayload = payload ?? { ok: true, currentVersion: '26.10.22', latestVersion: '26.10.23', updateAvailable: true };
@@ -51,6 +52,11 @@ function updaterHarness({ manager, result, versions, bundle, crypto, version: pa
     if (path.startsWith(VERSION_ROUTE)) {
       assert.match(path, /^\/plugins\/dsh-magpie\/version(?:\?force=1)?$/);
       return { ok: true, status: 200, json: async () => versionPayload };
+    }
+    if (market && path.startsWith(MARKET_ROUTE)) {
+      if (options.body !== undefined) calls.push(['body', JSON.parse(options.body)]);
+      const [status, body] = market(options.method ?? 'GET', path) ?? [404, undefined];
+      return { ok: status >= 200 && status < 300, status, json: async () => { if (body === undefined) throw new Error('not json'); return body; } };
     }
     throw new Error('Unexpected fetch: ' + path);
   };
@@ -88,7 +94,7 @@ test('设置页两处卡片与侧栏页面共用 apply 建的同一个更新器'
   assert.deepEqual(client.registration.factory((id) => (id === 'react' ? { createElement() {}, useState() {} } : undefined)).inject, ['slots', 'locale', 'remote']);
 });
 
-test('旧宿主：缺少官方接口时不探测市场、不恢复旧市场任务，也不提交更新', async () => {
+test('旧宿主：缺少官方接口时探测 dshmarket，市场不在时不恢复旧任务、不提交更新', async () => {
   for (const variant of ['none', 'legacy', 'throws']) {
     let storageReads = 0;
     const h = updaterHarness({ manager: variant === 'legacy' ? legacyManager().manager : {},
@@ -97,20 +103,21 @@ test('旧宿主：缺少官方接口时不探测市场、不恢复旧市场任�
     await h.updater.check();
     const snapshot = h.updater.getSnapshot();
     assert.equal(snapshot.manager.phase, 'unsupported');
-    assert.equal('market' in snapshot, false);
+    assert.equal(snapshot.market.phase, 'absent');
     assert.equal(snapshot.version.latestVersion, '26.10.23');
     await h.updater.startUpdate();
     await h.updater.startUpdate(true);
-    assert.deepEqual(fetched(h.calls), [VERSION_ROUTE]);
+    const capabilities = MARKET_ROUTE + '/capabilities';
+    assert.deepEqual(fetched(h.calls), [VERSION_ROUTE, capabilities]);
     assert.equal(h.calls.some((call) => call[0] !== 'fetch'), false);
-    assert.equal('restart' in h.updater, false);
-    assert.equal(storageReads, 0);
+    assert.equal(storageReads, 0, '市场不在时不恢复旧任务');
     const tree = render(snapshot);
-    assert.match(text(tree), /请升级 DSH.*指定版本/);
+    assert.match(text(tree), /dshmarket.*升级 DSH.*指定版本/);
     assert.match(text(tree), /@zhiqiangme\/dsh-magpie@26\.10\.23/);
+    assert.equal(nodes(tree, (n) => n.type === 'details')[0].props.open, true);
     assert.equal(hasUpdateButton(tree), false);
     await h.updater.check(true);
-    assert.deepEqual(fetched(h.calls), [VERSION_ROUTE, VERSION_ROUTE + '?force=1']);
+    assert.deepEqual(fetched(h.calls), [VERSION_ROUTE, capabilities, VERSION_ROUTE + '?force=1', capabilities]);
   }
 });
 
@@ -408,4 +415,67 @@ test('官方更新：卸载后不接受异步结果，也不提交新更新', as
   await h.updater.startUpdate();
   assert.equal(h.calls.filter((c) => c[0] === 'updateBundle').length, 1);
   assert.equal(h.events.has('plugin-manager/update-state'), false);
+});
+
+/** 装了 dshmarket 的旧宿主：capabilities、安装来源、提交与任务查询都按给定答复走。 */
+function marketHost({ operations = [], capabilities = {} } = {}) {
+  return (method, path) => {
+    if (path === `${MARKET_ROUTE}/capabilities`) {
+      return [200, { schema: 'dsh-market/update-api/v1', bootId: 'boot', features: { update: true }, ...capabilities }];
+    }
+    if (path.startsWith(`${MARKET_ROUTE}/updates?name=`)) return [200, { package: { source: 'npm' } }];
+    if (method === 'POST' && path === `${MARKET_ROUTE}/updates`) return [202, { operation: { operationId: 'boot-1', state: 'queued' } }];
+    if (path.startsWith(`${MARKET_ROUTE}/operations?operationId=boot-1`)) return [200, { operation: operations.shift() }];
+    if (method === 'POST' && path === `${MARKET_ROUTE}/restart`) return [202, {}];
+    return undefined;
+  };
+}
+
+test('dshmarket 兜底：旧宿主装了市场时提交纯包名、轮询到成功，Web 版给重启按钮', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = updaterHarness({
+    manager: legacyManager().manager,
+    market: marketHost({
+      capabilities: { restart: { supported: true } },
+      operations: [{ state: 'running', progress: { percent: 40 } }, { state: 'succeeded', installedVersion: '26.10.23', outcome: { restartRequired: true } }],
+    }),
+  });
+  await h.updater.check();
+  assert.equal(h.updater.getSnapshot().market.phase, 'ready');
+  assert.ok(hasUpdateButton(render(h.updater.getSnapshot())));
+  await h.updater.startUpdate();
+  assert.deepEqual(h.calls.find((call) => call[0] === 'body')[1], { packageName: PACKAGE_NAME });
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.match(text(render(h.updater.getSnapshot())), /正在更新… 40%/);
+  t.mock.timers.tick(1000);
+  await flush();
+  const done = render(h.updater.getSnapshot());
+  assert.match(text(done), /已更新到 v26\.10\.23/);
+  assert.ok(button(done, '立即重启 DSH'));
+  await h.updater.restart();
+  assert.equal(h.updater.getSnapshot().restart.phase, 'done');
+});
+
+test('dshmarket 兜底：市场报 bundle-in-use 时说明原因并展开手动重装；冷却期给强制更新', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const failure of [{ message: 'exit=1 err=这个插件正在使用中 (bundle-in-use)' }, { code: 'RELEASE_TOO_FRESH', message: 'too fresh' }]) {
+    const h = updaterHarness({ manager: legacyManager().manager, market: marketHost({ operations: [{ state: 'failed', failure }, { state: 'failed', failure }] }) });
+    await h.updater.check();
+    await h.updater.startUpdate();
+    t.mock.timers.tick(1000);
+    await flush();
+    const tree = render(h.updater.getSnapshot(), { ...actions, startUpdate: (force) => h.updater.startUpdate(force) });
+    assert.equal(nodes(tree, (n) => n.type === 'details')[0].props.open, true);
+    const force = button(tree, '强制更新');
+    if (failure.code) {
+      assert.match(text(tree), /发布冷却期/);
+      await force.props.onClick();
+      assert.equal(h.calls.filter((call) => call[0] === 'body').at(-1)[1].force, true);
+    } else {
+      assert.equal(h.updater.getSnapshot().operation.inUse, true);
+      assert.match(text(tree), /无法在本插件运行时卸下它/);
+      assert.equal(force, undefined);
+    }
+  }
 });
