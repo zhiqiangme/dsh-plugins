@@ -1,7 +1,7 @@
 {
   "name": "@zhiqiangme/dsh-opencode2api",
   "version": "26.10.20",
-  "description": "随 DSH 启动 opencode2api，支持后端安装更新、模型同步与管理页入口。",
+  "description": "（已停止更新，请改用 @zhiqiangme/dsh-magpie）随 DSH 启动 opencode2api，支持后端安装更新、模型同步与管理页入口。",
   "keywords": [
     "dsh",
     "deepseek-harness",

@@ -1,5 +1,19 @@
 # @zhiqiangme/dsh-opencode2api
 
+> [!WARNING]
+> **本插件已停止更新。** 26.10.31 是最后一个版本，之后不再修复问题，也不再跟进 opencode2api、Tiara 上游与 DSH 的变化；已安装的版本可以继续使用，但随时可能因上游变化失效。
+>
+> 请改用 [`@zhiqiangme/dsh-magpie`](https://www.npmjs.com/package/@zhiqiangme/dsh-magpie)，在 DSH「插件」页管理 Magpie 提供的模型：
+>
+> ```powershell
+> dsh plugin --profile desktop add @zhiqiangme/dsh-magpie
+> ```
+>
+> Magpie 插件不迁移、也不卸载本插件。切换后不再需要本插件时，先在本插件卡片点「彻底卸载」清除后端程序与数据，再到「插件」页卸载本插件。
+
+让 [opencode2api](https://github.com/jasonxu114514/opencode2api) 随 DSH 启动。
+默认托管独立的 Windows 程序；也可在卡片中切换到 [TiaraBasori/OpenCode2API](https://github.com/TiaraBasori/OpenCode2API) 第二后端，两者无需 Docker 或全局安装 OpenCode CLI。
+
 ## 使用
 
 完全退出 DSH（包括托盘），从 npm 安装：
