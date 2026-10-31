@@ -1,8 +1,5 @@
 # @zhiqiangme/dsh-opencode2api
 
-让 [opencode2api](https://github.com/jasonxu114514/opencode2api) 随 DSH 启动。
-默认托管独立的 Windows 程序；也可在卡片中切换到 [TiaraBasori/OpenCode2API](https://github.com/TiaraBasori/OpenCode2API) 第二后端，两者无需 Docker 或全局安装 OpenCode CLI。
-
 ## 使用
 
 完全退出 DSH（包括托盘），从 npm 安装：
@@ -76,7 +73,7 @@ Tiara 不沿用给 Go 后端设置的 `exe/cwd/args`；原值保留，切回原�
 - 从 `/v1/models` 同步上下文、最大输出、视觉模态和上游声明的思考档位。`System One` 专用模型不导入普通对话选择器；未知价格显示 `—`，价格单位为 USD / 百万 token。
 - 展示名按连字符分段、各段首字母大写，例如 `Deepseek-V4.1-Flash-Free`，模型 id 保持不变。选中的模型都支持 Max 时，OpenCode 提供商默认使用 Max；混有不支持 Max 的模型时不强设默认档位。在 DSH 里手动改过的默认档位，只要新清单的模型都支持就保持不变，否则移除。
 - 模型列表与 `/healthz` 正常只代表目录和服务状态；真实推理仍可能被上游拒绝或限流。
-- 本地 `file:` / `link:` 安装显示「本地安装」，跳过 npm 检查，通过仓库安装脚本更新。npm 安装检查注册表版本，通过 [DSH 官方接口](#插件自身更新)更新本插件。
+- 本地 `file:` / `link:` 安装显示「本地安装」，跳过 npm 检查，通过仓库安装脚本更新。npm 安装检查注册表版本，通过 [DSH 官方接口或 dshmarket](#插件自身更新)更新本插件。
 - 安装脚本会把旧包名 `@zhiqiangme/dsh-autostart-opencode2api` 和旧配置行迁移到新名称，保留模型勾选与同步开关。后端数据目录继续沿用 `~/.dsh/autostart-opencode2api`，保留已安装程序和凭据。
 
 ### 插件自身更新
@@ -86,7 +83,8 @@ Tiara 不沿用给 Go 后端设置的 `exe/cwd/args`；原值保留，切回原�
 - 宿主提供 `pluginManager.listVersions/updateBundle` 时，先用 `listBundles` 核对安装来源和更新资格，再选择兼容、未弃用的正式版，将精确版本与查询时的注册表交给 `updateBundle`。安装锁、卸载、安装和失败恢复都由宿主负责，本插件不自行运行 pnpm。
 - 卡片显示核对、卸载、安装和恢复阶段；实际安装版本等于目标版本才显示成功，并按结果提示重启。恢复失败或连接中断时提示检查「插件」页的实际安装状态，不自动重试。
 - npm 检查和官方版本列表各缓存 10 分钟；npm 显示已是最新时不自动列版本，「检查更新」绕过缓存。两个配置入口共享任务，切换页面不会重复提交；宿主插件变更后静默重读，整页刷新或热重载后重新确认实际安装版本。
-- 旧版 DSH 没有官方接口时，提示升级 DSH；发现新版后也可复制 `@zhiqiangme/dsh-opencode2api@版本号`，在「插件」页卸载后通过「添加插件」安装指定版本，无需清除插件数据。不会探测或调用 dshmarket，也不提供强制更新或市场重启按钮。
+- 宿主还没有官方接口时（如 DSH 0.2.1-rc.5），装了 [dshmarket](https://www.npmjs.com/package/dshmarket) 就交给它的公开更新 API v1（只传纯包名），卡片轮询任务进度；发布冷却期挡下时给「强制更新」，Web 版市场支持时显示「立即重启 DSH」。进行中的市场任务记在 sessionStorage，热重载后接着轮询。
+- 两条路都没有、或宿主拒绝卸载正在运行的本插件（`bundle-in-use`）时，展开「按指定版本安装」：复制 `@zhiqiangme/dsh-opencode2api@版本号`，在「插件」页本插件详情里先关闭「OpenCode API」组件，再卸载本插件，通过「添加插件」安装，装好后重新打开该组件，无需清除插件数据。官方更新被拒时宿主已把本插件移出启用列表，卡片会用 `setBundleEnabled` 补回；dshmarket 会自己补回。
 - 本地安装继续更新源码并重跑安装脚本；托管安装随宿主更新。官方已判定不可更新或没有兼容版本时，不提供指定版本绕过入口。
 
 ## 配置

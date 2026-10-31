@@ -17,8 +17,9 @@
  * 本插件刻意不引这个依赖，所以走自建路由。
  *
  * 插件更新（卡片最底部，与上面"后端版本"那块无关——那块管 opencode2api，这块管本插件自己）：
- * 版本检查走宿主半侧的 version 路由（问 npm）；一键更新只交给官方 pluginManager。
- * 旧宿主缺少官方更新接口时提示升级宿主或按指定版本安装，本插件不自己跑 pnpm。
+ * 版本检查走宿主半侧的 version 路由（问 npm）；一键更新优先交给官方 pluginManager，
+ * 宿主还没有这组接口时退回 dshmarket 的公开更新 API v1，两者都没有时只给按指定版本重装的指引。
+ * 本插件不自己跑 pnpm。
  *
  * 样式：全部自带（data-plugin-css 标记，避免重复注入），类名统一 `dsm-oc-*`，
  * 颜色只取 `--dsw-alias-*` 令牌，跟随主题。刻意不借用其它插件注入的类名
@@ -63,7 +64,7 @@ window.__ModuleLoader__.load({
     /** 宿主半侧的控制台访问密钥路由（lib/web.js）：POST 才给，点「复制访问密钥」时取一次。 */
     const PANEL_KEY_PATH = '/plugins/dsh-opencode2api/panel-key';
 
-    /** 本插件的 npm 包名：官方插件管理器按它定位 profile 中的依赖。 */
+    /** 本插件的 npm 包名：官方插件管理器与 dshmarket 都按它定位 profile 中的依赖。 */
     const PACKAGE_NAME = '@zhiqiangme/dsh-opencode2api';
     /** 宿主半侧的版本检查路由（lib/web.js），?force=1 绕过它的 10 分钟缓存。 */
     const VERSION_PATH = '/plugins/dsh-opencode2api/version';
@@ -79,6 +80,31 @@ window.__ModuleLoader__.load({
       installing: 'updateInstalling',
       restoring: 'updateRestoring',
     };
+    /**
+     * dshmarket 的公开更新 API v1（其包内 UPDATE-API-V1.md），只在宿主没有官方更新接口
+     * （DSH 0.2.1-rc.5 及更早）时作兜底。只认 capabilities 这一个固定入口，其余路径按它答复里的
+     * endpoints 走；答复的 schema 对不上就当市场不存在，不去猜旧路由。
+     */
+    const MARKET_CAPABILITIES_PATH = '/dsh-market/api/v1/capabilities';
+    const MARKET_SCHEMA = 'dsh-market/update-api/v1';
+    const MARKET_DEFAULT_ENDPOINTS = {
+      updates: '/dsh-market/api/v1/updates',
+      operations: '/dsh-market/api/v1/operations',
+      restart: '/dsh-market/api/v1/restart',
+    };
+    /** 轮询市场更新任务的间隔：pnpm 一次更新通常十几秒，1s 足够跟上进度又不刷屏。 */
+    const MARKET_POLL_MS = 1000;
+    /**
+     * 进行中的市场任务记在 sessionStorage：dshmarket 更新本插件自己时 DSH 可能热重载本 bundle，
+     * 更新器随插件重建，靠它接着轮询同一个任务，而不是丢掉进度。
+     */
+    const OPERATION_STORAGE_KEY = 'dsh-opencode2api:update-operation';
+    /** dshmarket 认为"可以带 force 重试"的两种失败：发布冷却期未过 / 装完版本没变。 */
+    const FORCEABLE_FAILURES = new Set(['RELEASE_TOO_FRESH', 'VERSION_UNCHANGED']);
+    /** dshmarket 不更新 file:/link: 本地安装（linked），桌面端自带的 generation 安装也只报版本。 */
+    const MARKET_UNMANAGED_SOURCES = new Set(['linked', 'generation']);
+    /** DSH 0.2.1 卸载仍启用的 bundle 时会拒绝并报这个错误码，官方更新与 dshmarket 都先卸载再安装。 */
+    const IN_USE = 'bundle-in-use';
     /** 模型区失败状态（lib/web.js 的 BACKEND_NOT_INSTALLED）：后端没装，提示去点「安装」。 */
     const BACKEND_NOT_INSTALLED = 'backend-not-installed';
     const GATEWAY_WAIT_MS = 240_000;
@@ -280,9 +306,9 @@ window.__ModuleLoader__.load({
       updateNoCompatible: '官方插件管理器暂未提供可更新的兼容正式版。',
       updateNotUpdatable: '官方插件管理器不支持更新此安装，请在「插件」页查看安装来源。',
       updatePinnedInstall: '按指定版本安装',
-      updatePinnedHint: '先复制下面的包名和版本，再到 DSH「插件」页卸载本插件，并在「添加插件」中粘贴安装。指定版本可避免 latest 因发布观察期选到旧版。卸载前无需清除插件数据，安装后重启 DSH。',
+      updatePinnedHint: '先复制下面的包名和版本。在「插件」页本插件详情里先关闭「OpenCode API」组件，再卸载本插件（插件仍在运行时 DSH 会拒绝卸载），然后在「添加插件」中粘贴安装，装好后重新打开该组件。指定版本可避免 latest 因发布观察期选到旧版。卸载前无需清除插件数据，安装后重启 DSH。',
       updateCopySpec: '复制包名和版本',
-      updateSpecCopied: '已复制 {spec}。到「插件」页卸载后，添加这个指定版本。',
+      updateSpecCopied: '已复制 {spec}。按上面的步骤卸载后，添加这个指定版本。',
       updateSpecCopyFailed: '复制失败，请选中包名和版本手动复制。',
       updateCancelled: '更新已取消。',
       updateRolledBack: '更新已回滚，插件保持在 v{version}。',
@@ -291,7 +317,18 @@ window.__ModuleLoader__.load({
       updateInstalling: '正在安装新版本…',
       updateRestoring: '正在恢复旧版本…',
       updateLocal: '本地安装',
-      updateUnsupported: '当前 DSH 未提供官方插件更新接口，请升级 DSH，或按下面的指定版本重新安装。',
+      updateNoMarket: '当前 DSH 版本还没有官方插件更新接口。装上 DSH 插件市场（dshmarket）后可以在这里一键更新；也可以升级 DSH，或按下面的指定版本重新安装。',
+      updateProgress: '正在更新… {percent}%',
+      updateStartFailed: '没能开始更新：{reason}',
+      updateMismatch: '注意：装上的是 v{installed}，不是预期的 v{target}。',
+      updateTooFresh: '新版本刚发布，还没过 pnpm 的发布冷却期。可以稍后再试，或强制更新。',
+      updateForce: '强制更新',
+      updateLost: '上次的更新任务已经结束或 DSH 已重启，以当前显示的版本为准。',
+      updateInUse: 'DSH 无法在本插件运行时卸下它（bundle-in-use），没有安装新版本，当前版本照常运行。请按下面的指定版本手动重新安装。',
+      updateReselectFailed: 'DSH 拒绝卸载时已把本插件移出启用列表，自动补回失败：{reason}。重启 DSH 前请在「插件」页重新启用本插件。',
+      restartNow: '立即重启 DSH',
+      restarting: '正在重启 DSH…',
+      restartFailed: '重启失败：{reason}',
     };
 
     const en = {
@@ -414,9 +451,9 @@ window.__ModuleLoader__.load({
       updateNoCompatible: 'The official plugin manager offers no compatible stable update.',
       updateNotUpdatable: 'The official plugin manager cannot update this installation. Check its source on the Plugins page.',
       updatePinnedInstall: 'Install a specific version',
-      updatePinnedHint: 'Copy the package and version below first, then uninstall this plugin on DSH\'s Plugins page and paste it into Add plugin. An exact version prevents latest from selecting an older release during the release-age wait. Keep the plugin data, then restart DSH after installation.',
+      updatePinnedHint: 'Copy the package and version below first. On this plugin\'s details in the Plugins page, turn off the "OpenCode API" component, then uninstall this plugin (DSH refuses to remove it while it runs), paste it into Add plugin, and turn the component back on once installed. An exact version prevents latest from selecting an older release during the release-age wait. Keep the plugin data, then restart DSH after installation.',
       updateCopySpec: 'Copy package and version',
-      updateSpecCopied: 'Copied {spec}. Uninstall on the Plugins page, then add this exact version.',
+      updateSpecCopied: 'Copied {spec}. Uninstall as described above, then add this exact version.',
       updateSpecCopyFailed: 'Could not copy. Select the package and version and copy it manually.',
       updateCancelled: 'Update cancelled.',
       updateRolledBack: 'Update rolled back; the plugin stays at v{version}.',
@@ -425,7 +462,18 @@ window.__ModuleLoader__.load({
       updateInstalling: 'Installing the new version…',
       updateRestoring: 'Restoring the previous version…',
       updateLocal: 'Local installation',
-      updateUnsupported: 'This DSH version has no official plugin update API. Upgrade DSH or reinstall the exact version below.',
+      updateNoMarket: 'This DSH version has no official plugin update API yet. Install the DSH plugin market (dshmarket) to update from here, upgrade DSH, or reinstall the exact version below.',
+      updateProgress: 'Updating… {percent}%',
+      updateStartFailed: 'Could not start the update: {reason}',
+      updateMismatch: 'Note: v{installed} was installed, not the expected v{target}.',
+      updateTooFresh: 'The new version is still inside pnpm\'s release cool-down. Try again later, or force the update.',
+      updateForce: 'Force update',
+      updateLost: 'The previous update task has finished or DSH restarted; the version shown here is current.',
+      updateInUse: 'DSH cannot remove this plugin while it runs (bundle-in-use). Nothing new was installed and the current version keeps running. Reinstall the exact version below by hand.',
+      updateReselectFailed: 'When DSH refused the removal it had already taken this plugin off the enabled list, and putting it back failed: {reason}. Enable the plugin again on the Plugins page before restarting DSH.',
+      restartNow: 'Restart DSH now',
+      restarting: 'Restarting DSH…',
+      restartFailed: 'Restart failed: {reason}',
     };
 
     function ensureStyle() {
@@ -637,6 +685,10 @@ window.__ModuleLoader__.load({
         };
       }
       if (application === 'cancelled') return { channel: 'official', state: 'cancelled' };
+      // 宿主在卸载步骤拒绝了运行中的本插件：什么都没装，旧版本照常运行，但启用状态可能已被移出（见 reselect）
+      if (value?.step === 'remove' && result?.error?.code === IN_USE) {
+        return { channel: 'official', state: 'failed', inUse: true, failure: { message: managementReason(result) } };
+      }
       if (value?.step === 'install' && APPLIED_STATES.has(application) && result.version === target) {
         return {
           channel: 'official',
@@ -672,11 +724,81 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** 官方更新器随插件生命周期共享；卡片挂卸只增减订阅，不重复提交更新。 */
+    /**
+     * 调 dshmarket 的 v1 API。与 request() 分开：市场的失败体是 `{ error, failure }` 而不是 `{ reason }`，
+     * 409 / 404 这类状态码本身就是要展示的结果，所以这里不抛，原样交回状态码与响应体。
+     */
+    async function marketRequest(path, method, body) {
+      const response = await fetch(path, {
+        method,
+        headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      let payload;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = undefined;
+      }
+      return { status: response.status, body: payload };
+    }
+
+    /** 市场失败体 → 一句可展示的原因。 */
+    function marketReason(result) {
+      return result.body?.failure?.message ?? result.body?.error ?? `HTTP ${result.status}`;
+    }
+
+    /** dshmarket 把宿主的拒绝原文放进失败信息；它会自己补回被移出的插件行，这里只需认出原因。 */
+    function marketInUse(failure) {
+      return `${failure?.code ?? ''} ${failure?.message ?? ''}`.includes(IN_USE);
+    }
+
+    /**
+     * 先问一次 dshmarket 本插件的安装来源，免得按钮点下去才失败。问不到（市场报错、网络抖动）时不拦着，
+     * 真点了失败也还有失败提示兜底。
+     */
+    async function installSourceOf(updatesPath) {
+      try {
+        const result = await marketRequest(`${updatesPath}?name=${encodeURIComponent(PACKAGE_NAME)}`, 'GET');
+        const source = result.status === 200 ? result.body?.package?.source : undefined;
+        if (typeof source !== 'string') return {};
+        return { source, updatable: !MARKET_UNMANAGED_SOURCES.has(source) };
+      } catch {
+        return {};
+      }
+    }
+
+    /** sessionStorage 读写都可能抛（隐私模式、存储被禁），失败就当没有记录。 */
+    function readStoredOperation() {
+      try {
+        const value = JSON.parse(window.sessionStorage.getItem(OPERATION_STORAGE_KEY) ?? 'null');
+        return typeof value?.operationId === 'string' ? value : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+
+    function storeOperation(value) {
+      try {
+        if (value) window.sessionStorage.setItem(OPERATION_STORAGE_KEY, JSON.stringify(value));
+        else window.sessionStorage.removeItem(OPERATION_STORAGE_KEY);
+      } catch {
+        /* 存不下只是少了"重挂后接着轮询"，不影响本次更新 */
+      }
+    }
+
+    /**
+     * 「插件更新」的共享状态与动作，随插件生命周期存在：卡片挂卸只增减订阅，不重复提交更新。
+     * 按宿主接口在不在选择更新路，不写死 DSH 版本号：
+     *   - 官方：pluginManager 有 listVersions / updateBundle 时，资格、目标版本与注册表都由宿主确定，
+     *     锁、卸载、安装与失败恢复也归宿主；
+     *   - dshmarket：宿主还没有官方接口时的兜底，按其公开 API v1 提交并轮询任务。
+     */
     function createPluginUpdater(remote) {
       let snapshot = {
         version: { phase: 'loading' },
         manager: { phase: 'loading' },
+        market: { phase: 'idle' },
         busy: false,
       };
       const listeners = new Set();
@@ -684,6 +806,7 @@ window.__ModuleLoader__.load({
       let updating;
       /** 最近一次官方版本列表 `{ installed, at, value }`：同一已装版本在 VERSION_LIST_TTL_MS 内复用。 */
       let versionList;
+      let pollTimer;
       let disposed = false;
 
       const patch = (value) => {
@@ -750,6 +873,84 @@ window.__ModuleLoader__.load({
       };
 
       /**
+       * 卡片随本插件热重载重建时接着轮询原来的市场任务。任务 id 以市场进程的 bootId 开头：
+       * 对不上说明 DSH 已重启，旧记录直接丢弃。
+       */
+      const resumeMarketOperation = (market) => {
+        const stored = readStoredOperation();
+        if (!stored) return;
+        if (market.bootId && !stored.operationId.startsWith(`${market.bootId}-`)) {
+          storeOperation(undefined);
+          return;
+        }
+        if (snapshot.operation) return;
+        patch({ target: stored.target, operation: { channel: 'market', operationId: stored.operationId, state: 'running' } });
+        pollMarket();
+      };
+
+      /** 探测 dshmarket，已探到时不重复问。只在宿主没有官方更新接口时调用。 */
+      const probeMarket = async () => {
+        if (snapshot.market.phase === 'ready') return;
+        patch({ market: { phase: 'loading' } });
+        let market = { phase: 'absent' };
+        try {
+          const result = await marketRequest(MARKET_CAPABILITIES_PATH, 'GET');
+          const body = result.body;
+          // 没装 dshmarket 时这条路径由宿主答 404（多半不是 JSON），schema 对不上同样当作不存在
+          if (result.status === 200 && body?.schema === MARKET_SCHEMA && body.features?.update === true) {
+            market = {
+              phase: 'ready',
+              bootId: typeof body.bootId === 'string' ? body.bootId : undefined,
+              // 桌面版的重启归桌面壳管，市场会答 supported:false，此时不显示重启按钮
+              restartSupported: body.restart?.supported === true,
+              endpoints: { ...MARKET_DEFAULT_ENDPOINTS, ...body.endpoints },
+            };
+            Object.assign(market, await installSourceOf(market.endpoints.updates));
+          }
+        } catch {
+          market = { phase: 'absent' };
+        }
+        if (disposed) return;
+        patch({ market });
+        if (market.phase === 'ready') resumeMarketOperation(market);
+      };
+
+      /** 轮询进行中的市场任务。用 setTimeout 链而不是 setInterval：慢响应时不会叠出并发请求。 */
+      const pollMarket = () => {
+        clearTimeout(pollTimer);
+        const tick = async () => {
+          const { operation, market } = snapshot;
+          const path = market.endpoints?.operations;
+          if (disposed || !path || operation?.channel !== 'market' || !isActiveOperation(operation)) return;
+          let result;
+          try {
+            result = await marketRequest(`${path}?operationId=${encodeURIComponent(operation.operationId)}`, 'GET');
+          } catch {
+            result = undefined; // 网络抖动或宿主正在重载：下一拍再问
+          }
+          if (disposed || snapshot.operation?.operationId !== operation.operationId) return;
+          if (result?.status === 404) {
+            // 任务记录只活在市场当前进程里，查不到说明进程已经换过
+            storeOperation(undefined);
+            patch({ operation: { channel: 'market', state: 'lost' } });
+            return;
+          }
+          const next = result?.body?.operation;
+          if (next && typeof next.state === 'string') {
+            // 沿用查询用的 operationId：答复没带它时下一拍也还能接着问同一个任务
+            const inUse = next.state === 'failed' && marketInUse(next.failure);
+            patch({ operation: { ...next, operationId: operation.operationId, channel: 'market', ...(inUse ? { inUse } : {}) } });
+            if (!isActiveOperation(next)) {
+              storeOperation(undefined);
+              return;
+            }
+          }
+          pollTimer = setTimeout(tick, MARKET_POLL_MS);
+        };
+        pollTimer = setTimeout(tick, MARKET_POLL_MS);
+      };
+
+      /**
        * 检查版本与更新途径。quiet 给宿主的插件变更广播用：不把区块切成"正在检查"，只静默重读，
        * 避免在插件页上开关别的插件时这块跟着闪。
        */
@@ -757,11 +958,14 @@ window.__ModuleLoader__.load({
         if (disposed) return Promise.resolve();
         if (updating) return updating;
         if (checking) return checking;
+        // 市场任务进行中时检查按钮已禁用；这里也不打断它的轮询
+        if (isActiveOperation(snapshot.operation)) return Promise.resolve();
         if (!quiet) {
           // 保留上一次的版本号与安装来源：重新检查时那几行不闪
           patch({
             version: { ...snapshot.version, phase: 'loading' },
             manager: { ...snapshot.manager, phase: 'loading' },
+            startFailure: undefined,
           });
         }
         const failure = (error) => ({ phase: 'error', reason: errorText(error) });
@@ -781,6 +985,8 @@ window.__ModuleLoader__.load({
             const { operation } = snapshot;
             const stale = operation?.installedVersion && manager.installedVersion && manager.installedVersion !== operation.installedVersion;
             patch({ manager, operation: stale ? undefined : operation });
+            // 本地拷贝没有 npm 目标，市场也不接
+            if (manager.phase === 'unsupported' && !manager.local) await probeMarket();
           })
           .finally(() => {
             checking = undefined;
@@ -788,11 +994,30 @@ window.__ModuleLoader__.load({
         return checking;
       };
 
+      /**
+       * 宿主卸载前会先把本插件移出启用列表，拒绝时不撤回；不补回的话下次启动 DSH 本插件就不加载了。
+       * 只在确实被移出时才动；返回补回失败的原因，成功或无需补回时返回 undefined。
+       */
+      const reselect = async () => {
+        try {
+          const manager = pluginManagerOf(remote);
+          const bundles = unwrap(await manager.listBundles());
+          const bundle = Array.isArray(bundles) ? bundles.find((item) => item.name === PACKAGE_NAME) : undefined;
+          if (!bundle || bundle.enabled !== false) return undefined;
+          if (typeof manager.setBundleEnabled !== 'function') return 'setBundleEnabled unavailable';
+          const result = unwrap(await manager.setBundleEnabled(PACKAGE_NAME, true));
+          return APPLIED_STATES.has(result?.application) ? undefined : managementReason(result);
+        } catch (error) {
+          return errorText(error);
+        }
+      };
+
       const startOfficial = (target, registry) => {
         const requestId = updateRequestId();
         patch({
           busy: true,
           target,
+          startFailure: undefined,
           operation: { channel: 'official', state: 'running', step: 'checking', requestId },
         });
         // 锁、卸载、安装与失败恢复都交给宿主。只显示本次 requestId 的阶段，不伪造百分比。
@@ -807,6 +1032,10 @@ window.__ModuleLoader__.load({
             });
             const answer = await pluginManagerOf(remote).updateBundle(PACKAGE_NAME, target, { registry, requestId });
             const operation = officialOutcome(unwrap(answer), target);
+            if (operation.inUse) {
+              const reason = await reselect();
+              if (reason) operation.reselectFailure = reason;
+            }
             const installedVersion = operation.installedVersion ?? snapshot.manager.installedVersion;
             patch({ operation, manager: { ...snapshot.manager, installedVersion } });
           } catch (error) {
@@ -823,13 +1052,58 @@ window.__ModuleLoader__.load({
         return updating;
       };
 
-      const startUpdate = () => {
+      /** dshmarket：提交更新后轮询任务。force 只在市场报了冷却期 / 版本未变之后由用户显式选择。 */
+      const startMarket = (force) => {
+        const goal = snapshot.version.latestVersion;
+        patch({ busy: true, startFailure: undefined, restart: undefined, operation: undefined });
+        updating = Promise.resolve().then(async () => {
+          try {
+            // 市场的公开 v1 API 只接受纯包名，由市场解析并固定版本，不能往 packageName 后拼 @version
+            const body = force ? { packageName: PACKAGE_NAME, force: true } : { packageName: PACKAGE_NAME };
+            const result = await marketRequest(snapshot.market.endpoints.updates, 'POST', body);
+            const next = result.body?.operation;
+            if (result.status === 202 && typeof next?.operationId === 'string') {
+              patch({ target: goal, operation: { ...next, channel: 'market' } });
+              storeOperation({ operationId: next.operationId, target: goal });
+              pollMarket();
+            } else {
+              patch({ startFailure: marketReason(result) });
+            }
+          } catch (error) {
+            patch({ startFailure: errorText(error) });
+          } finally {
+            patch({ busy: false });
+            updating = undefined;
+          }
+        });
+        return updating;
+      };
+
+      const startUpdate = (force = false) => {
         if (disposed) return Promise.resolve();
         if (updating) return updating;
-        if (checking) return Promise.resolve();
-        const { manager } = snapshot;
+        if (checking || isActiveOperation(snapshot.operation)) return Promise.resolve();
+        const { manager, market, version } = snapshot;
         if (manager.phase === 'ready' && manager.candidate) return startOfficial(manager.candidate, manager.registry);
+        // 市场按 npm 最新版解析目标；本地与托管安装它会拒绝，不去提交
+        const marketReady = manager.phase === 'unsupported' && market.phase === 'ready' && market.updatable !== false
+          && !manager.local && !manager.managed && version.installSource !== 'local';
+        if (marketReady && version.phase === 'ready' && version.updateAvailable) return startMarket(force);
         return Promise.resolve();
+      };
+
+      /** dshmarket 的重启：Web 版才支持，桌面版的重启归桌面壳管。 */
+      const restart = async () => {
+        const path = snapshot.market.endpoints?.restart;
+        if (!path) return;
+        patch({ restart: { phase: 'busy' } });
+        try {
+          const result = await marketRequest(path, 'POST', {});
+          patch({ restart: result.status >= 200 && result.status < 300 ? { phase: 'done' } : { phase: 'error', reason: marketReason(result) } });
+        } catch {
+          // 宿主可能在答复前就开始退出，连接随之断开——这正说明重启已经开始
+          patch({ restart: { phase: 'done' } });
+        }
       };
 
       return {
@@ -841,8 +1115,10 @@ window.__ModuleLoader__.load({
         check: (force = false) => run(force, false),
         refresh: () => run(false, true),
         startUpdate,
+        restart,
         dispose: () => {
           disposed = true;
+          clearTimeout(pollTimer);
           listeners.clear();
         },
       };
@@ -861,7 +1137,7 @@ window.__ModuleLoader__.load({
     }
 
     function isActiveOperation(operation) {
-      return operation?.state === 'running';
+      return operation?.state === 'queued' || operation?.state === 'running';
     }
 
     /** npm 的安装规格用不带 v 的明确版本；拒绝标签、范围和其它安装来源。 */
@@ -935,17 +1211,23 @@ window.__ModuleLoader__.load({
     /** 官方插件更新区；本地安装沿用源码更新，不显示 npm 检查和安装入口。 */
     function renderUpdateSection(update, actions, t) {
       const { version, manager, operation } = update;
+      const market = update.market ?? { phase: 'idle' };
       const running = Boolean(update.busy) || isActiveOperation(operation);
-      const local = manager.local === true || version.installSource === 'local';
-      const managed = manager.managed === true;
+      const viaMarket = manager.phase === 'unsupported';
+      const local = manager.local === true || version.installSource === 'local' || market.source === 'linked';
+      const managed = manager.managed === true || market.source === 'generation';
       const ready = version.phase === 'ready' && !local;
       // 当前运行代码要等重启才换，按钮与徽章按实际安装版本判断，避免重复安装。
       const installed = operation?.state === 'succeeded' ? operation.installedVersion : manager.installedVersion;
       const latestInstalled = ready && Boolean(installed) && !versionBelow(installed, version.latestVersion);
       const outdated = ready && version.updateAvailable && !latestInstalled;
-      // npm latest 只供显示；更新目标必须来自宿主认可的兼容正式版。
-      const target = !local && !managed && manager.phase === 'ready' && manager.candidate
-        && (!installed || versionBelow(installed, manager.candidate)) ? manager.candidate : undefined;
+      // 官方路径的目标必须来自宿主认可的兼容正式版；没有官方接口时由 dshmarket 按 npm 最新版解析。
+      let target;
+      if (!local && !managed && manager.phase === 'ready') {
+        if (manager.candidate && (!installed || versionBelow(installed, manager.candidate))) target = manager.candidate;
+      } else if (!local && !managed && viaMarket && market.phase === 'ready' && market.updatable !== false && outdated) {
+        target = version.latestVersion;
+      }
 
       const head = [h('span', { key: 'title', className: 'dsm-oc-backend-title' }, t('updateTitle'))];
       if (local) head.push(h('span', { key: 'local', className: 'dsm-oc-badge' }, t('updateLocal')));
@@ -955,10 +1237,11 @@ window.__ModuleLoader__.load({
         head.push(h('span', { key: 'badge', className: 'dsm-oc-badge dsm-oc-badge-' + (pending || target || outdated ? 'new' : 'ok') }, t(label)));
       }
       if (!local) {
-        head.push(wbButton('check', 'outline', t('updateCheck'), actions.checkUpdate, version.phase === 'loading' || manager.phase === 'loading' || running));
+        const checkBusy = version.phase === 'loading' || manager.phase === 'loading' || market.phase === 'loading';
+        head.push(wbButton('check', 'outline', t('updateCheck'), actions.checkUpdate, checkBusy || running));
       }
       if (target) {
-        head.push(wbButton('update', 'primary', running ? t('updateRunning') : t('updateNow', { version: target }), actions.startUpdate, running));
+        head.push(wbButton('update', 'primary', running ? t('updateRunning') : t('updateNow', { version: target }), () => actions.startUpdate(false), running));
       }
 
       const section = [h('div', { key: 'head', className: 'dsm-oc-backend-head' }, head)];
@@ -980,22 +1263,49 @@ window.__ModuleLoader__.load({
       }
       if (outdated && !target && !operation) {
         const blocker = managed ? 'updateManaged'
-          : { blocked: 'updateNotUpdatable', ready: 'updateNoCompatible', unsupported: 'updateUnsupported' }[manager.phase];
+          : { blocked: 'updateNotUpdatable', ready: 'updateNoCompatible', unsupported: market.phase === 'absent' ? 'updateNoMarket' : undefined }[manager.phase];
         if (blocker) section.push(h('p', { key: 'unavailable', className: 'dsm-oc-hint' }, t(blocker)));
       }
 
       if (isActiveOperation(operation)) {
-        section.push(h('p', { key: 'progress', className: 'dsm-oc-backend-line' }, t(UPDATE_STEPS[operation.step] ?? 'updateRunning')));
+        // 官方接口只报阶段，不伪造百分比；dshmarket 报百分比与 pnpm 输出摘要
+        const percent = operation.progress?.percent;
+        const progress = operation.channel === 'market'
+          ? typeof percent === 'number' ? t('updateProgress', { percent }) : t('updateRunning')
+          : t(UPDATE_STEPS[operation.step] ?? 'updateRunning');
+        section.push(h('p', { key: 'progress', className: 'dsm-oc-backend-line' }, progress));
+        if (operation.progress?.detail) section.push(h('p', { key: 'detail', className: 'dsm-oc-hint' }, operation.progress.detail));
       } else if (operation?.state === 'succeeded') {
         const parts = [t('updateSucceeded', { version: operation.installedVersion })];
         if (operation.outcome?.restartRequired) parts.push(t('updateRestartHint'));
         section.push(wbNotice('done', { kind: 'ok', text: parts.join(' ') }));
+        // 市场回报成功不等于装上的就是卡片答应的那个版本，客户端自己再核对一次（官方路径成功前已核对）
+        if (update.target && versionBelow(operation.installedVersion, update.target)) {
+          section.push(wbNotice('mismatch', { kind: 'error', text: t('updateMismatch', { installed: operation.installedVersion, target: update.target }) }));
+        }
+        // 只有探测过的 dshmarket 才可能答 restartSupported（Web 版）
+        if (operation.outcome?.restartRequired && market.restartSupported) {
+          const restartBusy = update.restart?.phase === 'busy' || update.restart?.phase === 'done';
+          section.push(h('div', { key: 'restart', className: 'dsm-oc-toolbar' },
+            wbButton('restart', 'primary', restartBusy ? t('restarting') : t('restartNow'), actions.restart, restartBusy)));
+        }
+      } else if (operation?.state === 'failed' && operation.inUse) {
+        section.push(wbNotice('inUse', { kind: 'error', text: t('updateInUse') }));
+        if (operation.reselectFailure) {
+          section.push(wbNotice('reselectFailed', { kind: 'error', text: t('updateReselectFailed', { reason: operation.reselectFailure }) }));
+        }
       } else if (operation?.state === 'failed') {
-        section.push(wbNotice('failed', { kind: 'error', text: t('updateFailed', { reason: operation.failure?.message ?? '' }) }));
+        const code = operation.failure?.code;
+        const reason = code === 'RELEASE_TOO_FRESH' ? t('updateTooFresh') : t('updateFailed', { reason: operation.failure?.message ?? code ?? '' });
+        section.push(wbNotice('failed', { kind: 'error', text: reason }));
         if (operation.restoreFailure) {
           section.push(wbNotice('restoreFailed', { kind: 'error', text: t('updateRestoreFailed', { reason: operation.restoreFailure }) }));
         }
         if (operation.unknown) section.push(wbNotice('unknown', { kind: 'error', text: t('updateUnknown') }));
+        if (FORCEABLE_FAILURES.has(code)) {
+          section.push(h('div', { key: 'force', className: 'dsm-oc-toolbar' },
+            wbButton('force', 'danger', t('updateForce'), () => actions.startUpdate(true), running)));
+        }
       } else if (operation?.state === 'cancelled') {
         section.push(wbNotice('cancelled', { kind: 'error', text: t('updateCancelled') }));
       } else if (operation?.state === 'rolled-back') {
@@ -1004,12 +1314,20 @@ window.__ModuleLoader__.load({
         parts.push(t('updateRolledBack', { version: operation.installedVersion }));
         if (operation.outcome?.restartRequired) parts.push(t('updateRestartHint'));
         section.push(wbNotice('rolledBack', { kind: 'error', text: parts.join(' ') }));
+      } else if (operation?.state === 'lost') {
+        section.push(wbNotice('lost', { kind: 'ok', text: t('updateLost') }));
+      }
+      if (update.startFailure) {
+        section.push(wbNotice('startFailed', { kind: 'error', text: t('updateStartFailed', { reason: update.startFailure }) }));
       }
 
-      // 旧宿主或查询失败时允许手动指定版本；不绕过官方已确认的安装资格或兼容性限制。
+      // 旧宿主、查询失败或宿主拒绝卸载运行中的本插件时允许手动指定版本；不绕过官方已确认的安装资格或兼容性限制。
       const spec = outdated ? pinnedInstallSpec(version.latestVersion) : undefined;
-      if (spec && !running && !local && !managed && ['unsupported', 'error'].includes(manager.phase)) {
-        section.push(h('details', { key: 'pinnedInstall', open: manager.phase === 'unsupported' },
+      if (spec && !running && !local && !managed && (['unsupported', 'error'].includes(manager.phase) || operation?.inUse)) {
+        // 没有任何一键更新、卸载被拒、市场报了冷却期 / 版本未变、或装上的仍低于最新版时自动展开
+        const open = (viaMarket && market.phase === 'absent') || operation?.inUse === true
+          || FORCEABLE_FAILURES.has(operation?.failure?.code) || operation?.state === 'succeeded';
+        section.push(h('details', { key: 'pinnedInstall', open },
           h('summary', { className: 'dsm-oc-backend-line' }, t('updatePinnedInstall')),
           h('p', { className: 'dsm-oc-hint' }, t('updatePinnedHint')),
           h('input', {
@@ -1017,6 +1335,9 @@ window.__ModuleLoader__.load({
             'aria-label': t('updatePinnedInstall'), onFocus: (event) => event.currentTarget.select(),
           }),
           h('div', { className: 'dsm-oc-toolbar' }, wbButton('copySpec', 'outline', t('updateCopySpec'), actions.copyInstallSpec, false))));
+      }
+      if (update.restart?.phase === 'error') {
+        section.push(wbNotice('restartError', { kind: 'error', text: t('restartFailed', { reason: update.restart.reason }) }));
       }
       section.push(wbNotice('updateNotice', update.notice));
       return section;
@@ -1044,10 +1365,11 @@ window.__ModuleLoader__.load({
             setNotice(undefined);
             return updater.check(true);
           },
-          startUpdate: () => {
+          startUpdate: (force) => {
             setNotice(undefined);
-            return updater.startUpdate();
+            return updater.startUpdate(force);
           },
+          restart: () => updater.restart(),
           copyInstallSpec: async () => {
             const spec = pinnedInstallSpec(update.version.latestVersion);
             if (!spec) return;
