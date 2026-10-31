@@ -1,6 +1,6 @@
 {
   "name": "@zhiqiangme/dsh-presets-zh",
-  "version": "26.10.30",
+  "version": "26.10.31",
   "description": "提供中文标准、中文 PTC、中文极简和中文创造四种预设，各模式可独立配置。",
   "keywords": [
     "dsh",
