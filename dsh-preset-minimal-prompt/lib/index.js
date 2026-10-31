@@ -1,4 +1,5 @@
 import { PRESET } from './preset.js'
+import { registerVersionRoute } from './web.js'
 
 export const name = 'dsh-preset-minimal-prompt'
 export const inject = ['agentPresets', 'loader']
@@ -29,6 +30,8 @@ function hasDeclaredPreset(ctx) {
  * 会话保留启动时的组合，不受影响。
  */
 export async function apply(ctx) {
+  // 插件页“插件更新”卡片的版本检查；与预设注册互不影响，先于下面的提前返回挂上。
+  registerVersionRoute(ctx, { logger: ctx.logger })
   if (hasDeclaredPreset(ctx)) {
     ctx.logger?.info?.(`agent preset ${PRESET.id} 已由 profile 声明，跳过自动注册`)
     return

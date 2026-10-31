@@ -80,6 +80,16 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-preset-minimal-prompt
 
 卸载后插件编辑过的 profile 配置不会残留（本插件不写 profile 文件）；如果之前有手动声明，手动声明仍然保留。
 
+## 插件更新
+
+插件页本插件的卡片显示当前运行版本与 npm 最新版本，按宿主接口在不在选择更新途径，不写死 DSH 版本号，也不自己跑 pnpm：
+
+- 版本检查走宿主路由 `/plugins/dsh-preset-minimal-prompt/version`，同时问 npm 官方源与 npmmirror，取较高者，缓存 10 分钟；「检查更新」绕过缓存。
+- **官方接口**（`pluginManager` 有 `listVersions/updateBundle`）：先用 `listBundles` 核对本插件的更新资格，再选最新的兼容、未弃用正式版，把精确版本和同一注册表交给 `updateBundle`。锁、卸载、安装与失败恢复都归宿主；只有实际装上目标版本才显示成功。
+- **dshmarket 兜底**：宿主还没有官方接口时（如 DSH 0.2.1-rc.5），装了 [dshmarket](https://www.npmjs.com/package/dshmarket) 就交给它的公开更新 API v1（只传纯包名），卡片轮询任务进度；发布冷却期挡下时给「强制更新」。Web 版市场支持时显示「立即重启 DSH」。
+- 两条路都没有、或宿主拒绝卸载正在运行的本插件（`bundle-in-use`）时，展开「按指定版本安装」：复制 `@zhiqiangme/dsh-preset-minimal-prompt@版本号`，在「插件」页本插件详情里先关闭「极简提示词」组件，再卸载本插件，通过「添加插件」安装，装好后重新打开该组件。官方更新被拒时宿主已把本插件移出启用列表，卡片会用 `setBundleEnabled` 补回；dshmarket 会自己补回。
+- 本地 `file:/link:` 安装请更新源码并重新运行安装脚本；DSH 托管的安装随宿主更新。
+
 ## 和标准模式保持同步
 
 本插件的 `lib/preset.js` 是 **DSH 标准模式插件列表的快照**，安装时不需要读取 DSH 安装目录。这样它能离线安装、可审计，也不会因为 DSH 升级时文件路径变化而加载失败。
@@ -133,7 +143,7 @@ cd dsh-preset-minimal-prompt
 node --test test/*.test.mjs
 ```
 
-只依赖 Node 内置模块和 `@deepseek-ai/cordis` peer；测试使用 fake host，不需要 DSH 或网络。
+只依赖 Node 内置模块和 `@deepseek-ai/cordis` peer；测试使用 fake host，不需要 DSH 或网络，覆盖预设注册、上下文汉化及插件更新的官方与 dshmarket 两条路。
 
 ## 许可
 
