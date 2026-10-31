@@ -64,7 +64,7 @@ window.__ModuleLoader__.load({
       updateCheckFailed: '检查更新失败：{reason}', updateCurrent: '当前运行版本：', updateLatestVersion: 'npm 最新版本：',
       updateUpToDate: '已是最新', updateAvailable: '有新版本', updatePendingRestart: '等待重启', updatePendingRefresh: '等待刷新',
       updateNow: '更新到 v{version}', updateUnsupported: '当前 DSH 未提供官方插件更新接口，请升级 DSH，或按下面的指定版本重新安装。',
-      updatePinnedTitle: '按指定版本安装', updatePinnedHint: '复制以下包名与版本，在「插件」页卸载本插件，再通过「添加插件」安装；无需清除插件数据。',
+      updatePinnedTitle: '按指定版本安装', updatePinnedHint: '复制以下包名与版本。在「插件」页本插件详情里先关闭「Magpie 模型管理」组件，再卸载本插件（插件仍在运行时 DSH 会拒绝卸载），然后通过「添加插件」安装，装好后重新打开该组件；无需清除插件数据。',
       updateLinked: '本插件从本地目录（file:）安装，请在源码目录更新后重新运行 install-plugins.cmd；从 npm 安装后可在此一键更新。',
       updateManaged: '本插件由 DSH 统一管理，请通过宿主管理插件版本。',
       updateNoCompatible: '官方插件管理器暂未提供可更新的兼容正式版。',
@@ -76,6 +76,8 @@ window.__ModuleLoader__.load({
       updateFailed: '更新失败：{reason}',
       updateRestoreFailed: '恢复旧版本失败：{reason}。请在「插件」页检查并重新安装。',
       updateUnknown: '未能确认更新结果，请检查「插件」页的实际安装版本后重试。',
+      updateInUse: 'DSH 无法在本插件运行时卸下它（bundle-in-use），没有安装新版本，当前版本照常运行。请按下面的指定版本手动重新安装。',
+      updateReselectFailed: 'DSH 拒绝卸载时已把本插件移出启用列表，自动补回失败：{reason}。重启 DSH 前请在「插件」页重新启用本插件。',
       updateCancelled: '更新已取消。', updateRolledBack: '更新已回滚，插件保持在 v{version}。',
       updateSaveFirst: '请先保存或放弃模型更改，再更新插件。', updateWait: '请等待当前操作完成后再更新插件。',
     };
@@ -136,7 +138,7 @@ window.__ModuleLoader__.load({
       updateCheckFailed: 'Update check failed: {reason}', updateCurrent: 'Running version: ', updateLatestVersion: 'Latest on npm: ',
       updateUpToDate: 'Up to date', updateAvailable: 'Update available', updatePendingRestart: 'Restart pending', updatePendingRefresh: 'Reload pending',
       updateNow: 'Update to v{version}', updateUnsupported: 'This DSH version has no official plugin update API. Upgrade DSH or reinstall the exact version below.',
-      updatePinnedTitle: 'Install an exact version', updatePinnedHint: 'Copy the package and version below, uninstall this plugin on the Plugins page, then add it again. Keep the plugin data.',
+      updatePinnedTitle: 'Install an exact version', updatePinnedHint: 'Copy the package and version below. On this plugin’s Plugins page, first turn off the “Magpie models” component, then uninstall the plugin (DSH refuses to uninstall it while it runs), add it again, and turn the component back on. Keep the plugin data.',
       updateLinked: 'This plugin was installed from a local directory (file:). Update its checkout and run install-plugins.cmd again, or install from npm for one-click updates.',
       updateManaged: 'DSH manages this plugin. Use the host to manage its version.',
       updateNoCompatible: 'The official plugin manager offers no compatible stable update.',
@@ -148,6 +150,8 @@ window.__ModuleLoader__.load({
       updateFailed: 'Update failed: {reason}',
       updateRestoreFailed: 'Restoring the previous version failed: {reason}. Check and reinstall on the Plugins page.',
       updateUnknown: 'The update outcome could not be confirmed. Check the installed version on the Plugins page before retrying.',
+      updateInUse: 'DSH cannot remove this plugin while it runs (bundle-in-use). Nothing new was installed and the current version keeps running. Reinstall the exact version below by hand.',
+      updateReselectFailed: 'When DSH refused the removal it had already taken this plugin off the enabled list, and putting it back failed: {reason}. Enable the plugin again on the Plugins page before restarting DSH.',
       updateCancelled: 'Update cancelled.', updateRolledBack: 'Update rolled back; the plugin stays at v{version}.',
       updateSaveFirst: 'Save or discard model edits before updating the plugin.', updateWait: 'Wait for the current operation before updating the plugin.',
     };
@@ -388,6 +392,11 @@ window.__ModuleLoader__.load({
         };
       }
       if (application === 'cancelled') return { channel: 'official', state: 'cancelled' };
+      // removeBundle 先把本插件移出 dsh.profile.bundles 并热重载，重载后本插件仍在运行才拒绝（bundle-in-use）。
+      // 此时还没跑 pnpm、旧版照常运行，结果是确定的，不必提示去核对；被移出的启用状态由 startOfficial 补回。
+      if (value?.step === 'remove' && result?.error?.code === 'bundle-in-use') {
+        return { channel: 'official', state: 'failed', inUse: true, failure: { message: managementReason(result) } };
+      }
       if (value?.step === 'install' && APPLIED_STATES.has(application) && result.version === target) {
         return {
           channel: 'official',
@@ -539,6 +548,24 @@ window.__ModuleLoader__.load({
         return checking;
       };
 
+      /**
+       * 宿主拒绝卸下本插件时不撤回已写入的 dsh.profile.bundles：插件这次仍在运行，下次启动却不再加载。
+       * 只在列表确认本插件已装、未启用时补回；成功或无需补回返回 undefined，否则返回原因。
+       */
+      const reselect = async () => {
+        try {
+          const manager = pluginManagerOf(remote);
+          const bundles = unwrap(await manager.listBundles());
+          const bundle = Array.isArray(bundles) ? bundles.find((item) => item.name === PACKAGE_NAME) : undefined;
+          if (!bundle || bundle.enabled !== false) return undefined;
+          if (typeof manager.setBundleEnabled !== 'function') return 'setBundleEnabled unavailable';
+          const result = unwrap(await manager.setBundleEnabled(PACKAGE_NAME, true));
+          return APPLIED_STATES.has(result?.application) ? undefined : managementReason(result);
+        } catch (error) {
+          return errorText(error);
+        }
+      };
+
       const startOfficial = (target, registry) => {
         const requestId = updateRequestId();
         patch({
@@ -558,6 +585,10 @@ window.__ModuleLoader__.load({
             });
             const answer = await pluginManagerOf(remote).updateBundle(PACKAGE_NAME, target, { registry, requestId });
             const operation = officialOutcome(unwrap(answer), target);
+            if (operation.inUse) {
+              const reason = await reselect();
+              if (reason) operation.reselectFailure = reason;
+            }
             const installedVersion = operation.installedVersion ?? snapshot.manager.installedVersion;
             patch({ operation, manager: { ...snapshot.manager, installedVersion } });
           } catch (error) {
@@ -659,6 +690,9 @@ window.__ModuleLoader__.load({
         if (operation.outcome?.restartRequired) parts.push(t('updateRestartHint'));
         else if (operation.outcome?.refreshRequired) parts.push(t('updateRefreshHint'));
         section.push(updateNotice('done', { kind: 'ok', text: parts.join(' ') }));
+      } else if (operation?.state === 'failed' && operation.inUse) {
+        section.push(updateNotice('inUse', { kind: 'error', text: t('updateInUse') }));
+        if (operation.reselectFailure) section.push(updateNotice('reselectFailed', { kind: 'error', text: t('updateReselectFailed', { reason: operation.reselectFailure }) }));
       } else if (operation?.state === 'failed') {
         section.push(updateNotice('failed', { kind: 'error', text: t('updateFailed', { reason: operation.failure?.message ?? '' }) }));
         if (operation.restoreFailure) section.push(updateNotice('restoreFailed', { kind: 'error', text: t('updateRestoreFailed', { reason: operation.restoreFailure }) }));
@@ -672,8 +706,8 @@ window.__ModuleLoader__.load({
         if (operation.outcome?.restartRequired) parts.push(t('updateRestartHint'));
         section.push(updateNotice('rolledBack', { kind: 'error', text: parts.join(' ') }));
       }
-      // 手动重装仅供旧宿主或查询失败时使用，不能绕过官方已确认的更新资格或兼容性限制。
-      if (outdated && !running && !local && !managed && ['unsupported', 'error'].includes(manager.phase)
+      // 手动重装仅供旧宿主、查询失败或宿主卸不下运行中的本插件时使用，不能绕过官方已确认的更新资格或兼容性限制。
+      if (outdated && !running && !local && !managed && (['unsupported', 'error'].includes(manager.phase) || operation?.inUse)
         && EXACT_VERSION.test(version.latestVersion ?? '')) {
         section.push(h('details', { key: 'pinnedInstall' },
           h('summary', null, t('updatePinnedTitle')),

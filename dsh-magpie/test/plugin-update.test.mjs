@@ -250,6 +250,37 @@ test('官方更新：失败、取消、回滚成功、回滚失败、版本不�
   }
 });
 
+test('官方更新：宿主卸不下运行中的本插件时说明原因、补回被移出的启用状态，并给指定版本重装', async () => {
+  // 宿主 removeBundle 先移出 dsh.profile.bundles、热重载后仍在运行才报 bundle-in-use，且不撤回移出
+  const refused = { from: '26.10.22', to: '26.10.23', step: 'remove',
+    result: { changed: true, application: 'failed', stage: 'remove', target: PACKAGE_NAME, error: { code: 'bundle-in-use' } } };
+  for (const answer of [{ ok: true, value: { application: 'applied' } }, { ok: true, value: { application: 'failed', error: { code: 'lock-timeout' } } }, undefined]) {
+    const bundle = { name: PACKAGE_NAME, version: '26.10.22', source: `${PACKAGE_NAME}@26.10.22`, availability: 'profile', updatable: true, enabled: true };
+    const h = updaterHarness({ bundle, result: () => { bundle.enabled = false; return { ok: true, value: refused }; } });
+    if (answer) h.remote.pluginManager.setBundleEnabled = async (...args) => { h.calls.push(['setBundleEnabled', ...args]); return answer; };
+    await h.updater.check();
+    await h.updater.startUpdate();
+    const { operation } = h.updater.getSnapshot();
+    assert.equal(operation.state, 'failed');
+    assert.equal(operation.inUse, true);
+    assert.equal(operation.unknown, undefined);
+    if (answer) assert.deepEqual(h.calls.filter((call) => call[0] === 'setBundleEnabled'), [['setBundleEnabled', PACKAGE_NAME, true]]);
+    const expected = answer?.value.application === 'applied' ? undefined : answer ? 'lock-timeout' : 'setBundleEnabled unavailable';
+    assert.equal(operation.reselectFailure, expected);
+    const tree = render({ ...h.updater.getSnapshot(), version });
+    assert.match(text(tree), /无法在本插件运行时卸下它.*当前版本照常运行/);
+    assert.doesNotMatch(text(tree), /未能确认更新结果/);
+    assert.equal(/重启 DSH 前请在「插件」页重新启用本插件/.test(text(tree)), expected !== undefined);
+    assert.match(text(tree), /先关闭「Magpie 模型管理」组件.*@zhiqiangme\/dsh-magpie@26\.10\.23/);
+  }
+  // 宿主没有移出启用状态时不去改它
+  const h = updaterHarness({ result: { from: '26.10.22', step: 'remove', result: refused.result } });
+  h.remote.pluginManager.setBundleEnabled = async () => { throw new Error('should not be called'); };
+  await h.updater.check();
+  await h.updater.startUpdate();
+  assert.equal(h.updater.getSnapshot().operation.reselectFailure, undefined);
+});
+
 test('官方更新：重新检查以实际安装版本为准，不沿用外部重装之前的成功状态', async () => {
   const bundle = { name: PACKAGE_NAME, version: '26.10.22', updatable: true };
   const versions = { status: 'listed', installed: '26.10.22', registry: null, versions: [{ version: '26.10.23', bundle: true, prerelease: false }] };
