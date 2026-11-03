@@ -633,6 +633,38 @@ test('模型同步：勾选未变时可重试同步失败，保存期间禁用�
   }
 });
 
+test('保存栏：放进 sticky 悬浮容器，ref 按滚动区底部内边距校正 bottom', () => {
+  const dock = collectByType(tabPanel(boot(modelStates(true)).renderCard(), '模型'), 'div')
+    .find((node) => node.props.className === 'dsm-wb-dock');
+  assert.ok(dock, '模型页签应有保存栏悬浮容器');
+  assert.ok(button(collectByType(dock, 'button'), '刷新'));
+  assert.ok(button(collectByType(dock, 'button'), '保存并同步'));
+
+  // 替身 DOM：卡片本身不滚动，往外第一个 overflow:auto 的祖先是 DSH 详情页滚动区（底部 48px 内边距）
+  const scroller = { parentElement: null };
+  const card = { parentElement: scroller };
+  const styles = new Map([
+    [scroller, { overflowY: 'auto', paddingBottom: '48px' }],
+    [card, { overflowY: 'visible', paddingBottom: '0px' }],
+  ]);
+  const original = globalThis.getComputedStyle;
+  globalThis.getComputedStyle = (element) => styles.get(element);
+  try {
+    const node = { parentElement: card, style: {} };
+    dock.props.ref(node);
+    assert.equal(node.style.bottom, '-36px', '抵消 48px 内边距后离窗口底边留 12px');
+    const detached = { parentElement: null };
+    styles.set(detached, { overflowY: 'visible', paddingBottom: '0px' });
+    const orphan = { parentElement: detached, style: {} };
+    dock.props.ref(orphan);
+    assert.equal(orphan.style.bottom, undefined, '找不到滚动区就沿用 CSS 的 bottom');
+    dock.props.ref(null); // React 卸载时传 null
+  } finally {
+    if (original) globalThis.getComputedStyle = original;
+    else delete globalThis.getComputedStyle;
+  }
+});
+
 test('搜索隐藏的勾选仍然生效，不误提示当前区域已选择全部', () => {
   const states = modelStates(true);
   states[2].realm = 'dual';
@@ -685,6 +717,9 @@ test('样式：颜色一律走主题令牌，不写死白/黑，主按钮禁用�
   assert.match(css, /\.dsm-wb-tabpanel\[hidden\]\{display:none\}/);
   // DSH 只有 state-warn-*，没有 state-warning-*；写错会一直落到兜底色
   assert.equal(/state-warning/.test(css), false);
+  // 保存栏 sticky 悬浮；只有真正吸附时才换底色加阴影，在原位时与卡片融为一体
+  assert.match(css, /\.dsm-wb-dock\{[^}]*position:sticky[^}]*container-type:scroll-state/);
+  assert.match(css, /@container scroll-state\(stuck: bottom\)\{\.dsm-wb-dock>\.dsm-wb-footer\{[^}]*box-shadow/);
   assert.equal(/\.dsm-wb-btn:disabled\{[^}]*opacity/.test(css), false, '禁用态不要只靠 opacity');
 
   // 主按钮走反色：label-primary 当底、bg-layer-3 当字。
