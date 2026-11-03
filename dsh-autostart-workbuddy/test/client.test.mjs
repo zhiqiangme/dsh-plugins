@@ -286,7 +286,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   const expected = [
     'modelUnavailable', 'missingSelected', 'prunedMissing',
     'emptyFiltered', 'recoveryOff', 'recoveryExternal',
-    'accountOverview', 'balanceOverview', 'balanceUnknown', 'balanceUnsupported', 'balanceUnavailable', 'balanceHint', 'balanceUpdated',
+    'balanceUnknown', 'balanceUnsupported', 'balanceUnavailable', 'balanceHint', 'balanceUpdated',
     'hubFollowKey',
     'hubKeySaved', 'hubKeyMissing', 'hubKeyEnvironment', 'hubKeyUnavailable', 'hubKeyKeep', 'hubSaving',
     'hubSettingsSaved', 'hubKeysSaved', 'hubSyncFailed', 'hubInventoryFailed',
@@ -298,7 +298,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'backendInstall', 'backendInstalled', 'backendLatest', 'backendNoAccounts', 'backendNoHistory', 'backendRollback',
     'backendTitle', 'backendUninstall', 'backendUninstalled', 'backendUnmanaged', 'backendUpdate',
     'backendUpdated', 'backendUpToDate', 'backendWorking', 'backendRolledBack', 'cancel',
-    'clearAll', 'count', 'description', 'disabledHint', 'emptyBackend', 'emptyHint', 'loading',
+    'clearAll', 'count', 'disabledHint', 'emptyBackend', 'emptyHint', 'loading',
     'panelHint', 'panelKeyCopied', 'panelKeyCopy', 'panelKeyManual', 'panelKeyNone', 'panelKeyWorking',
     'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'saveSync', 'savedDisabled', 'savedNoSync', 'savedSync',
     'saving', 'selectAll', 'summary', 'syncEnabled', 'syncHint', 'title', 'uninstallConfirm', 'uninstallDesc', 'uninstallKept',
@@ -324,6 +324,11 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'autoUpdatePending', 'autoUpdateRolledBack', 'autoUpdateUnavailable', 'autoUpdateUnknown', 'autoUpdateWaiting',
     // hub 出口
     'hubRealm',
+    // 页签、头部状态与概览数字
+    'tabModels', 'tabRegion', 'tabBackend', 'tabPlugin',
+    'statusRunning', 'statusChecking', 'statusNotInstalled', 'statusRecovering', 'statusPaused', 'statusNoAccounts', 'statusUnavailable',
+    'statAccounts', 'statBalance', 'statBalanceSub', 'statModels', 'statModelsAll', 'statModelsTotal',
+    'rulesTitle', 'ruleSort', 'unsaved', 'runtimeTitle', 'dangerTitle', 'diagnoseClose', 'backendLoading',
   ];
   assert.deepEqual(Object.keys(entry.zh).sort(), expected.sort());
 });
@@ -618,8 +623,9 @@ test('模型同步：勾选未变时可重试同步失败，保存期间禁用�
   states[8] = { exeExists: true, gateways: ['wb2api', 'hub'], gateway: 'wb2api', history: [] };
   const busy = boot(states).renderCard();
   assert.ok(collectByType(busy, 'input').every((node) => node.props.disabled === true));
-  const toolbar = collectByType(busy, 'div').find((node) => node.props.className === 'dsm-wb-toolbar');
-  assert.ok(collectByType(toolbar, 'button').every((node) => node.props.disabled === true));
+  const modelButtons = collectByType(tabPanel(busy, '模型'), 'button');
+  assert.ok(modelButtons.length >= 4, '模型页签应有全选、全不选、刷新、保存');
+  assert.ok(modelButtons.every((node) => node.props.disabled === true));
   for (const label of ['更新', '回滚', '卸载', 'workbuddy2api-hub（默认）']) {
     const operation = button(collectByType(busy, 'button'), label);
     assert.ok(operation, `${label} 按钮存在`);
@@ -674,7 +680,11 @@ test('样式：颜色一律走主题令牌，不写死白/黑，主按钮禁用�
   );
 
   // 禁用态必须是显式配色，而不是整体降透明度——降透明度会把文字一起洗掉。
-  assert.match(css, /\.dsm-wb-btn-primary:disabled\{[^}]*color:var\(--dsw-alias-label-dimmed/);
+  assert.match(css, /\.dsm-wb-btn-primary:disabled\{[^}]*color:var\(--dsw-alias-label-caption/);
+  // 非当前页签靠 hidden 隐藏，面板自带 display 时必须显式让 hidden 生效
+  assert.match(css, /\.dsm-wb-tabpanel\[hidden\]\{display:none\}/);
+  // DSH 只有 state-warn-*，没有 state-warning-*；写错会一直落到兜底色
+  assert.equal(/state-warning/.test(css), false);
   assert.equal(/\.dsm-wb-btn:disabled\{[^}]*opacity/.test(css), false, '禁用态不要只靠 opacity');
 
   // 主按钮走反色：label-primary 当底、bg-layer-3 当字。
@@ -717,11 +727,12 @@ test('账号积分概览区分真实零余额、未知余额与账号统计', ()
     { realm: 'cn', balance: 0, state: 'ready', accountsEnabled: 2, accountsKnown: 2 },
     { realm: 'intl', balance: null, state: 'unknown', accountsEnabled: 1, accountsKnown: 0 },
   ] } }));
-  const text = collectText(app.renderCard()).join('\n');
-  assert.match(text, /可用 1 \/ 总计 2/);
-  assert.match(text, /CN 剩余积分：0/);
-  assert.match(text, /GL 剩余积分：尚未获取/);
-  assert.doesNotMatch(text, /GL 剩余积分：0/);
+  const tiles = Object.fromEntries(collectByType(app.renderCard(), 'div')
+    .filter((node) => node.props.className === 'dsm-wb-stat')
+    .map((node) => [node.props.key, collectText(node)]));
+  assert.deepEqual(tiles.accounts, ['可用账号', '1 / 2']);
+  assert.deepEqual(tiles['balance-cn'], ['CN 剩余积分', '0', '启用 2 · 有数据 2'], '真实零余额显示 0');
+  assert.deepEqual(tiles['balance-intl'], ['GL 剩余积分', '尚未获取', '启用 1 · 有数据 0'], '没数据不能显示成 0');
 });
 
 /** 渲染后把按钮的文字标签取出来。 */
@@ -758,11 +769,14 @@ test('复制访问密钥：按钮挨着面板链接；复制成功给提示，�
   assert.deepEqual(codes.map((node) => collectText(node).join('')), ['panel-secret']);
 });
 
-/** 只取"后端版本"那一块：卡片底部还有插件自身的更新区，它也有"检查更新"按钮。 */
+/** 按页签名取面板（各页签都渲染，只是非当前页签带 hidden）。 */
+function tabPanel(tree, label) {
+  return collectByType(tree, 'div').find((node) => node.props.role === 'tabpanel' && node.props['aria-label'] === label);
+}
+
+/** 只取「后端」页签：「插件更新」页签也有"检查更新"按钮。 */
 function backendSection(tree) {
-  return collectByType(tree, 'div').find(
-    (node) => node.props.className === 'dsm-wb-backend' && collectText(node).includes('后端版本'),
-  );
+  return tabPanel(tree, '后端');
 }
 
 test('后端区（已安装）：显示 更新/卸载/回滚，不显示 安装；卸载是危险色', () => {
@@ -864,6 +878,73 @@ test('卸载二次确认：未点开时不出现确认界面', () => {
   const { cards, t } = boot(backendStates({ exeExists: true, version: {}, history: [] }));
   const texts = collectText(cards[0].component({ t, view: 'page' }));
   assert.equal(texts.includes('卸载后端？'), false);
+});
+
+// ---- 页签与头部状态 ----
+
+const tabs = (tree) => collectByType(tree, 'button').filter((node) => node.props.role === 'tab');
+
+test('页签：区域页签只在 hub 下出现；点页签切换选中态，其余面板 hidden 但仍渲染', () => {
+  const wb = boot(backendStates({ gateway: 'wb2api', exeExists: true, version: {}, history: [] }));
+  assert.deepEqual(tabs(wb.renderCard()).map((node) => collectText(node).join('')), ['模型', '后端', '插件更新']);
+
+  const app = boot(backendStates({ gateway: 'hub', exeExists: true, version: {}, history: [] }));
+  let tree = app.renderCard();
+  assert.deepEqual(tabs(tree).map((node) => collectText(node).join('')), ['模型', '区域与 Key', '后端', '插件更新']);
+  assert.deepEqual(tabs(tree).map((node) => node.props['aria-selected']), [true, false, false, false], '默认停在模型页签');
+  assert.equal(tabPanel(tree, '模型').props.hidden, false);
+  assert.equal(tabPanel(tree, '后端').props.hidden, true);
+
+  tabs(tree).find((node) => collectText(node).join('') === '后端').props.onClick();
+  tree = app.renderCard();
+  assert.equal(tabPanel(tree, '后端').props.hidden, false);
+  assert.equal(tabPanel(tree, '模型').props.hidden, true, '切走后模型面板隐藏，但勾选草稿仍在');
+  assert.ok(collectText(tabPanel(tree, '模型')).includes('Alpha CN 0.11'));
+});
+
+test('头部状态：未安装 / 自动恢复暂停 / 运行中，后端页签带对应提醒点', () => {
+  const status = (tree) => collectText(collectByType(tree, 'span').find((node) => String(node.props.className).startsWith('dsm-wb-pill dsm-wb-pill-'))).join('');
+  const dot = (tree) => collectByType(tabs(tree).find((node) => collectText(node).join('') === '后端'), 'span')[0]?.props.className;
+
+  const running = boot(backendStates({ gateway: 'hub', exeExists: true, version: { tag: 'v2.3.1' }, history: [] })).renderCard();
+  assert.equal(status(running), '运行中');
+  assert.ok(collectText(running).includes('WorkBuddy2API Hub'), '标题是当前网关的名字');
+  assert.equal(dot(running), undefined);
+
+  const missing = boot(backendStates({ exeExists: false, version: {}, history: [] })).renderCard();
+  assert.equal(status(missing), '未安装');
+  assert.match(dot(missing), /dsm-wb-tab-dot-warn/);
+
+  const paused = boot(['error', [], {}, 'fetch failed', new Set(), new Set(), false, undefined,
+    { gateway: 'hub', exeExists: true, version: {}, history: [], recovery: { state: 'exhausted', enabled: true, attempts: 5 } }]).renderCard();
+  assert.equal(status(paused), '已暂停');
+  assert.match(dot(paused), /dsm-wb-tab-dot-error/);
+});
+
+test('自动恢复暂停时，模型区的错误提示就地给「重试启动」', async () => {
+  const posts = [];
+  const app = boot(['error', [], {}, 'fetch failed', new Set(), new Set(), false, undefined,
+    { gateway: 'hub', exeExists: true, version: {}, history: [], recovery: { state: 'exhausted', enabled: true, attempts: 5 } }], {
+    fetchImpl: async (_path, options) => {
+      if (options.method === 'POST') posts.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ ok: true, backend: { gateway: 'hub', exeExists: true } }) };
+    },
+  });
+  const retry = button(collectByType(tabPanel(app.renderCard(), '模型'), 'button'), '重试启动');
+  assert.ok(retry, '模型页签里应有重试启动');
+  await retry.props.onClick();
+  assert.deepEqual(posts[0], { action: 'start' });
+});
+
+test('重读期间保留已有列表，但勾选、筛选和保存都锁住', () => {
+  const states = modelStates(true);
+  states[0] = 'loading';
+  const tree = boot(states).renderCard();
+  const models = tabPanel(tree, '模型');
+  assert.ok(collectText(models).includes('Alpha CN 0.11'), '不再整块换成"正在读取"');
+  assert.ok(collectText(models).includes('正在读取后端模型…'), '列表头部提示正在刷新');
+  assert.ok(collectByType(models, 'input').every((node) => node.props.disabled === true));
+  assert.ok(collectByType(models, 'button').every((node) => node.props.disabled === true));
 });
 
 // ---- 后端网关切换 ----
@@ -999,16 +1080,13 @@ const buttonByLabel = (tree, label) => buttons(tree).find((node) => collectText(
 const noop = () => {};
 const actions = { checkUpdate: noop, startUpdate: noop, restart: noop, copyInstallSpec: noop };
 
-test('插件更新区：首屏（hooks 状态尚未就绪）显示检查中，且排在后端版本区之后', () => {
+test('插件更新区：首屏（hooks 状态尚未就绪）显示检查中，且自成一个页签、排在后端之后', () => {
   const { cards, t } = boot(backendStates({ exeExists: true, version: { tag: 'v1.13.0' }, history: [] }));
   const tree = cards[0].component({ t, view: 'page' });
-  assert.ok(collectText(tree).includes('正在检查更新…'));
-  const sections = collectByType(tree, 'div').filter((node) => node.props.className === 'dsm-wb-backend');
-  assert.deepEqual(
-    sections.map((node) => collectText(node)[0]),
-    ['后端版本', '插件更新'],
-    '插件更新区应在后端版本区之后，两块各自独立',
-  );
+  const panels = collectByType(tree, 'div').filter((node) => node.props.role === 'tabpanel');
+  assert.deepEqual(panels.map((node) => node.props['aria-label']), ['模型', '后端', '插件更新'], 'wb2api 下没有区域页签');
+  assert.ok(collectText(tabPanel(tree, '插件更新')).includes('正在检查更新…'));
+  assert.equal(collectText(backendSection(tree)).includes('正在检查更新…'), false, '插件更新与后端版本各自独立');
 });
 
 function updateModel(overrides = {}) {
@@ -1685,7 +1763,7 @@ test('指定版本安装：版本规格校验与卡片复制动作，剪贴板�
 test('后端网关：选择区自成一块（有自己的容器），与「后端版本」标题行分开', () => {
   const { renderCard } = boot(gatewayStates({ ...GATEWAY_BACKEND, gateway: 'hub' }));
   const section = backendSection(renderCard());
-  const block = collectByType(section, 'div').find((node) => node.props.className === 'dsm-wb-gateway');
+  const block = collectByType(section, 'div').find((node) => String(node.props.className).split(' ').includes('dsm-wb-gateway'));
   assert.ok(block, '网关选择应包在 dsm-wb-gateway 里');
   assert.ok(buttonLabels(block).includes('wb2api'));
   assert.equal(buttonLabels(block).includes('检查更新'), false, '后端版本的按钮不能挤进网关块');

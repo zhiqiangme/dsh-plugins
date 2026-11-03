@@ -16,9 +16,12 @@
  * configForms 通道要求宿主半侧声明带 .volatile() 的 schemastery Config，
  * 本插件刻意不引这个依赖，所以走自建路由。
  *
- * 后端网关（"后端版本"区最上面）：wb2api / workbuddy2api-hub 二选一，切换写本插件的 config.gateway。
+ * 布局：头部（网关名 + 运行状态 + 面板入口 + 诊断）→ 概览数字 → 页签。页签依次是
+ * 模型 / 区域与 Key（仅 hub）/ 后端 / 插件更新；各面板都渲染、只切 hidden，切页签不丢草稿。
  *
- * 插件更新（卡片最底部，与上面"后端版本"那块无关——那块管后端网关，这块管本插件自己）：
+ * 后端网关（「后端」页签最上面）：wb2api / workbuddy2api-hub 二选一，切换写本插件的 config.gateway。
+ *
+ * 插件更新（「插件更新」页签，与「后端」页签的版本区无关——那块管后端网关，这块管本插件自己）：
  * 版本检查走宿主半侧的 version 路由（问 npm）；一键更新优先交给官方 pluginManager，
  * 旧宿主没有官方更新接口时退回 dshmarket 的公开 API v1，本插件不自己跑 pnpm。
  *
@@ -127,84 +130,168 @@ window.__ModuleLoader__.load({
     const GATEWAY_POLL_MS = 1_000;
 
     const CSS = `
-.dsm-wb-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;padding:14px 16px}
-.dsm-wb-filters input:not([type=checkbox]),.dsm-wb-filters select,.dsm-wb-gateway input[type=password]{font:inherit;font-size:12px;color:var(--dsw-alias-label-primary,#e6e6e6);background:var(--dsw-alias-bg-layer-2,#25262b);border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;padding:6px 8px;max-width:100%;box-sizing:border-box}
-.dsm-wb-filters label{font-size:12px;color:var(--dsw-alias-label-primary,#e6e6e6)}
-.dsm-wb-gateway input[type=password]{display:block;width:100%;margin:6px 0}
-.dsm-wb-key-field{display:block;margin-top:8px;font-size:12px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
-.dsm-wb-key-state{margin-left:8px;color:var(--dsw-alias-label-tertiary,#999)}
-.dsm-wb-key-state-saved{color:var(--dsw-alias-state-success-primary,#3fb950)}
-.dsm-wb-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:15px;font-weight:600;line-height:1.4}
+.dsm-wb{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-2,#2c2c2e);border-radius:14px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:1.5}
+.dsm-wb *,.dsm-wb *::before{box-sizing:border-box}
+.dsm-wb p{margin:0}
+/* 头部：网关名 + 运行状态 + 面板入口；右侧是诊断这类不属于某个页签的动作。 */
+.dsm-wb-head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px 16px;padding:16px 18px 14px}
+.dsm-wb-head-main{display:flex;flex-direction:column;gap:6px;flex:1 1 320px;min-width:0}
+.dsm-wb-head-title{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dsm-wb-head-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dsm-wb-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:16px;font-weight:600;line-height:1.4}
 .dsm-wb-desc{margin:4px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
-.dsm-wb-panel{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
+.dsm-wb-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-state-idle-primary,#777)}
+.dsm-wb-dot-ok{background:var(--dsw-alias-state-success-primary,#22c55e);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-success-primary,#22c55e) 22%,transparent)}
+.dsm-wb-dot-warn{background:var(--dsw-alias-state-warn-primary,#f59e0b)}
+.dsm-wb-dot-error{background:var(--dsw-alias-state-error-primary,#f25a5a)}
+.dsm-wb-panel{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
 /* 外链用 DSH 自己那套：http(s) + target=_blank，宿主主窗口的 setWindowOpenHandler
    会把它交给 shell.openExternal，即默认浏览器打开。 */
-.dsm-wb-link{color:var(--dsw-alias-state-business-primary,#5686fe);text-decoration:none;cursor:pointer}
+.dsm-wb-link{color:var(--dsw-alias-link,#7aaaff);text-decoration:none;cursor:pointer}
 .dsm-wb-link:hover{text-decoration:underline}
-.dsm-wb-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 0 8px}
-.dsm-wb-count{flex:1;min-width:120px;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
-.dsm-wb-sync{display:flex;align-items:center;gap:8px;margin-top:12px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;cursor:pointer}
-.dsm-wb-sync input{margin:0;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
-.dsm-wb-btn{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 14px;font-size:13px;line-height:1.5}
+/* 徽章：状态色只染文字，底色取同色 14% 透明度，明暗主题都不刺眼。 */
+.dsm-wb-pill,.dsm-wb-badge{flex:none;display:inline-flex;align-items:center;min-height:20px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:999px;padding:0 8px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;font-weight:500;line-height:18px;white-space:nowrap}
+.dsm-wb-pill-ok,.dsm-wb-pill-warn,.dsm-wb-pill-error,.dsm-wb-badge-ok,.dsm-wb-badge-new{border-color:transparent;background:color-mix(in srgb,currentColor 14%,transparent)}
+.dsm-wb-pill-ok,.dsm-wb-badge-ok{color:var(--dsw-alias-state-success-primary,#22c55e)}
+.dsm-wb-pill-warn,.dsm-wb-badge-new{color:var(--dsw-alias-state-warn-primary,#f59e0b)}
+.dsm-wb-pill-error{color:var(--dsw-alias-state-error-primary,#f25a5a)}
+.dsm-wb-pill-mono{font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-weight:400}
+.dsm-wb-report{display:flex;flex-direction:column;gap:8px;margin:0 18px 14px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:12px;background:var(--dsw-alias-bg-layer-1,#232324);padding:12px 14px}
+.dsm-wb-report-body{margin:0;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all;user-select:text;font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary,#c6c9d0)}
+/* 概览数字 */
+.dsm-wb-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;padding:0 18px 16px}
+.dsm-wb-stat{min-width:0;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#232324);padding:8px 12px}
+.dsm-wb-stat-label{overflow:hidden;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.dsm-wb-stat-value{overflow:hidden;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:18px;font-weight:600;line-height:26px;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap}
+.dsm-wb-stat-muted{color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:13px;font-weight:500}
+.dsm-wb-stat-sub{overflow:hidden;color:var(--dsw-alias-label-caption,#81858c);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+/* 页签：分段控件的样子，与 DSH 设置页的分段选择一致。 */
+.dsm-wb-tabs{display:flex;flex-wrap:wrap;align-self:flex-start;gap:2px;max-width:calc(100% - 36px);margin:0 18px;padding:3px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#232324)}
+.dsm-wb-tab{appearance:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 14px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-tertiary,#999);font:inherit;font-size:13px;font-weight:500;white-space:nowrap;cursor:pointer}
+.dsm-wb-tab:hover{color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-wb-tab[aria-selected=true]{background:var(--dsw-alias-interactive-bg-active,#ffffff24);color:var(--dsw-alias-label-primary,#e6e6e6);font-weight:600}
+.dsm-wb-tab:focus-visible,.dsm-wb-btn:focus-visible,.dsm-wb-sync input:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#7aaaff);outline-offset:2px}
+.dsm-wb-tab-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-state-warn-primary,#f59e0b)}
+.dsm-wb-tab-dot-error{background:var(--dsw-alias-state-error-primary,#f25a5a)}
+.dsm-wb-tabpanel{display:flex;flex-direction:column;gap:14px;padding:16px 18px 18px}
+/* 面板自己设了 display，必须显式让 hidden 生效，否则非当前页签也会显示。 */
+.dsm-wb-tabpanel[hidden]{display:none}
+/* 分组：页签内的一块独立设置。 */
+.dsm-wb-group{display:flex;flex-direction:column;gap:12px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:12px;background:var(--dsw-alias-bg-layer-1,#232324);padding:14px 16px}
+.dsm-wb-danger{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,#f25a5a) 40%,transparent)}
+.dsm-wb-stack{display:flex;flex-direction:column;gap:6px}
+.dsm-wb-divided{border-top:1px solid var(--dsw-alias-border-l1,#ffffff0f);padding-top:12px}
+.dsm-wb-split{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+.dsm-wb-actions,.dsm-wb-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dsm-wb-backend-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dsm-wb-backend-title{flex:1;min-width:100px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:14px;font-weight:600;line-height:1.5}
+.dsm-wb-backend-line{color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6;word-break:break-all}
+.dsm-wb-backend-line strong{color:var(--dsw-alias-label-secondary,#c6c9d0);font-weight:500}
+.dsm-wb-hint{color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
+.dsm-wb-notice{font-size:13px;line-height:1.6}
+.dsm-wb-notice-ok{color:var(--dsw-alias-state-success-primary,#22c55e)}
+.dsm-wb-notice-error{color:var(--dsw-alias-state-error-primary,#f25a5a)}
+.dsm-wb-callout{display:flex;flex-direction:column;gap:10px;border:1px solid transparent;border-radius:10px;padding:10px 12px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;line-height:1.6}
+.dsm-wb-callout-warn{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 35%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 8%,transparent)}
+.dsm-wb-callout-error{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,#f25a5a) 35%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#f25a5a) 8%,transparent)}
+.dsm-wb-empty{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:16px;color:var(--dsw-alias-label-tertiary,#999);font-size:13px}
+/* 按钮 */
+.dsm-wb-btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;border:1px solid transparent;border-radius:8px;padding:0 14px;font:inherit;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;transition:background .12s ease,border-color .12s ease,color .12s ease}
 .dsm-wb-btn:disabled{cursor:default}
+.dsm-wb-btn-sm{height:24px;border-radius:6px;padding:0 10px;font-size:12px}
 /* 主按钮用"反色"配色，不用 --dsw-alias-brand-primary 当底色：本主题把
    brand-primary 定义成 --dsw-alias-label-primary（深色模式下 #f9fafb，接近纯白），
    拿它当背景再配白字就是白底白字。label-primary 当底 + bg-layer-3 当字，
    明暗两种主题都成立（Trae 的 .dsm-btn-primary 也是这个写法）。 */
-.dsm-wb-btn-primary{background:var(--dsw-alias-label-primary,#e6e6e6);color:var(--dsw-alias-bg-layer-3,#202126)}
+.dsm-wb-btn-primary{background:var(--dsw-alias-label-primary,#e6e6e6);color:var(--dsw-alias-bg-layer-3,#353638)}
 .dsm-wb-btn-primary:hover:not(:disabled){opacity:.88}
 .dsm-wb-btn-outline{background:transparent;border-color:var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-secondary,#c6c9d0)}
-.dsm-wb-btn-outline:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed,#777);color:var(--dsw-alias-label-primary,#e6e6e6)}
-/* 禁用态给明确的弱化配色，而不是整体降透明度——降透明度会把文字一起洗掉，
-   深色主题下就变成"看不清字"的灰块。 */
-.dsm-wb-btn-primary:disabled{background:var(--dsw-alias-bg-layer-2,#25262b);color:var(--dsw-alias-label-dimmed,#8a8f99);border-color:var(--dsw-alias-border-l2,#36373b)}
-.dsm-wb-btn-outline:disabled{color:var(--dsw-alias-label-dimmed,#8a8f99)}
-.dsm-wb-list{display:flex;flex-direction:column;gap:2px;max-height:340px;overflow:auto;padding:2px 0}
-.dsm-wb-row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;cursor:pointer}
-.dsm-wb-row:hover{background:var(--dsw-alias-bg-layer-2,#25262b)}
-.dsm-wb-row input{margin:0;flex:none;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
-.dsm-wb-label{flex:1;min-width:0;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsm-wb-meta{flex:none;display:flex;align-items:center;gap:6px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px}
-.dsm-wb-credits{flex:none;font-variant-numeric:tabular-nums;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;padding:1px 6px;font-size:12px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
-.dsm-wb-credits-free{color:var(--dsw-alias-state-success-primary,#3fb950);border-color:currentColor}
-.dsm-wb-tag{flex:none;border-radius:6px;padding:1px 6px;font-size:12px;border:1px solid var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-tertiary,#999)}
-.dsm-wb-hint{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
-.dsm-wb-notice{margin:8px 0 0;font-size:13px;line-height:1.6}
-.dsm-wb-notice-ok{color:var(--dsw-alias-state-success-primary,#3fb950)}
-.dsm-wb-notice-error{color:var(--dsw-alias-state-error-primary,#d92d20)}
-.dsm-wb-empty{padding:12px 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px}
-.dsm-wb-panel-key{margin-left:8px;padding:1px 10px;font-size:12px}
-.dsm-wb-key{display:inline-block;margin-left:4px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;font-family:ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary,#e6e6e6);user-select:all;word-break:break-all}
-.dsm-wb-path{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;word-break:break-all}
-.dsm-wb-backend{margin-top:14px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px}
-.dsm-wb-backend-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.dsm-wb-gateway{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--dsw-alias-border-l2,#36373b)}
-.dsm-wb-backend-title{flex:1;min-width:100px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
-.dsm-wb-backend-line{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6;word-break:break-all}
-.dsm-wb-backend-line strong{color:var(--dsw-alias-label-secondary,#c6c9d0);font-weight:500}
-.dsm-wb-badge{flex:none;border-radius:6px;padding:1px 6px;font-size:12px;border:1px solid var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-tertiary,#999)}
-.dsm-wb-badge-new{color:var(--dsw-alias-state-warning-primary,#d29922);border-color:currentColor}
-.dsm-wb-badge-ok{color:var(--dsw-alias-state-success-primary,#3fb950);border-color:currentColor}
+.dsm-wb-btn-outline:hover:not(:disabled),.dsm-wb-btn-ghost:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#ffffff14);color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-wb-btn-ghost{background:transparent;color:var(--dsw-alias-label-secondary,#c6c9d0);height:26px;padding:0 8px;font-size:12px}
+/* 禁用态给明确的弱化配色，而不是整体降透明度——降透明度会把文字一起洗掉。
+   文字取 label-caption：深色主题的 label-dimmed 是 #43454a，压在卡片底色上几乎看不见。 */
+.dsm-wb-btn-primary:disabled{background:var(--dsw-alias-bg-layer-3,#353638);color:var(--dsw-alias-label-caption,#81858c);border-color:var(--dsw-alias-border-l2,#36373b)}
+.dsm-wb-btn-outline:disabled,.dsm-wb-btn-ghost:disabled{color:var(--dsw-alias-label-caption,#81858c)}
 /* 危险动作（卸载）用错误色描边；不做成实心红，避免误点。 */
-.dsm-wb-btn-danger{background:transparent;border-color:var(--dsw-alias-state-error-primary,#d92d20);color:var(--dsw-alias-state-error-primary,#d92d20)}
-.dsm-wb-btn-danger:hover:not(:disabled){background:rgba(217,45,32,.12)}
-.dsm-wb-confirm{margin-top:10px;border:1px solid var(--dsw-alias-state-warning-primary,#d29922);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#25262b);padding:12px 14px}
-.dsm-wb-confirm-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
-.dsm-wb-confirm-body{margin-top:4px}
+.dsm-wb-btn-danger{background:transparent;border-color:var(--dsw-alias-state-error-primary,#f25a5a);color:var(--dsw-alias-state-error-primary,#f25a5a)}
+.dsm-wb-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger,#f25a5a26)}
+.dsm-wb-btn-danger:disabled{border-color:var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-caption,#81858c)}
+/* 分段选择（后端网关）：当前项是禁用的主按钮，这里要显示成"已选中"而不是"不可用"。 */
+.dsm-wb-seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#2c2c2e)}
+.dsm-wb-seg .dsm-wb-btn{height:26px;border:0;border-radius:7px;padding:0 12px}
+.dsm-wb-seg .dsm-wb-btn-outline{background:transparent}
+.dsm-wb-seg .dsm-wb-btn-primary,.dsm-wb-seg .dsm-wb-btn-primary:disabled{background:var(--dsw-alias-label-primary,#e6e6e6);color:var(--dsw-alias-bg-layer-3,#353638);opacity:1}
+/* 开关：沿用 DSH 设置页的 switch 尺寸与配色，底层仍是 checkbox。 */
+.dsm-wb-sync{display:inline-flex;align-self:flex-start;align-items:center;gap:10px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:500;cursor:pointer}
+.dsm-wb-sync input{appearance:none;position:relative;flex:none;width:36px;height:20px;margin:0;border-radius:999px;background:var(--dsw-alias-border-l3,#ffffff29);cursor:pointer;transition:background .12s ease}
+.dsm-wb-sync input::before{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-switch-thumb,#adb2b8);transition:transform .12s ease}
+.dsm-wb-sync input:checked{background:var(--dsw-alias-label-primary,#f9fafb)}
+.dsm-wb-sync input:checked::before{background:var(--dsw-alias-label-primary-foreground,#0f1115);transform:translateX(16px)}
+.dsm-wb-sync input:disabled{cursor:default;opacity:.5}
+/* 输入框 */
+.dsm-wb-input{max-width:100%;height:32px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:8px;padding:0 10px;background:var(--dsw-alias-bg-layer-1,#232324);color:var(--dsw-alias-label-primary,#e6e6e6);font:inherit;font-size:13px;outline:none}
+.dsm-wb-group .dsm-wb-input{background:var(--dsw-alias-bg-layer-2,#2c2c2e)}
+.dsm-wb-input::placeholder{color:var(--dsw-alias-label-caption,#81858c)}
+.dsm-wb-input:focus{border-color:var(--dsw-alias-label-tertiary,#999)}
+.dsm-wb-input:disabled{cursor:default;opacity:.6}
+select.dsm-wb-input{padding-right:6px;cursor:pointer}
+.dsm-wb-filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dsm-wb-search{flex:1 1 240px;min-width:160px}
+.dsm-wb-max{width:200px}
+.dsm-wb-rules-label{color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;font-weight:600}
+.dsm-wb-chip{display:inline-flex;align-items:center;gap:6px;height:30px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:999px;padding:0 12px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;white-space:nowrap;cursor:pointer;user-select:none}
+.dsm-wb-chip:hover{border-color:var(--dsw-alias-border-l4,#fff3)}
+.dsm-wb-chip input{margin:0;accent-color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-wb-chip:has(input:checked){border-color:var(--dsw-alias-label-tertiary,#999);background:var(--dsw-alias-interactive-bg-active,#ffffff24);color:var(--dsw-alias-label-primary,#e6e6e6)}
+/* 模型列表 */
+.dsm-wb-listbox{border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:12px;background:var(--dsw-alias-bg-layer-1,#232324);overflow:hidden}
+.dsm-wb-list-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;border-bottom:1px solid var(--dsw-alias-border-l2,#36373b);padding:8px 10px 8px 14px}
+.dsm-wb-count{flex:1;min-width:140px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;line-height:1.5}
+.dsm-wb-count-status{color:var(--dsw-alias-label-caption,#81858c);font-size:12px}
+.dsm-wb-list{display:flex;flex-direction:column;gap:1px;max-height:420px;overflow:auto;padding:4px}
+.dsm-wb-row{display:flex;align-items:center;gap:10px;min-height:36px;border-radius:8px;padding:4px 10px;cursor:pointer}
+.dsm-wb-row:hover{background:var(--dsw-alias-interactive-bg-hover,#ffffff14)}
+.dsm-wb-row input{flex:none;margin:0;accent-color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-wb-label{flex:1;min-width:0;overflow:hidden;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:13px;line-height:1.5;text-overflow:ellipsis;white-space:nowrap}
+.dsm-wb-row-on .dsm-wb-label{color:var(--dsw-alias-label-primary,#e6e6e6)}
+/* 三列标签各有固定最小宽度、靠右对齐：缺哪列就空着，倍率始终上下对齐。 */
+.dsm-wb-meta{flex:none;display:flex;align-items:center;gap:6px}
+.dsm-wb-cell{display:flex;justify-content:flex-end;min-width:40px}
+.dsm-wb-cell-credits{min-width:62px}
+.dsm-wb-tag,.dsm-wb-credits{flex:none;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;padding:0 6px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:20px;white-space:nowrap}
+.dsm-wb-credits{min-width:56px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-variant-numeric:tabular-nums;text-align:center}
+.dsm-wb-credits-free{border-color:currentColor;color:var(--dsw-alias-state-success-primary,#22c55e)}
+.dsm-wb-tag-warn{border-color:currentColor;color:var(--dsw-alias-state-warn-primary,#f59e0b)}
+.dsm-wb-footer{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px}
+.dsm-wb-footer-info{display:flex;flex-direction:column;gap:2px;flex:1 1 260px;min-width:0}
+.dsm-wb-unsaved{display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-state-warn-primary,#f59e0b);font-size:12px}
+.dsm-wb-unsaved::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.dsm-wb-path{overflow:hidden;color:var(--dsw-alias-label-caption,#81858c);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+/* 区域 Key */
+.dsm-wb-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.dsm-wb-key-field{display:flex;flex-direction:column;gap:6px;min-width:0;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;font-weight:500}
+.dsm-wb-key-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+.dsm-wb-key-state{color:var(--dsw-alias-label-caption,#81858c);font-weight:400}
+.dsm-wb-key-state-saved{color:var(--dsw-alias-state-success-primary,#22c55e)}
+.dsm-wb-key-field .dsm-wb-input{margin-top:auto}
+.dsm-wb-key{display:inline-block;margin-left:4px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);color:var(--dsw-alias-label-primary,#e6e6e6);user-select:all;word-break:break-all}
 .dsm-wb-code{font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);color:var(--dsw-alias-label-secondary,#c6c9d0)}
-.dsm-wb-input{font:inherit;font-size:13px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-2,#25262b);color:var(--dsw-alias-label-primary,#e6e6e6);padding:8px 12px}
-.dsm-wb-install-spec{box-sizing:border-box;width:100%;margin-top:8px;font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace)}
+.dsm-wb-install-spec{width:100%;font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace)}
+.dsm-wb-plugin-update details>*+*{margin-top:8px}
+.dsm-wb-plugin-update summary{cursor:pointer}
+.dsm-wb-confirm{display:flex;flex-direction:column;gap:8px;border:1px solid var(--dsw-alias-state-warn-primary,#f59e0b);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#2c2c2e);padding:12px 14px}
+.dsm-wb-confirm-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
+.dsm-wb-confirm-body{display:flex;flex-direction:column;gap:4px}
 `;
 
     // 字典值必须是**字符串**：DSH 的 t(key, params) 用 `{name}` 占位符插值
     // （见 @deepseek-ai/dsh-client-locale 的 bind）。放函数会让 t() 返回函数本身，
     // React 拿它当 child 直接抛错，整块卡片从页面上消失——这个坑已经踩过一次。
     const zh = {
-      title: 'WorkBuddy 模型列表',
-      description: '勾选要出现在 DSH 模型列表里的模型；倍率取自后端 /v1/models。',
+      title: 'WorkBuddy',
       summary: '由插件接管 WorkBuddy 的模型列表（勾选 + 倍率）。',
       loading: '正在读取后端模型…',
-      modelsNotInstalled: '后端还没有安装。请点下方「后端版本」里的「安装」，装好后模型列表会自动刷新。',
+      modelsNotInstalled: '后端还没有安装。点「安装」，装好后会自动打开同步并刷新模型列表。',
       modelsNoAccounts: 'hub 里还没有可用账号（共 {total} 个，可用 0），模型暂时用不了，所以这里不列出来。请打开上方后端面板登录或导入 WorkBuddy 账号，再点「重试」。',
       retry: '重试',
       selectAll: '全部勾选',
@@ -267,7 +354,7 @@ window.__ModuleLoader__.load({
       hubKeyKeep: '已保存；留空保留，输入新 Key 可替换', hubSaving: '正在校验并保存…',
       hubSettingsSaved: '区域设置已保存。输入框留空会保留已保存的 Key。', hubKeysSaved: 'Key 已保存；为避免回显，输入框已清空，已保存的 Key 继续生效。',
       hubSyncFailed: '设置和 Key 已保存，但模型同步未完成：{reason}', hubInventoryFailed: '设置已保存，模型列表暂时无法刷新，请稍后重试。',
-      accountOverview: '账号概览：可用 {ready} / 总计 {total}', balanceOverview: '{realm} 剩余积分：{balance}；启用账号 {enabled}，有积分数据 {known}',
+      statAccounts: '可用账号', statBalance: '{realm} 剩余积分', statBalanceSub: '启用 {enabled} · 有数据 {known}', statModels: '已勾选模型', statModelsAll: '全部', statModelsTotal: '后端共 {total} 个',
       balanceUnknown: '尚未获取', balanceUnsupported: '后端版本不支持', balanceUnavailable: '暂不可用或密钥无效', balanceHint: '积分来自 HUB 缓存，不发起对话、不刷新上游积分。', balanceUpdated: '积分快照：{time}',
       backendUninstalled: '后端已卸载（config.json 与 data/ 已保留）。',
       backendUninstalledHub: 'hub 已卸载（hub/data/ 已保留）。',
@@ -315,7 +402,7 @@ window.__ModuleLoader__.load({
       purgeDesc: '会停止后端，并删除 {root} 整个目录：程序、历史版本、config.json、账号凭证与状态（data/）、缓存和日志。',
       purgeKept: '无法撤销。之后想继续用，需要重新安装后端并重新登录账号。',
       purgeConfirm: '确认彻底卸载',
-      updateTitle: '插件更新',
+      updateTitle: '插件版本',
       updateChecking: '正在检查更新…',
       updateCheck: '检查更新',
       updateCheckFailed: '检查更新失败：{reason}',
@@ -359,14 +446,17 @@ window.__ModuleLoader__.load({
       restartNow: '立即重启 DSH',
       restarting: '正在重启 DSH…',
       restartFailed: '重启失败：{reason}',
+      tabModels: '模型', tabRegion: '区域与 Key', tabBackend: '后端', tabPlugin: '插件更新',
+      statusRunning: '运行中', statusChecking: '检查中', statusNotInstalled: '未安装', statusRecovering: '正在恢复', statusPaused: '已暂停', statusNoAccounts: '无可用账号', statusUnavailable: '无法连接',
+      rulesTitle: '同步规则', ruleSort: 'DSH 中的顺序', unsaved: '有未保存的更改',
+      runtimeTitle: '运行状态', dangerTitle: '危险操作', diagnoseClose: '收起', backendLoading: '正在读取后端状态…',
     };
 
     const en = {
-      title: 'WorkBuddy models',
-      description: 'Tick the models that should appear in the DSH model list; the multiplier comes from the backend /v1/models.',
+      title: 'WorkBuddy',
       summary: 'This plugin manages the WorkBuddy model list (selection + multiplier).',
       loading: 'Reading models from the backend…',
-      modelsNotInstalled: 'The backend is not installed yet. Click "Install" under "Backend version" below; the model list refreshes once it is installed.',
+      modelsNotInstalled: 'The backend is not installed yet. Click "Install"; sync is turned on and the model list refreshes once it is installed.',
       modelsNoAccounts: 'The hub has no usable account yet ({total} total, 0 usable), so its models cannot be used and are not listed. Sign in or import a WorkBuddy account in the backend panel above, then click "Retry".',
       retry: 'Retry',
       selectAll: 'Select all',
@@ -420,7 +510,7 @@ window.__ModuleLoader__.load({
       recoveryIdle: 'Ready', recoveryWaiting: 'Waiting', recoveryRestarting: 'Restarting', recoveryRecovered: 'Recovered', recoveryExhausted: 'Paused after repeated failures',
       recoveryRetry: 'Retry start', recoveryOff: 'Disabled', recoveryExternal: 'Paused: port belongs to another process',
       diagnose: 'Diagnose', diagnoseCopy: 'Copy redacted report', diagnoseCopied: 'Report copied', diagnoseWorking: 'Diagnosing…',
-      emptyFiltered: 'No models match the filters', modelSearch: 'Search models', regionAll: 'All regions', ruleFree: 'Sync free models only', ruleVision: 'Sync vision models only', ruleMax: 'Maximum multiplier (blank: unlimited)',
+      emptyFiltered: 'No models match the filters', modelSearch: 'Search models', regionAll: 'All regions', ruleFree: 'Sync free models only', ruleVision: 'Sync vision models only', ruleMax: 'Max multiplier (blank = any)',
       sortUpstream: 'Upstream order', sortName: 'Sort by name', sortCredits: 'Sort by multiplier', ruleHint: 'Rules and selections both apply, including to new models. Unknown prices are not treated as free. Bulk actions affect only filtered rows.',
       hubDual: 'Use CN and GL together', hubDualHint: 'Shows CN / GL models in one WorkBuddy group, routed by the selected model region independently of the HUB dashboard. Uses the gateway key; region keys are only needed when it is bound to a region (stored only in DSH credentials; blank keeps saved values).',
       hubCnKey: 'CN region key (optional)', hubGlKey: 'GL region key (optional)', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved', hubBoth: 'CN + GL (one group, independent exits)',
@@ -429,7 +519,7 @@ window.__ModuleLoader__.load({
       hubKeyKeep: 'Saved; leave blank to keep, or enter a replacement', hubSaving: 'Validating and saving…',
       hubSettingsSaved: 'Region settings saved. Blank inputs keep saved keys.', hubKeysSaved: 'Keys saved. Inputs were cleared to avoid displaying secrets; saved keys remain in use.',
       hubSyncFailed: 'Settings and keys saved, but model sync did not finish: {reason}', hubInventoryFailed: 'Settings saved, but the model list could not be refreshed. Please retry later.',
-      accountOverview: 'Accounts: {ready} ready / {total} total', balanceOverview: '{realm} remaining credits: {balance}; {enabled} enabled accounts, {known} with balance data',
+      statAccounts: 'Usable accounts', statBalance: '{realm} credits left', statBalanceSub: '{enabled} enabled · {known} reporting', statModels: 'Selected models', statModelsAll: 'All', statModelsTotal: '{total} on the backend',
       balanceUnknown: 'Not available yet', balanceUnsupported: 'Unsupported backend version', balanceUnavailable: 'Unavailable or invalid key', balanceHint: 'Reads cached HUB balances without chat requests or upstream refreshes.', balanceUpdated: 'Balance snapshot: {time}',
       backendUninstalled: 'Backend uninstalled (config.json and data/ kept).',
       backendUninstalledHub: 'Hub uninstalled (hub/data/ kept).',
@@ -477,7 +567,7 @@ window.__ModuleLoader__.load({
       purgeDesc: 'Stops the backend and deletes the whole {root} directory: program, archived versions, config.json, credentials and state (data/), cache and logs.',
       purgeKept: 'This cannot be undone. To use it again you will need to reinstall the backend and sign in to your accounts again.',
       purgeConfirm: 'Fully uninstall',
-      updateTitle: 'Plugin update',
+      updateTitle: 'Plugin version',
       updateChecking: 'Checking for updates…',
       updateCheck: 'Check for updates',
       updateCheckFailed: 'Update check failed: {reason}',
@@ -521,6 +611,10 @@ window.__ModuleLoader__.load({
       restartNow: 'Restart DSH now',
       restarting: 'Restarting DSH…',
       restartFailed: 'Restart failed: {reason}',
+      tabModels: 'Models', tabRegion: 'Regions & keys', tabBackend: 'Backend', tabPlugin: 'Plugin update',
+      statusRunning: 'Running', statusChecking: 'Checking', statusNotInstalled: 'Not installed', statusRecovering: 'Recovering', statusPaused: 'Paused', statusNoAccounts: 'No usable account', statusUnavailable: 'Unreachable',
+      rulesTitle: 'Sync rules', ruleSort: 'Order in DSH', unsaved: 'Unsaved changes',
+      runtimeTitle: 'Runtime', dangerTitle: 'Danger zone', diagnoseClose: 'Close', backendLoading: 'Reading backend status…',
     };
 
     function ensureStyle() {
@@ -726,8 +820,53 @@ window.__ModuleLoader__.load({
       return error instanceof Error ? error.message : String(error);
     }
 
-    function wbButton(key, kind, label, onClick, disabled) {
-      return h('button', { key, type: 'button', className: `dsm-wb-btn dsm-wb-btn-${kind}`, disabled, onClick }, label);
+    function wbButton(key, kind, label, onClick, disabled, extra) {
+      return h('button', { key, type: 'button', className: `dsm-wb-btn dsm-wb-btn-${kind}`, disabled, onClick, ...extra }, label);
+    }
+
+    /** 网关的展示名：产品名，两种语言都不翻译。 */
+    const GATEWAY_NAMES = { hub: 'WorkBuddy2API Hub', wb2api: 'wb2api' };
+
+    /** hub 的出口 / 积分区域只有国内与国际两种，国际在不同接口里叫 global 或 intl。 */
+    function realmName(realm) {
+      return realm === 'cn' ? 'CN' : 'GL';
+    }
+
+    function formatNumber(value) {
+      return typeof value === 'number' ? value.toLocaleString() : String(value);
+    }
+
+    /**
+     * 卡片头部的运行状态。先看后端装没装、自动恢复是否卡住，再看模型区能不能读到目录。
+     * 重读期间（loading）已有列表就沿用"运行中"，免得每次保存都闪成"检查中"。
+     * @returns {{ tone: 'ok' | 'warn' | 'error' | 'idle', key: string }}
+     */
+    function backendStatus(backend, phase, reason, hasRows) {
+      if (backend?.exeExists === false || reason === BACKEND_NOT_INSTALLED) return { tone: 'warn', key: 'statusNotInstalled' };
+      const recovery = backend?.recovery?.state;
+      if (recovery === 'exhausted' || recovery === 'external') return { tone: 'error', key: 'statusPaused' };
+      if (recovery === 'waiting' || recovery === 'restarting') return { tone: 'warn', key: 'statusRecovering' };
+      if (phase === 'loading') return hasRows ? { tone: 'ok', key: 'statusRunning' } : { tone: 'idle', key: 'statusChecking' };
+      if (phase === 'error') return reason === BACKEND_NO_ACCOUNTS ? { tone: 'warn', key: 'statusNoAccounts' } : { tone: 'error', key: 'statusUnavailable' };
+      return { tone: 'ok', key: 'statusRunning' };
+    }
+
+    /** 「后端」页签上的提醒点：自动恢复已暂停算错误；没装、查到新版本算提醒。 */
+    function backendAttention(backend, check) {
+      if (['exhausted', 'external'].includes(backend?.recovery?.state)) return 'error';
+      if (backend?.exeExists === false || (check && !check.error && check.upToDate === false)) return 'warn';
+      return undefined;
+    }
+
+    /** 概览数字卡片。muted 用于"尚未获取"这类非数字值，字号随之变小。 */
+    function statTile(key, label, value, { sub, title, muted } = {}) {
+      return h(
+        'div',
+        { key, className: 'dsm-wb-stat', title },
+        h('div', { className: 'dsm-wb-stat-label' }, label),
+        h('div', { className: `dsm-wb-stat-value${muted ? ' dsm-wb-stat-muted' : ''}` }, value),
+        sub ? h('div', { className: 'dsm-wb-stat-sub' }, sub) : null,
+      );
     }
 
     function wbNotice(key, value) {
@@ -1734,6 +1873,8 @@ window.__ModuleLoader__.load({
       const [filters, setFilters] = useState(undefined);
       const [hubDraft, setHubDraft] = useState(undefined);
       const [hubNotice, setHubNotice] = useState(undefined);
+      // 当前页签。与上面一样排在既有 useState 之后，不打乱它们的配对顺序。
+      const [tab, setTab] = useState('models');
       // 稳定排序让已勾选项置顶，组内保留筛选器指定的顺序；保存仍按原白名单规则排序。
       const sorted = useMemo(() => filterRows(rows, { ...meta.rules, ...filters })
         .sort((a, b) => Number(picked.has(b.id)) - Number(picked.has(a.id))), [rows, meta.rules, filters, picked]);
@@ -1804,183 +1945,374 @@ window.__ModuleLoader__.load({
         } catch (error) { setHubNotice({ kind: 'error', text: errorText(error) }); }
         finally { setBackendBusy(undefined); }
       };
-      const body = [];
-      if (backend?.gateway === 'hub') body.push(h('div', { key: 'hubMode', className: 'dsm-wb-gateway' },
-        h('label', { className: 'dsm-wb-sync' }, h('input', { type: 'checkbox', checked: hubDraft?.enabled ?? backend.hubSettings?.enabled ?? meta.hubDual ?? false, disabled: Boolean(saving || backendBusy), onChange: (e) => { setHubDraft((last) => ({ ...last, enabled: e.target.checked })); setHubNotice(undefined); } }), t('hubDual')),
-        h('p', { className: 'dsm-wb-hint' }, t('hubDualHint')),
-        ...[['cnKey', 'hubCnKey', 'cn'], ['globalKey', 'hubGlKey', 'global'], ['followKey', 'hubFollowKey', 'follow']].map(([key, label, field]) => {
-          const state = backend.hubSettings?.keys?.[field];
-          const stateLabel = t({ saved: 'hubKeySaved', missing: 'hubKeyMissing', environment: 'hubKeyEnvironment' }[state] || 'hubKeyUnavailable');
-          return h('label', { key, className: 'dsm-wb-key-field' }, t(label),
-            h('span', { className: `dsm-wb-key-state${state === 'saved' ? ' dsm-wb-key-state-saved' : ''}` }, stateLabel),
-            h('input', { type: 'password', autoComplete: 'off', 'aria-label': t(label), placeholder: t(state === 'saved' ? 'hubKeyKeep' : label), value: hubDraft?.[key] ?? '', disabled: Boolean(saving || backendBusy), onChange: (e) => { setHubDraft((last) => ({ ...last, [key]: e.target.value })); setHubNotice(undefined); } }));
-        }),
-        wbButton('applyHubMode', 'outline', t(backendBusy === 'hubMode' ? 'hubSaving' : 'hubApply'), applyHubMode, Boolean(saving || backendBusy)),
-        hubNotice ? h('p', { key: 'hubNotice', role: hubNotice.kind === 'error' ? 'alert' : 'status', className: `dsm-wb-notice ${hubNotice.kind === 'error' ? 'dsm-wb-notice-error' : 'dsm-wb-notice-ok'}` }, hubNotice.text) : null));
-      body.push(h('div', { key: 'diagnose', className: 'dsm-wb-toolbar dsm-wb-diagnostics' },
-        wbButton('diagnose', 'outline', t(diagnostic?.busy ? 'diagnoseWorking' : 'diagnose'), runDiagnostic, diagnostic?.busy),
-        diagnostic?.report ? wbButton('copyReport', 'outline', t(diagnostic.copied ? 'diagnoseCopied' : 'diagnoseCopy'), copyDiagnostic, false) : null));
-      if (diagnostic?.report || diagnostic?.error) body.push(h('pre', { key: 'diagnosticReport', className: 'dsm-wb-hint', style: { whiteSpace: 'pre-wrap', maxHeight: 280, overflow: 'auto', userSelect: 'text' } }, diagnostic.error || JSON.stringify(diagnostic.report, null, 2)));
 
-      if (phase === 'loading') {
-        body.push(h('div', { key: 'loading', className: 'dsm-wb-empty' }, t('loading')));
-      } else if (phase === 'error') {
-        body.push(
+      const busy = Boolean(saving || backendBusy);
+      // 重读期间列表照常显示（不再整块换成"正在读取"），但勾选与保存都锁住，免得在旧快照上改出冲突。
+      const locked = busy || phase === 'loading';
+      const hub = backend?.gateway === 'hub';
+      const status = backendStatus(backend, phase, reason, rows.length > 0);
+      // hub 的勾选按出口分开：另一个出口的勾选不算，这个出口一个没勾就是"全部"。
+      const nonePicked = meta.realm ? rows.every((row) => !picked.has(row.id)) : picked.size === 0;
+
+      // ---- 头部：网关 + 运行状态 + 后端面板入口，诊断放右侧（各页签都用得上）----
+      // 后端管理面板地址：宿主在 /backend 应答里给（端口可配），拿不到就用兜底值。
+      const panelUrl = backend?.panelUrl ?? DEFAULT_PANEL_URL;
+      const panelLabel = String(panelUrl).replace(/^https?:\/\//, '');
+      const version = backend?.version ?? {};
+      const versionTag = version.tag ?? (version.revision ? version.revision.slice(0, 7) : null);
+      const head = h(
+        'div',
+        { key: 'head', className: 'dsm-wb-head' },
+        h(
+          'div',
+          { className: 'dsm-wb-head-main' },
           h(
             'div',
-            { key: 'error', className: 'dsm-wb-empty' },
-            h('div', { className: 'dsm-wb-notice dsm-wb-notice-error' }, errorReasonText(reason, meta, t)),
-            h('button', { type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', onClick: load }, t('retry')),
+            { className: 'dsm-wb-head-title' },
+            h('span', { className: `dsm-wb-dot dsm-wb-dot-${status.tone}`, 'aria-hidden': true }),
+            h('span', { className: 'dsm-wb-title' }, GATEWAY_NAMES[backend?.gateway] ?? t('title')),
+            h('span', { className: `dsm-wb-pill dsm-wb-pill-${status.tone}`, role: 'status' }, t(status.key)),
+            versionTag
+              ? h('span', { className: 'dsm-wb-pill dsm-wb-pill-mono', title: version.builtAt ? t('backendBuilt', { time: localTime(version.builtAt) }) : undefined }, versionTag)
+              : null,
           ),
-        );
-      } else {
-        body.push(
           h(
-            'label',
-            { key: 'sync', className: 'dsm-wb-sync' },
-            h('input', {
-              type: 'checkbox',
-              checked: meta.enabled === true,
-              disabled: Boolean(saving || backendBusy),
-              onChange: (event) => {
-                const enabled = event.target.checked;
-                setMeta((previous) => ({ ...previous, enabled }));
-                setNotice(undefined);
-              },
-            }),
-            t('syncEnabled'),
-          ),
-          h('p', { key: 'syncHint', className: 'dsm-wb-hint' }, t(meta.enabled === true ? 'syncHint' : 'disabledHint')),
-          // hub 才有出口（应答顶层的 realm）：说明这一页勾的是哪一组。
-          meta.realm ? h('p', { key: 'hubRealm', className: 'dsm-wb-hint' }, meta.realm === 'dual' ? t('hubBoth') : t('hubRealm', { realm: meta.realm === 'cn' ? 'CN' : 'GL' })) : null,
-        );
-        const setRule = (key, value) => setMeta((last) => ({ ...last, rules: { ...last.rules, [key]: value } }));
-        body.push(h('div', { key: 'filters', className: 'dsm-wb-toolbar dsm-wb-filters' },
-          h('input', { type: 'search', placeholder: t('modelSearch'), 'aria-label': t('modelSearch'), value: filters?.query ?? '', disabled: Boolean(saving || backendBusy), onChange: (e) => setFilters((last) => ({ ...last, query: e.target.value })) }),
-          h('select', { 'aria-label': t('regionAll'), value: filters?.region ?? 'all', disabled: Boolean(saving || backendBusy), onChange: (e) => setFilters((last) => ({ ...last, region: e.target.value })) },
-            h('option', { value: 'all' }, t('regionAll')), h('option', { value: 'cn' }, 'CN'), h('option', { value: 'global' }, 'GL')),
-          h('select', { 'aria-label': t('sortName'), value: meta.rules?.sort ?? 'upstream', disabled: Boolean(saving || backendBusy), onChange: (e) => setRule('sort', e.target.value) },
-            ...['upstream', 'name', 'credits'].map((value) => h('option', { key: value, value }, t({ upstream: 'sortUpstream', name: 'sortName', credits: 'sortCredits' }[value])))),
-          ...[['freeOnly', 'ruleFree'], ['visionOnly', 'ruleVision']].map(([key, label]) => h('label', { key }, h('input', { type: 'checkbox', checked: meta.rules?.[key] === true, disabled: Boolean(saving || backendBusy), onChange: (e) => setRule(key, e.target.checked) }), t(label))),
-          h('input', { type: 'number', min: 0, step: 'any', placeholder: t('ruleMax'), 'aria-label': t('ruleMax'), value: meta.rules?.maxCredits ?? '', disabled: Boolean(saving || backendBusy), onChange: (e) => setRule('maxCredits', e.target.value === '' ? null : Number(e.target.value)) })));
-        body.push(h('p', { key: 'ruleHint', className: 'dsm-wb-hint' }, t('ruleHint')));
-        if (rows.some((row) => row.unavailable && picked.has(row.id))) {
-          body.push(h('p', { key: 'missingSelected', className: 'dsm-wb-hint', role: 'status' }, t('missingSelected')));
-        }
-        body.push(
-          h(
-            'div',
-            { key: 'toolbar', className: 'dsm-wb-toolbar' },
-            h('span', { className: 'dsm-wb-count' }, t('count', { total: sorted.filter((row) => !row.unavailable).length, picked: sorted.filter((row) => picked.has(row.id)).length })),
+            'p',
+            { className: 'dsm-wb-panel' },
+            t('panelHint'),
             h(
-              'button',
+              'a',
               {
-                type: 'button',
-                className: 'dsm-wb-btn dsm-wb-btn-outline',
-                disabled: Boolean(saving || backendBusy),
-                onClick: () => {
-                  setPicked((previous) => new Set([...previous, ...sorted.map((row) => row.id)]));
-                  setNotice(undefined);
-                },
+                href: panelUrl,
+                target: '_blank',
+                rel: 'noopener noreferrer',
+                className: 'dsm-wb-link',
+                title: panelUrl,
               },
-              t('selectAll'),
+              panelLabel,
             ),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsm-wb-btn dsm-wb-btn-outline',
-                disabled: Boolean(saving || backendBusy),
-                onClick: () => {
-                  setPicked((previous) => new Set([...previous].filter((id) => !sorted.some((row) => row.id === id))));
-                  setNotice(undefined);
-                },
-              },
-              t('clearAll'),
-            ),
-            h('button', { type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', disabled: Boolean(saving || backendBusy), onClick: () => load(true, true) }, t('refresh')),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsm-wb-btn dsm-wb-btn-primary',
-                // 同步已开启时允许重复保存，修复旧清单或重试上次失败无需先改勾选。
-                disabled: Boolean(saving || backendBusy) || (!dirty && meta.enabled !== true),
-                onClick: save,
-              },
-              saving ? t('saving') : t(meta.enabled === true ? 'saveSync' : 'save'),
+            wbButton(
+              'panelKey',
+              'outline dsm-wb-btn-sm',
+              panelKey?.busy ? t('panelKeyWorking') : t(hub ? 'panelPasswordCopy' : 'panelKeyCopy'),
+              copyPanelKey,
+              Boolean(panelKey?.busy),
             ),
           ),
-        );
+          panelKey?.kind === 'manual'
+            ? h(
+                'p',
+                { className: 'dsm-wb-notice dsm-wb-notice-error' },
+                t('panelKeyManual'),
+                h('code', { className: 'dsm-wb-key' }, panelKey.key),
+              )
+            : wbNotice('panelKeyNotice', panelKey?.busy ? undefined : panelKey),
+        ),
+        h(
+          'div',
+          { className: 'dsm-wb-head-actions' },
+          wbButton('diagnose', 'outline', t(diagnostic?.busy ? 'diagnoseWorking' : 'diagnose'), runDiagnostic, diagnostic?.busy),
+        ),
+      );
 
-        if (sorted.length === 0) {
-          body.push(h('div', { key: 'empty', className: 'dsm-wb-empty' }, t(rows.length ? 'emptyFiltered' : 'emptyBackend')));
-        } else {
-          body.push(
+      const report = diagnostic?.report || diagnostic?.error
+        ? h(
+            'div',
+            { key: 'report', className: 'dsm-wb-report' },
             h(
               'div',
-              { key: 'list', className: 'dsm-wb-list' },
-              sorted.map((row) =>
-                h(
+              { className: 'dsm-wb-backend-head' },
+              h('span', { className: 'dsm-wb-backend-title' }, t('diagnose')),
+              diagnostic.report
+                ? wbButton('copyReport', 'outline dsm-wb-btn-sm', t(diagnostic.copied ? 'diagnoseCopied' : 'diagnoseCopy'), copyDiagnostic, false)
+                : null,
+              wbButton('closeReport', 'ghost dsm-wb-btn-sm', t('diagnoseClose'), () => setDiagnostic(undefined), false),
+            ),
+            h('pre', { className: 'dsm-wb-report-body' }, diagnostic.error || JSON.stringify(diagnostic.report, null, 2)),
+          )
+        : null;
+
+      // ---- 概览数字：账号、各出口积分、已勾选模型 ----
+      const stats = [];
+      const overview = backend?.overview;
+      if (overview) {
+        stats.push(statTile('accounts', t('statAccounts'), `${overview.ready ?? '?'} / ${overview.total ?? '?'}`));
+        for (const balance of overview.balances ?? []) {
+          // 0 是真实余额，null 才是没数据：两者不能显示成一样
+          const known = balance.balance != null;
+          const missing = t(balance.state === 'unsupported' ? 'balanceUnsupported' : balance.state === 'unknown' ? 'balanceUnknown' : 'balanceUnavailable');
+          stats.push(statTile(`balance-${balance.realm}`, t('statBalance', { realm: realmName(balance.realm) }), known ? formatNumber(balance.balance) : missing, {
+            muted: !known,
+            sub: t('statBalanceSub', { enabled: balance.accountsEnabled ?? '?', known: balance.accountsKnown ?? '?' }),
+            // 积分来源与快照时间放悬停提示：常驻显示太占地方，但要让人知道这不是实时值
+            title: [t('balanceHint'), balance.updatedAt ? t('balanceUpdated', { time: localTime(balance.updatedAt) }) : ''].filter(Boolean).join('\n'),
+          }));
+        }
+      }
+      if (rows.length) {
+        const total = rows.filter((row) => !row.unavailable).length;
+        const count = rows.filter((row) => picked.has(row.id)).length;
+        stats.push(statTile('models', t('statModels'), nonePicked ? t('statModelsAll') : String(count), { sub: t('statModelsTotal', { total }) }));
+      }
+
+      // ---- 页签：各面板都渲染、只切 hidden，切换时保留滚动位置、搜索词与未保存的 Key ----
+      const pluginVersion = updater.model.version;
+      const tabs = [
+        { id: 'models', label: t('tabModels') },
+        hub ? { id: 'region', label: t('tabRegion') } : null,
+        { id: 'backend', label: t('tabBackend'), dot: backendAttention(backend, check) },
+        {
+          id: 'plugin',
+          label: t('tabPlugin'),
+          dot: pluginVersion.phase === 'ready' && pluginVersion.updateAvailable && updater.model.operation?.state !== 'succeeded' ? 'warn' : undefined,
+        },
+      ].filter(Boolean);
+      // 「区域与 Key」只在 hub 下存在；切回 wb2api 时停在它上面就退回模型页。
+      const activeTab = tabs.some((item) => item.id === tab) ? tab : 'models';
+      const tabBar = h(
+        'div',
+        { key: 'tabs', className: 'dsm-wb-tabs', role: 'tablist' },
+        tabs.map((item) =>
+          h(
+            'button',
+            { key: item.id, type: 'button', role: 'tab', className: 'dsm-wb-tab', 'aria-selected': item.id === activeTab, onClick: () => setTab(item.id) },
+            item.label,
+            item.dot ? h('span', { className: `dsm-wb-tab-dot dsm-wb-tab-dot-${item.dot}`, 'aria-hidden': true }) : null,
+          ),
+        ),
+      );
+      const tabPanel = (id, children) =>
+        h(
+          'div',
+          { key: `panel-${id}`, className: 'dsm-wb-tabpanel', role: 'tabpanel', 'aria-label': tabs.find((item) => item.id === id)?.label, hidden: id !== activeTab },
+          children,
+        );
+
+      // ---- 模型页签 ----
+      const modelNotice = notice
+        ? h(
+            'p',
+            { key: 'notice', className: `dsm-wb-notice ${notice.kind === 'error' ? 'dsm-wb-notice-error' : 'dsm-wb-notice-ok'}` },
+            [notice.pruned && t('prunedMissing', { models: notice.pruned }), notice.text].filter(Boolean).join(' '),
+          )
+        : null;
+      const modelPanel = [];
+      if (phase === 'error') {
+        modelPanel.push(
+          h(
+            'div',
+            { key: 'error', className: 'dsm-wb-callout dsm-wb-callout-error' },
+            h('p', { className: 'dsm-wb-notice dsm-wb-notice-error' }, errorReasonText(reason, meta, t)),
+            h(
+              'div',
+              { className: 'dsm-wb-actions' },
+              // 没装后端时就地给「安装」，不用先去「后端」页签里找。
+              reason === BACKEND_NOT_INSTALLED && backend
+                ? wbButton('install', 'primary', backendBusy === 'install' ? t('backendWorking') : t('backendInstall'), () => runBackend('install'), busy)
+                : null,
+              // 自动恢复连续失败后已暂停：模型区读不到目录的根因在这里，同样就地给出重试。
+              status.key === 'statusPaused'
+                ? wbButton('retryStartInline', 'primary', backendBusy === 'start' ? t('backendWorking') : t('recoveryRetry'), () => runBackend('start'), busy)
+                : null,
+              wbButton('retry', 'outline', t('retry'), () => load(), busy),
+            ),
+          ),
+          modelNotice,
+        );
+      } else if (phase === 'loading' && rows.length === 0) {
+        modelPanel.push(h('div', { key: 'loading', className: 'dsm-wb-empty' }, t('loading')), modelNotice);
+      } else {
+        const setRule = (key, value) => setMeta((last) => ({ ...last, rules: { ...last.rules, [key]: value } }));
+        modelPanel.push(
+          h(
+            'div',
+            { key: 'sync', className: 'dsm-wb-stack' },
+            h(
+              'div',
+              { className: 'dsm-wb-split' },
+              h(
+                'label',
+                { className: 'dsm-wb-sync' },
+                h('input', {
+                  type: 'checkbox',
+                  role: 'switch',
+                  checked: meta.enabled === true,
+                  disabled: locked,
+                  onChange: (event) => {
+                    const enabled = event.target.checked;
+                    setMeta((previous) => ({ ...previous, enabled }));
+                    setNotice(undefined);
+                  },
+                }),
+                t('syncEnabled'),
+              ),
+              meta.realm === 'dual' ? h('span', { className: 'dsm-wb-pill' }, t('hubBoth')) : null,
+            ),
+            h('p', { className: 'dsm-wb-hint' }, t(meta.enabled === true ? 'syncHint' : 'disabledHint')),
+            // hub 单出口时说明这一页勾的是哪一组（应答顶层的 realm）。
+            meta.realm && meta.realm !== 'dual' ? h('p', { className: 'dsm-wb-hint' }, t('hubRealm', { realm: realmName(meta.realm) })) : null,
+          ),
+        );
+
+        // 第一行只是查看用的筛选，不写配置；第二行是会保存、也决定 DSH 里模型顺序的同步规则。
+        modelPanel.push(
+          h(
+            'div',
+            { key: 'filters', className: 'dsm-wb-stack' },
+            h(
+              'div',
+              { className: 'dsm-wb-filters' },
+              h('input', { type: 'search', className: 'dsm-wb-input dsm-wb-search', placeholder: t('modelSearch'), 'aria-label': t('modelSearch'), value: filters?.query ?? '', disabled: locked, onChange: (e) => setFilters((last) => ({ ...last, query: e.target.value })) }),
+              h('select', { className: 'dsm-wb-input', 'aria-label': t('regionAll'), value: filters?.region ?? 'all', disabled: locked, onChange: (e) => setFilters((last) => ({ ...last, region: e.target.value })) },
+                h('option', { value: 'all' }, t('regionAll')), h('option', { value: 'cn' }, 'CN'), h('option', { value: 'global' }, 'GL')),
+            ),
+            h(
+              'div',
+              { className: 'dsm-wb-filters' },
+              h('span', { className: 'dsm-wb-rules-label' }, t('rulesTitle')),
+              ...[['freeOnly', 'ruleFree'], ['visionOnly', 'ruleVision']].map(([key, label]) => h('label', { key, className: 'dsm-wb-chip' }, h('input', { type: 'checkbox', checked: meta.rules?.[key] === true, disabled: locked, onChange: (e) => setRule(key, e.target.checked) }), t(label))),
+              h('input', { type: 'number', className: 'dsm-wb-input dsm-wb-max', min: 0, step: 'any', placeholder: t('ruleMax'), 'aria-label': t('ruleMax'), value: meta.rules?.maxCredits ?? '', disabled: locked, onChange: (e) => setRule('maxCredits', e.target.value === '' ? null : Number(e.target.value)) }),
+              h('select', { className: 'dsm-wb-input', 'aria-label': t('ruleSort'), title: t('ruleSort'), value: meta.rules?.sort ?? 'upstream', disabled: locked, onChange: (e) => setRule('sort', e.target.value) },
+                ...['upstream', 'name', 'credits'].map((value) => h('option', { key: value, value }, t({ upstream: 'sortUpstream', name: 'sortName', credits: 'sortCredits' }[value])))),
+            ),
+            h('p', { className: 'dsm-wb-hint' }, t('ruleHint')),
+          ),
+        );
+
+        if (rows.some((row) => row.unavailable && picked.has(row.id))) {
+          modelPanel.push(h('p', { key: 'missingSelected', className: 'dsm-wb-callout dsm-wb-callout-warn', role: 'status' }, t('missingSelected')));
+        }
+
+        const listBody = sorted.length === 0
+          ? h('div', { className: 'dsm-wb-empty' }, t(rows.length ? 'emptyFiltered' : 'emptyBackend'))
+          : h(
+              'div',
+              { className: 'dsm-wb-list' },
+              sorted.map((row) => {
+                const on = picked.has(row.id);
+                const context = formatTokens(row.contextWindow);
+                // 三列标签各占固定最小宽度，缺的那列留空，倍率才能上下对齐。
+                return h(
                   'label',
-                  { key: row.id, className: 'dsm-wb-row', title: row.id },
-                  h('input', {
-                    type: 'checkbox',
-                    checked: picked.has(row.id),
-                    disabled: Boolean(saving || backendBusy),
-                    onChange: () => toggle(row.id),
-                  }),
+                  { key: row.id, className: `dsm-wb-row${on ? ' dsm-wb-row-on' : ''}`, title: row.id },
+                  h('input', { type: 'checkbox', checked: on, disabled: locked, onChange: () => toggle(row.id) }),
                   h('span', { className: 'dsm-wb-label' }, row.label),
                   h(
                     'span',
                     { className: 'dsm-wb-meta' },
-                    row.vision ? h('span', { className: 'dsm-wb-tag' }, t('vision')) : null,
-                    formatTokens(row.contextWindow)
-                      ? h('span', { className: 'dsm-wb-tag' }, formatTokens(row.contextWindow))
-                      : null,
-                    row.unavailable ? h('span', { className: 'dsm-wb-tag' }, t('modelUnavailable')) : h(
+                    h('span', { className: 'dsm-wb-cell' }, row.vision ? h('span', { className: 'dsm-wb-tag' }, t('vision')) : null),
+                    h('span', { className: 'dsm-wb-cell' }, context ? h('span', { className: 'dsm-wb-tag' }, context) : null),
+                    h(
                       'span',
-                      { className: `dsm-wb-credits${row.credits === 'Free' ? ' dsm-wb-credits-free' : ''}` },
-                      `x${row.credits}`,
+                      { className: 'dsm-wb-cell dsm-wb-cell-credits' },
+                      row.unavailable
+                        ? h('span', { className: 'dsm-wb-tag dsm-wb-tag-warn' }, t('modelUnavailable'))
+                        : h('span', { className: `dsm-wb-credits${row.credits === 'Free' ? ' dsm-wb-credits-free' : ''}` }, `x${row.credits}`),
                     ),
                   ),
-                ),
-              ),
-            ),
-          );
-        }
-
-        // hub 的勾选按出口分开：另一个出口的勾选不算，这个出口一个没勾就是"全部"。
-        const nonePicked = meta.realm ? rows.every((row) => !picked.has(row.id)) : picked.size === 0;
-        if (nonePicked && sorted.length > 0) {
-          body.push(h('p', { key: 'emptyHint', className: 'dsm-wb-hint' }, t('emptyHint')));
-        }
-      }
-
-      if (notice) {
-        body.push(
+                );
+              }),
+            );
+        modelPanel.push(
           h(
-            'p',
-            {
-              key: 'notice',
-              className: `dsm-wb-notice ${notice.kind === 'error' ? 'dsm-wb-notice-error' : 'dsm-wb-notice-ok'}`,
-            },
-            [notice.pruned && t('prunedMissing', { models: notice.pruned }), notice.text].filter(Boolean).join(' '),
+            'div',
+            { key: 'listbox', className: 'dsm-wb-listbox' },
+            h(
+              'div',
+              { className: 'dsm-wb-list-head' },
+              h('span', { className: 'dsm-wb-count' }, t('count', { total: sorted.filter((row) => !row.unavailable).length, picked: sorted.filter((row) => picked.has(row.id)).length })),
+              phase === 'loading' ? h('span', { className: 'dsm-wb-count-status' }, t('loading')) : null,
+              wbButton('selectAll', 'ghost', t('selectAll'), () => {
+                setPicked((previous) => new Set([...previous, ...sorted.map((row) => row.id)]));
+                setNotice(undefined);
+              }, locked),
+              wbButton('clearAll', 'ghost', t('clearAll'), () => {
+                setPicked((previous) => new Set([...previous].filter((id) => !sorted.some((row) => row.id === id))));
+                setNotice(undefined);
+              }, locked),
+            ),
+            listBody,
+          ),
+        );
+        if (nonePicked && sorted.length > 0) {
+          modelPanel.push(h('p', { key: 'emptyHint', className: 'dsm-wb-hint' }, t('emptyHint')));
+        }
+
+        modelPanel.push(
+          h(
+            'div',
+            { key: 'footer', className: 'dsm-wb-footer' },
+            h(
+              'div',
+              { className: 'dsm-wb-footer-info' },
+              modelNotice,
+              dirty ? h('span', { className: 'dsm-wb-unsaved' }, t('unsaved')) : null,
+              meta.patchPath ? h('p', { className: 'dsm-wb-path', title: meta.patchPath }, t('patchPath', { path: meta.patchPath })) : null,
+            ),
+            h(
+              'div',
+              { className: 'dsm-wb-actions' },
+              wbButton('refresh', 'outline', t('refresh'), () => load(true, true), locked),
+              // 同步已开启时允许重复保存，修复旧清单或重试上次失败无需先改勾选。
+              wbButton('save', 'primary', saving ? t('saving') : t(meta.enabled === true ? 'saveSync' : 'save'), save, locked || (!dirty && meta.enabled !== true)),
+            ),
           ),
         );
       }
-      if (meta.patchPath) {
-        body.push(h('p', { key: 'path', className: 'dsm-wb-path' }, t('patchPath', { path: meta.patchPath })));
-      }
 
-      // 后端版本区：检查 / 安装 / 更新 / 卸载 / 回滚。数据来自宿主半侧的 /backend 端点，
-      // 首屏那次 GET 不联网（快），点"检查更新"才真去查 release。
-      if (backend) {
-        const version = backend.version ?? {};
-        const currentTag =
-          version.tag ?? (version.revision ? version.revision.slice(0, 7) : null) ?? t('backendUnmanaged');
+      // ---- 区域与 Key 页签（仅 hub）----
+      const regionPanel = hub
+        ? [
+            h(
+              'div',
+              { key: 'hubMode', className: 'dsm-wb-group' },
+              h(
+                'div',
+                { className: 'dsm-wb-stack' },
+                h('label', { className: 'dsm-wb-sync' }, h('input', { type: 'checkbox', role: 'switch', checked: hubDraft?.enabled ?? backend.hubSettings?.enabled ?? meta.hubDual ?? false, disabled: busy, onChange: (e) => { setHubDraft((last) => ({ ...last, enabled: e.target.checked })); setHubNotice(undefined); } }), t('hubDual')),
+                h('p', { className: 'dsm-wb-hint' }, t('hubDualHint')),
+              ),
+              h(
+                'div',
+                { className: 'dsm-wb-fields' },
+                ...[['cnKey', 'hubCnKey', 'cn'], ['globalKey', 'hubGlKey', 'global'], ['followKey', 'hubFollowKey', 'follow']].map(([key, label, field]) => {
+                  const state = backend.hubSettings?.keys?.[field];
+                  const stateLabel = t({ saved: 'hubKeySaved', missing: 'hubKeyMissing', environment: 'hubKeyEnvironment' }[state] || 'hubKeyUnavailable');
+                  return h(
+                    'label',
+                    { key, className: 'dsm-wb-key-field' },
+                    h('span', { className: 'dsm-wb-key-head' }, t(label), h('span', { className: `dsm-wb-key-state${state === 'saved' ? ' dsm-wb-key-state-saved' : ''}` }, stateLabel)),
+                    h('input', { type: 'password', className: 'dsm-wb-input', autoComplete: 'off', 'aria-label': t(label), placeholder: t(state === 'saved' ? 'hubKeyKeep' : label), value: hubDraft?.[key] ?? '', disabled: busy, onChange: (e) => { setHubDraft((last) => ({ ...last, [key]: e.target.value })); setHubNotice(undefined); } }),
+                  );
+                }),
+              ),
+              h(
+                'div',
+                { className: 'dsm-wb-footer' },
+                h(
+                  'div',
+                  { className: 'dsm-wb-footer-info' },
+                  hubNotice ? h('p', { role: hubNotice.kind === 'error' ? 'alert' : 'status', className: `dsm-wb-notice ${hubNotice.kind === 'error' ? 'dsm-wb-notice-error' : 'dsm-wb-notice-ok'}` }, hubNotice.text) : null,
+                ),
+                wbButton('applyHubMode', 'primary', t(backendBusy === 'hubMode' ? 'hubSaving' : 'hubApply'), applyHubMode, busy),
+              ),
+            ),
+          ]
+        : [];
+
+      // ---- 后端页签：网关 → 运行状态 → 版本（含自动更新）→ 危险操作 ----
+      // 数据来自宿主半侧的 /backend 端点，首屏那次 GET 不联网（快），点"检查更新"才真去查 release。
+      const backendPanel = [];
+      if (!backend) {
+        backendPanel.push(h('div', { key: 'loading', className: 'dsm-wb-empty' }, t('backendLoading')));
+      } else {
+        if (backend.error) {
+          backendPanel.push(h('p', { key: 'error', className: 'dsm-wb-callout dsm-wb-callout-error' }, backend.error));
+        }
+        const currentTag = versionTag ?? t('backendUnmanaged');
         const history = Array.isArray(backend.history) ? backend.history : [];
         const latestTag = check?.latest?.tag ?? '';
+        const updateKnown = Boolean(check && !check.error && !check.upToDate);
         // 老快照没有 exeExists 字段时按"已安装"处理，避免误显示成未安装。
         const installed = backend.exeExists !== false;
 
@@ -1988,246 +2320,137 @@ window.__ModuleLoader__.load({
         const gateways = Array.isArray(backend.gateways) ? backend.gateways : [];
         const currentGateway = backend.gateway ?? 'wb2api';
         const gatewayLabel = (id) => t(id === 'hub' ? 'gatewayHub' : 'gatewayWb2api');
-        const section = [];
-        if (backend.overview) {
-          const overview = backend.overview;
-          section.push(h('p', { key: 'accounts', className: 'dsm-wb-backend-line' }, t('accountOverview', { ready: overview.ready ?? '?', total: overview.total ?? '?' })));
-          for (const balance of overview.balances ?? []) {
-            const value = balance.balance != null ? String(balance.balance) : t(balance.state === 'unsupported' ? 'balanceUnsupported' : balance.state === 'unknown' ? 'balanceUnknown' : 'balanceUnavailable');
-            section.push(h('p', { key: `balance-${balance.realm}`, className: 'dsm-wb-backend-line' },
-              t('balanceOverview', { realm: balance.realm === 'cn' ? 'CN' : 'GL', balance: value, enabled: balance.accountsEnabled ?? '?', known: balance.accountsKnown ?? '?' }),
-              balance.updatedAt ? ` · ${t('balanceUpdated', { time: localTime(balance.updatedAt) })}` : ''));
-          }
-          if (overview.balances?.length) section.push(h('p', { key: 'balanceHint', className: 'dsm-wb-hint' }, t('balanceHint')));
-        }
-        if (backend.recovery) {
-          const recoveryKey = { idle: 'recoveryIdle', waiting: 'recoveryWaiting', restarting: 'recoveryRestarting', recovered: 'recoveryRecovered', exhausted: 'recoveryExhausted', external: 'recoveryExternal' }[backend.recovery.state] ?? 'recoveryIdle';
-          section.push(h('p', { key: 'recovery', className: 'dsm-wb-backend-line' }, t('recoveryStatus', { state: t(backend.recovery.enabled === false ? 'recoveryOff' : recoveryKey), attempts: backend.recovery.attempts ?? 0 }),
-            wbButton('retryStart', 'outline', t('recoveryRetry'), () => runBackend('start'), Boolean(saving || backendBusy))));
-        }
         if (gateways.length > 1) {
-          const gatewayBlock = [
+          backendPanel.push(
             h(
               'div',
-              { key: 'gateway', className: 'dsm-wb-backend-head' },
-              h('span', { className: 'dsm-wb-backend-title' }, t('gatewayTitle')),
-              gateways.map((id) =>
-                wbButton(
-                  `gateway-${id}`,
-                  id === currentGateway ? 'primary' : 'outline',
-                  gatewaySwitch?.busy === id ? t('gatewaySwitching') : gatewayLabel(id),
-                  () => switchGateway(id, gatewayLabel(id)),
-                  id === currentGateway || Boolean(gatewaySwitch?.busy || saving || backendBusy),
+              { key: 'gatewayBlock', className: 'dsm-wb-group dsm-wb-gateway' },
+              h(
+                'div',
+                { className: 'dsm-wb-backend-head' },
+                h('span', { className: 'dsm-wb-backend-title' }, t('gatewayTitle')),
+                h(
+                  'div',
+                  { className: 'dsm-wb-seg', role: 'group', 'aria-label': t('gatewayTitle') },
+                  gateways.map((id) =>
+                    wbButton(
+                      `gateway-${id}`,
+                      id === currentGateway ? 'primary' : 'outline',
+                      gatewaySwitch?.busy === id ? t('gatewaySwitching') : gatewayLabel(id),
+                      () => switchGateway(id, gatewayLabel(id)),
+                      id === currentGateway || Boolean(gatewaySwitch?.busy || busy),
+                      { 'aria-pressed': id === currentGateway },
+                    ),
+                  ),
                 ),
               ),
+              currentGateway === 'hub' ? h('p', { className: 'dsm-wb-hint' }, t('gatewayHubHint')) : null,
+              wbNotice('gatewayNotice', gatewaySwitch),
             ),
-          ];
-          if (currentGateway === 'hub') {
-            gatewayBlock.push(h('p', { key: 'gatewayHint', className: 'dsm-wb-backend-line' }, t('gatewayHubHint')));
-          }
-          const switched = wbNotice('gatewayNotice', gatewaySwitch);
-          if (switched) gatewayBlock.push(switched);
-          section.push(h('div', { key: 'gatewayBlock', className: 'dsm-wb-gateway' }, gatewayBlock));
+          );
         }
-        section.push(
+
+        if (backend.recovery) {
+          const recoveryKey = { idle: 'recoveryIdle', waiting: 'recoveryWaiting', restarting: 'recoveryRestarting', recovered: 'recoveryRecovered', exhausted: 'recoveryExhausted', external: 'recoveryExternal' }[backend.recovery.state] ?? 'recoveryIdle';
+          backendPanel.push(
+            h(
+              'div',
+              { key: 'runtime', className: 'dsm-wb-group' },
+              h(
+                'div',
+                { className: 'dsm-wb-backend-head' },
+                h('span', { className: 'dsm-wb-backend-title' }, t('runtimeTitle')),
+                wbButton('retryStart', 'outline', backendBusy === 'start' ? t('backendWorking') : t('recoveryRetry'), () => runBackend('start'), busy),
+              ),
+              h('p', { className: 'dsm-wb-backend-line' }, t('recoveryStatus', { state: t(backend.recovery.enabled === false ? 'recoveryOff' : recoveryKey), attempts: backend.recovery.attempts ?? 0 })),
+            ),
+          );
+        }
+
+        const versionGroup = [
           h(
             'div',
             { key: 'head', className: 'dsm-wb-backend-head' },
             h('span', { className: 'dsm-wb-backend-title' }, t('backendTitle')),
             check && !check.error
-              ? h(
-                  'span',
-                  { className: `dsm-wb-badge ${check.upToDate ? 'dsm-wb-badge-ok' : 'dsm-wb-badge-new'}` },
-                  check.upToDate ? t('backendUpToDate') : t('backendAvailable', { tag: latestTag }),
-                )
-              : null,
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsm-wb-btn dsm-wb-btn-outline',
-                disabled: Boolean(saving || backendBusy),
-                onClick: () => runBackend('check'),
-              },
-              backendBusy === 'check' ? t('backendWorking') : t('backendCheck'),
-            ),
-            // 安装与卸载互斥：没装才显示"安装"，装了才显示"卸载"。
-            // 顺序按使用频率排：更新 → 回滚 → 卸载 → 彻底卸载（删除类放最后，离"检查更新"最远，减少误点）。
-            installed
-              ? h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsm-wb-btn dsm-wb-btn-primary',
-                    disabled: Boolean(saving || backendBusy),
-                    onClick: () => runBackend('update'),
-                  },
-                  backendBusy === 'update' ? t('backendWorking') : t('backendUpdate'),
-                )
-              : h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsm-wb-btn dsm-wb-btn-primary',
-                    disabled: Boolean(saving || backendBusy),
-                    onClick: () => runBackend('install'),
-                  },
-                  backendBusy === 'install' ? t('backendWorking') : t('backendInstall'),
-                ),
-            installed
-              ? h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsm-wb-btn dsm-wb-btn-outline',
-                    disabled: Boolean(saving || backendBusy),
-                    onClick: () => runBackend('rollback'),
-                  },
-                  backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'),
-                )
-              : null,
-            installed
-              ? h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsm-wb-btn dsm-wb-btn-danger',
-                    disabled: Boolean(saving || backendBusy),
-                    onClick: () => setConfirming('uninstall'),
-                  },
-                  t('backendUninstall'),
-                )
-              : null,
-            // 「彻底卸载」紧挨「卸载」：两者都是删除动作，放一起便于对比；它比卸载多删 config.json、
-            // data/ 凭证与日志。只看目录在不在，后端没装但还剩凭证 / 日志时也要能清。
-            backend.rootExists === true
-              ? h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsm-wb-btn dsm-wb-btn-danger',
-                    disabled: Boolean(saving || backendBusy),
-                    onClick: () => setConfirming('purge'),
-                  },
-                  backendBusy === 'purge' ? t('backendWorking') : t('backendPurge'),
-                )
+              ? h('span', { className: `dsm-wb-badge ${check.upToDate ? 'dsm-wb-badge-ok' : 'dsm-wb-badge-new'}` }, check.upToDate ? t('backendUpToDate') : t('backendAvailable', { tag: latestTag }))
               : null,
           ),
           h(
-            'p',
-            { key: 'current', className: 'dsm-wb-backend-line' },
-            h('strong', null, t('backendCurrent', { version: currentTag })),
-            version.builtAt ? ` · ${t('backendBuilt', { time: version.builtAt })}` : '',
+            'div',
+            { key: 'facts', className: 'dsm-wb-stack' },
+            h('p', { className: 'dsm-wb-backend-line' }, h('strong', null, t('backendCurrent', { version: currentTag })), version.builtAt ? ` · ${t('backendBuilt', { time: localTime(version.builtAt) })}` : ''),
+            check?.error
+              ? h('p', { className: 'dsm-wb-backend-line' }, check.error)
+              : check
+                ? h('p', { className: 'dsm-wb-backend-line' }, h('strong', null, t('backendLatest', { tag: latestTag })))
+                : null,
+            h('p', { className: 'dsm-wb-backend-line' }, history.length ? t('backendHistory', { list: history.map((item) => item.name).join(', ') }) : t('backendNoHistory')),
           ),
-        );
-
-        if (confirming) {
-          // 老状态里可能是 true（改成动作名之前的写法），按卸载处理。
-          const kind = confirming === 'purge' ? 'purge' : 'uninstall';
-          section.push(renderUninstallConfirm({
-            t, Modal, h, kind, params: { root: backend.root ?? '' },
-            textKind: kind === 'uninstall' && currentGateway === 'hub' ? 'uninstallHub' : undefined,
-            onCancel: () => setConfirming(false),
-            onConfirm: () => { setConfirming(false); runBackend(kind, { confirm: true }); },
-          }));
-        }
-
-        if (check?.error) {
-          section.push(h('p', { key: 'checkError', className: 'dsm-wb-backend-line' }, check.error));
-        } else if (check) {
-          section.push(
-            h(
-              'p',
-              { key: 'latest', className: 'dsm-wb-backend-line' },
-              h('strong', null, t('backendLatest', { tag: latestTag })),
-            ),
-          );
-        }
-
-        section.push(
+          // 安装与卸载互斥：没装才显示"安装"，装了才有更新 / 回滚；删除类按钮单独放到下面的危险操作区。
           h(
-            'p',
-            { key: 'history', className: 'dsm-wb-backend-line' },
-            history.length ? t('backendHistory', { list: history.map((item) => item.name).join(', ') }) : t('backendNoHistory'),
+            'div',
+            { key: 'actions', className: 'dsm-wb-actions' },
+            wbButton('check', 'outline', backendBusy === 'check' ? t('backendWorking') : t('backendCheck'), () => runBackend('check'), busy),
+            installed
+              ? wbButton('update', updateKnown ? 'primary' : 'outline', backendBusy === 'update' ? t('backendWorking') : t('backendUpdate'), () => runBackend('update'), busy)
+              : wbButton('install', 'primary', backendBusy === 'install' ? t('backendWorking') : t('backendInstall'), () => runBackend('install'), busy),
+            installed ? wbButton('rollback', 'outline', backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'), () => runBackend('rollback'), busy) : null,
           ),
-        );
-
+        ];
         // 没装就没有可更新的东西：首次安装永远由用户点。
-        if (installed) {
-          section.push(...renderAutoUpdate(backend.autoUpdate, version.tag ?? null, { busy: backendBusy, onToggle: toggleAutoUpdate }, t));
-        }
+        const auto = installed ? renderAutoUpdate(backend.autoUpdate, version.tag ?? null, { busy: backendBusy, onToggle: toggleAutoUpdate }, t) : [];
+        if (auto.length) versionGroup.push(h('div', { key: 'auto', className: 'dsm-wb-stack dsm-wb-divided' }, auto));
+        const backendNoticeNode = wbNotice('backendNotice', backendNotice);
+        if (backendNoticeNode) versionGroup.push(backendNoticeNode);
+        backendPanel.push(h('div', { key: 'version', className: 'dsm-wb-group dsm-wb-backend' }, versionGroup));
 
-        // DSH 卸载插件时不通知插件，数据目录只能靠用户在卸载前点「彻底卸载」清掉，这里写明会删哪个目录。
-        if (backend.rootExists === true) {
-          section.push(
+        // 「彻底卸载」只看目录在不在：后端没装但还剩凭证 / 日志时也要能清。
+        if (installed || backend.rootExists === true) {
+          let confirm = null;
+          if (confirming) {
+            // 老状态里可能是 true（改成动作名之前的写法），按卸载处理。
+            const kind = confirming === 'purge' ? 'purge' : 'uninstall';
+            confirm = renderUninstallConfirm({
+              t, Modal, h, kind, params: { root: backend.root ?? '' },
+              textKind: kind === 'uninstall' && currentGateway === 'hub' ? 'uninstallHub' : undefined,
+              onCancel: () => setConfirming(false),
+              onConfirm: () => { setConfirming(false); runBackend(kind, { confirm: true }); },
+            });
+          }
+          backendPanel.push(
             h(
-              'p',
-              { key: 'purgeHint', className: 'dsm-wb-backend-line' },
-              t('backendPurgeHint', { root: backend.root ?? '' }),
+              'div',
+              { key: 'danger', className: 'dsm-wb-group dsm-wb-danger' },
+              h(
+                'div',
+                { className: 'dsm-wb-backend-head' },
+                h('span', { className: 'dsm-wb-backend-title' }, t('dangerTitle')),
+                installed ? wbButton('uninstall', 'danger', backendBusy === 'uninstall' ? t('backendWorking') : t('backendUninstall'), () => setConfirming('uninstall'), busy) : null,
+                backend.rootExists === true ? wbButton('purge', 'danger', backendBusy === 'purge' ? t('backendWorking') : t('backendPurge'), () => setConfirming('purge'), busy) : null,
+              ),
+              // DSH 卸载插件时不通知插件，数据目录只能靠用户在卸载前点「彻底卸载」清掉，这里写明会删哪个目录。
+              backend.rootExists === true ? h('p', { className: 'dsm-wb-hint' }, t('backendPurgeHint', { root: backend.root ?? '' })) : null,
+              confirm,
             ),
           );
         }
-
-        if (backendNotice) {
-          section.push(
-            h(
-              'p',
-              {
-                key: 'backendNotice',
-                className: `dsm-wb-notice ${backendNotice.kind === 'error' ? 'dsm-wb-notice-error' : 'dsm-wb-notice-ok'}`,
-              },
-              backendNotice.text,
-            ),
-          );
-        }
-
-        body.push(h('div', { key: 'backend', className: 'dsm-wb-backend' }, section));
       }
 
-      // 插件自身的更新：放在最底部，与上面管 wb2api 的"后端版本"区分开
-      body.push(h('div', { key: 'pluginUpdate', className: 'dsm-wb-backend' }, renderUpdateSection(updater.model, updater.actions, t)));
-
-      // 后端管理面板地址：宿主在 /backend 应答里给（端口可配），拿不到就用兜底值。
-      const panelUrl = backend?.panelUrl ?? DEFAULT_PANEL_URL;
-      const panelLabel = String(panelUrl).replace(/^https?:\/\//, '');
+      // ---- 插件更新页签：管本插件自己，与上面管后端网关的版本区无关 ----
+      const pluginPanel = [h('div', { key: 'pluginUpdate', className: 'dsm-wb-group dsm-wb-plugin-update' }, renderUpdateSection(updater.model, updater.actions, t))];
 
       return h(
         'div',
-        { className: 'dsm-wb-card' },
-        h('div', { className: 'dsm-wb-title' }, t('title')),
-        h('p', { className: 'dsm-wb-desc' }, t('description')),
-        h(
-          'p',
-          { className: 'dsm-wb-panel' },
-          t('panelHint'),
-          h(
-            'a',
-            {
-              href: panelUrl,
-              target: '_blank',
-              rel: 'noopener noreferrer',
-              className: 'dsm-wb-link',
-              title: panelUrl,
-            },
-            panelLabel,
-          ),
-          wbButton(
-            'panelKey',
-            'outline dsm-wb-panel-key',
-            panelKey?.busy ? t('panelKeyWorking') : t(backend?.gateway === 'hub' ? 'panelPasswordCopy' : 'panelKeyCopy'),
-            copyPanelKey,
-            Boolean(panelKey?.busy),
-          ),
-        ),
-        panelKey?.kind === 'manual'
-          ? h(
-              'p',
-              { className: 'dsm-wb-notice dsm-wb-notice-error' },
-              t('panelKeyManual'),
-              h('code', { className: 'dsm-wb-key' }, panelKey.key),
-            )
-          : wbNotice('panelKeyNotice', panelKey?.busy ? undefined : panelKey),
-        body,
+        { className: 'dsm-wb' },
+        head,
+        report,
+        stats.length ? h('div', { key: 'stats', className: 'dsm-wb-stats' }, stats) : null,
+        tabBar,
+        tabPanel('models', modelPanel),
+        hub ? tabPanel('region', regionPanel) : null,
+        tabPanel('backend', backendPanel),
+        tabPanel('plugin', pluginPanel),
       );
     }
 
