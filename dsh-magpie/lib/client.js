@@ -301,7 +301,10 @@ window.__ModuleLoader__.load({
       .dsm-mp .backend .bar{margin-top:12px}.dsm-mp .backend-path{overflow-wrap:anywhere}.dsm-mp .backend progress{display:block;width:100%;height:6px;margin-top:10px;accent-color:var(--mp-accent)}
       .dsm-mp .plugin-update p{margin-top:8px;overflow-wrap:anywhere}.dsm-mp .plugin-update-title{font-size:14px;font-weight:600;margin-right:auto}
       .dsm-mp .foot{position:relative;z-index:1;padding:12px 20px;border-top:1px solid var(--mp-border);border-radius:0 0 12px 12px;background:var(--mp-bg)}
-      .dsm-mp .foot[data-docked]{position:fixed;bottom:0;z-index:10;border-radius:0;border-left:1px solid var(--mp-border);border-right:1px solid var(--mp-border)}
+      /* 贴底时保留底部圆角：下面延续的是卡片本身，圆角外侧要盖成页面底色（DSH 中栏为 bg-base）才看得出来。
+         fixed 自成层叠上下文，::before 垫底会盖住栏的背景，所以改用外阴影：只画在边框外，下移 6px 让顶边与栏对齐，
+         两侧多出的 6px 落在页面内边距上；扩展 6px 足以盖满 12px 圆角外侧（至少需 12×(√2−1)≈5px）。 */
+      .dsm-mp .foot[data-docked]{position:fixed;bottom:0;z-index:10;border:1px solid var(--mp-border);box-shadow:0 6px 0 6px var(--dsw-alias-bg-base,#fff)}
       .dsm-mp .foot .notice{margin:0 0 10px}.dsm-mp .foot .error:not(.notice){margin:0 0 10px}
       .dsm-mp .state{display:inline-flex;align-items:center;gap:8px;color:var(--mp-muted)}.dsm-mp .state::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--mp-ok)}
       .dsm-mp .state.dirty{color:var(--mp-fg);font-weight:500}.dsm-mp .state.dirty::before{background:var(--mp-warn)}

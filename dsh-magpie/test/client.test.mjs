@@ -36,6 +36,8 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
   assert.deepEqual(Object.keys(client.module.zh), Object.keys(client.module.en));
   assert.ok(Object.values(client.module.zh).every((value) => typeof value === 'string'));
   assert.equal(client.styles.length, 1);
+  // 贴底的保存栏保留底部圆角，圆角外侧用页面底色的外阴影盖住下面延续的卡片。
+  assert.match(client.styles[0], /\.foot\[data-docked\]\{(?![^}]*border-radius)[^}]*border:1px solid[^}]*box-shadow:0 6px 0 6px var\(--dsw-alias-bg-base/);
   assert.ok(button(client.render(), '手动添加模型'));
   assert.ok(button(client.render(), '从 Magpie 同步'));
   assert.ok(button(client.render(), '按模型排序'));
