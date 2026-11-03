@@ -170,6 +170,8 @@ function resolveModelsConfig(raw, spec) {
   return {
     enabled: bool(models.enabled, MODELS_DEFAULTS.enabled),
     only: stringArray(models.only, []),
+    // 手动刷新因后端暂缺移出白名单的勾选，后端重新列出后刷新时补回（见 web.js 的 restorePrunedSelection）。
+    pruned: stringArray(models.pruned, []),
     rules: normalizeModelRules(models.rules),
     exclude: stringArray(models.exclude, []),
     // `auto` = 按上游声明的档位生成；否则用给定档位（默认低/高/最大三档）。

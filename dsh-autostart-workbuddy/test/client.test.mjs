@@ -284,7 +284,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
-    'modelUnavailable', 'missingSelected', 'prunedMissing',
+    'modelUnavailable', 'missingSelected', 'prunedMissing', 'restoredPruned',
     'emptyFiltered', 'recoveryOff', 'recoveryExternal',
     'balanceUnknown', 'balanceUnsupported', 'balanceUnavailable', 'balanceHint', 'balanceUpdated',
     'hubFollowKey',
@@ -470,10 +470,22 @@ test('手动刷新移除缺席勾选后提示被移除的模型，同步延后�
     fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true, enabled: true, only: ['global:beta'], models: [ROWS[1]], pruned, sync }) }),
   });
   await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
-  assert.ok(collectText(renderCard()).includes('已移除后端不再提供的模型：DeepSeek-V4.1-Flash CN 0.11'));
+  assert.ok(collectText(renderCard()).includes('已移除后端暂未列出的模型（后端重新列出后刷新会自动恢复勾选）：DeepSeek-V4.1-Flash CN 0.11'));
   sync = { state: 'busy', reason: '有对话正在运行' };
   await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
-  assert.ok(collectText(renderCard()).includes('已移除后端不再提供的模型：DeepSeek-V4.1-Flash CN 0.11 有对话正在运行'));
+  assert.ok(collectText(renderCard()).includes('已移除后端暂未列出的模型（后端重新列出后刷新会自动恢复勾选）：DeepSeek-V4.1-Flash CN 0.11 有对话正在运行'));
+});
+
+test('后端重新列出剔除过的模型后，刷新提示已恢复勾选并勾上该行', async () => {
+  const restored = [{ id: ROWS[0].id, label: ROWS[0].label }];
+  const { renderCard } = boot(modelStates(true), {
+    fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true, enabled: true, only: [ROWS[0].id], models: ROWS, restored, sync: { state: 'updated', count: 1 } }) }),
+  });
+  await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
+  const tree = renderCard();
+  assert.ok(collectText(tree).includes(`后端已重新列出，已恢复勾选：${ROWS[0].label}`));
+  const row = collectByType(tree, 'label').find((node) => node.props.title === ROWS[0].id);
+  assert.equal(collectByType(row, 'input')[0].props.checked, true);
 });
 
 test('刷新能读取上游但同步失败时，面板显示同步错误', async () => {

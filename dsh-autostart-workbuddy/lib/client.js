@@ -310,8 +310,9 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       saving: '保存中…',
       count: '后端共 {total} 个模型，已勾选 {picked} 个',
       modelUnavailable: '目录暂缺',
-      missingSelected: '后端目录暂未列出部分已选模型。自动同步会保留勾选并暂缓更新清单；点「刷新」会按当前目录移除它们。若某个区域勾选的模型全部缺席，刷新仍会保留，请取消勾选并改选其他模型后保存。',
-      prunedMissing: '已移除后端不再提供的模型：{models}',
+      missingSelected: '后端目录暂未列出部分已选模型。自动同步会保留勾选并暂缓更新清单；点「刷新」会按当前目录移除它们，后端重新列出后刷新会自动恢复勾选。若某个区域勾选的模型全部缺席，刷新仍会保留，请取消勾选并改选其他模型后保存。',
+      prunedMissing: '已移除后端暂未列出的模型（后端重新列出后刷新会自动恢复勾选）：{models}',
+      restoredPruned: '后端已重新列出，已恢复勾选：{models}',
       vision: '视觉',
       emptyBackend: '后端没有返回任何模型。',
       emptyHint: '一个都没勾 = 同步后端全部模型（白名单留空的既有语义）。',
@@ -475,8 +476,9 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       saving: 'Saving…',
       count: '{total} models on the backend, {picked} selected',
       modelUnavailable: 'Missing from catalog',
-      missingSelected: 'Some selected models are missing from the backend catalog. Automatic sync keeps them and defers updating the list; click Refresh to remove them based on the current catalog. If every selected model in a region is missing, Refresh keeps them, so uncheck them, pick other models and save.',
-      prunedMissing: 'Removed models the backend no longer lists: {models}',
+      missingSelected: 'Some selected models are missing from the backend catalog. Automatic sync keeps them and defers updating the list; click Refresh to remove them based on the current catalog, and a later refresh re-selects them once the backend lists them again. If every selected model in a region is missing, Refresh keeps them, so uncheck them, pick other models and save.',
+      prunedMissing: 'Removed models the backend does not list right now (a refresh re-selects them once they return): {models}',
+      restoredPruned: 'The backend lists these again, re-selected: {models}',
       vision: 'vision',
       emptyBackend: 'The backend returned no models.',
       emptyHint: 'Selecting nothing means “sync every backend model” (the existing meaning of an empty allow-list).',
@@ -1680,14 +1682,16 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
           setPicked(selected);
           setSavedPicked(new Set(selected));
           setPhase('ready');
-          // 手动刷新移除的模型只记名称，渲染时再拼本地化前缀（理由同上）。
-          const pruned = payload.pruned?.length ? payload.pruned.map((row) => row.label).join(', ') : undefined;
+          // 手动刷新移除及之后补回的模型只记名称，渲染时再拼本地化前缀（理由同上）。
+          const labels = (list) => (list?.length ? list.map((row) => row.label).join(', ') : undefined);
+          const pruned = labels(payload.pruned);
+          const restored = labels(payload.restored);
           if (['failed', 'skipped', 'not-ready'].includes(payload.sync?.state)) {
-            setNotice({ kind: 'error', pruned, text: payload.sync.reason ?? payload.sync.state });
+            setNotice({ kind: 'error', pruned, restored, text: payload.sync.reason ?? payload.sync.state });
           } else if (['busy', 'deferred'].includes(payload.sync?.state)) {
-            setNotice({ kind: 'ok', pruned, text: payload.sync.reason });
-          } else if (pruned) {
-            setNotice({ kind: 'ok', pruned });
+            setNotice({ kind: 'ok', pruned, restored, text: payload.sync.reason });
+          } else if (pruned || restored) {
+            setNotice({ kind: 'ok', pruned, restored });
           }
         } catch (error) {
           setMeta({});
@@ -2115,7 +2119,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         ? h(
             'p',
             { key: 'notice', className: `dsm-wb-notice ${notice.kind === 'error' ? 'dsm-wb-notice-error' : 'dsm-wb-notice-ok'}` },
-            [notice.pruned && t('prunedMissing', { models: notice.pruned }), notice.text].filter(Boolean).join(' '),
+            [notice.restored && t('restoredPruned', { models: notice.restored }), notice.pruned && t('prunedMissing', { models: notice.pruned }), notice.text].filter(Boolean).join(' '),
           )
         : null;
       const modelPanel = [];

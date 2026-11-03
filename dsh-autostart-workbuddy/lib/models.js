@@ -327,9 +327,35 @@ export function missingSelectedModels(catalog, only = [], realm, exclude = []) {
  */
 export function prunableSelection(only = [], missing = [], realmScoped = false) {
   const gone = new Set(missing);
-  const scope = (id) => (realmScoped ? regionPrefixOf(id) ?? '' : '');
+  const scope = (id) => selectionScope(id, realmScoped);
   const kept = new Set(only.filter((id) => !gone.has(id)).map(scope));
   return [...gone].filter((id) => only.includes(id) && kept.has(scope(id)));
+}
+
+/** 白名单的生效范围：hub 按区域前缀，wb2api 整张一起。 */
+function selectionScope(id, realmScoped) {
+  return realmScoped ? regionPrefixOf(id) ?? '' : '';
+}
+
+/**
+ * 手动刷新剔除的勾选（`models.pruned`）里仍值得等后端恢复的那些。
+ * 已在白名单里的不必再记；所在范围是空白名单（同步全部）的也不再记，恢复时补回会把"全部"缩成这几个。
+ */
+export function pendingPruned(pruned = [], only = [], realmScoped = false) {
+  const scopes = new Set(only.map((id) => selectionScope(id, realmScoped)));
+  return [...new Set(pruned)].filter((id) => !only.includes(id) && scopes.has(selectionScope(id, realmScoped)));
+}
+
+/**
+ * 剔除的勾选重新出现在目录里时补回白名单：剔除只因后端偶发缩水目录，不是用户取消勾选。
+ * 不满足 pendingPruned 的回来也只清记录，不补。
+ * @param {string[]} present 本次目录实际列出的白名单键
+ * @returns {{ only: string[], pruned: string[], restored: string[] }}
+ */
+export function restorePruned(only = [], pruned = [], present = [], realmScoped = false) {
+  const listed = new Set(present);
+  const restored = pendingPruned(pruned, only, realmScoped).filter((id) => listed.has(id));
+  return { only: [...only, ...restored], pruned: [...new Set(pruned)].filter((id) => !listed.has(id)), restored };
 }
 
 class IncompleteModelCatalogError extends Error {

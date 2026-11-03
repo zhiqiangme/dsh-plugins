@@ -232,7 +232,7 @@ for (const enabled of [true, false]) {
   });
 }
 
-test('POST refresh：自动刷新保留缺席的已选模型，手动刷新当轮移除并剔除白名单', async (t) => {
+test('POST refresh：自动刷新保留缺席的已选模型，手动刷新当轮移除并剔除白名单，重新列出后刷新补回', async (t) => {
   const alpha = { id: 'cn:alpha', name: 'Alpha' };
   const beta = { id: 'global:beta', name: 'Beta' };
   let upstream = [alpha, beta];
@@ -274,9 +274,30 @@ test('POST refresh：自动刷新保留缺席的已选模型，手动刷新当�
   assert.deepEqual(manual.only, [beta.id]);
   assert.deepEqual(manual.pruned.map((row) => row.id), [alpha.id]);
   assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models.only, [beta.id]);
+  assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models.pruned, [alpha.id], '记下剔除项，等后端恢复');
   assert.deepEqual(resolved.models.only, [beta.id]);
 
   assert.equal((await post({ action: 'refresh' })).sync.state, 'unchanged', '自动刷新不再提示缺席');
+
+  // 后端重新列出：自动刷新（打开卡片）补回勾选，并当轮写进 DSH。
+  upstream = [alpha, beta];
+  const back = await post({ action: 'refresh' });
+  assert.equal(back.sync.state, 'updated', back.sync.reason);
+  assert.deepEqual(back.restored.map((row) => row.id), [alpha.id]);
+  assert.ok(back.models.find((row) => row.id === alpha.id).selected);
+  assert.deepEqual(back.only, [beta.id, alpha.id]);
+  assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models.only, [beta.id, alpha.id]);
+  assert.equal(editor.entry(PLUGIN_ID).options.config.models.pruned, undefined, '恢复后清掉剔除记录');
+  assert.deepEqual(new Set(ids()), new Set(only));
+
+  // 手动刷新同样补回。
+  upstream = [beta];
+  await post({ action: 'refresh', manual: true });
+  upstream = [alpha, beta];
+  const manualBack = await post({ action: 'refresh', manual: true });
+  assert.deepEqual(manualBack.restored.map((row) => row.id), [alpha.id]);
+  assert.equal(manualBack.pruned, undefined);
+  assert.deepEqual(new Set(ids()), new Set(only));
 });
 
 test('切换后自动刷新再保存：立即恢复地址和凭据，不改白名单和规则；再次切换后拒绝旧请求', async (t) => {

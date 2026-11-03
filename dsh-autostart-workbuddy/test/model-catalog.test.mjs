@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { resolvePluginConfig } from '../lib/config.js';
-import { confirmRemovals, fetchModels, missingSelectedModels, prunableSelection, syncModels } from '../lib/models.js';
-import { applySelection, describeModels, pruneMissingSelection } from '../lib/web.js';
+import { confirmRemovals, fetchModels, missingSelectedModels, pendingPruned, prunableSelection, restorePruned, syncModels } from '../lib/models.js';
+import { applySelection, describeModels, pruneMissingSelection, restorePrunedSelection } from '../lib/web.js';
 import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 const FLASH = { id: 'flash', name: 'Flash', credits: 'x0' };
@@ -97,7 +97,7 @@ for (const mode of ['dual', 'hub', 'wb2api']) {
     assert.ok(!provider().models.some((model) => model.name.startsWith('Changed Flash')));
   });
 
-  test(`${mode}：手动刷新以当前目录为准，当轮移除缺席的已选模型并剔除白名单`, async (t) => {
+  test(`${mode}：手动刷新以当前目录为准，当轮移除缺席的已选模型并剔除白名单，重新列出后补回`, async (t) => {
     const { state, resolved, editor, options, provider } = await fixture(t, mode);
     const kimiId = mode === 'hub' ? KIMI.id : `cn:${KIMI.id}`;
     state.data = [FLASH];
@@ -116,6 +116,21 @@ for (const mode of ['dual', 'hub', 'wb2api']) {
     assert.equal((await syncModels({ ...options, models: resolved.models })).state, 'updated');
     assert.ok(!provider().models.some((model) => model.id === kimiId));
     assert.equal((await syncModels({ ...options, models: resolved.models, removalGuard: {} })).state, 'unchanged', '之后的自动同步不再拦');
+
+    // 期间显式保存其它勾选：面板不回传剔除项，记录仍保留。
+    const saved = await applySelection({ resolved, editor, credentials: options.credentials, env: {}, only: payload.only });
+    assert.equal(saved.ok, true);
+    assert.deepEqual(resolved.models.pruned, ['cn:kimi-k3.1-pro']);
+
+    state.data = [FLASH, KIMI];
+    const back = await restorePrunedSelection({ resolved, editor, gateway: resolved.gateway, payload: await describeModels({ ...options, models: resolved.models, gateway: resolved.gateway }) });
+    assert.deepEqual(back.restored.map((row) => row.id), ['cn:kimi-k3.1-pro']);
+    assert.equal(back.models.find((row) => row.id === 'cn:kimi-k3.1-pro').selected, true);
+    assert.ok(back.only.includes('cn:kimi-k3.1-pro'));
+    assert.deepEqual(editor.entry('dsh-autostart-workbuddy').options.config.models.only, back.only);
+    assert.deepEqual(resolved.models.pruned, []);
+    assert.equal((await syncModels({ ...options, models: resolved.models })).state, 'updated');
+    assert.ok(provider().models.some((model) => model.id === kimiId), '补回的模型重新写进 DSH');
   });
 
   test(`${mode}：某个范围的勾选全部缺席时手动刷新也保留，不变成同步全部`, async (t) => {
@@ -197,6 +212,14 @@ test('手动刷新只剔除不会让范围变成同步全部的缺席勾选', ()
   assert.deepEqual(prunableSelection(['cn:a', 'global:c'], ['cn:a'], false), ['cn:a'], 'wb2api 整张白名单一起生效');
   assert.deepEqual(prunableSelection(['cn:a'], ['cn:a'], false), []);
   assert.deepEqual(prunableSelection(['cn:a', 'cn:b'], ['cn:x'], true), [], '不在白名单里的缺席项不算');
+});
+
+test('剔除记录：回到目录才补回；已勾回或所在范围改成同步全部的不再记', () => {
+  assert.deepEqual(pendingPruned(['cn:a', 'global:b'], ['cn:x'], true), ['cn:a'], 'GL 改成同步全部后不再补回 global:b');
+  assert.deepEqual(pendingPruned(['cn:a'], ['cn:a', 'cn:x'], true), [], '已勾回');
+  assert.deepEqual(pendingPruned(['cn:a'], [], false), [], 'wb2api 整张白名单清空即同步全部');
+  assert.deepEqual(restorePruned(['cn:x'], ['cn:a', 'cn:b'], ['cn:a', 'cn:x'], true), { only: ['cn:x', 'cn:a'], pruned: ['cn:b'], restored: ['cn:a'] });
+  assert.deepEqual(restorePruned([], ['cn:a'], ['cn:a'], true), { only: [], pruned: [], restored: [] }, '同步全部时只清记录');
 });
 
 test('目录来源只透传同步确认字段', async (t) => {
