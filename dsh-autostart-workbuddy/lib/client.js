@@ -140,17 +140,18 @@ window.__ModuleLoader__.load({
 .dsm-wb-head-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .dsm-wb-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:16px;font-weight:600;line-height:1.4}
 .dsm-wb-desc{margin:4px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
-.dsm-wb-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-state-idle-primary,#777)}
-.dsm-wb-dot-ok{background:var(--dsw-alias-state-success-primary,#22c55e);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-success-primary,#22c55e) 22%,transparent)}
-.dsm-wb-dot-warn{background:var(--dsw-alias-state-warn-primary,#f59e0b)}
-.dsm-wb-dot-error{background:var(--dsw-alias-state-error-primary,#f25a5a)}
+/* 状态色写在 color 上、底色取 currentColor：动效里的扩散光圈同样取 currentColor，状态切换时颜色整体过渡。 */
+.dsm-wb-dot{flex:none;width:8px;height:8px;border-radius:50%;color:var(--dsw-alias-state-idle-primary,#777);background:currentColor;transition:color .3s ease}
+.dsm-wb-dot-ok{color:var(--dsw-alias-state-success-primary,#22c55e);box-shadow:0 0 0 3px color-mix(in srgb,currentColor 22%,transparent)}
+.dsm-wb-dot-warn{color:var(--dsw-alias-state-warn-primary,#f59e0b)}
+.dsm-wb-dot-error{color:var(--dsw-alias-state-error-primary,#f25a5a)}
 .dsm-wb-panel{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
 /* 外链用 DSH 自己那套：http(s) + target=_blank，宿主主窗口的 setWindowOpenHandler
    会把它交给 shell.openExternal，即默认浏览器打开。 */
 .dsm-wb-link{color:var(--dsw-alias-link,#7aaaff);text-decoration:none;cursor:pointer}
 .dsm-wb-link:hover{text-decoration:underline}
 /* 徽章：状态色只染文字，底色取同色 14% 透明度，明暗主题都不刺眼。 */
-.dsm-wb-pill,.dsm-wb-badge{flex:none;display:inline-flex;align-items:center;min-height:20px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:999px;padding:0 8px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;font-weight:500;line-height:18px;white-space:nowrap}
+.dsm-wb-pill,.dsm-wb-badge{flex:none;display:inline-flex;align-items:center;min-height:20px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:999px;padding:0 8px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;font-weight:500;line-height:18px;white-space:nowrap;transition:color .3s ease,background-color .3s ease,border-color .3s ease}
 .dsm-wb-pill-ok,.dsm-wb-pill-warn,.dsm-wb-pill-error,.dsm-wb-badge-ok,.dsm-wb-badge-new{border-color:transparent;background:color-mix(in srgb,currentColor 14%,transparent)}
 .dsm-wb-pill-ok,.dsm-wb-badge-ok{color:var(--dsw-alias-state-success-primary,#22c55e)}
 .dsm-wb-pill-warn,.dsm-wb-badge-new{color:var(--dsw-alias-state-warn-primary,#f59e0b)}
@@ -167,12 +168,12 @@ window.__ModuleLoader__.load({
 .dsm-wb-stat-sub{overflow:hidden;color:var(--dsw-alias-label-caption,#81858c);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
 /* 页签：分段控件的样子，与 DSH 设置页的分段选择一致。 */
 .dsm-wb-tabs{display:flex;flex-wrap:wrap;align-self:flex-start;gap:2px;max-width:calc(100% - 36px);margin:0 18px;padding:3px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#232324)}
-.dsm-wb-tab{appearance:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 14px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-tertiary,#999);font:inherit;font-size:13px;font-weight:500;white-space:nowrap;cursor:pointer}
+.dsm-wb-tab{appearance:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 14px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-tertiary,#999);font:inherit;font-size:13px;font-weight:500;white-space:nowrap;cursor:pointer;transition:color .2s ease,background-color .2s ease}
 .dsm-wb-tab:hover{color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-wb-tab[aria-selected=true]{background:var(--dsw-alias-interactive-bg-active,#ffffff24);color:var(--dsw-alias-label-primary,#e6e6e6);font-weight:600}
 .dsm-wb-tab:focus-visible,.dsm-wb-btn:focus-visible,.dsm-wb-sync input:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#7aaaff);outline-offset:2px}
-.dsm-wb-tab-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-state-warn-primary,#f59e0b)}
-.dsm-wb-tab-dot-error{background:var(--dsw-alias-state-error-primary,#f25a5a)}
+.dsm-wb-tab-dot{width:6px;height:6px;border-radius:50%;color:var(--dsw-alias-state-warn-primary,#f59e0b);background:currentColor}
+.dsm-wb-tab-dot-error{color:var(--dsw-alias-state-error-primary,#f25a5a)}
 .dsm-wb-tabpanel{display:flex;flex-direction:column;gap:14px;padding:16px 18px 18px}
 /* 面板自己设了 display，必须显式让 hidden 生效，否则非当前页签也会显示。 */
 .dsm-wb-tabpanel[hidden]{display:none}
@@ -196,7 +197,7 @@ window.__ModuleLoader__.load({
 .dsm-wb-callout-error{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,#f25a5a) 35%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#f25a5a) 8%,transparent)}
 .dsm-wb-empty{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:16px;color:var(--dsw-alias-label-tertiary,#999);font-size:13px}
 /* 按钮 */
-.dsm-wb-btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;border:1px solid transparent;border-radius:8px;padding:0 14px;font:inherit;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;transition:background .12s ease,border-color .12s ease,color .12s ease}
+.dsm-wb-btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;border:1px solid transparent;border-radius:8px;padding:0 14px;font:inherit;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;transition:background-color .15s ease,border-color .15s ease,color .15s ease,opacity .15s ease,transform .12s ease}
 .dsm-wb-btn:disabled{cursor:default}
 .dsm-wb-btn-sm{height:24px;border-radius:6px;padding:0 10px;font-size:12px}
 /* 主按钮用"反色"配色，不用 --dsw-alias-brand-primary 当底色：本主题把
@@ -223,23 +224,24 @@ window.__ModuleLoader__.load({
 .dsm-wb-seg .dsm-wb-btn-primary,.dsm-wb-seg .dsm-wb-btn-primary:disabled{background:var(--dsw-alias-label-primary,#e6e6e6);color:var(--dsw-alias-bg-layer-3,#353638);opacity:1}
 /* 开关：沿用 DSH 设置页的 switch 尺寸与配色，底层仍是 checkbox。 */
 .dsm-wb-sync{display:inline-flex;align-self:flex-start;align-items:center;gap:10px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:500;cursor:pointer}
-.dsm-wb-sync input{appearance:none;position:relative;flex:none;width:36px;height:20px;margin:0;border-radius:999px;background:var(--dsw-alias-border-l3,#ffffff29);cursor:pointer;transition:background .12s ease}
-.dsm-wb-sync input::before{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-switch-thumb,#adb2b8);transition:transform .12s ease}
+.dsm-wb-sync input{appearance:none;position:relative;flex:none;width:36px;height:20px;margin:0;border-radius:999px;background:var(--dsw-alias-border-l3,#ffffff29);cursor:pointer;transition:background-color .2s ease}
+/* 滑块用回弹曲线；按住时横向拉长（见动效段），松手再弹到位。 */
+.dsm-wb-sync input::before{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-switch-thumb,#adb2b8);transition:transform .28s var(--dsm-wb-spring),width .15s ease,background-color .2s ease}
 .dsm-wb-sync input:checked{background:var(--dsw-alias-label-primary,#f9fafb)}
 .dsm-wb-sync input:checked::before{background:var(--dsw-alias-label-primary-foreground,#0f1115);transform:translateX(16px)}
 .dsm-wb-sync input:disabled{cursor:default;opacity:.5}
 /* 输入框 */
-.dsm-wb-input{max-width:100%;height:32px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:8px;padding:0 10px;background:var(--dsw-alias-bg-layer-1,#232324);color:var(--dsw-alias-label-primary,#e6e6e6);font:inherit;font-size:13px;outline:none}
+.dsm-wb-input{max-width:100%;height:32px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:8px;padding:0 10px;background:var(--dsw-alias-bg-layer-1,#232324);color:var(--dsw-alias-label-primary,#e6e6e6);font:inherit;font-size:13px;outline:none;transition:border-color .15s ease,box-shadow .15s ease}
 .dsm-wb-group .dsm-wb-input{background:var(--dsw-alias-bg-layer-2,#2c2c2e)}
 .dsm-wb-input::placeholder{color:var(--dsw-alias-label-caption,#81858c)}
-.dsm-wb-input:focus{border-color:var(--dsw-alias-label-tertiary,#999)}
+.dsm-wb-input:focus{border-color:var(--dsw-alias-label-tertiary,#999);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-label-tertiary,#999) 20%,transparent)}
 .dsm-wb-input:disabled{cursor:default;opacity:.6}
 select.dsm-wb-input{padding-right:6px;cursor:pointer}
 .dsm-wb-filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .dsm-wb-search{flex:1 1 240px;min-width:160px}
 .dsm-wb-max{width:200px}
 .dsm-wb-rules-label{color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;font-weight:600}
-.dsm-wb-chip{display:inline-flex;align-items:center;gap:6px;height:30px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:999px;padding:0 12px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;white-space:nowrap;cursor:pointer;user-select:none}
+.dsm-wb-chip{display:inline-flex;align-items:center;gap:6px;height:30px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:999px;padding:0 12px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;white-space:nowrap;cursor:pointer;user-select:none;transition:border-color .15s ease,background-color .15s ease,color .15s ease}
 .dsm-wb-chip:hover{border-color:var(--dsw-alias-border-l4,#fff3)}
 .dsm-wb-chip input{margin:0;accent-color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-wb-chip:has(input:checked){border-color:var(--dsw-alias-label-tertiary,#999);background:var(--dsw-alias-interactive-bg-active,#ffffff24);color:var(--dsw-alias-label-primary,#e6e6e6)}
@@ -248,11 +250,11 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
 .dsm-wb-list-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;border-bottom:1px solid var(--dsw-alias-border-l2,#36373b);padding:8px 10px 8px 14px}
 .dsm-wb-count{flex:1;min-width:140px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;line-height:1.5}
 .dsm-wb-count-status{color:var(--dsw-alias-label-caption,#81858c);font-size:12px}
-.dsm-wb-list{display:flex;flex-direction:column;gap:1px;max-height:420px;overflow:auto;padding:4px}
-.dsm-wb-row{display:flex;align-items:center;gap:10px;min-height:36px;border-radius:8px;padding:4px 10px;cursor:pointer}
+.dsm-wb-list{display:flex;flex-direction:column;gap:1px;max-height:420px;overflow:auto;padding:4px;transition:opacity .2s ease}
+.dsm-wb-row{display:flex;align-items:center;gap:10px;min-height:36px;border-radius:8px;padding:4px 10px;cursor:pointer;transition:background-color .15s ease}
 .dsm-wb-row:hover{background:var(--dsw-alias-interactive-bg-hover,#ffffff14)}
 .dsm-wb-row input{flex:none;margin:0;accent-color:var(--dsw-alias-label-primary,#e6e6e6)}
-.dsm-wb-label{flex:1;min-width:0;overflow:hidden;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:13px;line-height:1.5;text-overflow:ellipsis;white-space:nowrap}
+.dsm-wb-label{flex:1;min-width:0;overflow:hidden;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:13px;line-height:1.5;text-overflow:ellipsis;white-space:nowrap;transition:color .15s ease}
 .dsm-wb-row-on .dsm-wb-label{color:var(--dsw-alias-label-primary,#e6e6e6)}
 /* 三列标签各有固定最小宽度、靠右对齐：缺哪列就空着，倍率始终上下对齐。 */
 .dsm-wb-meta{flex:none;display:flex;align-items:center;gap:6px}
@@ -270,9 +272,10 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
 /* 保存栏就是卡片底边：负边距抵消页签内边距（底 18px）和卡片 1px 边框，横向铺满卡片，自己画边框和底部圆角。
    卡片末尾在窗口里就留在原位；在窗口外时 sticky 贴住窗口底边（bottom 由 dockToWindowBottom 按滚动区内边距校正）。 */
 .dsm-wb-dock{position:sticky;bottom:0;z-index:2;margin:4px -19px -19px;container-type:scroll-state}
-.dsm-wb-dock>.dsm-wb-footer{position:relative;padding:12px 18px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:0 0 14px 14px;background:var(--dsw-alias-bg-layer-2,#2c2c2e)}
-/* 贴底时卡片还在下面延续，圆角外侧露出来的是卡片本身；垫一层页面底色（DSH 中栏用 bg-base），圆角才看得出来。 */
-@container scroll-state(stuck: bottom){.dsm-wb-dock>.dsm-wb-footer::before{content:"";position:absolute;z-index:-1;right:-1px;bottom:-1px;left:-1px;height:16px;background:var(--dsw-alias-bg-base,#161618)}}
+.dsm-wb-dock>.dsm-wb-footer{position:relative;padding:12px 18px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:0 0 14px 14px;background:var(--dsw-alias-bg-layer-2,#2c2c2e);transition:box-shadow .25s ease}
+/* 贴底时卡片还在下面延续，圆角外侧露出来的是卡片本身；垫一层页面底色（DSH 中栏用 bg-base），圆角才看得出来。
+   同时向上投一道阴影，表示保存栏此刻浮在列表之上；回到原位时阴影随 transition 淡出。 */
+@container scroll-state(stuck: bottom){.dsm-wb-dock>.dsm-wb-footer::before{content:"";position:absolute;z-index:-1;right:-1px;bottom:-1px;left:-1px;height:16px;background:var(--dsw-alias-bg-base,#161618)}.dsm-wb-dock>.dsm-wb-footer{box-shadow:0 -10px 24px -16px rgb(0 0 0 / .55)}}
 /* 区域 Key */
 .dsm-wb-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
 .dsm-wb-key-field{display:flex;flex-direction:column;gap:6px;min-width:0;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;font-weight:500}
@@ -288,6 +291,60 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
 .dsm-wb-confirm{display:flex;flex-direction:column;gap:8px;border:1px solid var(--dsw-alias-state-warn-primary,#f59e0b);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#2c2c2e);padding:12px 14px}
 .dsm-wb-confirm-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
 .dsm-wb-confirm-body{display:flex;flex-direction:column;gap:4px}
+/* ---- 动效 ----
+   只动 opacity / transform / 颜色 / 阴影，单段不超过 .4s。入场一律 backwards 填充：错峰延迟期间停在首帧，播完不残留样式。
+   非当前页签是 display:none，切回来时其中的 CSS 动画会重播——切页签时"内容依次浮现"靠的就是这一点，不需要额外状态。
+   错峰用 sibling-index()（DSH 的 Chromium 已支持；不认识时整条 animation-delay 作废，退化为同时出现）。 */
+@keyframes dsm-wb-fade{from{opacity:0}}
+@keyframes dsm-wb-rise{from{opacity:0;transform:translateY(6px)}}
+@keyframes dsm-wb-drop{from{opacity:0;transform:translateY(-4px)}}
+@keyframes dsm-wb-pop{50%{transform:scale(1.18)}}
+@keyframes dsm-wb-spin{to{transform:rotate(1turn)}}
+@keyframes dsm-wb-breathe{50%{opacity:.35}}
+/* 运行中状态点：第一层是常驻的淡光晕（与静态样式一致），第二层从点边缘扩散到 9px 并淡出。 */
+@keyframes dsm-wb-ping{from{box-shadow:0 0 0 3px color-mix(in srgb,currentColor 22%,transparent),0 0 0 0 color-mix(in srgb,currentColor 50%,transparent)}to{box-shadow:0 0 0 3px color-mix(in srgb,currentColor 22%,transparent),0 0 0 9px transparent}}
+@keyframes dsm-wb-ring{from{box-shadow:0 0 0 0 color-mix(in srgb,currentColor 60%,transparent)}to{box-shadow:0 0 0 5px transparent}}
+/* ease 是"快出慢停"的减速曲线；spring 末段越过终点约 10% 再回落，只给开关滑块、勾选这类小部件用。 */
+.dsm-wb{--dsm-wb-ease:cubic-bezier(.2,.8,.2,1);--dsm-wb-spring:cubic-bezier(.34,1.56,.64,1);animation:dsm-wb-fade .3s var(--dsm-wb-ease) backwards}
+/* 状态点：运行中慢心跳；需要处理（没装 / 恢复中）快一些；检查中呼吸；出错保持静止，不让故障看起来像在"活动"。 */
+.dsm-wb-dot-ok{animation:dsm-wb-ping 2.4s var(--dsm-wb-ease) infinite}
+.dsm-wb-dot-warn{animation:dsm-wb-ring 1.6s var(--dsm-wb-ease) infinite}
+.dsm-wb-dot-idle{animation:dsm-wb-breathe 1.2s ease-in-out infinite}
+.dsm-wb-tab-dot{animation:dsm-wb-ring 2s var(--dsm-wb-ease) infinite}
+/* 概览数字依次浮起；数值节点的 key 跟着值走，值一变就重建并从下方滑入。 */
+.dsm-wb-stat{transition:border-color .2s ease;animation:dsm-wb-rise .36s var(--dsm-wb-ease) backwards;animation-delay:calc((sibling-index() - 1) * 50ms)}
+.dsm-wb-stat:hover{border-color:var(--dsw-alias-border-l3,#ffffff29)}
+.dsm-wb-stat-value{animation:dsm-wb-rise .3s var(--dsm-wb-ease) backwards}
+/* 页签内容逐块浮现，最多错开 5 档（200ms），长面板也不会拖沓。 */
+.dsm-wb-tabpanel>*{animation:dsm-wb-rise .32s var(--dsm-wb-ease) backwards;animation-delay:calc(min(sibling-index() - 1, 5) * 40ms)}
+/* 选中页签的底色改成一块滑动指示条：锚定到当前页签，换页签时滑过去。不支持锚点定位时整段不生效，保留上面的静态底色。
+   anchor-scope 把锚点名限定在本卡片内：组合包页与行配置页可能各有一张卡片，锚点名不能串到另一张上。 */
+@supports (anchor-name:--a) and (anchor-scope:--a){
+.dsm-wb-tabs{position:relative;anchor-scope:--dsm-wb-tab}
+.dsm-wb-tabs::before{content:"";position:absolute;position-anchor:--dsm-wb-tab;inset:anchor(top) anchor(right) anchor(bottom) anchor(left);border-radius:7px;background:var(--dsw-alias-interactive-bg-active,#ffffff24);transition:inset .3s var(--dsm-wb-ease)}
+.dsm-wb-tab{position:relative}
+.dsm-wb-tab[aria-selected=true]{anchor-name:--dsm-wb-tab;background:transparent}
+}
+/* 按下反馈 */
+.dsm-wb-btn:active:not(:disabled){transform:scale(.97)}
+.dsm-wb-sync input:active:not(:disabled)::before{width:20px}
+.dsm-wb-sync input:checked:active:not(:disabled)::before{transform:translateX(12px)}
+.dsm-wb-row input:checked,.dsm-wb-chip input:checked{animation:dsm-wb-pop .24s var(--dsm-wb-spring)}
+/* 提示类内容出现时从上方轻落；嵌在提示框里的文字跟着框走，不再单独动。 */
+.dsm-wb-notice,.dsm-wb-callout,.dsm-wb-confirm,.dsm-wb-report,.dsm-wb-unsaved{animation:dsm-wb-drop .24s var(--dsm-wb-ease) backwards}
+.dsm-wb-callout .dsm-wb-notice{animation:none}
+.dsm-wb-unsaved::before{animation:dsm-wb-breathe 1.6s ease-in-out infinite}
+/* 进行中：按钮（aria-busy）、列表头的"正在读取"和整块的加载占位前面加一个转圈；整表重读期间列表变淡，提示此刻不能勾选。 */
+.dsm-wb-loading{flex-direction:row;align-items:center}
+.dsm-wb-count-status{display:inline-flex;align-items:center;gap:6px}
+.dsm-wb-btn[aria-busy=true]::before,.dsm-wb-count-status::before,.dsm-wb-loading::before{content:"";flex:none;width:12px;height:12px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:dsm-wb-spin .7s linear infinite}
+.dsm-wb-listbox:has(.dsm-wb-count-status) .dsm-wb-list{opacity:.55}
+/* 「插件更新」里的折叠区：展开 / 收起时高度过渡（interpolate-size 允许在 0 与 auto 之间插值）。 */
+.dsm-wb-plugin-update details{interpolate-size:allow-keywords}
+.dsm-wb-plugin-update details::details-content{block-size:0;overflow:hidden;transition:block-size .25s var(--dsm-wb-ease),content-visibility .25s allow-discrete}
+.dsm-wb-plugin-update details[open]::details-content{block-size:auto}
+/* 系统开了"减少动态效果"：动画与过渡全部关掉，状态仍靠颜色与文字表达。 */
+@media (prefers-reduced-motion:reduce){.dsm-wb,.dsm-wb *,.dsm-wb *::before,.dsm-wb details::details-content{animation:none!important;transition:none!important}}
 `;
 
     // 字典值必须是**字符串**：DSH 的 t(key, params) 用 `{name}` 占位符插值
@@ -882,13 +939,16 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       return undefined;
     }
 
-    /** 概览数字卡片。muted 用于"尚未获取"这类非数字值，字号随之变小。 */
+    /**
+     * 概览数字卡片。muted 用于"尚未获取"这类非数字值，字号随之变小。
+     * 数值节点以值为 key：值变了就重建节点，入场动画随之重播，算是"数字跳动"的提示。
+     */
     function statTile(key, label, value, { sub, title, muted } = {}) {
       return h(
         'div',
         { key, className: 'dsm-wb-stat', title },
         h('div', { className: 'dsm-wb-stat-label' }, label),
-        h('div', { className: `dsm-wb-stat-value${muted ? ' dsm-wb-stat-muted' : ''}` }, value),
+        h('div', { key: String(value), className: `dsm-wb-stat-value${muted ? ' dsm-wb-stat-muted' : ''}` }, value),
         sub ? h('div', { className: 'dsm-wb-stat-sub' }, sub) : null,
       );
     }
@@ -2023,6 +2083,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
               panelKey?.busy ? t('panelKeyWorking') : t(hub ? 'panelPasswordCopy' : 'panelKeyCopy'),
               copyPanelKey,
               Boolean(panelKey?.busy),
+              { 'aria-busy': Boolean(panelKey?.busy) },
             ),
           ),
           panelKey?.kind === 'manual'
@@ -2037,7 +2098,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         h(
           'div',
           { className: 'dsm-wb-head-actions' },
-          wbButton('diagnose', 'outline', t(diagnostic?.busy ? 'diagnoseWorking' : 'diagnose'), runDiagnostic, diagnostic?.busy),
+          wbButton('diagnose', 'outline', t(diagnostic?.busy ? 'diagnoseWorking' : 'diagnose'), runDiagnostic, diagnostic?.busy, { 'aria-busy': Boolean(diagnostic?.busy) }),
         ),
       );
 
@@ -2134,11 +2195,11 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
               { className: 'dsm-wb-actions' },
               // 没装后端时就地给「安装」，不用先去「后端」页签里找。
               reason === BACKEND_NOT_INSTALLED && backend
-                ? wbButton('install', 'primary', backendBusy === 'install' ? t('backendWorking') : t('backendInstall'), () => runBackend('install'), busy)
+                ? wbButton('install', 'primary', backendBusy === 'install' ? t('backendWorking') : t('backendInstall'), () => runBackend('install'), busy, { 'aria-busy': backendBusy === 'install' })
                 : null,
               // 自动恢复连续失败后已暂停：模型区读不到目录的根因在这里，同样就地给出重试。
               status.key === 'statusPaused'
-                ? wbButton('retryStartInline', 'primary', backendBusy === 'start' ? t('backendWorking') : t('recoveryRetry'), () => runBackend('start'), busy)
+                ? wbButton('retryStartInline', 'primary', backendBusy === 'start' ? t('backendWorking') : t('recoveryRetry'), () => runBackend('start'), busy, { 'aria-busy': backendBusy === 'start' })
                 : null,
               wbButton('retry', 'outline', t('retry'), () => load(), busy),
             ),
@@ -2146,7 +2207,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
           modelNotice,
         );
       } else if (phase === 'loading' && rows.length === 0) {
-        modelPanel.push(h('div', { key: 'loading', className: 'dsm-wb-empty' }, t('loading')), modelNotice);
+        modelPanel.push(h('div', { key: 'loading', className: 'dsm-wb-empty dsm-wb-loading' }, t('loading')), modelNotice);
       } else {
         const setRule = (key, value) => setMeta((last) => ({ ...last, rules: { ...last.rules, [key]: value } }));
         modelPanel.push(
@@ -2283,7 +2344,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
                 { className: 'dsm-wb-actions' },
                 wbButton('refresh', 'outline', t('refresh'), () => load(true, true), locked),
                 // 同步已开启时允许重复保存，修复旧清单或重试上次失败无需先改勾选。
-                wbButton('save', 'primary', saving ? t('saving') : t(meta.enabled === true ? 'saveSync' : 'save'), save, locked || (!dirty && meta.enabled !== true)),
+                wbButton('save', 'primary', saving ? t('saving') : t(meta.enabled === true ? 'saveSync' : 'save'), save, locked || (!dirty && meta.enabled !== true), { 'aria-busy': saving }),
               ),
             ),
           ),
@@ -2334,7 +2395,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       // 数据来自宿主半侧的 /backend 端点，首屏那次 GET 不联网（快），点"检查更新"才真去查 release。
       const backendPanel = [];
       if (!backend) {
-        backendPanel.push(h('div', { key: 'loading', className: 'dsm-wb-empty' }, t('backendLoading')));
+        backendPanel.push(h('div', { key: 'loading', className: 'dsm-wb-empty dsm-wb-loading' }, t('backendLoading')));
       } else {
         if (backend.error) {
           backendPanel.push(h('p', { key: 'error', className: 'dsm-wb-callout dsm-wb-callout-error' }, backend.error));
@@ -2390,7 +2451,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
                 'div',
                 { className: 'dsm-wb-backend-head' },
                 h('span', { className: 'dsm-wb-backend-title' }, t('runtimeTitle')),
-                wbButton('retryStart', 'outline', backendBusy === 'start' ? t('backendWorking') : t('recoveryRetry'), () => runBackend('start'), busy),
+                wbButton('retryStart', 'outline', backendBusy === 'start' ? t('backendWorking') : t('recoveryRetry'), () => runBackend('start'), busy, { 'aria-busy': backendBusy === 'start' }),
               ),
               h('p', { className: 'dsm-wb-backend-line' }, t('recoveryStatus', { state: t(backend.recovery.enabled === false ? 'recoveryOff' : recoveryKey), attempts: backend.recovery.attempts ?? 0 })),
             ),
@@ -2421,11 +2482,11 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
           h(
             'div',
             { key: 'actions', className: 'dsm-wb-actions' },
-            wbButton('check', 'outline', backendBusy === 'check' ? t('backendWorking') : t('backendCheck'), () => runBackend('check'), busy),
+            wbButton('check', 'outline', backendBusy === 'check' ? t('backendWorking') : t('backendCheck'), () => runBackend('check'), busy, { 'aria-busy': backendBusy === 'check' }),
             installed
-              ? wbButton('update', updateKnown ? 'primary' : 'outline', backendBusy === 'update' ? t('backendWorking') : t('backendUpdate'), () => runBackend('update'), busy)
-              : wbButton('install', 'primary', backendBusy === 'install' ? t('backendWorking') : t('backendInstall'), () => runBackend('install'), busy),
-            installed ? wbButton('rollback', 'outline', backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'), () => runBackend('rollback'), busy) : null,
+              ? wbButton('update', updateKnown ? 'primary' : 'outline', backendBusy === 'update' ? t('backendWorking') : t('backendUpdate'), () => runBackend('update'), busy, { 'aria-busy': backendBusy === 'update' })
+              : wbButton('install', 'primary', backendBusy === 'install' ? t('backendWorking') : t('backendInstall'), () => runBackend('install'), busy, { 'aria-busy': backendBusy === 'install' }),
+            installed ? wbButton('rollback', 'outline', backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'), () => runBackend('rollback'), busy, { 'aria-busy': backendBusy === 'rollback' }) : null,
           ),
         ];
         // 没装就没有可更新的东西：首次安装永远由用户点。
@@ -2456,8 +2517,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
                 'div',
                 { className: 'dsm-wb-backend-head' },
                 h('span', { className: 'dsm-wb-backend-title' }, t('dangerTitle')),
-                installed ? wbButton('uninstall', 'danger', backendBusy === 'uninstall' ? t('backendWorking') : t('backendUninstall'), () => setConfirming('uninstall'), busy) : null,
-                backend.rootExists === true ? wbButton('purge', 'danger', backendBusy === 'purge' ? t('backendWorking') : t('backendPurge'), () => setConfirming('purge'), busy) : null,
+                installed ? wbButton('uninstall', 'danger', backendBusy === 'uninstall' ? t('backendWorking') : t('backendUninstall'), () => setConfirming('uninstall'), busy, { 'aria-busy': backendBusy === 'uninstall' }) : null,
+                backend.rootExists === true ? wbButton('purge', 'danger', backendBusy === 'purge' ? t('backendWorking') : t('backendPurge'), () => setConfirming('purge'), busy, { 'aria-busy': backendBusy === 'purge' }) : null,
               ),
               // DSH 卸载插件时不通知插件，数据目录只能靠用户在卸载前点「彻底卸载」清掉，这里写明会删哪个目录。
               backend.rootExists === true ? h('p', { className: 'dsm-wb-hint' }, t('backendPurgeHint', { root: backend.root ?? '' })) : null,

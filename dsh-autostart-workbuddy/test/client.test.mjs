@@ -783,6 +783,23 @@ test('账号积分概览区分真实零余额、未知余额与账号统计', ()
   assert.deepEqual(tiles['balance-intl'], ['GL 剩余积分', '尚未获取', '启用 1 · 有数据 0'], '没数据不能显示成 0');
 });
 
+test('动效：减少动态效果时全关，滑动指示条要求锚点定位，数值变化重建节点，进行中的按钮带 aria-busy', () => {
+  const { css } = boot();
+  assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{[^}]*\{animation:none!important;transition:none!important\}\}/);
+  // 不支持锚点定位（或 anchor-scope）时整段不生效，选中页签退回静态底色
+  assert.match(css, /@supports \(anchor-name:--a\) and \(anchor-scope:--a\)\{[^@]*anchor-scope:--dsm-wb-tab/);
+  // 关键帧名是全局的，必须带本插件前缀，免得和宿主或其它插件的同名动画互相覆盖
+  for (const [, keyframes] of css.matchAll(/@keyframes ([\w-]+)/g)) assert.match(keyframes, /^dsm-wb-/);
+
+  const states = backendStates({ gateway: 'hub', version: {}, history: [], overview: { ready: 1, total: 2, balances: [] } });
+  states[6] = true; // saving
+  const tree = boot(states).renderCard();
+  const value = collectByType(tree, 'div').find((node) => node.props.className === 'dsm-wb-stat-value');
+  assert.equal(value.props.key, '1 / 2', '数值节点以值为 key，值一变就重建并重播入场动画');
+  const save = collectByType(tree, 'button').find((node) => node.props.key === 'save');
+  assert.equal(save.props['aria-busy'], true, '保存中的按钮带 aria-busy，CSS 据此显示转圈');
+});
+
 /** 渲染后把按钮的文字标签取出来。 */
 function buttonLabels(tree) {
   return collectByType(tree, 'button').map((node) => collectText(node).join(''));
