@@ -633,7 +633,7 @@ test('模型同步：勾选未变时可重试同步失败，保存期间禁用�
   }
 });
 
-test('保存栏：放进 sticky 悬浮容器，ref 按滚动区底部内边距校正 bottom', () => {
+test('保存栏：放进 sticky 容器，ref 按滚动区底部内边距校正 bottom，贴住窗口底边', () => {
   const dock = collectByType(tabPanel(boot(modelStates(true)).renderCard(), '模型'), 'div')
     .find((node) => node.props.className === 'dsm-wb-dock');
   assert.ok(dock, '模型页签应有保存栏悬浮容器');
@@ -652,7 +652,7 @@ test('保存栏：放进 sticky 悬浮容器，ref 按滚动区底部内边距�
   try {
     const node = { parentElement: card, style: {} };
     dock.props.ref(node);
-    assert.equal(node.style.bottom, '-36px', '抵消 48px 内边距后离窗口底边留 12px');
+    assert.equal(node.style.bottom, '-48px', '抵消 48px 内边距，贴住窗口底边');
     const detached = { parentElement: null };
     styles.set(detached, { overflowY: 'visible', paddingBottom: '0px' });
     const orphan = { parentElement: detached, style: {} };
@@ -717,9 +717,10 @@ test('样式：颜色一律走主题令牌，不写死白/黑，主按钮禁用�
   assert.match(css, /\.dsm-wb-tabpanel\[hidden\]\{display:none\}/);
   // DSH 只有 state-warn-*，没有 state-warning-*；写错会一直落到兜底色
   assert.equal(/state-warning/.test(css), false);
-  // 保存栏 sticky 悬浮；只有真正吸附时才换底色加阴影，在原位时与卡片融为一体
+  // 保存栏是卡片底边，sticky 贴窗口底；贴底时用页面底色垫出圆角，在原位时就是卡片本身的底边
   assert.match(css, /\.dsm-wb-dock\{[^}]*position:sticky[^}]*container-type:scroll-state/);
-  assert.match(css, /@container scroll-state\(stuck: bottom\)\{\.dsm-wb-dock>\.dsm-wb-footer\{[^}]*box-shadow/);
+  assert.match(css, /\.dsm-wb-dock>\.dsm-wb-footer\{[^}]*border-radius:0 0 14px 14px/);
+  assert.match(css, /@container scroll-state\(stuck: bottom\)\{\.dsm-wb-dock>\.dsm-wb-footer::before\{[^}]*background:var\(--dsw-alias-bg-base/);
   assert.equal(/\.dsm-wb-btn:disabled\{[^}]*opacity/.test(css), false, '禁用态不要只靠 opacity');
 
   // 主按钮走反色：label-primary 当底、bg-layer-3 当字。

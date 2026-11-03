@@ -267,11 +267,12 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
 .dsm-wb-unsaved{display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-state-warn-primary,#f59e0b);font-size:12px}
 .dsm-wb-unsaved::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
 .dsm-wb-path{overflow:hidden;color:var(--dsw-alias-label-caption,#81858c);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
-/* 保存栏：列表把它挤出窗口时 sticky 悬浮在窗口底部，看得见时留在原位；bottom 由 dockAboveWindowBottom 按滚动区内边距校正。
-   外层负边距与内层内边距等量抵消，悬浮态多出的底色与阴影不改变占位，吸附前后不跳动。 */
-.dsm-wb-dock{position:sticky;bottom:12px;z-index:2;margin:-10px -12px;container-type:scroll-state}
-.dsm-wb-dock>.dsm-wb-footer{padding:10px 12px;border-radius:12px;background:var(--dsw-alias-bg-layer-2,#2c2c2e);transition:background-color .15s,box-shadow .15s}
-@container scroll-state(stuck: bottom){.dsm-wb-dock>.dsm-wb-footer{background:var(--dsw-alias-bg-layer-3,#353638);box-shadow:0 0 0 1px var(--dsw-alias-border-l2,#36373b),0 8px 24px rgba(0,0,0,.28)}}
+/* 保存栏就是卡片底边：负边距抵消页签内边距（底 18px）和卡片 1px 边框，横向铺满卡片，自己画边框和底部圆角。
+   卡片末尾在窗口里就留在原位；在窗口外时 sticky 贴住窗口底边（bottom 由 dockToWindowBottom 按滚动区内边距校正）。 */
+.dsm-wb-dock{position:sticky;bottom:0;z-index:2;margin:4px -19px -19px;container-type:scroll-state}
+.dsm-wb-dock>.dsm-wb-footer{position:relative;padding:12px 18px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:0 0 14px 14px;background:var(--dsw-alias-bg-layer-2,#2c2c2e)}
+/* 贴底时卡片还在下面延续，圆角外侧露出来的是卡片本身；垫一层页面底色（DSH 中栏用 bg-base），圆角才看得出来。 */
+@container scroll-state(stuck: bottom){.dsm-wb-dock>.dsm-wb-footer::before{content:"";position:absolute;z-index:-1;right:-1px;bottom:-1px;left:-1px;height:16px;background:var(--dsw-alias-bg-base,#161618)}}
 /* 区域 Key */
 .dsm-wb-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
 .dsm-wb-key-field{display:flex;flex-direction:column;gap:6px;min-width:0;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;font-weight:500}
@@ -829,20 +830,17 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       return h('button', { key, type: 'button', className: `dsm-wb-btn dsm-wb-btn-${kind}`, disabled, onClick, ...extra }, label);
     }
 
-    /** 保存栏悬浮时离窗口底边留的距离，够露出圆角，与 CSS 里 .dsm-wb-dock 的 bottom 一致。 */
-    const DOCK_GAP = 12;
-
     /**
      * 保存栏的 ref（放在这里定义，引用稳定，只在挂载/卸载时各调一次）。
      * sticky 的 bottom 从滚动区内边距的内侧算起，DSH 插件详情页底部有 48px 内边距，
-     * 只靠 CSS 会悬在离窗口底边 48px + DOCK_GAP 处；这里按实际内边距抵消，贴到窗口底边。
+     * 只靠 CSS 会悬在离窗口底边 48px 处；这里按实际内边距抵消，贴到窗口底边。
      */
-    function dockAboveWindowBottom(node) {
+    function dockToWindowBottom(node) {
       if (!node) return;
       for (let parent = node.parentElement; parent; parent = parent.parentElement) {
         const style = getComputedStyle(parent);
         if (/auto|scroll/.test(style.overflowY)) {
-          node.style.bottom = `${DOCK_GAP - (parseFloat(style.paddingBottom) || 0)}px`;
+          node.style.bottom = `${-(parseFloat(style.paddingBottom) || 0)}px`;
           return;
         }
       }
@@ -2265,7 +2263,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         modelPanel.push(
           h(
             'div',
-            { key: 'footer', className: 'dsm-wb-dock', ref: dockAboveWindowBottom },
+            { key: 'footer', className: 'dsm-wb-dock', ref: dockToWindowBottom },
             h(
               'div',
               { className: 'dsm-wb-footer' },
