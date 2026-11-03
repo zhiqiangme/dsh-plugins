@@ -7,6 +7,7 @@
  *   - 后端健康探针（wb2api 的 `/healthz` / hub 的 `/health`）不通，或账号池暂无可用账号（此时目录不可信）时整轮跳过；
  *   - 已选且已有的模型缺席时保留清单；其余移除需两轮确认，HUB 的同批缓存或降级目录不累计确认。
  *   - 任一对话正在运行时延后整轮同步，空闲后的下一轮再拉取最新目录。
+ * 用户在面板手动点「刷新」时不要求两轮确认（缺席的勾选已由面板先从白名单剔除）；健康检查和对话运行保护照旧。
  *
  * 网关密钥：syncModels 每轮会调 ensureProxyCredential，它只读凭据库，值已在（且不是占位值）就不写，
  * 所以定时同步不会每轮重写 WORKBUDDY_PROXY_KEY；推迟写入的那一轮连读都不读。
@@ -86,7 +87,8 @@ export function createModelResync(options) {
     }
   };
 
-  async function runOnce() {
+  async function runOnce(manual) {
+    const label = manual ? '手动刷新' : '定时同步';
     const models = resolved.models;
     if (!models?.enabled) return { state: 'disabled' };
     const blocked = modelSyncBlocked(syncBlocker);
@@ -99,7 +101,7 @@ export function createModelResync(options) {
     // 双区域的固定分组不看看板出口，不能用当前出口的账号状态挡住另一组目录。
     if (!health.ok || (!models.hubDual && !health.servable)) {
       const result = { state: 'not-ready', reason: health.ok ? '账号池暂无可用账号' : health.reason };
-      note('info', `定时同步跳过：${result.reason}`);
+      note('info', `${label}跳过：${result.reason}`);
       return result;
     }
 
@@ -112,31 +114,34 @@ export function createModelResync(options) {
     }
     const result = await sync({
       spec: resolved.spec, models, editor: editor(), credentials: credentials(), env, syncBlocker,
-      removalGuard: realmSwitched ? undefined : removalGuard,
+      removalGuard: realmSwitched || manual ? undefined : removalGuard,
       // 区域分组不随看板出口变化，切换那一轮也照常要两轮确认。
-      regionGuard: removalGuard,
+      regionGuard: manual ? undefined : removalGuard,
     });
     if (watchRealm && ['updated', 'unchanged', 'deferred'].includes(result.state)) {
       syncedRealm = result.realm ?? health.realm ?? syncedRealm;
     }
     if (result.state === 'updated') {
       lastNote = undefined;
-      logger.info(`[${name}] 定时同步：模型列表已更新为 ${result.entries.length} 个模型 → ${result.documentPath}`);
+      logger.info(`[${name}] ${label}：模型列表已更新为 ${result.entries.length} 个模型 → ${result.documentPath}`);
     } else if (result.state === 'deferred' || result.state === 'busy') {
-      note('info', `定时同步：${result.reason}`);
+      note('info', `${label}：${result.reason}`);
     } else if (result.state === 'unchanged') {
       lastNote = undefined;
     } else if (result.state !== 'disabled') {
-      note('warn', `定时同步未完成：${result.reason ?? result.state}`);
+      note('warn', `${label}未完成：${result.reason ?? result.state}`);
     }
     logCredential(result.credential);
     return result;
   }
 
-  /** 单轮同步；上一轮还没结束就跳过，避免两轮交错（确认状态也会乱）。 */
-  function tick() {
-    if (running) return running;
-    running = runOnce()
+  /**
+   * 单轮同步；上一轮还没结束就跳过，避免两轮交错（确认状态也会乱）。
+   * 手动刷新不能拿正在进行的自动一轮充数：那一轮仍要两轮确认，等它结束再按手动规则跑一轮。
+   */
+  function tick({ manual = false } = {}) {
+    if (running) return manual ? running.then(() => tick({ manual })) : running;
+    running = runOnce(manual)
       .then((result) => { lastSync = { at: new Date().toISOString(), state: result.state }; return result; })
       .catch((error) => {
         const reason = error instanceof Error ? error.message : String(error);

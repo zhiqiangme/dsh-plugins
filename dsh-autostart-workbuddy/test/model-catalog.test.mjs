@@ -2,12 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { resolvePluginConfig } from '../lib/config.js';
-import { confirmRemovals, fetchModels, missingSelectedModels, syncModels } from '../lib/models.js';
-import { applySelection, describeModels } from '../lib/web.js';
+import { confirmRemovals, fetchModels, missingSelectedModels, prunableSelection, syncModels } from '../lib/models.js';
+import { applySelection, describeModels, pruneMissingSelection } from '../lib/web.js';
 import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 const FLASH = { id: 'flash', name: 'Flash', credits: 'x0' };
 const KIMI = { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', credits: 'x0.97', context_length: 1000000 };
+const OTHER = { id: 'other', name: 'Other', credits: 'x1' };
 
 async function fixture(t, mode, { all = false } = {}) {
   const state = { data: [FLASH, KIMI], catalog: { source: 'remote', fetched_at: 100, ignored: 'do-not-forward' } };
@@ -96,6 +97,43 @@ for (const mode of ['dual', 'hub', 'wb2api']) {
     assert.ok(!provider().models.some((model) => model.name.startsWith('Changed Flash')));
   });
 
+  test(`${mode}：手动刷新以当前目录为准，当轮移除缺席的已选模型并剔除白名单`, async (t) => {
+    const { state, resolved, editor, options, provider } = await fixture(t, mode);
+    const kimiId = mode === 'hub' ? KIMI.id : `cn:${KIMI.id}`;
+    state.data = [FLASH];
+    state.catalog.fetched_at += 300;
+    assert.equal((await syncModels({ ...options, removalGuard: {} })).state, 'deferred', '自动同步仍保留缺席模型');
+
+    const panel = await describeModels({ ...options, gateway: resolved.gateway });
+    const payload = await pruneMissingSelection({ resolved, editor, gateway: resolved.gateway, payload: panel });
+    assert.deepEqual(payload.pruned.map((row) => row.id), ['cn:kimi-k3.1-pro']);
+    assert.match(payload.pruned[0].label, /Kimi/);
+    assert.ok(!payload.models.some((row) => row.unavailable));
+    assert.ok(!payload.only.includes('cn:kimi-k3.1-pro'));
+    assert.deepEqual(editor.entry('dsh-autostart-workbuddy').options.config.models.only, payload.only);
+    assert.deepEqual(resolved.models.only, payload.only);
+    // 手动那一轮不带移除确认；同一份缓存目录也当轮生效。
+    assert.equal((await syncModels({ ...options, models: resolved.models })).state, 'updated');
+    assert.ok(!provider().models.some((model) => model.id === kimiId));
+    assert.equal((await syncModels({ ...options, models: resolved.models, removalGuard: {} })).state, 'unchanged', '之后的自动同步不再拦');
+  });
+
+  test(`${mode}：某个范围的勾选全部缺席时手动刷新也保留，不变成同步全部`, async (t) => {
+    const { state, resolved, editor, options, provider } = await fixture(t, mode);
+    const before = structuredClone(provider());
+    const only = [...resolved.models.only];
+    state.data = [OTHER];
+    const panel = await describeModels({ ...options, gateway: resolved.gateway });
+    const payload = await pruneMissingSelection({ resolved, editor, gateway: resolved.gateway, payload: panel });
+    assert.equal(payload.pruned, undefined);
+    assert.deepEqual(payload.models.filter((row) => row.unavailable).map((row) => row.id), ['cn:flash', 'cn:kimi-k3.1-pro']);
+    assert.deepEqual(editor.entry('dsh-autostart-workbuddy').options.config.models.only, only);
+    const synced = await syncModels(options);
+    assert.equal(synced.state, 'deferred', '保留的勾选照常受缺席保护');
+    assert.match(synced.reason, /cn:flash/);
+    assert.deepEqual(provider(), before);
+  });
+
   test(`${mode}：显式排除和目录可用时的筛选规则仍能移除模型`, async (t) => {
     const { state, options, provider } = await fixture(t, mode);
     const kimiId = mode === 'hub' ? KIMI.id : `cn:${KIMI.id}`;
@@ -151,6 +189,14 @@ test('缺席检测遵守区域及排除，空白名单不制造缺席条目', ()
   assert.deepEqual(missingSelectedModels(catalog, ['cn:kimi'], 'cn', ['kimi']), []);
   assert.deepEqual(missingSelectedModels([{ id: 'cn:flash' }], ['cn:kimi'], undefined, ['kimi']), ['cn:kimi'], 'wb2api 的排除项仍须使用完整 id');
   assert.deepEqual(missingSelectedModels(catalog, [], 'cn'), []);
+});
+
+test('手动刷新只剔除不会让范围变成同步全部的缺席勾选', () => {
+  assert.deepEqual(prunableSelection(['cn:a', 'cn:b', 'global:c'], ['cn:a'], true), ['cn:a']);
+  assert.deepEqual(prunableSelection(['cn:a', 'global:c'], ['cn:a'], true), [], 'hub 按区域生效：CN 唯一的勾选不剔除');
+  assert.deepEqual(prunableSelection(['cn:a', 'global:c'], ['cn:a'], false), ['cn:a'], 'wb2api 整张白名单一起生效');
+  assert.deepEqual(prunableSelection(['cn:a'], ['cn:a'], false), []);
+  assert.deepEqual(prunableSelection(['cn:a', 'cn:b'], ['cn:x'], true), [], '不在白名单里的缺席项不算');
 });
 
 test('目录来源只透传同步确认字段', async (t) => {

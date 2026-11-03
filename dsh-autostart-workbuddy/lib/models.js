@@ -320,6 +320,18 @@ export function missingSelectedModels(catalog, only = [], realm, exclude = []) {
   });
 }
 
+/**
+ * 手动刷新时可以从白名单剔除的缺席勾选。
+ * 白名单留空表示同步全部：hub 的键按区域分别生效，wb2api 整张白名单一起生效。
+ * 某个范围的勾选若全部缺席就整组保留，否则剔除后该范围会变成同步全部模型，缩水目录下尤其不能这样。
+ */
+export function prunableSelection(only = [], missing = [], realmScoped = false) {
+  const gone = new Set(missing);
+  const scope = (id) => (realmScoped ? regionPrefixOf(id) ?? '' : '');
+  const kept = new Set(only.filter((id) => !gone.has(id)).map(scope));
+  return [...gone].filter((id) => only.includes(id) && kept.has(scope(id)));
+}
+
 class IncompleteModelCatalogError extends Error {
   constructor(missing) {
     super(`后端目录暂缺已选模型 ${missing.join(', ')}，保留现有列表；如需移除，请取消勾选后保存`);

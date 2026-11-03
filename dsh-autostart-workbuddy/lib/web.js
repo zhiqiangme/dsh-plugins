@@ -46,6 +46,7 @@ import {
   modelDisplayName,
   missingSelectedModels,
   panelApiKey,
+  prunableSelection,
   scopedSelection,
   selectionKey,
   selectModels,
@@ -342,6 +343,35 @@ export async function applySelection({ resolved, editor, credentials, env = proc
       created: synced.created,
       credential: synced.credential?.state,
     },
+  };
+}
+
+/**
+ * 手动刷新的收尾：把本次目录里已不存在的勾选从白名单剔除，面板不再列出，后续同步也不再为它们保留清单。
+ * 只改白名单，不动开关和规则；剔除后会让某个区域变成"同步全部"的勾选整组保留（见 prunableSelection）。
+ *
+ * @param {{ resolved: object, editor?: object, gateway?: string, payload: object }} options
+ *   `payload` 是 describeModels 的结果，缺席的已选模型在里面标为 unavailable。
+ * @returns {Promise<object>} 去掉已剔除行的面板数据；`pruned` 列出被移除的 { id, label }
+ */
+export async function pruneMissingSelection({ resolved, editor, gateway, payload }) {
+  if (!payload?.ok) return payload;
+  const missing = payload.models.filter((row) => row.unavailable).map((row) => row.id);
+  const prune = new Set(prunableSelection(payload.only, missing, gateway === 'hub'));
+  const entry = prune.size ? findConfigEntry(editor, { id: PLUGIN_ID }) : undefined;
+  if (!entry || typeof editor?.edit !== 'function') return payload;
+  // payload.only 已按区域展开（scopedSelection），与面板保存的形式一致，写回不改变其余勾选的含义。
+  const only = payload.only.filter((id) => !prune.has(id));
+  await editor.edit(entry, (current) => {
+    const config = plainObject(current);
+    return { ...config, models: { ...plainObject(config.models), only } };
+  });
+  resolved.models = { ...resolved.models, only };
+  return {
+    ...payload,
+    only,
+    models: payload.models.filter((row) => !prune.has(row.id)),
+    pruned: payload.models.filter((row) => prune.has(row.id)).map(({ id, label }) => ({ id, label })),
   };
 }
 
@@ -756,11 +786,19 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
             if (body.value.action === 'refresh') {
               // 刷新只沿用已保存的选择：不能把当前可见的 GL 子集写成永久白名单。
               // 与定时同步共用健康检查、移除确认和并发保护；恢复的模型当轮即可补回。
-              const synced = await resync.tick();
-              const payload = await describeModels({
+              const describe = () => describeModels({
                 spec: resolved.spec, models: resolved.models, managedExe: resolved.managedExe,
                 editor: configEditorOf(ctx), env, gateway: resolved.gateway, probe: gatewayDriver(resolved).probe, credentials: credentialsOf(ctx),
               });
+              if (body.value.manual !== true) {
+                const synced = await resync.tick();
+                json(res, 200, { ...(await describe()), sync: { state: synced.state, reason: synced.reason } });
+                return;
+              }
+              // 打开卡片、切换网关后的自动刷新保留缺席保护（HUB 偶发缩水目录）；用户手点「刷新」则以本次目录为准：
+              // 先剔除后端已不列出的勾选（名称取自同步前的 DSH 清单），再跳过两轮确认同步，当轮从 DSH 移除。
+              const payload = await pruneMissingSelection({ resolved, editor: configEditorOf(ctx), gateway: resolved.gateway, payload: await describe() });
+              const synced = await resync.tick({ manual: true });
               json(res, 200, { ...payload, sync: { state: synced.state, reason: synced.reason } });
               return;
             }

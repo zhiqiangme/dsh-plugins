@@ -232,6 +232,53 @@ for (const enabled of [true, false]) {
   });
 }
 
+test('POST refresh：自动刷新保留缺席的已选模型，手动刷新当轮移除并剔除白名单', async (t) => {
+  const alpha = { id: 'cn:alpha', name: 'Alpha' };
+  const beta = { id: 'global:beta', name: 'Beta' };
+  let upstream = [alpha, beta];
+  const server = createHttpServer((_req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ data: upstream }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  const only = [alpha.id, beta.id];
+  const resolved = configFor(server.address().port, { only });
+  const editor = editorFor({ enabled: true, only });
+  const credentials = createFakeCredentials();
+  const ctx = fakeCtx({ configEditor: editor, credentials });
+  const resync = createModelResync({
+    resolved, logger: ctx.logger, env: {}, probe: async () => ({ ok: true, servable: true }),
+    editor: () => editor, credentials: () => credentials,
+  });
+  registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: {}, resync });
+  const handler = ctx.routes.find((route) => route.path === MODELS_PATH).handler;
+  const post = async (body) => { const res = fakeRes(); await handler(fakeReq('POST', { body: JSON.stringify(body) }), res); return res.body; };
+  const ids = () => editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((model) => model.id);
+  // 夹具 profile 自带旧条目，自动同步要两轮确认才对齐。
+  await resync.tick();
+  await resync.tick();
+  assert.deepEqual(ids(), only);
+
+  upstream = [beta];
+  const auto = await post({ action: 'refresh' });
+  assert.equal(auto.sync.state, 'deferred');
+  assert.deepEqual(ids(), only);
+  assert.ok(auto.models.some((row) => row.id === alpha.id && row.unavailable && row.selected));
+  assert.equal(auto.pruned, undefined);
+
+  const manual = await post({ action: 'refresh', manual: true });
+  assert.equal(manual.sync.state, 'updated', manual.sync.reason);
+  assert.deepEqual(ids(), [beta.id]);
+  assert.deepEqual(manual.models.map((row) => row.id), [beta.id]);
+  assert.deepEqual(manual.only, [beta.id]);
+  assert.deepEqual(manual.pruned.map((row) => row.id), [alpha.id]);
+  assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models.only, [beta.id]);
+  assert.deepEqual(resolved.models.only, [beta.id]);
+
+  assert.equal((await post({ action: 'refresh' })).sync.state, 'unchanged', '自动刷新不再提示缺席');
+});
+
 test('切换后自动刷新再保存：立即恢复地址和凭据，不改白名单和规则；再次切换后拒绝旧请求', async (t) => {
   const fixture = startFixture({ TEST_MODE: 'http-models', TEST_TOKEN: 'test-key' });
   t.after(fixture.stop);

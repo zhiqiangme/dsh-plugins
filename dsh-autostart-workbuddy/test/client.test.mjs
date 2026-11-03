@@ -224,12 +224,12 @@ test('目录缺席项可见且能取消，不伪报倍率或后端模型数量',
   const text = collectText(tree).join('\n');
   assert.match(text, /目录暂缺/);
   assert.match(text, /后端共 2 个模型，已勾选 2 个/);
-  assert.match(text, /若这些模型已在 DSH 中，将暂缓更新清单/);
+  assert.match(text, /自动同步会保留勾选并暂缓更新清单；点「刷新」会按当前目录移除它们/);
   assert.doesNotMatch(text, /xundefined|xnull/);
   const row = collectByType(tree, 'label').find((node) => node.props.title === missing.id);
   collectByType(row, 'input')[0].props.onChange();
   tree = app.renderCard();
-  assert.doesNotMatch(collectText(tree).join('\n'), /若这些模型已在 DSH 中，将暂缓更新清单/);
+  assert.doesNotMatch(collectText(tree).join('\n'), /自动同步会保留勾选并暂缓更新清单/);
   await button(collectByType(tree, 'button'), '保存并同步').props.onClick();
   assert.deepEqual(requests[0].only, ['cn:alpha']);
 
@@ -284,7 +284,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
   assert.deepEqual(Object.keys(entry.zh).sort(), Object.keys(entry.en).sort(), 'zh/en 键集合应一致');
 
   const expected = [
-    'modelUnavailable', 'missingSelected',
+    'modelUnavailable', 'missingSelected', 'prunedMissing',
     'emptyFiltered', 'recoveryOff', 'recoveryExternal',
     'accountOverview', 'balanceOverview', 'balanceUnknown', 'balanceUnsupported', 'balanceUnavailable', 'balanceHint', 'balanceUpdated',
     'hubFollowKey',
@@ -438,7 +438,7 @@ test('刷新会立即同步 DSH，沿用保存的选择；暂时消失的白名�
     },
   });
   await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
-  assert.deepEqual(requests[0], { path: '/plugins/dsh-autostart-workbuddy/models', method: 'POST', body: { action: 'refresh' } });
+  assert.deepEqual(requests[0], { path: '/plugins/dsh-autostart-workbuddy/models', method: 'POST', body: { action: 'refresh', manual: true } });
   assert.ok(collectText(renderCard()).includes('后端共 1 个模型，已勾选 1 个'));
   await button(collectByType(renderCard(), 'button'), '保存并同步').props.onClick();
   assert.deepEqual(requests[1].body, { enabled: true, only: ['global:beta', 'cn:alpha'] });
@@ -456,6 +456,19 @@ test('同步全部模型时重复保存仍保留空白名单，网络恢复后�
   await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
   await button(collectByType(renderCard(), 'button'), '保存并同步').props.onClick();
   assert.deepEqual(requests[1], { enabled: true, only: [] });
+});
+
+test('手动刷新移除缺席勾选后提示被移除的模型，同步延后时一并说明', async () => {
+  const pruned = [{ id: 'cn:dsv4', label: 'DeepSeek-V4.1-Flash CN 0.11' }];
+  let sync = { state: 'updated', count: 1 };
+  const { renderCard } = boot(modelStates(true), {
+    fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true, enabled: true, only: ['global:beta'], models: [ROWS[1]], pruned, sync }) }),
+  });
+  await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
+  assert.ok(collectText(renderCard()).includes('已移除后端不再提供的模型：DeepSeek-V4.1-Flash CN 0.11'));
+  sync = { state: 'busy', reason: '有对话正在运行' };
+  await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
+  assert.ok(collectText(renderCard()).includes('已移除后端不再提供的模型：DeepSeek-V4.1-Flash CN 0.11 有对话正在运行'));
 });
 
 test('刷新能读取上游但同步失败时，面板显示同步错误', async () => {

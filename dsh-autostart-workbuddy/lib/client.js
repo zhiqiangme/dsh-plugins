@@ -217,7 +217,8 @@ window.__ModuleLoader__.load({
       saving: '保存中…',
       count: '后端共 {total} 个模型，已勾选 {picked} 个',
       modelUnavailable: '目录暂缺',
-      missingSelected: '后端目录暂未列出部分已选模型。勾选记录仍保留；若这些模型已在 DSH 中，将暂缓更新清单。你可以取消勾选后保存，也可以等待目录恢复。',
+      missingSelected: '后端目录暂未列出部分已选模型。自动同步会保留勾选并暂缓更新清单；点「刷新」会按当前目录移除它们。若某个区域勾选的模型全部缺席，刷新仍会保留，请取消勾选并改选其他模型后保存。',
+      prunedMissing: '已移除后端不再提供的模型：{models}',
       vision: '视觉',
       emptyBackend: '后端没有返回任何模型。',
       emptyHint: '一个都没勾 = 同步后端全部模型（白名单留空的既有语义）。',
@@ -378,7 +379,8 @@ window.__ModuleLoader__.load({
       saving: 'Saving…',
       count: '{total} models on the backend, {picked} selected',
       modelUnavailable: 'Missing from catalog',
-      missingSelected: 'Some selected models are missing from the backend catalog. Selections are kept; if these models are already in DSH, updating the list is deferred. Uncheck and save to remove them, or wait for the catalog to recover.',
+      missingSelected: 'Some selected models are missing from the backend catalog. Automatic sync keeps them and defers updating the list; click Refresh to remove them based on the current catalog. If every selected model in a region is missing, Refresh keeps them, so uncheck them, pick other models and save.',
+      prunedMissing: 'Removed models the backend no longer lists: {models}',
       vision: 'vision',
       emptyBackend: 'The backend returned no models.',
       emptyHint: 'Selecting nothing means “sync every backend model” (the existing meaning of an empty allow-list).',
@@ -1491,14 +1493,15 @@ window.__ModuleLoader__.load({
       const [saving, setSaving] = useState(false);
       const [notice, setNotice] = useState(undefined);
 
-      const load = useCallback(async (refresh = true) => {
+      const load = useCallback(async (refresh = true, manual = false) => {
         setPhase('loading');
         setNotice(undefined);
         try {
           // 保存后只回读；首次打开、刷新及重试则立即对齐 DSH，无需再点保存。
+          // 只有手点「刷新」带 manual：以当前目录为准移除缺席的勾选，自动刷新仍保留它们。
           const payload = refresh === false
             ? await request(MODELS_PATH, 'GET')
-            : await request(MODELS_PATH, 'POST', { action: 'refresh' });
+            : await request(MODELS_PATH, 'POST', manual === true ? { action: 'refresh', manual: true } : { action: 'refresh' });
           if (!payload.ok) {
             setRows([]);
             setPicked(new Set());
@@ -1516,10 +1519,14 @@ window.__ModuleLoader__.load({
           setPicked(selected);
           setSavedPicked(new Set(selected));
           setPhase('ready');
+          // 手动刷新移除的模型只记名称，渲染时再拼本地化前缀（理由同上）。
+          const pruned = payload.pruned?.length ? payload.pruned.map((row) => row.label).join(', ') : undefined;
           if (['failed', 'skipped', 'not-ready'].includes(payload.sync?.state)) {
-            setNotice({ kind: 'error', text: payload.sync.reason ?? payload.sync.state });
+            setNotice({ kind: 'error', pruned, text: payload.sync.reason ?? payload.sync.state });
           } else if (['busy', 'deferred'].includes(payload.sync?.state)) {
-            setNotice({ kind: 'ok', text: payload.sync.reason });
+            setNotice({ kind: 'ok', pruned, text: payload.sync.reason });
+          } else if (pruned) {
+            setNotice({ kind: 'ok', pruned });
           }
         } catch (error) {
           setMeta({});
@@ -1891,7 +1898,7 @@ window.__ModuleLoader__.load({
               },
               t('clearAll'),
             ),
-            h('button', { type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', disabled: Boolean(saving || backendBusy), onClick: load }, t('refresh')),
+            h('button', { type: 'button', className: 'dsm-wb-btn dsm-wb-btn-outline', disabled: Boolean(saving || backendBusy), onClick: () => load(true, true) }, t('refresh')),
             h(
               'button',
               {
@@ -1958,7 +1965,7 @@ window.__ModuleLoader__.load({
               key: 'notice',
               className: `dsm-wb-notice ${notice.kind === 'error' ? 'dsm-wb-notice-error' : 'dsm-wb-notice-ok'}`,
             },
-            notice.text,
+            [notice.pruned && t('prunedMissing', { models: notice.pruned }), notice.text].filter(Boolean).join(' '),
           ),
         );
       }

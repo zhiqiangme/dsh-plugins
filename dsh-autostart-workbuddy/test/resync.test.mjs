@@ -261,6 +261,26 @@ test('上一轮未结束时再次触发不会并发同步', async () => {
   assert.equal(calls, 1);
 });
 
+test('手动刷新不复用进行中的自动一轮，等它结束后按手动规则再跑一轮', async () => {
+  const calls = [];
+  let release;
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true } }, { PATH: '' });
+  const resync = createModelResync({
+    resolved, logger: memoryLogger(), probe: READY, editor: () => undefined, credentials: () => undefined,
+    sync: (options) => {
+      calls.push(Boolean(options.removalGuard || options.regionGuard));
+      return calls.length === 1 ? new Promise((resolve) => { release = () => resolve({ state: 'deferred' }); }) : { state: 'updated', entries: [] };
+    },
+  });
+  const auto = resync.tick();
+  const manual = resync.tick({ manual: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  assert.equal((await auto).state, 'deferred');
+  assert.equal((await manual).state, 'updated');
+  assert.deepEqual(calls, [true, false], '手动那一轮不带移除确认');
+});
+
 test('定时器按间隔触发，stop 后不再触发', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let calls = 0;
