@@ -22,12 +22,27 @@ export function hasModelRules(raw) {
 
 export function applyModelRules(models, raw) {
   const rules = normalizeModelRules(raw);
-  const list = models.filter((model) => {
+  return models.filter((model) => {
     const price = creditValue(model.credits);
     return (!rules.freeOnly || price === 0) && (!rules.visionOnly || model.supports_images === true) &&
       (rules.maxCredits === null || (price !== null && price <= rules.maxCredits));
   });
-  if (rules.sort === 'name') list.sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
-  if (rules.sort === 'credits') list.sort((a, b) => (creditValue(a.credits) ?? Infinity) - (creditValue(b.credits) ?? Infinity));
-  return list;
+}
+
+/**
+ * 按「DSH 中的顺序」规则排序，`upstream` 保持传入顺序。
+ *
+ * 键必须与面板的 filterRows（client.js）相同：名称比展示名而不是上游原名，倍率比价格且未知价格排最后。
+ * 面板是这个顺序的预览，任一边换键，DSH 的顺序就和用户看到的对不上。
+ *
+ * @param {object[]} list 待排序的模型或条目
+ * @param {unknown} raw 规则
+ * @param {{ label: (item: object) => string, credits: (item: object) => unknown }} keys
+ */
+export function sortByRule(list, raw, { label, credits }) {
+  const { sort } = normalizeModelRules(raw);
+  const sorted = [...list];
+  if (sort === 'name') sorted.sort((a, b) => label(a).localeCompare(label(b)));
+  if (sort === 'credits') sorted.sort((a, b) => (creditValue(credits(a)) ?? Infinity) - (creditValue(credits(b)) ?? Infinity));
+  return sorted;
 }

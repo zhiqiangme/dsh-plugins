@@ -10,3 +10,7 @@ test('免费、倍率和视觉规则跟随新模型，未知价格不被当成�
   assert.deepEqual(planModelEntries([...list, { id: 'new', credits: 0 }], { rules: { freeOnly: true } }).map((x) => x.id), ['a', 'new']);
   assert.deepEqual(applyModelRules(list, { maxCredits: 0 }).map((x) => x.id), ['a']);
 });
+test('名称排序比展示名：上游原名相同时按区域标签分先后，与面板一致', () => {
+  const same = [{ id: 'b', name: 'Same', realm: 'intl' }, { id: 'a', name: 'Same', realm: 'cn' }];
+  assert.deepEqual(planModelEntries(same, { rules: { sort: 'name' } }).map((x) => x.name), ['Same CN Free', 'Same GL Free']);
+});

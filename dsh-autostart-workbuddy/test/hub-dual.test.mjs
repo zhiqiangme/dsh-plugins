@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { resolvePluginConfig } from '../lib/config.js';
-import { describeHubSettings, describeModels, setHubMode } from '../lib/web.js';
+import { applySelection, describeHubSettings, describeModels, setHubMode } from '../lib/web.js';
 import { HUB_ROUTER_PATH, syncModels } from '../lib/models.js';
 import { createHubRouter } from '../lib/hub-router.js';
 import { diagnose } from '../lib/diagnostics.js';
@@ -12,9 +13,10 @@ import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../f
  * 假 hub：与 v1.7.16 的 _request_realm 同序——绑定区域的 Key 优先，其次 X-Realm 头，最后看板全局出口。
  * cn-secret / gl-secret / hw-secret 是绑定 Key；其余 Key 视为未绑定，boundShared 时模拟网关 Key 在 HUB 里被绑到国际。
  * codearts 模拟在 HUB 设置里启用了 CodeArts（/health 才报 configured），codeartsDown 模拟它的目录取不到。
+ * catalog 按出口覆盖目录，用于需要多个模型的用例。
  */
 async function setup(t) {
-  const hub = { realm: 'intl', wrongBinding: false, boundShared: false, codearts: false, codeartsDown: false, hits: [], chats: [] };
+  const hub = { realm: 'intl', wrongBinding: false, boundShared: false, codearts: false, codeartsDown: false, catalog: undefined, hits: [], chats: [] };
   const server = createServer(async (req, res) => {
     if (req.url === '/health') return res.end(JSON.stringify({ realm: hub.realm, accounts: 1, accounts_ready: 1, ...(hub.codearts ? { codearts: { configured: true, accounts: 1, healthy: 1 } } : {}) }));
     const key = req.headers.authorization;
@@ -29,7 +31,7 @@ async function setup(t) {
     if (realm === 'codearts' && hub.codeartsDown) { res.writeHead(502); return res.end('{}'); }
     res.setHeader('content-type', 'application/json');
     // CodeArts 的目录没有 credits，catalog.source 也不是 remote。
-    const data = realm === 'codearts' ? [{ id: 'shared', name: 'Shared' }, { id: 'GLM-5.2', name: 'GLM-5.2' }] : [{ id: 'shared', name: 'Shared', credits: 'x0.00' }];
+    const data = hub.catalog?.[realm] ?? (realm === 'codearts' ? [{ id: 'shared', name: 'Shared' }, { id: 'GLM-5.2', name: 'GLM-5.2' }] : [{ id: 'shared', name: 'Shared', credits: 'x0.00' }]);
     res.end(JSON.stringify(req.url.endsWith('/models') ? { realm, data } : { realm }));
   });
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
@@ -45,6 +47,15 @@ async function setup(t) {
   t.after(() => new Promise((done) => { router.stop(); proxy.closeAllConnections(); proxy.close(done); }));
   const config = () => editor.entry('llm-pi-ai').options.config;
   return { hub, resolved, editor, credentials, options, config };
+}
+
+/** 面板实际用的 filterRows：从浏览器 bundle 取，而不是在测试里抄一份，两边的排序才不会各改各的。 */
+function panelFilterRows() {
+  let registration;
+  const window = { __ModuleLoader__: { load: (value) => { registration = value; } } };
+  // eslint-disable-next-line no-new-func -- 故意在沙箱里跑浏览器 bundle
+  new Function('window', 'document', 'console', 'fetch', readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'))(window, {}, console, fetch);
+  return registration.factory(() => ({})).filterRows;
 }
 
 /** 按 llm-pi-ai 的方式发一条对话：provider 的 headers 加上凭据库里 apiKeyEnv 的值。 */
@@ -298,6 +309,46 @@ test('CodeArts 取不到目录不拖累 CN / GL：已勾选的 HW 模型保留�
   resolved.models.only = ['cn:shared', 'global:shared'];
   assert.equal((await sync()).state, 'updated');
   assert.deepEqual(ids(), ['cn:shared', 'global:shared']);
+});
+
+test('规则排序跨区域生效：DSH 的顺序与面板一致，改规则后保存立即重排', async (t) => {
+  const { hub, resolved, editor, credentials, options, config } = await setup(t);
+  const filterRows = panelFilterRows();
+  const ids = () => config().providers.workbuddy.models.map((model) => model.id);
+  const sync = () => syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} });
+  const only = ['cn:kimi', 'cn:glm', 'cn:flash', 'global:kimi', 'global:flash', 'codearts:GLM-5.2', 'codearts:flash'];
+  const save = (sort) => applySelection({ resolved, editor, credentials, env: {}, only, enabled: true, rules: { sort } });
+  const panel = async (sort) => {
+    const snapshot = await describeModels({ ...options, spec: resolved.spec, models: resolved.models, gateway: 'hub' });
+    return filterRows(snapshot.models, { sort }).map((row) => row.id).filter((id) => only.includes(id));
+  };
+  hub.codearts = true;
+  hub.catalog = {
+    cn: [{ id: 'kimi', name: 'Kimi', credits: 'x0.97' }, { id: 'glm', name: 'GLM', credits: 'x0.69' }, { id: 'flash', name: 'Flash', credits: 'x0.11' }],
+    intl: [{ id: 'kimi', name: 'Kimi', credits: 'x0.97' }, { id: 'flash', name: 'Flash', credits: 'x0.11' }],
+    codearts: [{ id: 'GLM-5.2', name: 'GLM-5.2' }, { id: 'flash', name: 'Flash' }],
+  };
+  resolved.models.only = only;
+  assert.equal((await setHubMode({ ...options, enabled: true })).ok, true);
+  assert.deepEqual(ids(), only, '上游顺序仍是区域一批一批');
+  assert.deepEqual(await panel('upstream'), only);
+
+  const byName = ['cn:flash', 'global:flash', 'codearts:flash', 'cn:glm', 'codearts:GLM-5.2', 'cn:kimi', 'global:kimi'];
+  assert.equal((await save('name')).sync.state, 'updated', '只改顺序也要写回 DSH');
+  assert.deepEqual(ids(), byName);
+  assert.deepEqual(await panel('name'), byName);
+  assert.equal((await sync()).state, 'unchanged', '排好后重复同步不再写入');
+
+  // CodeArts 目录暂缺时保留的条目也参与排序，否则那一轮 HW 模型会被甩到末尾。
+  hub.codeartsDown = true;
+  assert.equal((await sync()).state, 'unchanged');
+  assert.deepEqual(ids(), byName);
+  hub.codeartsDown = false;
+
+  const byCredits = ['cn:flash', 'global:flash', 'cn:glm', 'cn:kimi', 'global:kimi', 'codearts:GLM-5.2', 'codearts:flash'];
+  assert.equal((await save('credits')).sync.state, 'updated');
+  assert.deepEqual(ids(), byCredits, '未定价的 HW 排在最后');
+  assert.deepEqual(await panel('credits'), byCredits);
 });
 
 test('网关 Key 绑了区域时 CodeArts 只跳过并说明；HW Key 校验通过才保存，走错出口的不写入', async (t) => {

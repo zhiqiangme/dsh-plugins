@@ -23,7 +23,7 @@ import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { isFile, resolveDshHome } from './services.js';
-import { applyModelRules, hasModelRules } from './model-rules.js';
+import { applyModelRules, hasModelRules, sortByRule } from './model-rules.js';
 import { assertModelSyncIdle, modelSyncBlocked, ModelSyncBusyError } from './model-sync-guard.js';
 
 /** llm-pi-ai 的包名：按包名找 Loader 条目，profile 里的行 id 可能被用户改过。 */
@@ -208,6 +208,9 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     if (deferred) return { state: 'deferred', reason: '区域目录缺项，等待新的可靠目录再次确认后再移除', realm: 'dual', documentPath };
   }
   const entries = groups.flatMap((group) => group.entries.map((entry) => ({ ...entry, id: selectionKey({ id: entry.id, realm: group.realm }) })));
+  const credits = new Map(groups.flatMap((group) => group.models.map((model) => [selectionKey(model), model.credits])));
+  // 面板把所有区域混在一起排，这里也要在合并后的整张清单上排；只在区域内排序的话，DSH 永远是 CN → GL → HW 三段。
+  const ordered = (list) => sortByRule(list, models.rules, { label: (entry) => entry.name, credits: (entry) => credits.get(entry.id) });
   const plan = (current) => {
     const config = plainObject(current);
     verifySelection(config);
@@ -215,7 +218,7 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     if (conflicted) throw new Error(`provider ${conflicted} 已被占用`);
     const sharedRef = proxyCredentialRef(models);
     const kept = hasCodeArts ? [] : retainedCodeArts(config, models.provider, models.only);
-    const planned = withProviderModels(config, models.provider, [...entries, ...kept], providerSkeleton(models, spec)).config;
+    const planned = withProviderModels(config, models.provider, ordered([...entries, ...kept]), providerSkeleton(models, spec)).config;
     const provider = planned.providers[models.provider];
     const headers = Object.fromEntries(Object.entries(plainObject(provider.headers)).filter(([key]) => key.toLowerCase() !== 'x-realm'));
     return dropDualProviders({ ...planned, providers: { ...planned.providers, [models.provider]: { ...provider, baseURL, apiKeyEnv: sharedRef, ...(provider.headers ? { headers } : {}) } } }, models.provider);
@@ -467,8 +470,8 @@ export function modelEfforts(model, efforts) {
 /**
  * 把 `/v1/models` 的原始条目规划成 `llm-pi-ai` 的模型配置条目。
  *
- * 顺序规则：配了 `only` 就按 `only` 里的先后顺序（保留用户自己排的展示顺序），
- * 否则按后端返回顺序（上游本身就是 cn: 一批、global: 一批）。
+ * 顺序规则：`rules.sort` 指定了名称或倍率就按它排（见 sortByRule）；否则配了 `only` 就按 `only`
+ * 里的先后顺序（保留用户自己排的展示顺序），再否则按后端返回顺序（上游本身就是 cn: 一批、global: 一批）。
  *
  * @param {object[]} models 后端返回的模型
  * @param {{ only?: string[], exclude?: string[], efforts?: string[] | 'auto' }} options
@@ -478,7 +481,8 @@ export function planModelEntries(models, options = {}) {
   const efforts = options.efforts === 'auto' ? 'auto' : Array.isArray(options.efforts) ? options.efforts : DEFAULT_EFFORTS;
 
   const entries = [];
-  for (const model of applyModelRules(selectModels(models, options.only), options.rules)) {
+  const selected = applyModelRules(selectModels(models, options.only), options.rules);
+  for (const model of sortByRule(selected, options.rules, { label: modelDisplayName, credits: (item) => item.credits })) {
     if (exclude.has(model.id) || exclude.has(selectionKey(model))) continue;
     const entry = { id: model.id, name: modelDisplayName(model) };
     const contextWindow = positiveInt(model.context_length);
