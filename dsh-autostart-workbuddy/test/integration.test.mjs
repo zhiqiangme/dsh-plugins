@@ -17,7 +17,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { apply, inject, name } from '../lib/index.js';
-import { BACKEND_PATH, MODELS_PATH } from '../lib/web.js';
+import { BACKEND_PATH, MODELS_PATH, registerPanelRoutes } from '../lib/web.js';
+import { resolvePluginConfig } from '../lib/config.js';
 import { HUB_ROUTER_PATH } from '../lib/models.js';
 import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
 
@@ -142,6 +143,46 @@ test('默认 HUB 合并路由挂载后，保存模型规则仍可同步到同一
   assert.equal(providers.workbuddy.baseURL, `${origin}${HUB_ROUTER_PATH}/`);
   assert.deepEqual(providers.workbuddy.models.map((model) => model.id), ['cn:shared', 'global:shared']);
   assert.equal(providers['workbuddy-hub-cn'], undefined);
+});
+
+test('重启换宿主端口且 configEditor 不可写时，已保存的模型地址仍能鉴权并转发', async (t) => {
+  const requests = [];
+  const backend = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requests.push({ realm: req.headers['x-realm'], body: JSON.parse(Buffer.concat(chunks)) });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"choices":[{"message":{"role":"assistant","content":"OK"}}]}');
+  });
+  await new Promise((resolve) => backend.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => { backend.closeAllConnections(); backend.close(resolve); }));
+  const savedBaseURL = `http://127.0.0.1:${await freePort()}${HUB_ROUTER_PATH}/`;
+  const rows = profileRows();
+  rows[0].config.providers.workbuddy.baseURL = savedBaseURL;
+  const editor = createFakeConfigEditor(rows);
+  editor.edit = () => { throw new Error('profile reload requires the root Include entry'); };
+  const credentials = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY: 'test-secret', WORKBUDDY_HUB_KEY: 'test-secret' } });
+  const ctx = fakeContext({ configEditor: editor, credentials, webServer: {
+    getOrigin: () => 'http://127.0.0.1:1', register: () => () => {},
+  } });
+  t.after(() => ctx.disposeAll());
+  const resolved = resolvePluginConfig({ gateway: 'hub', models: {
+    enabled: true, hubDual: true, baseURL: `http://127.0.0.1:${backend.address().port}`,
+  } }, {});
+  registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: {} });
+  const deadline = Date.now() + 2000;
+  while (!resolved.models.hubProxyBaseURL() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(resolved.models.hubProxyBaseURL(), savedBaseURL);
+  const send = authorization => fetch(`${savedBaseURL}chat/completions`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization },
+    body: JSON.stringify({ model: 'cn:example', messages: [{ role: 'user', content: 'reply OK' }] }),
+  });
+  assert.equal((await send('Bearer wrong')).status, 401);
+  const response = await send('Bearer test-secret');
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).choices[0].message.content, 'OK');
+  assert.deepEqual(requests.map(request => [request.realm, request.body.model]), [['cn', 'example']]);
+  assert.equal(editor.edits.length, 0);
 });
 
 /** 轮询等待日志出现某段文本（比直接探测端口稳：端口先就绪、日志后写入）。 */

@@ -45,7 +45,7 @@
 
 默认一个 WorkBuddy 分组，跟随 HUB 看板顶部的全局出口。先在 HUB 登录两种区域的账号，再在插件卡片的「区域与 Key」页签打开「CN / GL / HW 同时使用」并应用（需要打开模型同步开关），两个区域的模型也合在这一个 WorkBuddy 分组中，按名称里的 CN / GL 标签区分：
 
-- **路由**：DSH 中的模型 id 为 `cn:xxx` / `global:xxx`，同名模型不会冲突。插件在宿主已有的 webServer 上提供带凭据鉴权的本地转发端点，将前缀转成 `X-Realm: cn` / `intl`，发给 HUB 的仍是裸 id。对话参数和 SSE 流原样转发，取消对话会取消上游请求，不另占端口。通常沿用现有网关 Key，HUB 设置页不用另建 Key。
+- **路由**：DSH 中的模型 id 为 `cn:xxx` / `global:xxx`，同名模型不会冲突。插件提供带凭据鉴权的本地转发端点，将前缀转成 `X-Realm: cn` / `intl`，发给 HUB 的仍是裸 id。对话参数和 SSE 流原样转发，取消对话会取消上游请求。通常复用宿主 webServer；桌面版重启换端口时，会在 provider 已保存的本机地址恢复仅供模型调用的监听，避免配置热更新失败导致整组模型断连。该监听不开放面板和配置接口，退出时自动关闭；端口被占用会明确报错，不停止其它程序。通常沿用现有网关 Key，HUB 设置页不用另建 Key。
 - **一个分组、独立出口**：CN / GL 都在 workbuddy provider 下，勾选和规则仍按出口分别应用。切换 HUB 看板出口不会改变这两类模型的路由，也不重写分组；定时同步照常更新两边目录。
 - **区域 Key（可选）**：hub 判断出口时，Key 在设置页绑定的区域优先于 `X-Realm` 头。如果网关 Key 在 HUB 里绑了区域，头就不起作用，开启时插件会核对两组应答的 `realm`，并拒绝开启。这时可以把那把 Key 改成「跟随面板切换」，或者给被挡住的区域填一把绑定了该区域的 Key。区域 Key 只存在 DSH 凭据库的 `WORKBUDDY_PROXY_KEY_CN` / `WORKBUDDY_PROXY_KEY_GLOBAL` 里，填了的区域改用它；留空就沿用已保存的值。
 - **CodeArts（HW）**：hub 的第三出口，直连华为云 CodeArts。先在 HUB「设置 → CodeArts 接入」启用并添加账号，模型就以 `codearts:xxx` 出现在卡片里，名称标 `HW`（CodeArts 与 CN 首字母相同，标 CA 容易看错），对话走 `X-Realm: codearts`。

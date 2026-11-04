@@ -27,6 +27,7 @@ import { autoUpdateStatus, recordUpdateCheck } from './auto-update.js';
 import { diagnose } from './diagnostics.js';
 import { createAccountOverview } from './overview.js';
 import { createHubRouter } from './hub-router.js';
+import { createHubEndpoint } from './hub-endpoint.js';
 import { creditValue, normalizeModelRules } from './model-rules.js';
 import { GATEWAY_IDS, backendLockHolder, gatewayDriver, withBackendLock } from './gateway.js';
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
@@ -798,11 +799,15 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
     ctx.effect(() => {
       let disposeRouter;
       let router;
+      let endpoint;
       if (resolved.gateway === 'hub') {
         router = createHubRouter({ resolved, env, credentials: () => credentialsOf(ctx), editor: () => configEditorOf(ctx) });
-        resolved.models.hubProxyBaseURL = () => {
-          try { return `${webServer.getOrigin()}${HUB_ROUTER_PATH}/`; } catch { return undefined; }
-        };
+        const provider = findConfigEntry(configEditorOf(ctx), { name: LLM_PI_AI_PACKAGE })?.options?.config?.providers?.[resolved.models.provider];
+        endpoint = createHubEndpoint({
+          webServer, router, savedBaseURL: provider?.baseURL,
+          onError: (error) => logger.warn(`[${PLUGIN_ID}] 已保存的模型路由监听失败：${error.message}`),
+        });
+        resolved.models.hubProxyBaseURL = endpoint.baseURL;
         // 模型调用来自宿主 HTTP 客户端，沿用 provider 的 Bearer 凭据鉴权，不要求浏览器会话 Cookie。
         disposeRouter = webServer.register({ kind: 'prefix', path: HUB_ROUTER_PATH, handler: (req, res) => router.handle(req, res) });
       }
@@ -904,8 +909,9 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
         }),
       });
 
-      return () => {
+      return async () => {
         router?.stop();
+        await endpoint?.stop();
         for (const dispose of [disposeRouter, disposeModels, disposeBackend, disposeVersion, disposePanelKey]) {
           try {
             dispose?.();
