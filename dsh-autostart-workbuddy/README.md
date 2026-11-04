@@ -89,7 +89,8 @@ HUB 配了多把 Key 之后，启动参数里的旧 Key 可能不再有效。这
   后端专用引用会随成功校验过的 Key 更新，支持面板轮换密钥。旧共享引用和用户自定义引用已有的非空值保留；占位值可以换成真密钥。启动环境给的值由宿主管理，插件无法覆盖。
 - 展示名统一成 `<上游名> <CN|GL|HW> <倍率>`：`cn:` → `CN`、`global:` → `GL`、`codearts:` → `HW`；
   倍率取上游的 `credits`（`x0.11` → `0.11`，`x0.00` 或缺失 → `Free`）。例如 `DeepSeek V4.1 Flash CN Free`。
-  CodeArts 按账号积分计费、目录里没有倍率，不显示倍率也不算免费，例如 `GLM-5.2 HW`。
+  CodeArts 目录里的名称是小写 id，插件按 CN / GL 的风格规整大小写（`kimi-k3.1-pro` → `Kimi-K3.1-Pro HW`），id 不变。hub 的目录暂时没有 CodeArts 倍率，不显示倍率也不算免费；hub 日后给了 `credits` 就会照常显示。
+- 图片输入取 hub 的 `supports_images`。CodeArts 上游把几个其实能读图的模型标成了不支持（`deepseek-v4.1-flash`、`deepseek-v4.1-flash-1017`、`glm-5.3-flash`、`kimi-k3`、`kimi-k3.1-pro`、`speed`），插件按实测纠正；`GLM-5.2`、`glm-5.3` 等带图只会得到空回复，保持纯文本。
 - 每个模型默认给**低/高/最大**三个思考档位（`efforts: auto` 则按上游声明的档位）。CodeArts 模型声明过档位时只保留声明内的，hub 对档位外的请求直接返回 400。
 - `models.only` 是白名单：留空 = 同步后端全部模型；填了就只保留列出的 id，并按列出顺序展示。
   hub 网关下按出口分开算（`cn:xxx` / `global:xxx` / `codearts:xxx`），见[后端网关](#后端网关)。

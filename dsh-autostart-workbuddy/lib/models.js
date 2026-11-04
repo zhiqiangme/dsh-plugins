@@ -422,11 +422,20 @@ function catalogDeferred(error, realm, documentPath) {
   return { state: 'deferred', reason: error.message, missing: error.missing, realm, documentPath };
 }
 
+/** 这些词不是首字母大写的写法；其余词只大写首字母，与 CN / GL 上游的展示名一致（GLM-5.3、Kimi-K3.1-Pro）。 */
+const CODEARTS_NAME_WORDS = new Map(Object.entries({ deepseek: 'DeepSeek', glm: 'GLM', openpangu: 'OpenPangu', sft: 'SFT', vl: 'VL' }));
+
+/** CodeArts 的目录没有展示名，name 就是小写 id；id 本身不动，发给上游的还是它。 */
+function codeArtsName(name) {
+  return name.split('-').map((word) => CODEARTS_NAME_WORDS.get(word.toLowerCase()) ?? word.charAt(0).toUpperCase() + word.slice(1)).join('-');
+}
+
 /** 展示名：`<上游名> <CN|GL|HW> <倍率>`；上游名已带同款后缀时不重复追加。 */
 export function modelDisplayName(model) {
   const prefixed = REGION_PREFIXES.find(([prefix]) => model.id.startsWith(prefix))?.[1];
   const region = prefixed ?? (typeof model.realm === 'string' ? REALM_LABELS[model.realm] : undefined);
-  const base = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
+  const raw = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
+  const base = model.realm === CODEARTS_REALM ? codeArtsName(raw) : raw;
   const suffix = modelCreditsLabel(model);
   // 先去掉上游名称已有的同款倍率，再把区域插到倍率前，避免产生重复倍率或把区域放到末尾。
   const name = suffix && base.toLowerCase().endsWith(` ${suffix.toLowerCase()}`)
@@ -638,6 +647,12 @@ export function panelApiKey(panelConfigPath) {
   }
 }
 
+/**
+ * 上游目录把这些模型的 supports_images 标成 false，实测能读图（2026-11-03：绿、蓝纯色图都答对，不带图时答不出），
+ * hub 的目录照抄上游，所以在这里纠正。只补不减：GLM-5.2、glm-5.3 等同样标 false 的确实不行，带图只会得到空回复。
+ */
+const CODEARTS_VISION_IDS = new Set(['deepseek-v4.1-flash', 'deepseek-v4.1-flash-1017', 'glm-5.3-flash', 'kimi-k3', 'kimi-k3.1-pro', 'speed']);
+
 /** 拉取模型清单；任何失败都返回 ok:false，由调用方决定是否保持现有配置。 */
 export async function fetchModels(options = {}) {
   const { baseURL, apiKey = '', timeoutMs = 30_000, signal, realm: requestRealm } = options;
@@ -670,7 +685,8 @@ export async function fetchModels(options = {}) {
   const models = list
     .filter((model) => model && typeof model.id === 'string' && model.id.trim())
     // 条目自己带了 realm 就不覆盖；只给 hub 这种"出口写在顶层"的应答补上。
-    .map((model) => (realm && model.realm === undefined ? { ...model, realm } : model));
+    .map((model) => (realm && model.realm === undefined ? { ...model, realm } : model))
+    .map((model) => (model.realm === CODEARTS_REALM && CODEARTS_VISION_IDS.has(model.id.toLowerCase()) ? { ...model, supports_images: true } : model));
   // 只透传同步确认所需的来源字段，不把任意后端元数据带到配置或面板。
   const catalog = payload?.catalog && typeof payload.catalog === 'object' ? {
     source: typeof payload.catalog.source === 'string' ? payload.catalog.source : undefined,

@@ -6,9 +6,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { probeHubHealth } from '../lib/hub.js';
-import { creditsLabel, confirmRemovals, hubRegionWanted, modelCreditsLabel, modelDisplayName, modelEfforts, planModelEntries, scopedSelection, selectionKey } from '../lib/models.js';
+import { creditsLabel, confirmRemovals, fetchModels, hubRegionWanted, modelCreditsLabel, modelDisplayName, modelEfforts, planModelEntries, scopedSelection, selectionKey } from '../lib/models.js';
 
 const realm = 'codearts';
+
+test('展示名大小写与 CN / GL 一致，id 不变', () => {
+  const names = {
+    'GLM-5.2': 'GLM-5.2', 'glm-5.3': 'GLM-5.3', 'glm-5.3-flash': 'GLM-5.3-Flash', 'glm-5.2-sft-harmony': 'GLM-5.2-SFT-Harmony',
+    'deepseek-v4.1-flash': 'DeepSeek-V4.1-Flash', 'deepseek-v4.1-flash-1017': 'DeepSeek-V4.1-Flash-1017',
+    'kimi-k3': 'Kimi-K3', 'kimi-k3.1-pro': 'Kimi-K3.1-Pro', 'kimi-k2.6-vl': 'Kimi-K2.6-VL',
+    'openpangu-2.0-flash': 'OpenPangu-2.0-Flash', 'openpangu-2.0-pro': 'OpenPangu-2.0-Pro', 'Qwen3-VL-235B': 'Qwen3-VL-235B', speed: 'Speed',
+  };
+  for (const [id, name] of Object.entries(names)) assert.equal(modelDisplayName({ id, name: id, realm }), `${name} HW`);
+  assert.equal(modelDisplayName({ id: 'glm-5.3', name: 'glm-5.3', realm: 'cn', credits: 'x0.69' }), 'glm-5.3 CN 0.69', 'WorkBuddy 的展示名原样保留');
+  assert.equal(planModelEntries([{ id: 'glm-5.3', name: 'glm-5.3', realm }], {})[0].id, 'glm-5.3');
+});
 
 test('展示名标 HW 不标 Free：CodeArts 没有倍率，WorkBuddy 缺倍率仍是 Free', () => {
   assert.equal(modelDisplayName({ id: 'GLM-5.2', name: 'GLM-5.2', realm }), 'GLM-5.2 HW');
@@ -43,6 +55,23 @@ test('白名单范围：CodeArts 没勾过时双区域不要它，同步全部�
   assert.equal(hubRegionWanted(realm, ['cn:a', 'codearts:b']), true);
   assert.equal(hubRegionWanted('cn', ['global:a']), true, 'CN / GL 的"没勾过 = 全部"不变');
   assert.deepEqual(scopedSelection(['legacy', 'codearts:b'], 'hub'), ['cn:legacy', 'global:legacy', 'codearts:b']);
+});
+
+test('图片输入：纠正上游错标的 CodeArts 模型，确实不能读图的不动，其它出口的同名模型不受影响', async (t) => {
+  let answer;
+  const server = createServer((_req, res) => res.end(JSON.stringify(answer)));
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(done); }));
+  const images = async () => {
+    const fetched = await fetchModels({ baseURL: `http://127.0.0.1:${server.address().port}` });
+    return Object.fromEntries(fetched.models.map((model) => [model.id, model.supports_images]));
+  };
+  const data = [{ id: 'kimi-k3.1-pro', supports_images: false }, { id: 'glm-5.3-flash', supports_images: false }, { id: 'glm-5.3', supports_images: false }, { id: 'Qwen3-VL-235B', supports_images: true }];
+
+  answer = { realm, data };
+  assert.deepEqual(await images(), { 'kimi-k3.1-pro': true, 'glm-5.3-flash': true, 'glm-5.3': false, 'Qwen3-VL-235B': true });
+  answer = { realm: 'cn', data };
+  assert.deepEqual(await images(), { 'kimi-k3.1-pro': false, 'glm-5.3-flash': false, 'glm-5.3': false, 'Qwen3-VL-235B': true });
 });
 
 test('probeHubHealth：CodeArts 账号单独报，看板切到它时按它判断能否服务', async (t) => {
