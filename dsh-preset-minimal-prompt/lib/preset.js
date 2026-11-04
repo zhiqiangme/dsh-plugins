@@ -133,16 +133,13 @@ export const PRESET = {
           "name": "@deepseek-ai/dsh-tool-subagent-control"
         },
         {
-          "id": "tool-subagent-list-agents",
-          "name": "@deepseek-ai/dsh-tool-subagent-control/list-agents"
-        },
-        {
           "id": "tool-subagent",
           "name": "@deepseek-ai/dsh-tool-subagent",
           "config": {
             "provider": "spawn",
             "toolName": "subagent",
-            "modelSelectionSettings": true
+            "modelSelection": true,
+            "modelDiscovery": true
           }
         },
         {

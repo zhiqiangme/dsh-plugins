@@ -92,6 +92,18 @@ test('planning / compaction / delegation 分组配置完整', () => {
   assert.ok(delegation.config.some((plugin) => plugin.id === 'tool-subagent-fork'))
 })
 
+test('子代理配置兼容 DSH 0.2.2 的统一控制入口和模型发现', () => {
+  const delegation = row('delegation').config
+  // list_agents 已合并到控制插件；引用已移除的子路径会使整个预设加载失败。
+  assert.deepEqual(delegation.filter((plugin) => plugin.name.startsWith('@deepseek-ai/dsh-tool-subagent-control')).map((plugin) => plugin.name), ['@deepseek-ai/dsh-tool-subagent-control'])
+  assert.deepEqual(delegation.find((plugin) => plugin.id === 'tool-subagent').config, {
+    provider: 'spawn', toolName: 'subagent', modelSelection: true, modelDiscovery: true,
+  })
+  assert.deepEqual(delegation.find((plugin) => plugin.id === 'tool-subagent-fork').config, {
+    provider: 'fork', toolName: 'subagent_fork',
+  })
+})
+
 test('bundle patch 只挂载插件自身，预设由代码注册', () => {
   const patch = readFileSync(join(root, 'cordis.patch.yml'), 'utf8')
   assert.match(patch, /- id: dsh-preset-minimal-prompt\r?\n\s+name: '@zhiqiangme\/dsh-preset-minimal-prompt'/)

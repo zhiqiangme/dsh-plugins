@@ -94,6 +94,8 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-preset-minimal-prompt
 
 本插件的 `lib/preset.js` 是 **DSH 标准模式插件列表的快照**，安装时不需要读取 DSH 安装目录。这样它能离线安装、可审计，也不会因为 DSH 升级时文件路径变化而加载失败。
 
+已适配 DSH 0.2.2 的子代理配置：`list_agents` 由控制插件统一提供，不再引用已移除的 `/list-agents` 子路径；子代理模型选择与发现使用新的 `modelSelection`、`modelDiscovery` 配置。
+
 代价是：DSH 升级后，如果标准模式新增或删除了工具，插件不会自动跟着变。升级 DSH 后可以：
 
 1. 对比新版本 `@deepseek-ai/dsh-web-app/presets/standard.patch.yml` 的 `plugins` 列表；
