@@ -247,8 +247,9 @@ window.__ModuleLoader__.load({
       .dsm-mp input:not([type=checkbox]),.dsm-mp select{width:100%;min-width:0;padding:6px 10px;border:1px solid var(--mp-border);border-radius:8px;background:transparent;color:inherit;font:inherit;line-height:20px}
       .dsm-mp select option{background:var(--mp-bg);color:var(--mp-fg)}.dsm-mp input::placeholder{color:var(--mp-faint)}
       .dsm-mp input[type=checkbox]{accent-color:var(--mp-accent)}
-      .dsm-mp .switch{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:34px;height:20px;margin:0;border-radius:999px;background:var(--dsw-alias-border-l4,#00000029);cursor:pointer;transition:background .15s}
-      .dsm-mp .switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0000004d;transition:transform .15s}
+      .dsm-mp .switch{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:34px;height:20px;margin:0;border-radius:999px;background:var(--dsw-alias-border-l4,#00000029);cursor:pointer;transition:background .2s}
+      /* 滑块用回弹曲线；按住时横向拉长（见动效段），松手再弹到位。 */
+      .dsm-mp .switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0000004d;transition:transform .28s var(--mp-spring),width .15s ease}
       .dsm-mp .switch:checked{background:var(--mp-accent)}.dsm-mp .switch:checked::after{transform:translateX(14px)}.dsm-mp .switch:disabled{opacity:.45;cursor:default}
       .dsm-mp .segmented{display:inline-flex;gap:2px;padding:2px;border-radius:8px;background:var(--mp-fill)}
       .dsm-mp .segmented button{border:0;border-radius:6px;padding:3px 10px;color:var(--mp-muted)}.dsm-mp .segmented button:hover:not(:disabled){background:transparent;color:var(--mp-fg)}
@@ -258,14 +259,17 @@ window.__ModuleLoader__.load({
       .dsm-mp .head-desc{margin-top:4px;color:var(--mp-muted);font-size:12px}
       .dsm-mp .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
       .dsm-mp .chip{display:inline-flex;align-items:center;gap:6px;padding:1px 9px;border:0;border-radius:999px;background:var(--mp-fill);color:var(--mp-muted);font-size:12px;line-height:20px}
-      .dsm-mp .chip .dot{width:6px;height:6px;border-radius:50%;background:var(--mp-faint)}.dsm-mp .chip.ok .dot{background:var(--mp-ok)}.dsm-mp .chip.off .dot{background:var(--mp-error)}
+      /* 状态色写在 color 上、底色取 currentColor：动效里的扩散光圈同样取 currentColor，状态切换时颜色整体过渡。 */
+      .dsm-mp .chip .dot{width:6px;height:6px;border-radius:50%;color:var(--mp-faint);background:currentColor;transition:color .3s ease}.dsm-mp .chip.ok .dot{color:var(--mp-ok)}.dsm-mp .chip.off .dot{color:var(--mp-error)}
       .dsm-mp button.chip{padding:1px 9px;border:0}.dsm-mp button.chip:hover:not(:disabled){background:var(--mp-hover);color:var(--mp-fg)}.dsm-mp .chip .new{color:var(--mp-accent)}
-      .dsm-mp .tabs{display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--mp-border);overflow-x:auto;scrollbar-width:none}
+      /* 横向滚动会连带裁掉纵向溢出：底线不能画在边框上（bottom:-1px 会多出 1px 纵向滚动、选中线只露一半），
+         改用内阴影画分隔线，选中线压在它上面；焦点框也收进按钮内，免得上下两边被裁掉。 */
+      .dsm-mp .tabs{display:flex;gap:2px;padding:0 14px;box-shadow:inset 0 -1px 0 var(--mp-border);overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
       .dsm-mp .tabs button.tab{position:relative;border:0;border-radius:0;padding:8px 10px 9px;background:transparent;color:var(--mp-muted);font-weight:500}
-      .dsm-mp .tabs button.tab:hover{background:transparent;color:var(--mp-fg)}
-      .dsm-mp .tabs button.tab[aria-selected=true]{color:var(--mp-fg)}.dsm-mp .tabs button.tab[aria-selected=true]::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--mp-fg)}
-      .dsm-mp .tab .count{margin-left:6px;padding:0 6px;border-radius:999px;background:var(--mp-fill);font-size:11px;font-weight:400}
-      .dsm-mp .tab .mark{display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;background:var(--mp-accent);vertical-align:2px}
+      .dsm-mp .tabs button.tab:hover{background:transparent;color:var(--mp-fg)}.dsm-mp .tabs button.tab:focus-visible{outline-offset:-2px}
+      .dsm-mp .tabs button.tab[aria-selected=true]{color:var(--mp-fg)}.dsm-mp .tabs button.tab[aria-selected=true]::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:var(--mp-fg)}
+      .dsm-mp .tab .count{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;background:var(--mp-fill);font-size:11px;font-weight:400}
+      .dsm-mp .tab .mark{display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;color:var(--mp-accent);background:currentColor;vertical-align:2px}
       .dsm-mp .panel{padding:16px 20px 20px;min-width:0}
       .dsm-mp .row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--mp-border-soft)}
       .dsm-mp .row:last-child{border-bottom:0}.dsm-mp label.row{cursor:pointer}
@@ -291,8 +295,7 @@ window.__ModuleLoader__.load({
       .dsm-mp .model-list.sorting .model:hover:not(.dragging){background:transparent}
       .dsm-mp .model.dragging{position:relative;z-index:1;border-style:dashed;border-color:var(--mp-accent);background:color-mix(in srgb,var(--mp-accent) 8%,transparent)}
       .dsm-mp .model.dragging>*{opacity:.35}
-      @media(prefers-reduced-motion:reduce){.dsm-mp .model-list.sorting .model{transition:none}}
-      .dsm-mp .model-toggle{padding:4px 6px;line-height:1;border-color:transparent;background:transparent;flex:none;color:var(--mp-faint)}.dsm-mp .model-toggle svg{display:block;width:16px;height:16px;transition:transform .15s}.dsm-mp .model-toggle[aria-expanded=true] svg{transform:rotate(90deg)}
+      .dsm-mp .model-toggle{padding:4px 6px;line-height:1;border-color:transparent;background:transparent;flex:none;color:var(--mp-faint)}.dsm-mp .model-toggle svg{display:block;width:16px;height:16px;transition:transform .2s var(--mp-ease)}.dsm-mp .model-toggle[aria-expanded=true] svg{transform:rotate(90deg)}
       .dsm-mp .model-badges{display:flex;gap:6px;margin-left:auto;flex:none}.dsm-mp .badge{padding:0 6px;border-radius:4px;background:var(--mp-fill);color:var(--mp-muted);font-size:11px;line-height:18px;white-space:nowrap}
       .dsm-mp .model-actions{display:flex;gap:4px;flex:none;margin-left:auto}.dsm-mp .model-badges+.model-actions{margin-left:4px}.dsm-mp .model-actions button{padding:2px 8px;border-color:transparent;font-size:12px}
       .dsm-mp .model-details{padding:0 12px 12px;min-width:0}.dsm-mp .model-details[hidden]{display:none}.dsm-mp .model-details label:not(.field){display:flex;align-items:center;gap:8px;align-self:end;padding-bottom:7px}
@@ -303,8 +306,9 @@ window.__ModuleLoader__.load({
       .dsm-mp .foot{position:relative;z-index:1;padding:12px 20px;border-top:1px solid var(--mp-border);border-radius:0 0 12px 12px;background:var(--mp-bg)}
       /* 贴底时保留底部圆角：下面延续的是卡片本身，圆角外侧要盖成页面底色（DSH 中栏为 bg-base）才看得出来。
          fixed 自成层叠上下文，::before 垫底会盖住栏的背景，所以改用外阴影：只画在边框外，下移 6px 让顶边与栏对齐，
-         两侧多出的 6px 落在页面内边距上；扩展 6px 足以盖满 12px 圆角外侧（至少需 12×(√2−1)≈5px）。 */
-      .dsm-mp .foot[data-docked]{position:fixed;bottom:0;z-index:10;border:1px solid var(--mp-border);box-shadow:0 6px 0 6px var(--dsw-alias-bg-base,#fff)}
+         两侧多出的 6px 落在页面内边距上；扩展 6px 足以盖满 12px 圆角外侧（至少需 12×(√2−1)≈5px）。
+         第二层是向上的柔和投影，提示栏下面还压着卡片内容；收缩 16px 让它不越过两侧，也就碰不到盖圆角的那层。 */
+      .dsm-mp .foot[data-docked]{position:fixed;bottom:0;z-index:10;border:1px solid var(--mp-border);box-shadow:0 6px 0 6px var(--dsw-alias-bg-base,#fff),0 -10px 24px -16px rgb(0 0 0 / .55)}
       .dsm-mp .foot .notice{margin:0 0 10px}.dsm-mp .foot .error:not(.notice){margin:0 0 10px}
       .dsm-mp .state{display:inline-flex;align-items:center;gap:8px;color:var(--mp-muted)}.dsm-mp .state::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--mp-ok)}
       .dsm-mp .state.dirty{color:var(--mp-fg);font-weight:500}.dsm-mp .state.dirty::before{background:var(--mp-warn)}
@@ -312,6 +316,66 @@ window.__ModuleLoader__.load({
       .dsm-mp-page{box-sizing:border-box;height:100%;overflow-y:auto;padding:calc(28px + var(--dsh-frame-top-clearance,0px)) max(clamp(16px,4vw,48px),calc((100% - 960px) / 2)) 32px}
       @media(max-width:640px){.dsm-mp .head,.dsm-mp .panel,.dsm-mp .foot{padding-left:14px;padding-right:14px}.dsm-mp .fields{grid-template-columns:minmax(0,1fr)}
         .dsm-mp .row:has(.segmented){flex-wrap:wrap}.dsm-mp .toolbar{flex-wrap:wrap}.dsm-mp .toolbar .search{flex-basis:100%}.dsm-mp .model-badges{display:none}.dsm-mp .model-select{flex:1}}
+      /* ---- 动效 ----
+         只动 opacity / transform / 颜色 / 阴影 / 裁切，单段不超过 .4s。入场一律 backwards 填充：错峰延迟期间停在首帧，播完不残留样式。
+         不加 hook（测试的假 React 按调用顺序分配 useState 槽位）：要重播就换元素的 key，让 React 重建节点。
+         卡片本身只淡入不位移：transform 会让贴底保存栏的 position:fixed 改以卡片为参照。 */
+      @keyframes dsm-mp-fade{from{opacity:0}}
+      @keyframes dsm-mp-rise{from{opacity:0;transform:translateY(6px)}}
+      @keyframes dsm-mp-drop{from{opacity:0;transform:translateY(-4px)}}
+      @keyframes dsm-mp-pop{50%{transform:scale(1.18)}}
+      @keyframes dsm-mp-spin{to{transform:rotate(1turn)}}
+      @keyframes dsm-mp-breathe{50%{opacity:.35}}
+      @keyframes dsm-mp-ring{from{box-shadow:0 0 0 0 color-mix(in srgb,currentColor 60%,transparent)}to{box-shadow:0 0 0 5px transparent}}
+      @keyframes dsm-mp-reveal{from{clip-path:inset(0 0 100% 0)}}
+      /* ease 是"快出慢停"的减速曲线，与排序 FLIP 相同；spring 末段越过终点约 10% 再回落，只给开关、勾选这类小部件用。 */
+      .dsm-mp{--mp-ease:cubic-bezier(.2,.8,.2,1);--mp-spring:cubic-bezier(.34,1.56,.64,1);animation:dsm-mp-fade .3s var(--mp-ease) backwards}
+      .dsm-mp button{transition:background-color .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease,transform .12s ease}
+      .dsm-mp .model{transition:background-color .15s ease,border-color .15s ease}.dsm-mp .state::before{transition:background-color .3s ease}
+      /* 网关状态点：在线慢心跳，检查中呼吸，离线保持静止，不让故障看起来像在"活动"。「更新」页签上的提醒点同样扩散。 */
+      .dsm-mp .chip.ok .dot{animation:dsm-mp-ring 2.4s var(--mp-ease) infinite}
+      .dsm-mp .chip:not(.ok):not(.off) .dot{animation:dsm-mp-breathe 1.2s ease-in-out infinite}
+      .dsm-mp .tab .mark{animation:dsm-mp-ring 2s var(--mp-ease) infinite}
+      /* 面板以页签为 key，换页签时整块重建，内容逐块浮现；最多错开 5 档（200ms），长面板也不拖沓。
+         错峰用 sibling-index()（DSH 的 Chromium 已支持；不认识时整条 animation-delay 作废，退化为同时出现）。 */
+      .dsm-mp .panel>*{animation:dsm-mp-rise .32s var(--mp-ease) backwards;animation-delay:calc(min(sibling-index() - 1, 5) * 40ms)}
+      /* 计数的 key 跟着值走：值一变就重建，页签上的数字轻弹一下，列表头的勾选数从下方滑入。 */
+      .dsm-mp .tab .count{animation:dsm-mp-pop .24s var(--mp-spring)}
+      .dsm-mp .list-head .count{animation:dsm-mp-rise .24s var(--mp-ease) backwards}
+      /* 展开详情自上而下揭开，时长与曲线同 FLIP（REORDER_MS）：下方各行滑下去多少，详情就正好露出多少，滑动的行不会压在新露出的输入框上。 */
+      .dsm-mp .model-details{animation:dsm-mp-reveal .2s var(--mp-ease)}
+      /* 每行的「删除」平时收起，悬停、键盘聚焦或展开该行时出现；触屏没有悬停，照常显示。 */
+      .dsm-mp .model-actions{transition:opacity .15s ease}
+      @media (hover:hover){.dsm-mp .model:not(:hover):not(:focus-within):not(.expanded) .model-actions{opacity:0}}
+      /* 页签下划线与分段选择的白底改成滑块：锚定到当前选中项，换选项时滑过去。不支持锚点定位时整段不生效，保留各按钮自带的静态样式。
+         anchor-scope 把锚点名限定在本控件内：插件页与侧栏页可能各有一张卡片，一张卡片里也有多组分段选择，锚点名不能串到别处。 */
+      @supports (anchor-name:--a) and (anchor-scope:--a){
+        .dsm-mp .tabs{position:relative;anchor-scope:--dsm-mp-tab}
+        .dsm-mp .tabs::before{content:"";position:absolute;position-anchor:--dsm-mp-tab;left:calc(anchor(left) + 10px);right:calc(anchor(right) + 10px);bottom:anchor(bottom);height:2px;border-radius:2px;background:var(--mp-fg);transition:left .3s var(--mp-ease),right .3s var(--mp-ease)}
+        .dsm-mp .tabs button.tab[aria-selected=true]{anchor-name:--dsm-mp-tab}.dsm-mp .tabs button.tab[aria-selected=true]::after{content:none}
+        .dsm-mp .segmented{position:relative;anchor-scope:--dsm-mp-seg}
+        .dsm-mp .segmented::before{content:"";position:absolute;position-anchor:--dsm-mp-seg;inset:anchor(top) anchor(right) anchor(bottom) anchor(left);border-radius:6px;background:var(--mp-raised);box-shadow:0 1px 2px #0000001f;transition:inset .25s var(--mp-ease)}
+        .dsm-mp .segmented button{position:relative}
+        .dsm-mp .segmented button.active,.dsm-mp .segmented button.active:hover:not(:disabled){anchor-name:--dsm-mp-seg;background:transparent;box-shadow:none}
+      }
+      /* 按下反馈；开关按住时滑块从 16px 拉宽到 20px，已开启时只右移 10px（34 宽 − 左右各 2 − 20），右缘仍贴边。 */
+      .dsm-mp button:active:not(:disabled):not(.tab){transform:scale(.97)}
+      .dsm-mp .switch:active:not(:disabled)::after{width:20px}
+      .dsm-mp .switch:checked:active:not(:disabled)::after{transform:translateX(10px)}
+      /* 勾选时轻弹。只认聚焦中的那个（刚点过或用键盘切换的）：保存、重新载入后整列重建时，已勾选的不会一齐弹。 */
+      .dsm-mp .model input[type=checkbox]:checked:focus{animation:dsm-mp-pop .24s var(--mp-spring)}
+      /* 提示从上方轻落；有未保存更改时状态点呼吸。 */
+      .dsm-mp .notice{animation:dsm-mp-drop .24s var(--mp-ease) backwards}
+      .dsm-mp .state.dirty::before{animation:dsm-mp-breathe 1.6s ease-in-out infinite}
+      /* 进行中：被点的按钮（aria-busy）与加载中的文字前面加一个转圈。 */
+      .dsm-mp button[aria-busy=true]{display:inline-flex;align-items:center;gap:6px}.dsm-mp .loading{display:flex;align-items:center;gap:8px}
+      .dsm-mp button[aria-busy=true]::before,.dsm-mp .loading::before{content:"";flex:none;width:12px;height:12px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:dsm-mp-spin .7s linear infinite}
+      /* 「插件更新」里的折叠区：展开 / 收起时高度过渡（interpolate-size 允许在 0 与 auto 之间插值）。 */
+      .dsm-mp .plugin-update details{interpolate-size:allow-keywords}
+      .dsm-mp .plugin-update details::details-content{block-size:0;overflow:hidden;transition:block-size .25s var(--mp-ease),content-visibility .25s allow-discrete}
+      .dsm-mp .plugin-update details[open]::details-content{block-size:auto}
+      /* 系统开了"减少动态效果"：动画与过渡全部关掉，状态仍靠颜色与文字表达；排序的 FLIP 在脚本里读同一个媒体查询。 */
+      @media (prefers-reduced-motion:reduce){.dsm-mp,.dsm-mp *,.dsm-mp *::before,.dsm-mp *::after,.dsm-mp details::details-content{animation:none!important;transition:none!important}}
     `;
 
     async function request(body) {
@@ -366,8 +430,8 @@ window.__ModuleLoader__.load({
       return error instanceof Error ? error.message : String(error);
     }
 
-    function updateButton(key, kind, label, onClick, disabled) {
-      return h('button', { key, type: 'button', className: kind === 'primary' || kind === 'danger' ? kind : '', disabled, onClick }, label);
+    function updateButton(key, kind, label, onClick, disabled, busy) {
+      return h('button', { key, type: 'button', className: kind === 'primary' || kind === 'danger' ? kind : '', disabled, onClick, 'aria-busy': busy || undefined }, label);
     }
 
     function updateNotice(key, value) {
@@ -899,10 +963,10 @@ window.__ModuleLoader__.load({
       }
       head.push(updateButton('check', 'outline', t('updateCheck'), actions.checkUpdate,
         version.phase === 'loading' || manager.phase === 'loading' || market.phase === 'loading' || running));
-      if (target) head.push(updateButton('update', 'primary', running ? t('updateRunning') : t('updateNow', { version: target }), () => actions.startUpdate(false), running || update.blocked));
+      if (target) head.push(updateButton('update', 'primary', running ? t('updateRunning') : t('updateNow', { version: target }), () => actions.startUpdate(false), running || update.blocked, running));
       const section = [h('div', { key: 'head', className: 'bar' }, head)];
       if (update.blocked && !running) section.push(h('p', { key: 'blocked', className: 'muted' }, update.blockedHint));
-      if (version.phase === 'loading') section.push(h('p', { key: 'checking', className: 'muted' }, t('updateChecking')));
+      if (version.phase === 'loading') section.push(h('p', { key: 'checking', className: 'muted loading' }, t('updateChecking')));
       else if (version.phase === 'error') section.push(updateNotice('checkError', { kind: 'error', text: t('updateCheckFailed', { reason: version.reason }) }));
       if (version.currentVersion) section.push(h('p', { key: 'versions', className: 'muted' },
         t('updateCurrent'), h('strong', null, 'v' + version.currentVersion), ready ? '  ·  ' : null,
@@ -934,7 +998,7 @@ window.__ModuleLoader__.load({
         if (operation.outcome?.restartRequired && market.restartSupported) {
           const restartBusy = update.restart?.phase === 'busy' || update.restart?.phase === 'done';
           section.push(h('div', { key: 'restart', className: 'bar' },
-            updateButton('restart', 'primary', restartBusy ? t('restarting') : t('restartNow'), actions.restart, restartBusy)));
+            updateButton('restart', 'primary', restartBusy ? t('restarting') : t('restartNow'), actions.restart, restartBusy, restartBusy)));
         }
       } else if (operation?.state === 'failed' && operation.inUse) {
         section.push(updateNotice('inUse', { kind: 'error', text: t('updateInUse') }));
@@ -1065,7 +1129,8 @@ window.__ModuleLoader__.load({
         }
         positions.current = next;
       });
-      const busy = modelBusy || updater.model.busy || isActiveOperation(updater.model.operation);
+      // modelBusy 记的是正在进行的操作名（见 perform），对应按钮据此显示转圈；其余地方只当作布尔值。
+      const busy = Boolean(modelBusy) || updater.model.busy || isActiveOperation(updater.model.operation);
       const failure = (error) => ({ error: true, text: error?.code === 'INVALID_JSON' ? `${t('invalidJson')}（${error.message}）` : error.message });
       useEffect(() => {
         let active = true;
@@ -1108,15 +1173,15 @@ window.__ModuleLoader__.load({
         const timer = setInterval(check, STATUS_POLL_MS);
         return () => { active = false; clearInterval(timer); };
       }, [view?.revision, operation?.running]);
-      const perform = async (run) => {
-        setBusy(true); setNotice(null);
+      const perform = async (run, action = true) => {
+        setBusy(action); setNotice(null);
         try { await run(); } catch (error) { setNotice(failure(error)); }
         finally { setBusy(false); }
       };
-      const reload = () => perform(async () => { const value = await request(); publishConfig(value.config); setView(value); setDirty(false); setKey(''); setExpanded(new Set()); });
+      const reload = () => perform(async () => { const value = await request(); publishConfig(value.config); setView(value); setDirty(false); setKey(''); setExpanded(new Set()); }, 'reload');
       const button = (text, click, extra = {}) => h('button', { type: 'button', disabled: busy, onClick: click, ...extra }, text);
       if (!view) return h('section', { className: 'dsm-mp' }, h('header', { className: 'head' }, h('div', { className: 'title' }, h(MagpieGlyph, { size: 20 }), h('h3', null, t('title')))),
-        h('div', { className: 'panel' }, notice ? h('p', { className: 'notice error', role: 'alert' }, notice.text) : h('p', { className: 'muted' }, t('loading')), h('div', { className: 'bar', style: { marginTop: 12 } }, button(t('reload'), reload))));
+        h('div', { className: 'panel' }, notice ? h('p', { className: 'notice error', role: 'alert' }, notice.text) : h('p', { className: 'muted loading' }, t('loading')), h('div', { className: 'bar', style: { marginTop: 12 } }, button(t('reload'), reload, { 'aria-busy': modelBusy === 'reload' }))));
       const config = view.config;
       const update = (patch) => { setView((v) => ({ ...v, config: { ...v.config, ...patch } })); setDirty(true); };
       const rows = config.models;
@@ -1128,7 +1193,7 @@ window.__ModuleLoader__.load({
         const result = await request({ action, magpiePath: config.magpiePath || '' });
         // 程序操作不保存或覆盖模型草稿；程序路径仍由原有保存流程持久化。
         setView((old) => ({ ...old, backend: result.backend }));
-      });
+      }, action);
       // 安装成功后按启动结果给出提示；启动失败不影响安装结果。
       const finished = (key) => operation.launchError ? t('backendLaunchFailed', { version: operation.version, reason: operation.launchError })
         : operation.alreadyRunning ? t('backendAlreadyRunning', { version: operation.version }) : t(key, { version: operation.version });
@@ -1150,19 +1215,19 @@ window.__ModuleLoader__.load({
         const result = await request({ action: 'backend-open', magpiePath: config.magpiePath || '' });
         setView((old) => ({ ...old, backend: result.backend, magpieSettings: result.magpieSettings }));
         setNotice({ text: t('opened') });
-      });
+      }, 'open');
       const magpieSettings = view.magpieSettings;
       const syncCatalog = () => perform(async () => {
         const result = await request({ action: 'sync-catalog', config, revision: view.revision, apiKey: key || undefined });
         publishConfig(result.config); setView(result); setDirty(false); setKey(''); setSearch(''); setExpanded(new Set());
         dragSource.current = null; setDrag(null);
         setNotice({ error: !result.sync.ok, text: result.sync.ok ? t('mirrored', { count: result.sync.count }) : t('saveFailed', { reason: result.sync.reason }) });
-      });
+      }, 'sync-catalog');
       const save = () => perform(async () => {
         const result = await request({ action: 'save', config, revision: view.revision, apiKey: key || undefined });
         publishConfig(result.config); setView(result); setDirty(false); setKey('');
         setNotice({ error: !result.sync.ok, text: result.sync.ok ? t('saved', { count: result.sync.count }) : t('saveFailed', { reason: result.sync.reason }) });
-      });
+      }, 'save');
       const visible = rows.map((row, index) => ({ row, index })).filter(({ row }) => `${row.id} ${labelFor(row)}`.toLowerCase().includes(search.toLowerCase()));
       const visibleIndexes = new Set(visible.map(({ index }) => index));
       const selectVisible = (enabled) => update({ models: rows.map((m, i) => visibleIndexes.has(i) ? keepKey(m, { ...m, enabled }) : m) });
@@ -1194,7 +1259,7 @@ window.__ModuleLoader__.load({
         const rank = new Map(ids.map((id, i) => [id, i]));
         const position = (i) => rank.get(visible[i].row.id) ?? ids.length;
         applySorted(visible.map((_v, i) => i).sort((a, b) => position(a) - position(b) || a - b), 'catalog');
-      });
+      }, 'sort-default');
       // 拖动：其它行实时让出空位（样式过渡），松手后各行已在目标位置，直接换成新顺序。
       // 落点按列表里各行未位移的布局位置计算，让位的位移不会反过来改变落点。
       const slotAt = (event) => {
@@ -1250,7 +1315,7 @@ window.__ModuleLoader__.load({
           onClick: () => value === option ? undefined : change(option),
         }, label))));
       const addModel = () => { update({ models: [...rows, { id: '', name: '', enabled: true, input: ['text'], reasoningEfforts: [] }] }); setExpanded((old) => new Set([...old, rows.length])); };
-      const checkConnection = () => perform(async () => { const result = await request({ action: 'check', baseURL: config.baseURL, apiKey: key || undefined }); setNotice({ text: t('connected', { version: result.version }) }); });
+      const checkConnection = () => perform(async () => { const result = await request({ action: 'check', baseURL: config.baseURL, apiKey: key || undefined }); setNotice({ text: t('connected', { version: result.version }) }); }, 'check');
       const pluginUpdate = updater.model.version?.phase === 'ready' && updater.model.version.updateAvailable;
 
       const header = h('header', { className: 'head' },
@@ -1263,12 +1328,12 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'chip', onClick: () => setTab('updates') },
               backend?.version ? t('programVersion', { version: backend.version }) : t(backend?.installed ? 'backendUnknown' : 'programMissing'),
               backend?.updateAvailable ? h('span', { className: 'new' }, ` · ${t('programUpgrade', { version: backend.latest.version })}`) : null))),
-        button(t('open'), openMagpie, { disabled: busy || operation?.running || unsupported || !backend?.installed || !backend?.version }));
+        button(t('open'), openMagpie, { disabled: busy || operation?.running || unsupported || !backend?.installed || !backend?.version, 'aria-busy': modelBusy === 'open' }));
 
       const tabs = h('div', { className: 'tabs', role: 'tablist' }, ...TABS.map(([id, label]) => h('button', {
         key: id, type: 'button', role: 'tab', className: 'tab', id: `dsm-mp-tab-${id}`, 'aria-selected': tab === id, 'aria-controls': 'dsm-mp-panel', onClick: () => setTab(id),
       }, t(label),
-      id === 'models' ? h('span', { className: 'count' }, rows.length) : null,
+      id === 'models' ? h('span', { key: rows.length, className: 'count' }, rows.length) : null,
       id === 'updates' && (backend?.updateAvailable || pluginUpdate) ? h('span', { className: 'mark', 'aria-hidden': true }) : null)));
 
       const modelList = h('div', {
@@ -1326,14 +1391,14 @@ window.__ModuleLoader__.load({
           view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
           h('div', { className: 'toolbar' },
             h('input', { className: 'search', type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: search, onChange: (e) => setSearch(e.target.value) }),
-            button(t('catalog'), syncCatalog, { disabled: busy || !view.editable }),
+            button(t('catalog'), syncCatalog, { disabled: busy || !view.editable, 'aria-busy': modelBusy === 'sync-catalog' }),
             button(t('add'), addModel)),
           h('div', { className: 'list-head' },
-            h('span', { className: 'count' }, t('count', { selected, total: rows.length })),
+            h('span', { key: `${selected}/${rows.length}`, className: 'count' }, t('count', { selected, total: rows.length })),
             h('div', { className: 'list-actions' },
               button(t('all'), () => selectVisible(true), { className: 'ghost' }), button(t('none'), () => selectVisible(false), { className: 'ghost' }),
               h('span', { className: 'divider', 'aria-hidden': true }),
-              button(t('sortDefault'), sortDefault, { className: 'ghost', title: t('sortDefaultHint'), disabled: busy || visible.length < 2 }),
+              button(t('sortDefault'), sortDefault, { className: 'ghost', title: t('sortDefaultHint'), disabled: busy || visible.length < 2, 'aria-busy': modelBusy === 'sort-default' }),
               button(t('sortModel'), () => sort('model'), { className: 'ghost', title: t('sortModelHint'), disabled: busy || visible.length < 2 }),
               button(t('sortProvider'), () => sort('provider'), { className: 'ghost', title: t('sortProviderHint'), disabled: busy || visible.length < 2 }))),
           rows.length && orderMode !== 'model' ? h('p', { className: 'hint' }, t(orderMode === 'manual' ? 'manualOrder' : 'catalogOrder')) : null,
@@ -1348,7 +1413,7 @@ window.__ModuleLoader__.load({
               ...[['openai-completions', 'OpenAI Chat Completions'], ['openai-responses', 'OpenAI Responses'], ['anthropic-messages', 'Anthropic Messages']].map(([value, label]) => h('option', { key: value, value }, label)))),
             field(t('key'), key, (value) => { setKey(value); setDirty(true); }, { type: 'password', autoComplete: 'new-password', disabled: busy || !view.keyWritable, placeholder: t(view.keyConfigured ? 'keySaved' : 'keyEmpty') })),
           h('p', { className: 'hint' }, t(view.keyWritable ? 'keyHint' : 'keyReadonly')),
-          h('div', { className: 'bar', style: { marginTop: 14 } }, button(t('check'), checkConnection)),
+          h('div', { className: 'bar', style: { marginTop: 14 } }, button(t('check'), checkConnection, { 'aria-busy': modelBusy === 'check' })),
         ],
         preferences: () => [
           h('h4', { className: 'group' }, t('groupProgram')),
@@ -1367,9 +1432,11 @@ window.__ModuleLoader__.load({
           h('section', { className: 'block backend' },
             h('div', { className: 'bar spread' }, h('h4', null, t('backendTitle')),
               h('div', { className: 'bar' },
-                button(t('backendCheck'), () => backendAction('backend-check'), { disabled: busy || operation?.running || unsupported }),
+                button(t('backendCheck'), () => backendAction('backend-check'), { disabled: busy || operation?.running || unsupported, 'aria-busy': modelBusy === 'backend-check' }),
                 button(t(backend?.installed ? 'backendUpgrade' : 'backendDownload'), () => backendAction('backend-install'), {
                   className: !backend?.installed || backend?.updateAvailable ? 'primary' : '',
+                  // 下载升级在后台进行（含自动更新），请求返回后按程序操作是否在跑继续转圈
+                  'aria-busy': modelBusy === 'backend-install' || Boolean(operation?.running),
                   disabled: busy || operation?.running || unsupported || (backend?.installed && (!backend.version || (backend.latest && !backend.updateAvailable))),
                 }))),
             h('div', { className: 'versions' },
@@ -1383,9 +1450,10 @@ window.__ModuleLoader__.load({
               update({ magpiePath }); setView((old) => ({ ...old, backend: { ...old.backend, installed: false, version: null, reason: null } }));
             }, { placeholder: backend?.defaultPath || t('backendDefault'), disabled: busy || operation?.running })),
             h('p', { className: 'hint' }, t('backendPathHint')),
-            backend?.path ? h('p', { className: 'hint backend-path' }, backend.path) : null),
+            // 解析出的路径与输入框里（留空时是占位符）显示的相同时不再重复一行
+            backend?.path && backend.path !== (config.magpiePath?.trim() || backend.defaultPath) ? h('p', { className: 'hint backend-path' }, backend.path) : null),
           h('section', { className: 'plugin-update', 'aria-label': t('updateTitle') }, renderUpdateSection({ ...updater.model,
-            blocked: dirty || modelBusy || operation?.running,
+            blocked: dirty || Boolean(modelBusy) || operation?.running,
             blockedHint: dirty ? t('updateSaveFirst') : t('updateWait'),
           }, updater.actions, t)),
         ],
@@ -1393,13 +1461,14 @@ window.__ModuleLoader__.load({
 
       return h('section', { className: 'dsm-mp', 'aria-busy': busy, ref: cardRef },
         header, tabs,
-        h('div', { className: 'panel', role: 'tabpanel', id: 'dsm-mp-panel', 'aria-labelledby': `dsm-mp-tab-${tab}` }, ...panels[tab]()),
+        // key 跟随页签：换页签时整块重建，样式里的逐块浮现随之重播。
+        h('div', { key: tab, className: 'panel', role: 'tabpanel', id: 'dsm-mp-panel', 'aria-labelledby': `dsm-mp-tab-${tab}` }, ...panels[tab]()),
         h('div', { className: 'foot-space', ref: footerSpaceRef }, h('footer', { className: 'foot' },
           notice ? h('p', { className: `notice${notice.error ? ' error' : ''}`, role: notice.error ? 'alert' : 'status' }, notice.text) : null,
           !view.editable ? h('p', { className: 'error' }, t('readOnly')) : null,
           h('div', { className: 'bar spread' },
             h('span', { className: `state${dirty ? ' dirty' : ''}` }, t(dirty ? 'unsaved' : 'savedState')),
-            h('div', { className: 'bar' }, button(t(dirty ? 'discard' : 'reload'), reload), button(t(busy ? 'saving' : 'save'), save, { className: 'primary', disabled: busy || !view.editable }))))),
+            h('div', { className: 'bar' }, button(t(dirty ? 'discard' : 'reload'), reload, { 'aria-busy': modelBusy === 'reload' }), button(t(busy ? 'saving' : 'save'), save, { className: 'primary', disabled: busy || !view.editable, 'aria-busy': modelBusy === 'save' }))))),
       );
     }
 

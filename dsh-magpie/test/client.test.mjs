@@ -738,3 +738,44 @@ test('拖动手柄可用上下方向键移动，搜索时跳过隐藏模型，�
   assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['hidden', 'a', 'c', 'b']);
   assert.equal(key(0, 'Enter').prevented, false);
 });
+
+test('动效：减少动态效果时全关，滑块要求锚点定位，换页签与计数变化重建节点，只有被点的按钮转圈', async () => {
+  let release;
+  const client = clientHarness(view({ models: [{ id: 'a/one' }, { id: 'b/two', enabled: false }] }),
+    () => new Promise((resolve) => { release = () => resolve(response({ ...view(), sync: { ok: true, count: 1 } })); }));
+  const css = client.styles[0];
+  assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{\.dsm-mp,[^}]*\{animation:none!important;transition:none!important\}\}/);
+  const anchored = css.slice(css.indexOf('@supports (anchor-name:--a) and (anchor-scope:--a)'));
+  assert.match(anchored, /anchor-scope:--dsm-mp-tab/);
+  assert.match(anchored, /anchor-scope:--dsm-mp-seg/);
+  assert.ok([...css.matchAll(/@keyframes ([\w-]+)/g)].every(([, name]) => name.startsWith('dsm-mp-')));
+  const panel = () => nodes(client.render(), (n) => n.props.role === 'tabpanel')[0];
+  const listCount = () => nodes(client.render(), (n) => n.props.className === 'count' && n.type === 'span')[1];
+  assert.equal(panel().props.key, 'models');
+  assert.equal(listCount().props.key, '1/2');
+  nodes(client.render(), (n) => n.props.className === 'model-select')[1].children[0].props.onChange({ target: { checked: true } });
+  assert.equal(listCount().props.key, '2/2');
+  const saving = button(client.render(), '保存并同步').props.onClick();
+  assert.equal(button(client.render(), '处理中…').props['aria-busy'], true);
+  assert.equal(button(client.render(), '从 Magpie 同步').props['aria-busy'], false);
+  assert.equal(button(client.render(), '从 Magpie 同步').props.disabled, true);
+  release();
+  await saving;
+  assert.equal(button(client.render(), '保存并同步').props['aria-busy'], false);
+  client.tab('偏好');
+  assert.equal(panel().props.key, 'preferences');
+});
+
+test('程序路径与输入框或占位符相同时不重复显示，解析出不同路径时才列出', () => {
+  const exe = resolve('Magpie.exe');
+  const client = clientHarness({ ...view(), backend: { supported: true, installed: true, version: '0.1.1', path: exe, defaultPath: exe } });
+  client.tab('更新');
+  const pathLine = () => nodes(client.render(), (n) => n.props.className === 'hint backend-path');
+  assert.equal(pathLine().length, 0);
+  field(client.render(), 'Magpie 程序路径').props.onChange({ target: { value: exe } });
+  client.states[0].backend.path = exe;
+  assert.equal(pathLine().length, 0);
+  client.states[0].config.magpiePath = resolve('portable');
+  client.states[0].backend.path = resolve('portable', 'Magpie.exe');
+  assert.deepEqual(pathLine()[0].children, [resolve('portable', 'Magpie.exe')]);
+});
