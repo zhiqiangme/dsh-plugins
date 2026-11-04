@@ -290,7 +290,8 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'hubFollowKey',
     'hubKeySaved', 'hubKeyMissing', 'hubKeyEnvironment', 'hubKeyUnavailable', 'hubKeyKeep', 'hubSaving',
     'hubSettingsSaved', 'hubKeysSaved', 'hubSyncFailed', 'hubInventoryFailed',
-    'hubDual', 'hubDualHint', 'hubCnKey', 'hubGlKey', 'hubApply', 'hubDualSaved', 'hubBoth',
+    'hubDual', 'hubDualHint', 'hubCnKey', 'hubGlKey', 'hubHwKey', 'hubApply', 'hubDualSaved', 'hubBoth', 'hubAll',
+    'codeartsSkipped', 'statCodeArts', 'statCodeArtsSub',
     'modelSearch', 'regionAll', 'ruleFree', 'ruleVision', 'ruleMax', 'sortUpstream', 'sortName', 'sortCredits', 'ruleHint',
     'diagnose', 'diagnoseCopy', 'diagnoseCopied', 'diagnoseWorking',
     'backendStarted', 'recoveryStatus', 'recoveryIdle', 'recoveryWaiting', 'recoveryRestarting', 'recoveryRecovered', 'recoveryExhausted', 'recoveryRetry',
@@ -1039,7 +1040,7 @@ test('区域 Key：重新打开仍显示各项保存状态，不回填密钥', (
 test('区域 Key：校验中有提示，成功后就近显示已保存并解释输入框清空', async () => {
   let finish;
   const posts = [];
-  const settings = { enabled: false, keys: { cn: 'saved', global: 'saved', follow: 'saved' } };
+  const settings = { enabled: false, keys: { cn: 'saved', global: 'saved', codearts: 'saved', follow: 'saved' } };
   const app = boot(gatewayStates({ gateway: 'hub' }), { fetchImpl: async (_path, options) => {
     if (options.method === 'POST') {
       posts.push(JSON.parse(options.body));
@@ -1047,20 +1048,20 @@ test('区域 Key：校验中有提示，成功后就近显示已保存并解释�
     }
     return { ok: true, json: async () => ({ ok: true, enabled: true, hubDual: false, models: ROWS, only: [] }) };
   } });
-  const keys = ['cn-secret', 'gl-secret', 'follow-secret'];
+  const keys = ['cn-secret', 'gl-secret', 'hw-secret', 'follow-secret'];
   collectByType(hubKeyForm(app), 'input').filter((node) => node.props.type === 'password').forEach((node, index) => node.props.onChange({ target: { value: keys[index] } }));
   const pending = button(collectByType(hubKeyForm(app), 'button'), '应用区域模式').props.onClick();
   assert.equal(button(collectByType(hubKeyForm(app), 'button'), '正在校验并保存…').props.disabled, true);
   assert.ok(collectByType(hubKeyForm(app), 'input').filter((node) => node.props.type === 'password').every((node) => node.props.value));
   finish();
   await pending;
-  assert.deepEqual(posts, [{ action: 'hubMode', enabled: false, cnKey: keys[0], globalKey: keys[1], followKey: keys[2] }]);
+  assert.deepEqual(posts, [{ action: 'hubMode', enabled: false, cnKey: keys[0], globalKey: keys[1], codeartsKey: keys[2], followKey: keys[3] }]);
   const form = hubKeyForm(app);
-  assert.equal(collectByType(form, 'span').filter((node) => node.props.className.includes('dsm-wb-key-state-saved')).length, 3);
+  assert.equal(collectByType(form, 'span').filter((node) => node.props.className.includes('dsm-wb-key-state-saved')).length, 4);
   assert.ok(collectByType(form, 'input').filter((node) => node.props.type === 'password').every((node) => node.props.value === ''));
   const notice = collectByType(form, 'p').find((node) => node.props.role === 'status');
   assert.match(collectText(notice).join(''), /Key 已保存.*输入框已清空.*继续生效/);
-  assert.doesNotMatch(collectText(form).join(''), /cn-secret|gl-secret|follow-secret/);
+  assert.doesNotMatch(collectText(form).join(''), /cn-secret|gl-secret|hw-secret|follow-secret/);
 });
 
 test('区域 Key：保存被拒时就近显示错误且保留输入，不能显示成功', async () => {
@@ -1988,4 +1989,25 @@ test('模型区（hub）：说明当前出口；另一个出口的勾选不算�
   const wbText = collectText(wb.renderCard()).join('\n');
   assert.doesNotMatch(wbText, /hub 当前出口/, 'wb2api 没有出口一说');
   assert.doesNotMatch(wbText, /一个都没勾/, 'wb2api 下白名单非空就不是"全部"');
+});
+
+test('CodeArts：有 HW 模型才多一个筛选项，排在 GL 之后，不画空的倍率标签；概览单列账号数', () => {
+  const rows = [{ id: 'codearts:glm', label: 'GLM HW', credits: '', price: null, selected: false }, ...ROWS];
+  const backend = { gateway: 'hub', version: {}, history: [], overview: { ready: 1, total: 2, balances: [], codearts: { ready: 1, total: 1 } } };
+  const states = backendStates(backend);
+  states[1] = rows;
+  states[2] = { realm: 'dual', skipped: '网关 Key 绑了区域' };
+  const tree = boot(states).renderCard();
+  const region = collectByType(tree, 'select').find((node) => node.props['aria-label'] === '全部区域');
+  assert.deepEqual(collectText(region), ['全部区域', 'CN', 'GL', 'HW']);
+  const text = collectText(tree);
+  assert.ok(text.indexOf('Beta GL Free') < text.indexOf('GLM HW'), 'HW 排在 CN / GL 后面');
+  assert.ok(!text.includes('x'), '没有倍率不画 x 标签');
+  assert.ok(text.includes('CN + GL + HW（同一分组，独立出口）'));
+  assert.ok(text.includes('CodeArts 暂未接入：网关 Key 绑了区域'));
+  const tile = collectByType(tree, 'div').find((node) => node.props.className === 'dsm-wb-stat' && node.props.key === 'accounts-codearts');
+  assert.deepEqual(collectText(tile), ['HW（CodeArts）账号', '1 / 1', '积分请到 HUB 看板查看']);
+
+  const plain = boot(backendStates({ gateway: 'hub', version: {}, history: [] })).renderCard();
+  assert.deepEqual(collectText(collectByType(plain, 'select').find((node) => node.props['aria-label'] === '全部区域')), ['全部区域', 'CN', 'GL'], '没启用 CodeArts 不出现空筛选项');
 });

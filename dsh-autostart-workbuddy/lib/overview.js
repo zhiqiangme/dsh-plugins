@@ -30,9 +30,10 @@ export function createAccountOverview({ resolved, credentials, env = process.env
       if (resolved.models.hubDual) {
         const routes = await hubRegionRoutes({ models: resolved.models, credentials: service, env });
         balances = await Promise.all(['cn', 'intl'].map((realm) => balance(realm, routes[realm].apiKey)));
-      } else balances = [await balance('current', await resolveModelApiKey(resolved.models, env, service))];
+        // hub 的积分汇总只数 WorkBuddy 账号，CodeArts 恒为空，积分只在要面板会话的 /codearts/overview 里：不显示永远未知的积分块。
+      } else if (health.realm !== 'codearts') balances = [await balance('current', await resolveModelApiKey(resolved.models, env, service))];
     }
-    return { at: new Date(now()).toISOString(), ok: health.ok, ready: count(health.healthy), total: count(health.total), realm: health.realm, balances };
+    return { at: new Date(now()).toISOString(), ok: health.ok, ready: count(health.healthy), total: count(health.total), realm: health.realm, balances, ...(health.codearts ? { codearts: health.codearts } : {}) };
   }
   return function overview() {
     if (cached && config === resolved.models && now() < expires) return Promise.resolve(cached);

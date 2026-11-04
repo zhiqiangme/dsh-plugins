@@ -12,12 +12,12 @@
  * 网关密钥：syncModels 每轮会调 ensureProxyCredential，它只读凭据库，值已在（且不是占位值）就不写，
  * 所以定时同步不会每轮重写 WORKBUDDY_PROXY_KEY；推迟写入的那一轮连读都不读。
  *
- * hub 一次只服务一个出口（国内 / 国际），用户在 hub 看板顶部切换。为了让 DSH 的模型列表跟着换：
+ * hub 一次只服务一个出口（国内 / 国际 / CodeArts），用户在 hub 看板顶部切换。为了让 DSH 的模型列表跟着换：
  *   - 每 REALM_POLL_MS 探一次 hub 的 `/health`（它报当前出口，hub 也不给这条请求记日志），
  *     出口变了就立即同步一轮，不等下一个 resyncIntervalMs；
  *   - 出口切换后的那一轮跳过"移除要连续两轮确认"：模型变少是用户切出口的结果，不是上游抖动。
- * 白名单按出口分开记（cn: / global: 键，见 models.js 的 selectionKey），所以切过去用的是那个出口自己的勾选。
- * 双区域时两个出口合在同一分组中，按模型 id 路由，不需要随看板出口变化重写清单。
+ * 白名单按出口分开记（cn: / global: / codearts: 键，见 models.js 的 selectionKey），所以切过去用的是那个出口自己的勾选。
+ * 双区域时各出口合在同一分组中，按模型 id 路由，不需要随看板出口变化重写清单。
  */
 
 import { gatewayDriver } from './gateway.js';

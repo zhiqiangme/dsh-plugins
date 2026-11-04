@@ -31,11 +31,12 @@ import { creditValue, normalizeModelRules } from './model-rules.js';
 import { GATEWAY_IDS, backendLockHolder, gatewayDriver, withBackendLock } from './gateway.js';
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
 import {
-  creditsLabel,
+  CODEARTS_REALM,
   fetchModels,
   dualProviderConflict,
   fetchHubRegions,
   hubRegionKeys,
+  hubRegionWanted,
   HUB_KEY_REFS,
   HUB_ROUTER_PATH,
   providerKeyRef,
@@ -43,11 +44,13 @@ import {
   resolveModelApiKey,
   LLM_PI_AI_PACKAGE,
   findConfigEntry,
+  modelCreditsLabel,
   modelDisplayName,
   missingSelectedModels,
   panelApiKey,
   pendingPruned,
   prunableSelection,
+  REALM_LABELS,
   restorePruned,
   scopedSelection,
   selectionKey,
@@ -191,8 +194,8 @@ function positiveIntOrNull(value) {
  *
  * 白名单为空 = 同步后端全部模型（既有语义），此时所有条目都标记为已选。
  *
- * hub：行的 id 是带出口前缀的白名单键（cn:xxx / global:xxx，见 models.js 的 selectionKey），回显的白名单
- * 也把老的裸 id 展开成两个出口的键。浏览器半侧原样回传，存下来的勾选就按出口分开，hub 切出口时各用各的。
+ * hub：行的 id 是带出口前缀的白名单键（cn:xxx / global:xxx / codearts:xxx，见 models.js 的 selectionKey），回显的白名单
+ * 也把老的裸 id 展开成 cn / global 的键。浏览器半侧原样回传，存下来的勾选就按出口分开，hub 切出口时各用各的。
  *
  * `models` 是插件手里的当前配置（随配置变更就地刷新，见 index.js），`patchPath` 只用来
  * 告诉用户写到了哪个文件。
@@ -242,12 +245,12 @@ export async function describeModels({ spec, models, editor, env = process.env, 
 
   // 与同步同一套挑选规则（含 hub 当前出口没勾过任何模型时按"全部"算），面板显示的勾选就是 DSH 会得到的。
   const selected = new Set(models.hubDual
-    ? fetched.regions.flatMap((region) => selectModels(region.models, only).map(selectionKey))
+    ? fetched.regions.filter((region) => hubRegionWanted(region.realm, only)).flatMap((region) => selectModels(region.models, only).map(selectionKey))
     : selectModels(fetched.models, only).map((model) => model.id));
   const rows = fetched.models.map((model) => ({
     id: selectionKey(model),
     label: modelDisplayName(model),
-    credits: creditsLabel(model.credits),
+    credits: modelCreditsLabel(model),
     price: creditValue(model.credits),
     contextWindow: positiveIntOrNull(model.context_length),
     maxTokens: positiveIntOrNull(model.max_output_tokens),
@@ -264,9 +267,11 @@ export async function describeModels({ spec, models, editor, env = process.env, 
   return {
     ok: true,
     url: fetched.url,
-    // hub 的当前出口（intl / cn）；wb2api 没有。
+    // hub 的当前出口（intl / cn / codearts）；wb2api 没有。
     realm: fetched.realm,
     hubDual: models.hubDual,
+    // CodeArts 已启用却取不到目录的原因（典型是网关 Key 绑了区域）：CN / GL 照常可用，面板单独提示。
+    ...(fetched.skipped ? { skipped: fetched.skipped } : {}),
     patchPath,
     enabled,
     provider: models.provider,
@@ -496,7 +501,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
   }
   const action = typeof body.value.action === 'string' ? body.value.action : '';
   if (action === 'hubMode') {
-    const result = await setHubMode({ resolved, editor, credentials, env, enabled: body.value.enabled, cnKey: body.value.cnKey, globalKey: body.value.globalKey, followKey: body.value.followKey });
+    const result = await setHubMode({ resolved, editor, credentials, env, enabled: body.value.enabled, cnKey: body.value.cnKey, globalKey: body.value.globalKey, codeartsKey: body.value.codeartsKey, followKey: body.value.followKey });
     json(res, result.ok ? 200 : 400, result);
     return;
   }
@@ -613,25 +618,25 @@ export async function describeHubSettings({ resolved, editor, credentials, env =
       return result?.source === 'env' ? 'environment' : 'saved';
     } catch { return 'unavailable'; }
   };
-  const [cn, global, savedFollow] = await Promise.all([state(HUB_KEY_REFS.cn), state(HUB_KEY_REFS.intl), state(followRef)]);
+  const [cn, global, codearts, savedFollow] = await Promise.all([state(HUB_KEY_REFS.cn), state(HUB_KEY_REFS.intl), state(HUB_KEY_REFS.codearts), state(followRef)]);
   // 旧版跟随 Key 尚未迁移时，仍按实际读取的旧引用显示状态。
   const follow = savedFollow === 'missing' && resolved.models.apiKeyRef && resolved.models.apiKeyRef !== followRef
     ? await state(resolved.models.apiKeyRef) : savedFollow;
-  return { enabled: resolved.models.hubDual === true, keys: { cn, global, follow } };
+  return { enabled: resolved.models.hubDual === true, keys: { cn, global, codearts, follow } };
 }
 
 /** 区域 Key 只写凭据库，profile 和面板快照只保存模式开关与不含密钥的状态。 */
-export async function setHubMode({ resolved, editor, credentials, env = process.env, enabled, cnKey, globalKey, followKey }) {
+export async function setHubMode({ resolved, editor, credentials, env = process.env, enabled, cnKey, globalKey, codeartsKey, followKey }) {
   if (resolved.gateway !== 'hub' || typeof enabled !== 'boolean') return { ok: false, reason: '请在 HUB 网关下设置双区域模式' };
   const entry = findConfigEntry(editor, { id: PLUGIN_ID });
   if (!entry || typeof editor?.edit !== 'function') return { ok: false, reason: '宿主没有可编辑的插件配置' };
   try {
     const follow = typeof followKey === 'string' ? followKey.trim() : '';
     const existing = await hubRegionKeys(credentials, env);
-    const typed = { cn: typeof cnKey === 'string' ? cnKey.trim() : '', intl: typeof globalKey === 'string' ? globalKey.trim() : '' };
-    const keys = { cn: typed.cn || existing.cn, intl: typed.intl || existing.intl };
+    const typed = { cn: typeof cnKey === 'string' ? cnKey.trim() : '', intl: typeof globalKey === 'string' ? globalKey.trim() : '', codearts: typeof codeartsKey === 'string' ? codeartsKey.trim() : '' };
+    const keys = { cn: typed.cn || existing.cn, intl: typed.intl || existing.intl, codearts: typed.codearts || existing.codearts };
     const keyRef = proxyCredentialRef(resolved.models);
-    if ((typed.cn || typed.intl || follow) && typeof credentials?.set !== 'function') return { ok: false, reason: '保存 Key 需要 DSH 凭据服务' };
+    if ((typed.cn || typed.intl || typed.codearts || follow) && typeof credentials?.set !== 'function') return { ok: false, reason: '保存 Key 需要 DSH 凭据服务' };
     if (follow) {
       if (env[keyRef] && env[keyRef] !== follow) return { ok: false, reason: `${keyRef} 来自只读环境变量` };
       const checked = await Promise.all(['cn', 'intl'].map((realm) => fetchModels({ baseURL: resolved.models.baseURL, apiKey: follow, realm, timeoutMs: resolved.models.timeoutMs })));
@@ -648,12 +653,14 @@ export async function setHubMode({ resolved, editor, credentials, env = process.
       // 区域 Key 是可选覆盖：留空的区域用网关 Key + X-Realm 头，HUB 里不必另建 Key。
       const checked = await fetchHubRegions({ models: resolved.models, credentials, env, keys, sharedKey: follow || undefined });
       if (!checked.ok) return checked;
+      // 可选出口取不到不挡开启，但刚填的 Key 必须校验过才能保存。
+      if (typed.codearts && !checked.regions.some((region) => region.realm === CODEARTS_REALM)) return { ok: false, reason: checked.skipped ?? 'HUB 没有启用 CodeArts，无法校验 HW 区域 Key' };
     } else {
       // 关闭双区域只改变路由；用户在表单里填的 Key 仍须校验并保存，不能随成功后的清空丢掉。
       for (const [realm, key] of Object.entries(typed)) {
         if (!key) continue;
         const checked = await fetchModels({ baseURL: resolved.models.baseURL, apiKey: key, realm, timeoutMs: resolved.models.timeoutMs });
-        const label = realm === 'cn' ? 'CN' : 'GL';
+        const label = REALM_LABELS[realm];
         if (!checked.ok) return { ok: false, reason: `${label} 区域 Key 校验失败，请核对 Key 和 HUB 状态` };
         if (![realm, ...(realm === 'intl' ? ['global'] : [])].includes(checked.realm)) return { ok: false, reason: `${label} 区域 Key 没有走 ${label} 出口，请在 HUB 设置页核对区域绑定` };
       }

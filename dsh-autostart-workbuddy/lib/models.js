@@ -28,7 +28,11 @@ import { assertModelSyncIdle, modelSyncBlocked, ModelSyncBusyError } from './mod
 
 /** llm-pi-ai 的包名：按包名找 Loader 条目，profile 里的行 id 可能被用户改过。 */
 export const LLM_PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
-export const HUB_KEY_REFS = Object.freeze({ cn: 'WORKBUDDY_PROXY_KEY_CN', intl: 'WORKBUDDY_PROXY_KEY_GLOBAL' });
+export const HUB_KEY_REFS = Object.freeze({ cn: 'WORKBUDDY_PROXY_KEY_CN', intl: 'WORKBUDDY_PROXY_KEY_GLOBAL', codearts: 'WORKBUDDY_PROXY_KEY_CODEARTS' });
+/** hub 的第三出口（华为云 CodeArts）。要在 HUB 设置里启用才有目录，所以和 CN / GL 不同，是可选的。 */
+export const CODEARTS_REALM = 'codearts';
+/** 早期版本建过独立分组的两个区域；CodeArts 接入时已合并成一个分组，没有对应的旧分组。 */
+const LEGACY_DUAL_REALMS = Object.freeze(['cn', 'intl']);
 /** 两种后端可以有不同的 Key；旧的共享引用只作为迁移读取来源，不再互相覆盖。 */
 export const GATEWAY_KEY_REFS = Object.freeze({ wb2api: 'WORKBUDDY_WB2API_KEY', hub: 'WORKBUDDY_HUB_KEY' });
 /** hub 按请求选出口的请求头：Key 未绑定区域时由它决定出口（绑定了区域的 Key 优先，见 hub 的 _request_realm）。 */
@@ -68,29 +72,40 @@ export async function hubRegionKeys(credentials, env = process.env) {
 }
 
 /**
- * 两个区域各用哪把 Key：存了区域绑定 Key 就用它，否则用跟随分组的同一把 Key，出口交给 X-Realm 头。
+ * 各区域用哪把 Key：存了区域绑定 Key 就用它，否则用跟随分组的同一把 Key，出口交给 X-Realm 头。
  * `keys` / `sharedKey` 供面板在保存前用草稿值校验。
  */
 export async function hubRegionRoutes({ models, credentials, env = process.env, keys, sharedKey }) {
   keys ??= await hubRegionKeys(credentials, env);
   sharedKey ??= await resolveModelApiKey(models, env, credentials);
-  return Object.fromEntries(['cn', 'intl'].map((realm) => [realm, keys[realm]
+  return Object.fromEntries(Object.keys(HUB_KEY_REFS).map((realm) => [realm, keys[realm]
     ? { realm, apiKey: keys[realm], bound: true }
     : { realm, apiKey: sharedKey, bound: false }]));
 }
 
 function sameRealm(expected, actual) { return actual === expected || (expected === 'intl' && actual === 'global'); }
 
-/** 不把 Key 放到 URL；必须核对应答区域，旧 HUB 或绑定到另一区域的 Key 不能静默退回全局出口。 */
+/** /health 不鉴权；不认识 CodeArts 的旧 HUB 没有这个字段，不能把 X-Realm: codearts 发给它。 */
+async function hubCodeArtsEnabled(baseURL) {
+  try {
+    const response = await fetch(modelsEndpoint(baseURL).replace(/v1\/models$/, 'health'), { signal: AbortSignal.timeout(3000) });
+    return (await response.json())?.codearts?.configured === true;
+  } catch { return false; }
+}
+
+/**
+ * 不把 Key 放到 URL；必须核对应答区域，旧 HUB 或绑定到另一区域的 Key 不能静默退回全局出口。
+ * CodeArts 取不到时只记进 `skipped`：它是可选出口，不能拖累 CN / GL 的同步和面板。
+ */
 export async function fetchHubRegions({ models, credentials, env = process.env, keys, sharedKey }) {
-  const routes = await hubRegionRoutes({ models, credentials, env, keys, sharedKey });
-  const regions = await Promise.all(Object.values(routes).map(async ({ realm, apiKey, bound }) => {
+  const [routes, codearts] = await Promise.all([hubRegionRoutes({ models, credentials, env, keys, sharedKey }), hubCodeArtsEnabled(models.baseURL)]);
+  const regions = await Promise.all(Object.values(routes).filter(({ realm }) => realm !== CODEARTS_REALM || codearts).map(async ({ realm, apiKey, bound }) => {
     const label = REALM_LABELS[realm];
     // 绑定 Key 也带上头：hub 以绑定为准，头只是无害的冗余。
     const fetched = await fetchModels({ baseURL: models.baseURL, apiKey, realm, timeoutMs: models.timeoutMs });
-    if (!fetched.ok) return { ok: false, reason: `${label} 模型接口失败（${fetched.reason}），请检查${bound ? ` ${label} 区域 Key` : '网关 Key'}和 HUB 状态` };
+    if (!fetched.ok) return { ok: false, realm, reason: `${label} 模型接口失败（${fetched.reason}），请检查${bound ? ` ${label} 区域 Key` : '网关 Key'}和 HUB 状态` };
     if (!sameRealm(realm, fetched.realm)) {
-      return { ok: false, reason: bound
+      return { ok: false, realm, reason: bound
         ? `${label} 区域 Key 实际没有走 ${label} 出口，请在 HUB 设置页核对它的区域绑定`
         : fetched.realm === undefined
           ? 'HUB 版本过旧，不支持按请求选择出口，请先更新 HUB'
@@ -98,11 +113,27 @@ export async function fetchHubRegions({ models, credentials, env = process.env, 
     }
     return { ...fetched, ok: true, realm, bound, models: fetched.models.map((model) => ({ ...model, realm })) };
   }));
-  const failed = regions.find((region) => !region.ok);
-  return failed ?? { ok: true, regions };
+  const failed = regions.find((region) => !region.ok && region.realm !== CODEARTS_REALM);
+  if (failed) return failed;
+  const skipped = regions.find((region) => !region.ok);
+  return { ok: true, regions: regions.filter((region) => region.ok), ...(skipped ? { skipped: skipped.reason } : {}) };
 }
 
-function dualProviderName(provider, realm) { return `${provider}-hub-${realm === 'cn' ? 'cn' : 'global'}`; }
+/**
+ * 双区域是否同步这个区域。CodeArts 是后接入的：白名单已有勾选却没有一条 codearts: 时按"不要"算。
+ * CN / GL 的"没勾过 = 全部"不能套用，否则一启用就把整个目录灌进 DSH，全部取消勾选也去不掉。
+ */
+export function hubRegionWanted(realm, only = []) {
+  return realm !== CODEARTS_REALM || only.length === 0 || only.some((key) => key.startsWith(REALM_KEY_PREFIXES[CODEARTS_REALM]));
+}
+
+/** 本轮没有 CodeArts 目录（HUB 关了它或暂时取不到）时要留下的条目：勾选过的不因此消失，取消勾选才移除。 */
+function retainedCodeArts(config, provider, only = []) {
+  const current = plainObject(plainObject(plainObject(config).providers)[provider]).models;
+  return Array.isArray(current) ? current.filter((entry) => entry?.id?.startsWith?.(REALM_KEY_PREFIXES[CODEARTS_REALM]) && only.includes(entry.id)) : [];
+}
+
+function dualProviderName(provider, realm) { return `${provider}-hub-${realm === 'intl' ? 'global' : realm}`; }
 
 /**
  * 本插件建的区域分组：X-Realm 头写着该区域，或（早期版本建的）引用该区域的专用凭据。
@@ -116,7 +147,7 @@ function ownsDualProvider(provider, realm) {
 /** 区域分组名被别的 provider 占用时返回其名字，否则 undefined。 */
 export function dualProviderConflict(config, provider) {
   const providers = plainObject(plainObject(config).providers);
-  for (const realm of Object.keys(HUB_KEY_REFS)) {
+  for (const realm of LEGACY_DUAL_REALMS) {
     const name = dualProviderName(provider, realm);
     if (providers[name] && !ownsDualProvider(providers[name], realm)) return name;
   }
@@ -127,7 +158,7 @@ export function dualProviderConflict(config, provider) {
 function dropDualProviders(config, provider) {
   const providers = { ...config.providers };
   let changed = false;
-  for (const realm of Object.keys(HUB_KEY_REFS)) {
+  for (const realm of LEGACY_DUAL_REALMS) {
     const name = dualProviderName(provider, realm);
     if (ownsDualProvider(providers[name], realm)) { delete providers[name]; changed = true; }
   }
@@ -148,7 +179,8 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
   const blocked = modelSyncBlocked(syncBlocker);
   if (blocked) return blocked;
   const documentPath = editor.documentPath;
-  const groups = fetched.regions.map((region) => ({ ...region, name: dualProviderName(models.provider, region.realm), entries: planModelEntries(region.models, models) }));
+  const groups = fetched.regions.filter((region) => hubRegionWanted(region.realm, models.only)).map((region) => ({ ...region, name: dualProviderName(models.provider, region.realm), entries: planModelEntries(region.models, models) }));
+  const hasCodeArts = fetched.regions.some((region) => region.realm === CODEARTS_REALM);
   if (groups.some((group) => group.models.length === 0)) return { state: 'skipped', reason: '某个区域返回空目录，保留现有列表', documentPath };
   const previousIds = (config, group) => {
     const prefix = REALM_KEY_PREFIXES[group.realm];
@@ -182,14 +214,16 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     const conflicted = dualProviderConflict(config, models.provider);
     if (conflicted) throw new Error(`provider ${conflicted} 已被占用`);
     const sharedRef = proxyCredentialRef(models);
-    const planned = withProviderModels(config, models.provider, entries, providerSkeleton(models, spec)).config;
+    const kept = hasCodeArts ? [] : retainedCodeArts(config, models.provider, models.only);
+    const planned = withProviderModels(config, models.provider, [...entries, ...kept], providerSkeleton(models, spec)).config;
     const provider = planned.providers[models.provider];
     const headers = Object.fromEntries(Object.entries(plainObject(provider.headers)).filter(([key]) => key.toLowerCase() !== 'x-realm'));
     return dropDualProviders({ ...planned, providers: { ...planned.providers, [models.provider]: { ...provider, baseURL, apiKeyEnv: sharedRef, ...(provider.headers ? { headers } : {}) } } }, models.provider);
   };
   const planned = plan(target.options?.config ?? {});
   const changed = !isDeepStrictEqual(planned, target.options?.config);
-  if (dryRun) return { state: changed ? 'dry-run' : 'unchanged', entries, realm: 'dual', documentPath };
+  const written = planned.providers[models.provider].models;
+  if (dryRun) return { state: changed ? 'dry-run' : 'unchanged', entries: written, realm: 'dual', documentPath };
   try {
     if (changed) await editor.edit(target, (current) => {
       assertModelSyncIdle(syncBlocker);
@@ -200,17 +234,21 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     return { state: error instanceof ModelSyncBusyError ? 'busy' : 'failed', reason: error.message, documentPath };
   }
   const credential = await ensureProxyCredential({ credentials, ref: providerKeyRef(planned, models.provider), apiKey: await resolveModelApiKey(models, env, credentials), managed: providerKeyRef(planned, models.provider) === GATEWAY_KEY_REFS[models.gateway] });
-  return { state: changed ? 'updated' : 'unchanged', entries, credential, realm: 'dual', documentPath };
+  return { state: changed ? 'updated' : 'unchanged', entries: written, credential, realm: 'dual', documentPath };
 }
 
 /** 默认保留的思考档位：与 DSH 既有的三档 UI 对齐（低/高/最大）。 */
 export const DEFAULT_EFFORTS = Object.freeze(['low', 'high', 'max']);
 
-/** id 前缀 → 展示名里的区域标签：国内版 cn: / 国际版 global:。 */
+/** id 前缀 → 展示名里的区域标签：国内版 cn: / 国际版 global: / 华为云 CodeArts codearts:（CA 和 CN 容易看错，故标 HW）。 */
 const REGION_PREFIXES = Object.freeze([
   ['cn:', 'CN'],
   ['global:', 'GL'],
+  ['codearts:', 'HW'],
 ]);
+
+/** 不带前缀的老条目早于 CodeArts，只展开成这两个出口；否则没启用 CodeArts 也会多出一批缺席行。 */
+const LEGACY_REGION_PREFIXES = Object.freeze(['cn:', 'global:']);
 
 /**
  * 倍率标签：`credits` 是 wb2api 给的积分倍率（形如 `x0.11`）。
@@ -225,14 +263,19 @@ export function creditsLabel(credits) {
   return stripped || 'Free';
 }
 
+/** CodeArts 按账号积分计费，目录里没有倍率（hub 也只记 codearts:unpriced）：缺字段不等于免费，留空不显示。 */
+export function modelCreditsLabel(model) {
+  return model.realm === CODEARTS_REALM && model.credits === undefined ? '' : creditsLabel(model.credits);
+}
+
 /**
  * hub 的出口名 → 展示名里的区域标签。hub 的模型 id 不带 cn:/global:（一次只服务一个出口），
  * 出口写在 /v1/models 应答顶层的 `realm` 里，由 fetchModels 抄到每个条目上。
  */
-const REALM_LABELS = Object.freeze({ cn: 'CN', intl: 'GL', global: 'GL' });
+export const REALM_LABELS = Object.freeze({ cn: 'CN', intl: 'GL', global: 'GL', codearts: 'HW' });
 
 /** hub 的出口 → 白名单键前缀：与 wb2api 的模型 id 前缀一致，两种网关因此共用同一份白名单。 */
-const REALM_KEY_PREFIXES = Object.freeze({ cn: 'cn:', intl: 'global:', global: 'global:' });
+const REALM_KEY_PREFIXES = Object.freeze({ cn: 'cn:', intl: 'global:', global: 'global:', codearts: 'codearts:' });
 
 /** 键带的出口前缀（cn: / global:）；不带前缀返回 undefined。 */
 function regionPrefixOf(key) {
@@ -293,14 +336,14 @@ export function selectModels(models, only = []) {
 }
 
 /**
- * 面板回显用的白名单：hub 下把不带前缀的老条目展开成 cn: 与 global: 两条（语义不变：两个出口都选中）。
+ * 面板回显用的白名单：hub 下把不带前缀的老条目展开成 cn: 与 global: 两条（语义不变：两个老出口都选中）。
  * 面板之后保存的就全是带前缀的键，取消一个出口的勾选不会连带另一个出口。
  */
 export function scopedSelection(only = [], gateway) {
   if (gateway !== 'hub') return [...only];
   const out = [];
   for (const key of only) {
-    for (const scoped of regionPrefixOf(key) ? [key] : REGION_PREFIXES.map(([prefix]) => `${prefix}${key}`)) {
+    for (const scoped of regionPrefixOf(key) ? [key] : LEGACY_REGION_PREFIXES.map((prefix) => `${prefix}${key}`)) {
       if (!out.includes(scoped)) out.push(scoped);
     }
   }
@@ -379,14 +422,14 @@ function catalogDeferred(error, realm, documentPath) {
   return { state: 'deferred', reason: error.message, missing: error.missing, realm, documentPath };
 }
 
-/** 展示名：`<上游名> <CN|GL> <倍率>`；上游名已带同款后缀时不重复追加。 */
+/** 展示名：`<上游名> <CN|GL|HW> <倍率>`；上游名已带同款后缀时不重复追加。 */
 export function modelDisplayName(model) {
   const prefixed = REGION_PREFIXES.find(([prefix]) => model.id.startsWith(prefix))?.[1];
   const region = prefixed ?? (typeof model.realm === 'string' ? REALM_LABELS[model.realm] : undefined);
   const base = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
-  const suffix = creditsLabel(model.credits);
+  const suffix = modelCreditsLabel(model);
   // 先去掉上游名称已有的同款倍率，再把区域插到倍率前，避免产生重复倍率或把区域放到末尾。
-  const name = base.toLowerCase().endsWith(` ${suffix.toLowerCase()}`)
+  const name = suffix && base.toLowerCase().endsWith(` ${suffix.toLowerCase()}`)
     ? base.slice(0, -suffix.length).trimEnd()
     : base;
   return [name, region, suffix].filter(Boolean).join(' ');
@@ -400,8 +443,13 @@ function positiveInt(value) {
 /** 单个模型条目上的思考档位；`auto` 表示按上游声明的档位生成。 */
 export function modelEfforts(model, efforts) {
   if (model.supports_reasoning === false) return [];
-  if (efforts !== 'auto') return [...efforts];
-  const declared = Array.isArray(model.reasoning_supported_efforts)
+  // hub 按 CodeArts 的 reasoning_efforts 严格校验，档位外的请求直接 400；WorkBuddy 的同名字段 hub 会自行换算，不受此限。
+  // none 是关闭思考，DSH 没有这个档位名（叫 off），写进配置会被 schema 拒绝。
+  const strict = model.realm === CODEARTS_REALM && Array.isArray(model.reasoning_efforts)
+    ? model.reasoning_efforts.filter((e) => typeof e === 'string' && e !== 'none')
+    : [];
+  if (efforts !== 'auto') return strict.length > 0 ? efforts.filter((e) => strict.includes(e)) : [...efforts];
+  const declared = strict.length > 0 ? strict : Array.isArray(model.reasoning_supported_efforts)
     ? model.reasoning_supported_efforts.filter((e) => typeof e === 'string' && e.trim())
     : [];
   return declared.length > 0 ? declared : [...DEFAULT_EFFORTS];
@@ -507,6 +555,9 @@ export function providerModelIds(config, providerName) {
   return Array.isArray(models) ? models.map((model) => model?.id).filter((id) => typeof id === 'string') : [];
 }
 
+/** 算远程目录的来源：WorkBuddy 报 remote，CodeArts 报 codearts（它的种子目录 fetched_at 为空，过不了下面的判断）。 */
+const REMOTE_CATALOG_SOURCES = new Set(['remote', CODEARTS_REALM]);
+
 /**
  * 定时同步的移除确认：本轮要从 provider 里删掉的模型，必须上一轮也已缺席才放行。
  *
@@ -525,7 +576,7 @@ export function confirmRemovals(guard, currentIds, nextIds, catalog) {
   // HUB 的目录缓存为 300s；每分钟重读同一 fetched_at 不是一次新的下架证据。
   // 文件缓存、内置表等降级来源也不能确认移除，更不能替上一批远程结果背书。
   if (catalog) {
-    if (catalog.source !== 'remote' || !(catalog.fetched_at > 0)) {
+    if (!REMOTE_CATALOG_SOURCES.has(catalog.source) || !(catalog.fetched_at > 0)) {
       guard.missing = new Set();
       guard.catalogAt = undefined;
       return { ok: missing.length === 0, missing };

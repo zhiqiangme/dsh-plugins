@@ -33,10 +33,11 @@ async function setup(t, upstream, options = {}) {
   return { resolved, credentials, router, send, calls, url };
 }
 
-test('区域模型只接受 cn:/global: 前缀，裸 id 和空模型不能静默跟随出口', () => {
+test('区域模型只接受 cn:/global:/codearts: 前缀，裸 id 和空模型不能静默跟随出口', () => {
   assert.deepEqual(parseHubModel('cn:deepseek-v4.1'), { realm: 'cn', model: 'deepseek-v4.1' });
   assert.deepEqual(parseHubModel('global:vendor:model'), { realm: 'intl', model: 'vendor:model' });
-  for (const id of ['', 'cn:', 'intl:m', 'm', null]) assert.equal(parseHubModel(id), undefined);
+  assert.deepEqual(parseHubModel('codearts:GLM-5.2'), { realm: 'codearts', model: 'GLM-5.2' });
+  for (const id of ['', 'cn:', 'intl:m', 'codearts:', 'hw:m', 'm', null]) assert.equal(parseHubModel(id), undefined);
 });
 
 test('同组模型按区域 Key 路由，保留图像、工具与推理参数，Key 修改后立即生效', async (t) => {

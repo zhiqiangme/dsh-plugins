@@ -34,8 +34,8 @@ export async function diagnose({ resolved, service, recovery, editor, credential
   ]);
   checks.push({ id: 'port', ok: listening, detail: `${target.host}:${target.port}` });
   checks.push({ id: 'gateway', ok: health.ok, detail: health.ok ? driver.title : health.reason });
-  checks.push({ id: 'accounts', ok: health.servable === true, detail: { ready: health.healthy ?? null, total: health.total ?? null } });
-  checks.push({ id: 'models', ok: catalog.ok, detail: catalog.ok ? { count: catalog.models?.length ?? catalog.regions.reduce((n, region) => n + region.models.length, 0), realm: models.hubDual ? 'dual' : catalog.realm } : catalog.reason });
+  checks.push({ id: 'accounts', ok: health.servable === true, detail: { ready: health.healthy ?? null, total: health.total ?? null, ...(health.codearts ? { codearts: health.codearts } : {}) } });
+  checks.push({ id: 'models', ok: catalog.ok, detail: catalog.ok ? { count: catalog.models?.length ?? catalog.regions.reduce((n, region) => n + region.models.length, 0), realm: models.hubDual ? 'dual' : catalog.realm, ...(catalog.skipped ? { skipped: catalog.skipped } : {}) } : catalog.reason });
   const entry = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE });
   const ref = providerKeyRef(entry?.options?.config, models.provider);
   if (ref && typeof credentials?.resolve === 'function') {

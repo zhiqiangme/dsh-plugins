@@ -411,8 +411,9 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       diagnose: '一键诊断', diagnoseCopy: '复制脱敏报告', diagnoseCopied: '诊断报告已复制', diagnoseWorking: '正在诊断…',
       emptyFiltered: '没有符合筛选条件的模型', modelSearch: '搜索模型', regionAll: '全部区域', ruleFree: '只同步免费模型', ruleVision: '只同步视觉模型', ruleMax: '最高倍率（留空不限）',
       sortUpstream: '上游顺序', sortName: '按名称排序', sortCredits: '按倍率排序', ruleHint: '规则与勾选共同生效，新增模型也按规则筛选；未定价的模型不会视为免费。批量操作只影响当前筛选结果。',
-      hubDual: 'CN / GL 同时使用', hubDualHint: 'CN / GL 模型合并显示在一个 WorkBuddy 分组中，按模型区域自动选择出口，不随 HUB 看板切换。沿用网关 Key；只有网关 Key 在 HUB 里绑定了区域时，才需要另填区域 Key（只存 DSH 凭据库，留空沿用已保存的值）。',
-      hubCnKey: 'CN 区域 Key（可选）', hubGlKey: 'GL 区域 Key（可选）', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存', hubBoth: 'CN + GL（同一分组，独立出口）',
+      hubDual: 'CN / GL / HW 同时使用', hubDualHint: 'CN / GL 模型合并显示在一个 WorkBuddy 分组中，按模型区域自动选择出口，不随 HUB 看板切换。HUB 启用 CodeArts 后，它的模型标记为 HW 一并列出，默认不勾选。沿用网关 Key；只有网关 Key 在 HUB 里绑定了区域时，才需要另填区域 Key（只存 DSH 凭据库，留空沿用已保存的值）。',
+      hubCnKey: 'CN 区域 Key（可选）', hubGlKey: 'GL 区域 Key（可选）', hubHwKey: 'HW（CodeArts）区域 Key（可选）', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存', hubBoth: 'CN + GL（同一分组，独立出口）', hubAll: 'CN + GL + HW（同一分组，独立出口）',
+      codeartsSkipped: 'CodeArts 暂未接入：{reason}', statCodeArts: 'HW（CodeArts）账号', statCodeArtsSub: '积分请到 HUB 看板查看',
       hubFollowKey: '跟随出口的未绑定 Key（可选，供关闭双区域后使用）',
       hubKeySaved: '已保存', hubKeyMissing: '未单独保存，使用网关 Key', hubKeyEnvironment: '已从环境配置', hubKeyUnavailable: '暂无法读取保存状态',
       hubKeyKeep: '已保存；留空保留，输入新 Key 可替换', hubSaving: '正在校验并保存…',
@@ -577,8 +578,9 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       diagnose: 'Diagnose', diagnoseCopy: 'Copy redacted report', diagnoseCopied: 'Report copied', diagnoseWorking: 'Diagnosing…',
       emptyFiltered: 'No models match the filters', modelSearch: 'Search models', regionAll: 'All regions', ruleFree: 'Sync free models only', ruleVision: 'Sync vision models only', ruleMax: 'Max multiplier (blank = any)',
       sortUpstream: 'Upstream order', sortName: 'Sort by name', sortCredits: 'Sort by multiplier', ruleHint: 'Rules and selections both apply, including to new models. Unknown prices are not treated as free. Bulk actions affect only filtered rows.',
-      hubDual: 'Use CN and GL together', hubDualHint: 'Shows CN / GL models in one WorkBuddy group, routed by the selected model region independently of the HUB dashboard. Uses the gateway key; region keys are only needed when it is bound to a region (stored only in DSH credentials; blank keeps saved values).',
-      hubCnKey: 'CN region key (optional)', hubGlKey: 'GL region key (optional)', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved', hubBoth: 'CN + GL (one group, independent exits)',
+      hubDual: 'Use CN, GL and HW together', hubDualHint: 'Shows CN / GL models in one WorkBuddy group, routed by the selected model region independently of the HUB dashboard. Once CodeArts is enabled in HUB, its models are listed too, tagged HW and unselected by default. Uses the gateway key; region keys are only needed when it is bound to a region (stored only in DSH credentials; blank keeps saved values).',
+      hubCnKey: 'CN region key (optional)', hubGlKey: 'GL region key (optional)', hubHwKey: 'HW (CodeArts) region key (optional)', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved', hubBoth: 'CN + GL (one group, independent exits)', hubAll: 'CN + GL + HW (one group, independent exits)',
+      codeartsSkipped: 'CodeArts is not connected: {reason}', statCodeArts: 'HW (CodeArts) accounts', statCodeArtsSub: 'See credits on the HUB dashboard',
       hubFollowKey: 'Unbound key for follow mode (optional)',
       hubKeySaved: 'Saved', hubKeyMissing: 'No separate key; using gateway key', hubKeyEnvironment: 'Configured by environment', hubKeyUnavailable: 'Saved state unavailable',
       hubKeyKeep: 'Saved; leave blank to keep, or enter a replacement', hubSaving: 'Validating and saving…',
@@ -710,14 +712,15 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       return payload;
     }
 
-    /** 区域排序：cn 在前、global 在后（与 profile 里模型清单的既有排布一致）。 */
+    /** 区域排序：cn、global、codearts 依次排列（与 profile 里模型清单的既有排布一致）。 */
     function regionRank(id) {
       if (id.startsWith('cn:')) return 0;
       if (id.startsWith('global:')) return 1;
-      return 2;
+      if (id.startsWith('codearts:')) return 2;
+      return 3;
     }
 
-    /** 面板的展示顺序：区域（cn → global → 其它），区域内保持后端返回顺序。 */
+    /** 面板的展示顺序：区域（cn → global → codearts → 其它），区域内保持后端返回顺序。 */
     function sortRows(rows) {
       return rows
         .map((row, index) => ({ row, index }))
@@ -752,7 +755,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         for (const id of oldSaved) if (!oldPicked.has(id)) picked.delete(id);
       }
       const old = previous.meta ?? {};
-      const meta = { ...old, only: payload.only, realm: payload.realm, hubDual: payload.hubDual, savedEnabled: payload.enabled, savedRules: payload.rules,
+      const meta = { ...old, only: payload.only, realm: payload.realm, hubDual: payload.hubDual, skipped: payload.skipped, savedEnabled: payload.enabled, savedRules: payload.rules,
         enabled: old.enabled !== old.savedEnabled ? old.enabled : payload.enabled,
         rules: JSON.stringify(old.rules) !== JSON.stringify(old.savedRules) ? old.rules : payload.rules };
       return { rows, picked, savedPicked, meta };
@@ -908,9 +911,9 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
     /** 网关的展示名：产品名，两种语言都不翻译。 */
     const GATEWAY_NAMES = { hub: 'WorkBuddy2API Hub', wb2api: 'wb2api' };
 
-    /** hub 的出口 / 积分区域只有国内与国际两种，国际在不同接口里叫 global 或 intl。 */
+    /** hub 的出口 / 积分区域：国际在不同接口里叫 global 或 intl，CodeArts 与模型名一样标 HW。 */
     function realmName(realm) {
-      return realm === 'cn' ? 'CN' : 'GL';
+      return realm === 'cn' ? 'CN' : realm === 'codearts' ? 'HW' : 'GL';
     }
 
     function formatNumber(value) {
@@ -1738,7 +1741,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
           const list = payload.models ?? [];
           const selected = new Set([...(payload.only ?? []), ...list.filter((row) => row.selected).map((row) => row.id)]);
           setRows(list);
-          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, only: payload.only, patchPath: payload.patchPath, url: payload.url, realm: payload.realm, hubDual: payload.hubDual, rules: payload.rules, savedRules: payload.rules });
+          setMeta({ enabled: payload.enabled, savedEnabled: payload.enabled, only: payload.only, patchPath: payload.patchPath, url: payload.url, realm: payload.realm, hubDual: payload.hubDual, skipped: payload.skipped, rules: payload.rules, savedRules: payload.rules });
           setPicked(selected);
           setSavedPicked(new Set(selected));
           setPhase('ready');
@@ -2009,14 +2012,14 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         setBackendBusy('hubMode');
         setHubNotice(undefined);
         try {
-          const payload = await request(BACKEND_PATH, 'POST', { action: 'hubMode', enabled: hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, followKey: hubDraft?.followKey });
+          const payload = await request(BACKEND_PATH, 'POST', { action: 'hubMode', enabled: hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, codeartsKey: hubDraft?.codeartsKey, followKey: hubDraft?.followKey });
           if (!payload.ok) throw new Error(payload.reason || t('saveFailed'));
           // 宿主确认保存后才清空敏感草稿；同步/回读失败不能再把已落盘的 Key 说成保存失败。
           setHubDraft(undefined);
           setBackend((last) => ({ ...last, hubSettings: payload.settings }));
           setMeta((last) => ({ ...last, hubDual: payload.enabled }));
           const syncFailed = ['failed', 'skipped', 'not-ready'].includes(payload.sync?.state);
-          const hadKeys = ['cnKey', 'globalKey', 'followKey'].some((key) => hubDraft?.[key]?.trim());
+          const hadKeys = ['cnKey', 'globalKey', 'codeartsKey', 'followKey'].some((key) => hubDraft?.[key]?.trim());
           setHubNotice(syncFailed
             ? { kind: 'error', text: t('hubSyncFailed', { reason: payload.sync.reason || payload.sync.state }) }
             : { kind: 'ok', text: t(hadKeys ? 'hubKeysSaved' : 'hubSettingsSaved') });
@@ -2039,6 +2042,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       const status = backendStatus(backend, phase, reason, rows.length > 0);
       // hub 的勾选按出口分开：另一个出口的勾选不算，这个出口一个没勾就是"全部"。
       const nonePicked = meta.realm ? rows.every((row) => !picked.has(row.id)) : picked.size === 0;
+      const hasCodeArts = rows.some((row) => row.id.startsWith('codearts:'));
 
       // ---- 头部：网关 + 运行状态 + 后端面板入口，诊断放右侧（各页签都用得上）----
       // 后端管理面板地址：宿主在 /backend 应答里给（端口可配），拿不到就用兜底值。
@@ -2124,6 +2128,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       const overview = backend?.overview;
       if (overview) {
         stats.push(statTile('accounts', t('statAccounts'), `${overview.ready ?? '?'} / ${overview.total ?? '?'}`));
+        // CodeArts 账号由 hub 单独管理；积分只有看板会话读得到，这里只报账号数。
+        if (overview.codearts) stats.push(statTile('accounts-codearts', t('statCodeArts'), `${overview.codearts.ready} / ${overview.codearts.total}`, { sub: t('statCodeArtsSub') }));
         for (const balance of overview.balances ?? []) {
           // 0 是真实余额，null 才是没数据：两者不能显示成一样
           const known = balance.balance != null;
@@ -2233,11 +2239,12 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
                 }),
                 t('syncEnabled'),
               ),
-              meta.realm === 'dual' ? h('span', { className: 'dsm-wb-pill' }, t('hubBoth')) : null,
+              meta.realm === 'dual' ? h('span', { className: 'dsm-wb-pill' }, t(hasCodeArts ? 'hubAll' : 'hubBoth')) : null,
             ),
             h('p', { className: 'dsm-wb-hint' }, t(meta.enabled === true ? 'syncHint' : 'disabledHint')),
             // hub 单出口时说明这一页勾的是哪一组（应答顶层的 realm）。
             meta.realm && meta.realm !== 'dual' ? h('p', { className: 'dsm-wb-hint' }, t('hubRealm', { realm: realmName(meta.realm) })) : null,
+            meta.skipped ? h('p', { className: 'dsm-wb-hint' }, t('codeartsSkipped', { reason: meta.skipped })) : null,
           ),
         );
 
@@ -2251,7 +2258,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
               { className: 'dsm-wb-filters' },
               h('input', { type: 'search', className: 'dsm-wb-input dsm-wb-search', placeholder: t('modelSearch'), 'aria-label': t('modelSearch'), value: filters?.query ?? '', disabled: locked, onChange: (e) => setFilters((last) => ({ ...last, query: e.target.value })) }),
               h('select', { className: 'dsm-wb-input', 'aria-label': t('regionAll'), value: filters?.region ?? 'all', disabled: locked, onChange: (e) => setFilters((last) => ({ ...last, region: e.target.value })) },
-                h('option', { value: 'all' }, t('regionAll')), h('option', { value: 'cn' }, 'CN'), h('option', { value: 'global' }, 'GL')),
+                h('option', { value: 'all' }, t('regionAll')), h('option', { value: 'cn' }, 'CN'), h('option', { value: 'global' }, 'GL'), hasCodeArts ? h('option', { value: 'codearts' }, 'HW') : null),
             ),
             h(
               'div',
@@ -2294,7 +2301,9 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
                       { className: 'dsm-wb-cell dsm-wb-cell-credits' },
                       row.unavailable
                         ? h('span', { className: 'dsm-wb-tag dsm-wb-tag-warn' }, t('modelUnavailable'))
-                        : h('span', { className: `dsm-wb-credits${row.credits === 'Free' ? ' dsm-wb-credits-free' : ''}` }, `x${row.credits}`),
+                        : row.credits
+                          ? h('span', { className: `dsm-wb-credits${row.credits === 'Free' ? ' dsm-wb-credits-free' : ''}` }, `x${row.credits}`)
+                          : null,
                     ),
                   ),
                 );
@@ -2366,7 +2375,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
               h(
                 'div',
                 { className: 'dsm-wb-fields' },
-                ...[['cnKey', 'hubCnKey', 'cn'], ['globalKey', 'hubGlKey', 'global'], ['followKey', 'hubFollowKey', 'follow']].map(([key, label, field]) => {
+                ...[['cnKey', 'hubCnKey', 'cn'], ['globalKey', 'hubGlKey', 'global'], ['codeartsKey', 'hubHwKey', 'codearts'], ['followKey', 'hubFollowKey', 'follow']].map(([key, label, field]) => {
                   const state = backend.hubSettings?.keys?.[field];
                   const stateLabel = t({ saved: 'hubKeySaved', missing: 'hubKeyMissing', environment: 'hubKeyEnvironment' }[state] || 'hubKeyUnavailable');
                   return h(

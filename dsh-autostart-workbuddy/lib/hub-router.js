@@ -1,12 +1,12 @@
 /**
- * 把 CN / GL 放进一个 OpenAI provider：模型 id 带区域前缀，转发时还原 HUB 的裸 id。
+ * 把 CN / GL / HW（CodeArts）放进一个 OpenAI provider：模型 id 带区域前缀，转发时还原 HUB 的裸 id。
  * llm-pi-ai 只能在 provider 层设置 Key / headers，不能给同组模型分别指定出口，故在已有
  * webServer 上做一层转发；不另开端口、不接管上游程序，SSE 原样流式传输。
  */
 import { timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { fetchHubRegions, hubRegionRoutes, HUB_ROUTER_PATH, planModelEntries, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE, providerBaseURL, resolveModelApiKey, selectionKey } from './models.js';
+import { fetchHubRegions, hubRegionRoutes, hubRegionWanted, HUB_ROUTER_PATH, planModelEntries, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE, providerBaseURL, resolveModelApiKey, selectionKey } from './models.js';
 
 // 视觉请求含 base64 图像，不能沿用面板 64KiB 的限制；仍给整个 JSON 请求设 32MiB 上限。
 const MAX_CHAT_BYTES = 32 * 1024 * 1024;
@@ -32,11 +32,11 @@ function sameSecret(actual, expected) {
   return b.length > 0 && a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** 只接受两个显式区域；不能将拼错的 id 静默转成看板当前出口。 */
+/** 只接受显式区域；不能将拼错的 id 静默转成看板当前出口。 */
 export function parseHubModel(id) {
   if (typeof id !== 'string') return undefined;
-  const match = /^(cn|global):(.+)$/.exec(id);
-  return match ? { realm: match[1] === 'cn' ? 'cn' : 'intl', model: match[2] } : undefined;
+  const match = /^(cn|global|codearts):(.+)$/.exec(id);
+  return match ? { realm: match[1] === 'global' ? 'intl' : match[1], model: match[2] } : undefined;
 }
 
 /** credentials/editor 均现取，保存 Key 后下一次调用立即生效。 */
@@ -64,7 +64,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
         if (req.method === 'GET' && path === `${HUB_ROUTER_PATH}/models`) {
           const fetched = await fetchHubRegions({ models, credentials: store, env });
           if (!fetched.ok) return reply(res, 502, fetched.reason);
-          const data = fetched.regions.flatMap((region) => planModelEntries(region.models, models).map((entry) => ({ ...entry, id: selectionKey({ id: entry.id, realm: region.realm }) })));
+          const data = fetched.regions.filter((region) => hubRegionWanted(region.realm, models.only)).flatMap((region) => planModelEntries(region.models, models).map((entry) => ({ ...entry, id: selectionKey({ id: entry.id, realm: region.realm }) })));
           res.writeHead(200, { 'content-type': 'application/json' });
           return res.end(JSON.stringify({ object: 'list', data }));
         }
@@ -82,7 +82,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
         catch { return reply(res, 400, '请求体不是合法 JSON'); }
         const route = parseHubModel(body?.model);
-        if (!route) return reply(res, 400, '请选择带 CN / GL 区域的 WorkBuddy 模型');
+        if (!route) return reply(res, 400, '请选择带 CN / GL / HW 区域的 WorkBuddy 模型');
         const routes = await hubRegionRoutes({ models, credentials: store, env });
         const apiKey = routes[route.realm].apiKey;
         // timeoutMs 只管等响应头；长对话由 DSH 的流空闲超时和客户端取消控制，不能在 60s 截断。

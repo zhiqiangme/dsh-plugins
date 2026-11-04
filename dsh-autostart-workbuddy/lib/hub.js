@@ -167,6 +167,9 @@ export function describeHub(paths) {
  * 健康探针：hub 的 `/health` 不鉴权、恒回 200，形如
  * `{ ok, realm, accounts, accounts_ready, api_key_required }`。它没有 service 字段，
  * 认身份靠 accounts 字段——hub 自己的启动器也是这么判定"端口上是不是自己"的。
+ *
+ * accounts* 只数 WorkBuddy 账号，CodeArts 单独报在 `codearts` 子字段（启用时才有账号数）：
+ * 看板出口切到 CodeArts 时能不能服务要看它，否则只登录了 CodeArts 的用户会被当成没有账号。
  */
 export async function probeHubHealth({ host = '127.0.0.1', port, timeoutMs = 5_000 } = {}) {
   try {
@@ -177,12 +180,17 @@ export async function probeHubHealth({ host = '127.0.0.1', port, timeoutMs = 5_0
       return { ok: false, reason: '/health 的应答不是 workbuddy2api-hub' };
     }
     const ready = Number(payload.accounts_ready) || 0;
+    const realm = typeof payload.realm === 'string' ? payload.realm : undefined;
+    const codearts = payload.codearts?.configured === true
+      ? { ready: Number(payload.codearts.healthy) || 0, total: Number(payload.codearts.accounts) || 0 }
+      : undefined;
     return {
       ok: true,
-      servable: ready > 0,
+      servable: (realm === 'codearts' ? codearts?.ready ?? 0 : ready) > 0,
       healthy: ready,
       total: Number(payload.accounts) || 0,
-      realm: typeof payload.realm === 'string' ? payload.realm : undefined,
+      realm,
+      ...(codearts ? { codearts } : {}),
     };
   } catch (error) {
     return { ok: false, reason: `探测 /health 失败：${error instanceof Error ? error.message : String(error)}` };

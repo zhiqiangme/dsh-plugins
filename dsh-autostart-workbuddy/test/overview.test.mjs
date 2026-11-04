@@ -62,3 +62,12 @@ test('双区域没存区域 Key 时用网关 Key 加 X-Realm 头分别取两个�
   const report = await createAccountOverview(x)();
   assert.deepEqual(report.balances.map((row) => [row.realm, row.state]), [['cn', 'ready'], ['intl', 'ready']]);
 });
+
+test('看板出口是 CodeArts 时不查积分汇总（它只数 WorkBuddy 账号），账号数来自 /health', async (t) => {
+  const x = await setup(t);
+  x.driver = { probe: async () => ({ ok: true, healthy: 1, total: 2, realm: 'codearts', codearts: { ready: 1, total: 1 } }) };
+  const report = await createAccountOverview(x)();
+  assert.deepEqual(report.balances, []);
+  assert.deepEqual(report.codearts, { ready: 1, total: 1 });
+  assert.deepEqual(x.state.hits, []);
+});
