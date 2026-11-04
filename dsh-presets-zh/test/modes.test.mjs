@@ -59,6 +59,20 @@ test('三种完整模式保留规划规则、平台判断及完整提示词，PT
   for (const id of ['tool-plugin-manager', 'tool-plugin-market']) assert.deepEqual(row(creation, id).disabled, { __jsExpr: "!ctx.get('profileContext')" })
 })
 
+test('完整模式适配 DSH 0.2.2 的子代理控制入口与模型发现配置', () => {
+  for (const { definition } of MODES.filter(item => item.key !== 'minimal')) {
+    const delegation = row(definition, 'delegation').config
+    // list_agents 已由控制插件统一注册；旧子路径不再导出，会导致整个预设加载失败。
+    assert.deepEqual(delegation.filter(plugin => plugin.name.startsWith('@deepseek-ai/dsh-tool-subagent-control')).map(plugin => plugin.name), ['@deepseek-ai/dsh-tool-subagent-control'])
+    assert.deepEqual(delegation.find(plugin => plugin.id === 'tool-subagent').config, {
+      provider: 'spawn', toolName: 'subagent', modelSelection: true, modelDiscovery: true,
+    })
+    assert.deepEqual(delegation.find(plugin => plugin.id === 'tool-subagent-fork').config, {
+      provider: 'fork', toolName: 'subagent_fork',
+    })
+  }
+})
+
 test('汉化命中精确原文；省略指定宿主段落，未知说明、属性及其他内容原样保留', () => {
   const dictionary = data('translations/standard.json')
   const sections = dictionary.entries.map(entry => ({ name: entry.name, text: entry.original, priority: 37, interpolate: true }))
