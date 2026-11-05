@@ -214,8 +214,9 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
     try {
       const response = await fetch(`${hubOrigin(resolved.models.baseURL)}/health`, { signal: AbortSignal.timeout(3000) });
       const payload = await response.json();
-      // 旧版 hub 没有按出口的账号数，当作都能用。
-      const counts = payload?.accounts_ready_by_realm ?? { cn: 1, intl: 1 };
+      // 只跳过根本没账号的出口。账号都不可用时仍要问 hub：风控暂停只有问了才知道（/health 不报），
+      // 跳过就等于绕到别的出口。这一问 hub 在本地就答完，不打上游。旧版 hub 没有按出口的账号数，当作都能用。
+      const counts = payload?.accounts_by_realm ?? payload?.accounts_ready_by_realm ?? { cn: 1, intl: 1 };
       const ready = new Set(Object.entries(counts).filter(([, count]) => count > 0).map(([realm]) => realm));
       if (payload?.codearts?.configured && payload.codearts.healthy !== 0) ready.add(CODEARTS_REALM);
       health = { ready, codearts: payload?.codearts?.configured === true };
@@ -248,7 +249,7 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
     },
 
     /**
-     * 此刻能接请求的出口；探不到时返回 undefined，由调用方照常发请求，让 hub 报真实错误。
+     * 有账号的出口；探不到时返回 undefined，由调用方照常发请求，让 hub 报真实错误。
      *
      * @returns {Promise<{ ready: Set<string>, codearts: boolean } | undefined>}
      */

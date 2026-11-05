@@ -28,6 +28,11 @@ const MAX_PINS = 500;
  * 404 在内：目录可能已更新，这个出口刚下架了这个模型。
  */
 const RETRY_STATUSES = new Set([402, 404, 408, 429, 500, 502, 503, 504]);
+/**
+ * hub 在风控连坐暂停期间也回 429，但换出口正是这个暂停要防的：同一台设备上的账号会被牵连。
+ * 状态码和类型都与普通限额相同，只有正文写了 code 11140 能区分。
+ */
+const RESTRICTION_HOLD = /11140/;
 
 function reply(res, status, message) {
   res.writeHead(status, { 'content-type': 'application/json' });
@@ -48,6 +53,12 @@ function localRequest(req) {
 function sameSecret(actual, expected) {
   const a = Buffer.from(actual), b = Buffer.from(expected);
   return b.length > 0 && a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** 用 clone 读：判定为暂停时原响应还要原样转给用户。读不到时按普通限额处理。 */
+async function restrictionHold(upstream) {
+  if (upstream.status !== 429) return false;
+  return RESTRICTION_HOLD.test(await upstream.clone().text().catch(() => ''));
 }
 
 /** 只接受显式区域；不能将拼错的 id 静默转成看板当前出口。 */
@@ -218,7 +229,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
             continue;
           }
           if (controller.signal.aborted) return;
-          if (!last && RETRY_STATUSES.has(upstream.status)) {
+          if (!last && RETRY_STATUSES.has(upstream.status) && !await restrictionHold(upstream)) {
             await upstream.body?.cancel().catch(() => undefined);
             continue;
           }

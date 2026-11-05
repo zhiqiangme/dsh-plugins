@@ -57,10 +57,10 @@ async function setup(t, options = {}) {
   // 有哈希才算改过密码：否则插件会用出厂密码 admin 自动登录。
   writeFileSync(join(accounts, 'settings.json'), JSON.stringify({ panel_password_hash: 'x', panel_password_default: false }));
 
-  const hub = { catalog: CATALOG, codearts: true, codeartsDown: false, password: 'panel-pass', logins: [], overviews: 0, tokens: new Set(), hwEndDate: '', hwRemain: 50, chats: [], reply: undefined, ready: { cn: 1, intl: 1 } };
+  const hub = { catalog: CATALOG, codearts: true, codeartsDown: false, password: 'panel-pass', logins: [], overviews: 0, tokens: new Set(), hwEndDate: '', hwRemain: 50, chats: [], reply: undefined, replyBody: undefined, ready: { cn: 1, intl: 1 }, accounts: { cn: 1, intl: 1 } };
   const server = createServer(async (req, res) => {
     res.setHeader('content-type', 'application/json');
-    if (req.url === '/health') return res.end(JSON.stringify({ accounts_ready_by_realm: hub.ready, ...(hub.codearts ? { codearts: { configured: true, healthy: 1 } } : {}) }));
+    if (req.url === '/health') return res.end(JSON.stringify({ accounts_by_realm: hub.accounts, accounts_ready_by_realm: hub.ready, ...(hub.codearts ? { codearts: { configured: true, healthy: 1 } } : {}) }));
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : undefined;
@@ -84,7 +84,7 @@ async function setup(t, options = {}) {
     hub.chats.push({ ...body, realm });
     const answer = hub.reply?.(realm, body) ?? 200;
     res.writeHead(answer);
-    res.end(JSON.stringify(answer === 200 ? { realm } : { error: { message: `from ${realm}` } }));
+    res.end(JSON.stringify(answer === 200 ? { realm } : { error: { message: hub.replyBody ?? `from ${realm}` } }));
   });
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(done); }));
@@ -457,14 +457,14 @@ test('转发：同一对话固定出口，到期变化也不换；新对话重�
   assert.equal(x.hub.chats.at(-1).realm, 'intl');
 });
 
-test('转发：固定的出口账号不可用时换一个，之后固定在新出口', async (t) => {
+test('转发：固定的出口没有账号时换一个，之后固定在新出口', async (t) => {
   const x = await setup(t);
   x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
   await x.send(ask('task'));
-  x.hub.ready = { cn: 0, intl: 1 };
+  x.hub.accounts = { cn: 0, intl: 1 };
   x.clock.now += 10_000;
   await x.send(ask('task'));
-  x.hub.ready = { cn: 1, intl: 1 };
+  x.hub.accounts = { cn: 1, intl: 1 };
   x.clock.now += 10_000;
   await x.send(ask('task'));
   assert.deepEqual(x.hub.chats.map(({ realm }) => realm), ['cn', 'intl', 'intl']);
@@ -538,6 +538,47 @@ test('转发：风控 403 和参数错误不换出口，全部失败时返回最
   assert.equal(failed.status, 429);
   assert.equal(x.hub.chats.length, 3);
   assert.deepEqual(await failed.json(), { error: { message: 'from codearts' } });
+});
+
+/** hub 的 restriction_hold_message 开头：判定只靠这段正文，hub 改措辞时这里要跟着核对。 */
+const RESTRICTION_HOLD = '上游风控已限制本区域账号（403 / code 11140，账号存在异常行为）。网关已暂停派发 1800 秒';
+
+test('转发：风控暂停期间的 429 不换出口，把 hub 的说明交给用户', async (t) => {
+  const x = await setup(t);
+  x.hub.reply = (realm) => (realm === 'cn' ? 429 : 200);
+  x.hub.replyBody = RESTRICTION_HOLD;
+  const held = await x.send(ask('task', 'auto:hy4'));
+  assert.equal(held.status, 429);
+  assert.deepEqual(sentTo(x), ['cn:hy4free'], '换出口会牵连同一台设备上的账号');
+  assert.deepEqual(await held.json(), { error: { message: RESTRICTION_HOLD } });
+});
+
+test('转发：账号全部不可用的出口也要问 hub，否则会绕过风控暂停', async (t) => {
+  const x = await setup(t);
+  x.hub.ready = { cn: 0, intl: 1 };
+  x.hub.reply = (realm) => (realm === 'cn' ? 429 : 200);
+  x.hub.replyBody = RESTRICTION_HOLD;
+  assert.equal((await x.send(ask('task', 'auto:hy4'))).status, 429);
+  assert.deepEqual(sentTo(x), ['cn:hy4free']);
+});
+
+test('转发：账号全部不可用但没有暂停时，问过 hub 后照常换出口', async (t) => {
+  const x = await setup(t);
+  x.hub.ready = { cn: 0, intl: 1 };
+  x.hub.reply = (realm) => (realm === 'cn' ? 503 : 200);
+  assert.equal((await x.send(ask('task', 'auto:hy4'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free']);
+});
+
+test('转发：另一个出口风控暂停时，已固定在这边的对话继续用', async (t) => {
+  const x = await setup(t);
+  x.hub.reply = (realm) => (realm === 'cn' ? 503 : 200);
+  await x.send(ask('task', 'auto:hy4'));
+  x.hub.chats.length = 0;
+  x.hub.reply = (realm) => (realm === 'cn' ? 429 : 200);
+  x.hub.replyBody = RESTRICTION_HOLD;
+  assert.equal((await x.send(ask('task', 'auto:hy4'))).status, 200);
+  assert.deepEqual(sentTo(x), ['intl:hy4free']);
 });
 
 test('转发：取消勾选某个出口后立即生效，不等出口表过期', async (t) => {
