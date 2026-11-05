@@ -779,3 +779,7 @@ test('程序路径与输入框或占位符相同时不重复显示，解析出�
   client.states[0].backend.path = resolve('portable', 'Magpie.exe');
   assert.deepEqual(pathLine()[0].children, [resolve('portable', 'Magpie.exe')]);
 });
+
+test('详情页把面板提到 README 上方，规则只作用于本插件', () => {
+  assert.ok(clientHarness(view()).styles[0].includes('[data-plugin-detail="@zhiqiangme/dsh-magpie"] section[data-plugin-config]{order:-1}'));
+});

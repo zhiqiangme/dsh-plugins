@@ -230,6 +230,8 @@ window.__ModuleLoader__.load({
       return payload;
     }
     const CSS = `
+      /* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
+      [data-plugin-detail="@zhiqiangme/dsh-magpie"] section[data-plugin-config]{order:-1}
       .dsm-mp{--mp-fg:var(--dsw-alias-label-primary,#0f1115);--mp-muted:var(--dsw-alias-label-secondary,#61666b);--mp-faint:var(--dsw-alias-label-tertiary,#81858c);--mp-dimmed:var(--dsw-alias-label-dimmed,#a0a5ad);
         --mp-border:var(--dsw-alias-border-l2,#0000001a);--mp-border-soft:var(--dsw-alias-border-l1,#0000000a);--mp-bg:var(--dsw-alias-bg-layer-2,#fff);--mp-raised:var(--dsw-alias-button-elevated-fill,#fff);
         --mp-fill:var(--dsw-alias-interactive-bg-hover,#2631480f);--mp-hover:var(--dsw-alias-interactive-bg-active,#2631481a);--mp-accent:var(--dsw-alias-state-business-primary,#4176e6);
