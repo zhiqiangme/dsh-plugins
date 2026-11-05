@@ -272,7 +272,7 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
 const EXIT_ORDER = Object.freeze(['cn', 'intl', CODEARTS_REALM]);
 
 /**
- * 给合并模型的出口排序，排在前面的先试。
+ * 给合并模型的成员排序，排在前面的先试；同一出口的免费和付费是两个成员。
  *
  * 规则：免费的不花积分，优先且按固定顺序；其余最早有积分作废的优先；到期相同或都未知时比倍率。
  * 能接图片的出口才收带图请求；没有一个出口能接时不过滤，让 hub 报真实错误。

@@ -244,7 +244,7 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     return { state: error instanceof ModelSyncBusyError ? 'busy' : 'failed', reason: error.message, documentPath };
   }
   const credential = await ensureProxyCredential({ credentials, ref: providerKeyRef(planned, models.provider), apiKey: await resolveModelApiKey(models, env, credentials), managed: providerKeyRef(planned, models.provider) === GATEWAY_KEY_REFS[models.gateway] });
-  const refs = await retargetModelRefs({ editor, provider: models.provider, entries: written, syncBlocker });
+  const refs = await retargetModelRefs({ editor, provider: models.provider, entries: written, credits: planHubEntries(groups, models).credits, syncBlocker });
   return { state: changed ? 'updated' : 'unchanged', entries: written, credential, refs, realm: 'dual', documentPath };
 }
 
@@ -260,19 +260,27 @@ function mergedKeys(config, provider) {
 
 /** 上游给模型快照加的月日版本号（`-1017`）。限定成合法月日，`-2000` 这类数字不算版本号。 */
 const MODEL_VERSION_SUFFIX = /-(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/;
+/** 上游把计费档位写在 id 末尾（hy4free / hy4std）。前面必须还有内容，否则单独叫 free 的模型会变成空键。 */
+const MODEL_TIER_SUFFIX = /(?<=[a-z0-9])[-_]?(?:free|std)$/i;
+
+/** 去掉版本号和档位词后剩下的模型本身。 */
+function modelFamily(text) {
+  return text.replace(MODEL_VERSION_SUFFIX, '').replace(MODEL_TIER_SUFFIX, '');
+}
 
 /**
- * 合并用的键：去掉出口前缀和月日版本号的小写 id。
+ * 合并用的键：去掉出口前缀、月日版本号和计费档位词的小写 id。
  *
- * 不按展示名合并：`Hy4` 同时是付费 hy4std 和免费 hy4free 的上游名称，按名称会把两者并成一个；
- * 而同一模型的展示名大小写又可能不同（`DeepSeek-…` / `Deepseek-…`），id 才是一致的。
+ * 不按展示名合并：同一模型的展示名大小写可能不同（`DeepSeek-…` / `Deepseek-…`），
+ * 同名的又不一定同款（`Hy3` 下有 hy3 / hy3-b / hy3-c / hy3-x，看不出是不是一个模型），id 才可靠。
  * 版本号不算区别：HW 的 deepseek-v4.1-flash-1017 与 CN / GL 的 deepseek-v4.1-flash 是同一模型，
  * 而合并模型只在用户勾选的出口里选，勾了就表示接受这个版本。
+ * 档位也不算区别：hy4free 和 hy4std 是同一模型的免费和付费版，发送时先试免费的。
  */
 export function mergeKey(id) {
   const text = String(id);
   const prefix = [MERGED_PREFIX, ...REGION_PREFIXES.map(([region]) => region)].find((candidate) => text.startsWith(candidate));
-  return (prefix ? text.slice(prefix.length) : text).toLowerCase().replace(MODEL_VERSION_SUFFIX, '');
+  return modelFamily((prefix ? text.slice(prefix.length) : text).toLowerCase());
 }
 
 /** 没有版本号的算最旧：HW 的 deepseek-v4.1-flash 比 deepseek-v4.1-flash-1017 旧。 */
@@ -281,14 +289,18 @@ function modelVersion(id) {
   return match ? Number(match[1] + match[2]) : 0;
 }
 
-/** 同一出口勾了新旧两版时只留最新的，一个出口只出现一次；Map 保持 CN → GL → HW 的顺序。 */
-function latestPerExit(members) {
-  const byRealm = new Map();
+/**
+ * 同一出口勾了新旧两版时只留最新的。免费和付费分开算，一个出口最多出现两次：
+ * 免费的不可用时还能落到付费的。Map 保持 CN → GL → HW 的顺序。
+ */
+function latestPerTier(members) {
+  const kept = new Map();
   for (const member of members) {
-    const kept = byRealm.get(member.realm);
-    if (!kept || modelVersion(member.bare) > modelVersion(kept.bare)) byRealm.set(member.realm, member);
+    const tier = `${member.realm}/${creditValue(member.model.credits) === 0}`;
+    const current = kept.get(tier);
+    if (!current || modelVersion(member.bare) > modelVersion(current.bare)) kept.set(tier, member);
   }
-  return [...byRealm.values()];
+  return [...kept.values()];
 }
 
 function smallestField(members, field) {
@@ -296,12 +308,12 @@ function smallestField(members, field) {
   return values.length ? { [field]: Math.min(...values) } : {};
 }
 
-/** 名称取 CN → GL → HW 里第一个；各出口倍率不同时显示范围（`0.97-1.63`），不知道倍率的出口不计入。 */
+/** 名称取 CN → GL → HW 里第一个；倍率不同时显示范围（`0.97-1.63`、`Free-0.29`），不知道倍率的出口不计入。 */
 function mergedName(members) {
   const labels = [...new Set(members.map(({ model }) => modelCreditsLabel(model)).filter(Boolean))]
     .sort((a, b) => (creditValue(a) ?? Infinity) - (creditValue(b) ?? Infinity));
   const credits = labels.length > 1 ? `${labels[0]}-${labels.at(-1)}` : labels[0];
-  return [modelBaseName(members[0].model).replace(MODEL_VERSION_SUFFIX, ''), 'Auto', credits].filter(Boolean).join(' ');
+  return [modelFamily(modelBaseName(members[0].model)), 'Auto', credits].filter(Boolean).join(' ');
 }
 
 /**
@@ -325,8 +337,8 @@ function mergedEntry(key, members) {
 }
 
 /**
- * 把各出口的条目变成写进 DSH 的清单。`models.hubMerge` 时，多个出口都勾选的模型并成一条
- * `auto:` 条目；只有一个出口的保持原 id，默认模型等引用不受影响。
+ * 把各出口的条目变成写进 DSH 的清单。`models.hubMerge` 时，有多个可选项的模型（多个出口，
+ * 或同一出口的免费和付费）并成一条 `auto:` 条目；只有一个的保持原 id，默认模型等引用不受影响。
  *
  * @param {{ realm: string, models: object[], entries: object[] }[]} plans hubRegionPlans 的结果
  * @param {object} models
@@ -344,17 +356,17 @@ export function planHubEntries(plans, models, { keepMerged = new Set() } = {}) {
       groups.get(key).push({ realm: plan.realm, bare: entry.id, model: byId.get(entry.id), entry: { ...entry, id: selectionKey({ id: entry.id, realm: plan.realm }) } });
     }
   }
-  const routes = new Map([...groups].map(([key, members]) => [key, latestPerExit(members).map(({ realm, bare, model }) => ({ realm, model: bare, vision: model.supports_images === true, price: creditValue(model.credits) }))]));
+  const routes = new Map([...groups].map(([key, members]) => [key, latestPerTier(members).map(({ realm, bare, model }) => ({ realm, model: bare, vision: model.supports_images === true, price: creditValue(model.credits) }))]));
   const credits = new Map(plans.flatMap((plan) => plan.models.map((model) => [selectionKey(model), model.credits])));
   if (models.hubMerge !== true) return { entries: plans.flatMap((plan) => plan.entries.map((entry) => ({ ...entry, id: selectionKey({ id: entry.id, realm: plan.realm }) }))), credits, routes };
   const entries = [];
   for (const [key, members] of groups) {
-    const exits = latestPerExit(members);
-    // 只有一个出口时没有可选的，同一出口的新旧版本各自保留，用户仍能手动选。
-    if (exits.length === 1 && !keepMerged.has(key)) { entries.push(...members.map((member) => member.entry)); continue; }
-    const entry = mergedEntry(key, exits);
+    const choices = latestPerTier(members);
+    // 只有一个可选项时不用合并，同一出口的新旧版本各自保留，用户仍能手动选。
+    if (choices.length === 1 && !keepMerged.has(key)) { entries.push(...members.map((member) => member.entry)); continue; }
+    const entry = mergedEntry(key, choices);
     entries.push(entry);
-    const cheapest = [...exits].sort((a, b) => (creditValue(a.model.credits) ?? Infinity) - (creditValue(b.model.credits) ?? Infinity))[0];
+    const cheapest = [...choices].sort((a, b) => (creditValue(a.model.credits) ?? Infinity) - (creditValue(b.model.credits) ?? Infinity))[0];
     credits.set(entry.id, cheapest.model.credits);
   }
   return { entries, credits, routes };
@@ -392,12 +404,15 @@ function replaceModelRefs(value, provider, swap) {
  * 开启合并时 `cn:x` → `auto:x`，关闭或只剩一个出口时 `auto:x` → `cn:x`。清单里还有的引用不动；
  * 写入失败不影响模型同步，只在返回值里说明。
  *
+ * @param {{ editor: object, provider: string, entries: object[], credits: Map<string, unknown>, syncBlocker?: object }} options
  * @returns {Promise<{ state: 'kept' | 'updated' | 'failed', count?: number, reason?: string }>}
  */
-export async function retargetModelRefs({ editor, provider, entries, syncBlocker }) {
+export async function retargetModelRefs({ editor, provider, entries, credits, syncBlocker }) {
   const current = new Set(entries.map((entry) => entry.id));
+  // 同款落到倍率最低的：关闭合并时，用着 auto:hy4 的配置不能悄悄变成扣积分的 hy4std。
+  const price = ({ id }) => creditValue(credits.get(id)) ?? Infinity;
   const byKey = new Map();
-  for (const entry of entries) if (!byKey.has(mergeKey(entry.id))) byKey.set(mergeKey(entry.id), entry.id);
+  for (const entry of [...entries].sort((a, b) => price(a) - price(b))) if (!byKey.has(mergeKey(entry.id))) byKey.set(mergeKey(entry.id), entry.id);
   const swap = (id) => {
     if (current.has(id) || !(id.startsWith(MERGED_PREFIX) || regionPrefixOf(id))) return id;
     return byKey.get(mergeKey(id)) ?? id;

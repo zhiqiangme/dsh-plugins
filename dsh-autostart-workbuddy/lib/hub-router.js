@@ -74,7 +74,7 @@ export function conversationKey(body) {
   return createHash('sha256').update(String(body.model)).update('\0').update(JSON.stringify(first.content ?? '')).digest('hex');
 }
 
-/** 对话 → 出口。Map 按写入顺序迭代，每次使用重新写入，最前面的就是最久没用的。 */
+/** 对话 → 出口和真实模型。Map 按写入顺序迭代，每次使用重新写入，最前面的就是最久没用的。 */
 function createExitPins(now) {
   const pins = new Map();
   return {
@@ -84,14 +84,27 @@ function createExitPins(now) {
       pins.delete(key);
       if (now() - pin.at > PIN_IDLE_MS) return undefined;
       pins.set(key, { ...pin, at: now() });
-      return pin.realm;
+      return pin;
     },
-    set(key, realm) {
+    set(key, { realm, model }) {
       pins.delete(key);
-      pins.set(key, { realm, at: now() });
+      pins.set(key, { realm, model, at: now() });
       if (pins.size > MAX_PINS) pins.delete(pins.keys().next().value);
     },
   };
+}
+
+/**
+ * 把固定的成员提到同档位最前；ranked 已按免费在前排好。
+ * 免费的始终排在付费前：对话换到付费只因免费暂时不可用，固定住的话长对话会一直扣积分，
+ * 而回到免费丢掉缓存也不花钱。
+ */
+function holdPinned(ranked, pinned) {
+  const held = ranked.find(({ realm, model }) => realm === pinned?.realm && model === pinned?.model);
+  if (!held) return ranked;
+  const rest = ranked.filter((member) => member !== held);
+  rest.splice(held.price === 0 ? 0 : rest.filter((member) => member.price === 0).length, 0, held);
+  return rest;
 }
 
 /** 合并模型 → 各出口的真实 id 与能力，用与写进 DSH 相同的勾选和规则算出来。 */
@@ -134,9 +147,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
     const [credits, readiness] = await Promise.all([exits.snapshot(), exits.readiness()]).catch(() => [{}, undefined]);
     const ranked = rankExits(members, credits, { ready: readiness?.ready, image: requestHasImage(body) });
     const pin = conversationKey(body);
-    const pinned = pin ? pins.get(pin) : undefined;
-    const held = ranked.find((member) => member.realm === pinned);
-    return { pin, attempts: held ? [held, ...ranked.filter((member) => member !== held)] : ranked };
+    return { pin, attempts: holdPinned(ranked, pin ? pins.get(pin) : undefined) };
   }
 
   return {
@@ -211,7 +222,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
             await upstream.body?.cancel().catch(() => undefined);
             continue;
           }
-          if (pin && upstream.ok) pins.set(pin, attempt.realm);
+          if (pin && upstream.ok) pins.set(pin, attempt);
           res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': 'no-store' });
           res.flushHeaders();
           if (upstream.body) await pipeline(Readable.fromWeb(upstream.body), res, { signal: controller.signal });

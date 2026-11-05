@@ -129,10 +129,15 @@ test('配置：HUB 默认开启合并，可关闭；wb2api 不支持', () => {
   assert.equal(resolvePluginConfig({ gateway: 'wb2api', models: { hubMerge: true } }, {}).models.hubMerge, false);
 });
 
-test('合并键按 id 不按展示名：大小写和月日版本号不算区别，同名不同 id 不合并', () => {
+test('合并键按 id 不按展示名：大小写、月日版本号和计费档位不算区别，同名不同 id 不合并', () => {
   assert.equal(mergeKey('cn:DeepSeek-V4.1-Flash'), mergeKey('global:deepseek-v4.1-flash'));
   assert.equal(mergeKey('auto:glm-5.3'), mergeKey('codearts:glm-5.3'));
-  assert.notEqual(mergeKey('cn:hy4std'), mergeKey('cn:hy4free'));
+  assert.equal(mergeKey('cn:hy4std'), 'hy4');
+  assert.equal(mergeKey('global:hy4free'), 'hy4');
+  assert.equal(mergeKey('auto:hy4'), 'hy4');
+  assert.equal(mergeKey('cn:model-free-1017'), 'model');
+  assert.notEqual(mergeKey('cn:hy3'), mergeKey('cn:hy3-x'), 'Hy3 同名，但 id 看不出是同款');
+  assert.equal(mergeKey('cn:free'), 'free', '不能变成空键');
   assert.equal(mergeKey('cn:deepseek-v4.1-flash'), mergeKey('codearts:deepseek-v4.1-flash-1017'));
   assert.equal(mergeKey('cn:deepseek-r1-0528'), 'deepseek-r1');
   for (const id of ['model-2000', 'model-1301', 'model-0132', 'glm-5.3']) assert.equal(mergeKey(id), id, '不是合法月日的数字不算版本号');
@@ -142,11 +147,28 @@ test('多个出口的同一模型并成一条，只有一个出口的保持原 i
   const x = await setup(t);
   assert.equal((await x.sync()).state, 'updated');
   const byId = new Map(x.listed().map((entry) => [entry.id, entry]));
-  assert.deepEqual([...byId.keys()].sort(), ['auto:deepseek-v4.1-flash', 'auto:glm-5.3', 'auto:hy4free', 'auto:hy4std', 'auto:kimi-k3.1-pro']);
+  assert.deepEqual([...byId.keys()].sort(), ['auto:deepseek-v4.1-flash', 'auto:glm-5.3', 'auto:hy4', 'auto:kimi-k3.1-pro']);
   assert.equal(byId.get('auto:deepseek-v4.1-flash').name, 'DeepSeek-V4.1-Flash Auto 0.11-0.18', 'HW 的 -1017 并进来，名称取 CN');
   assert.equal(byId.get('auto:kimi-k3.1-pro').name, 'Kimi-K3.1-Pro Auto 0.97-1.63', '倍率不同显示范围');
-  assert.equal(byId.get('auto:hy4free').name, 'Hy4 Auto Free');
-  assert.equal(byId.get('auto:hy4std').name, 'Hy4 Auto 0.29', '倍率相同只显示一个');
+  assert.equal(byId.get('auto:hy4').name, 'Hy4 Auto Free-0.29', '免费和付费并成一条，免费排在范围最前');
+});
+
+test('只勾了免费版时显示 Free；只勾付费版时显示一个倍率', async (t) => {
+  const free = await setup(t, { only: ['cn:hy4free', 'global:hy4free'] });
+  await free.sync();
+  assert.deepEqual(free.listed().map(({ id, name }) => [id, name]), [['auto:hy4', 'Hy4 Auto Free']]);
+  const paid = await setup(t, { only: ['cn:hy4std', 'global:hy4std'] });
+  await paid.sync();
+  assert.deepEqual(paid.listed().map(({ id, name }) => [id, name]), [['auto:hy4', 'Hy4 Auto 0.29']]);
+});
+
+test('同一出口勾了免费和付费也合并；只勾一版且只有一个出口时保持原 id', async (t) => {
+  const x = await setup(t, { only: ['cn:hy4free', 'cn:hy4std', 'global:kimi-k3.1-pro'] });
+  await x.sync();
+  assert.deepEqual(x.listed().map((entry) => entry.id).sort(), ['auto:hy4', 'global:kimi-k3.1-pro']);
+  x.resolved.models = { ...x.resolved.models, only: ['cn:hy4free', 'global:kimi-k3.1-pro'] };
+  await x.sync();
+  assert.deepEqual(x.listed().map((entry) => entry.id).sort(), ['cn:hy4free', 'global:kimi-k3.1-pro']);
 });
 
 test('只有一个出口的模型保持原 id；同一出口的新旧版本各自保留', async (t) => {
@@ -188,7 +210,7 @@ test('合并条目的能力：上下文和输出取最小，档位取交集，�
   const glm = byId.get('auto:glm-5.3');
   assert.deepEqual(glm.input, ['text', 'image'], 'HW 不支持视觉不能拖累整条');
   assert.deepEqual(glm.reasoningEfforts, { low: 'low', high: 'high' }, 'CodeArts 对档位外的请求直接 400');
-  assert.equal(byId.get('auto:hy4std').contextWindow, 960000);
+  assert.equal(byId.get('auto:hy4').contextWindow, 960000);
   assert.equal(byId.get('auto:deepseek-v4.1-flash').maxTokens, 65536, 'HW 的输出上限比 CN / GL 低');
 });
 
@@ -223,6 +245,17 @@ test('开启合并改写其它插件的引用并去重，不动别的 provider�
     { provider: 'workbuddy', model: 'cn:deepseek-v4.1-flash' },
     { provider: 'trae', model: 'cn:deepseek-v4.1-flash' },
   ]);
+});
+
+test('引用：旧的 auto:hy4free 改到 auto:hy4；关闭合并时落到免费版，不悄悄开始扣积分', async (t) => {
+  const x = await setup(t);
+  const defaults = x.editor.entry('agent-default-model');
+  defaults.options.config.model = 'auto:hy4free';
+  await x.sync();
+  assert.equal(x.editor.entry('agent-default-model').options.config.model, 'auto:hy4');
+  x.resolved.models = { ...x.resolved.models, hubMerge: false };
+  await x.sync();
+  assert.equal(x.editor.entry('agent-default-model').options.config.model, 'cn:hy4free');
 });
 
 test('CodeArts 这轮取不到时，含 HW 的合并条目保持 auto id，不改写引用', async (t) => {
@@ -320,6 +353,16 @@ test('排序：免费的不花积分，优先且不看到期；带图只走支�
   const vision = [{ realm: 'cn', vision: false }, { realm: 'codearts', vision: true }];
   assert.deepEqual(rankExits(vision, { cn: { expireAt: 1 } }, { image: true }).map((m) => m.realm), ['codearts']);
   assert.deepEqual(rankExits([{ realm: 'cn', vision: false }], {}, { image: true }).map((m) => m.realm), ['cn']);
+});
+
+test('排序：同一出口的免费和付费是两个成员，免费的都排在付费前', () => {
+  const members = [
+    { realm: 'cn', model: 'hy4std', price: 0.29, vision: true }, { realm: 'cn', model: 'hy4free', price: 0 },
+    { realm: 'intl', model: 'hy4std', price: 0.29, vision: true }, { realm: 'intl', model: 'hy4free', price: 0 },
+  ];
+  const order = (options) => rankExits(members, { cn: { expireAt: 2 }, intl: { expireAt: 1 } }, options).map(({ realm, model }) => `${realm}:${model}`);
+  assert.deepEqual(order(), ['cn:hy4free', 'intl:hy4free', 'intl:hy4std', 'cn:hy4std']);
+  assert.deepEqual(order({ image: true }), ['intl:hy4std', 'cn:hy4std'], '免费版不支持视觉时，带图请求只走付费版');
 });
 
 test('识别带图请求和同一对话', () => {
@@ -425,6 +468,48 @@ test('转发：固定的出口账号不可用时换一个，之后固定在新�
   x.clock.now += 10_000;
   await x.send(ask('task'));
   assert.deepEqual(x.hub.chats.map(({ realm }) => realm), ['cn', 'intl', 'intl']);
+});
+
+/** 发给 hub 的每次请求：`出口:真实 id`。 */
+function sentTo(x) {
+  return x.hub.chats.splice(0).map(({ realm, model }) => `${realm}:${model}`);
+}
+
+test('转发：先试免费版，都不可用才用付费版，付费版按积分到期选', async (t) => {
+  const x = await setup(t);
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
+  x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + DAY) }]));
+  assert.equal((await x.send(ask('a', 'auto:hy4'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:hy4free'], '免费的不看到期');
+  x.hub.reply = (_realm, body) => (body.model === 'hy4free' ? 429 : 200);
+  assert.equal((await x.send(ask('b', 'auto:hy4'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free', 'intl:hy4std']);
+});
+
+test('转发：对话回退到付费版后下一轮仍先试免费版，付费版之间不换出口', async (t) => {
+  const x = await setup(t);
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
+  x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + DAY) }]));
+  x.hub.reply = (_realm, body) => (body.model === 'hy4free' ? 429 : 200);
+  await x.send(ask('task', 'auto:hy4'));
+  assert.equal(sentTo(x).at(-1), 'intl:hy4std');
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 3600_000) }]));
+  x.clock.now += 2 * 60_000;
+  await x.send(ask('task', 'auto:hy4'));
+  assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free', 'intl:hy4std'], '到期变了也留在原来的付费出口');
+  x.hub.reply = undefined;
+  await x.send(ask('task', 'auto:hy4'));
+  assert.deepEqual(sentTo(x), ['cn:hy4free'], '免费版恢复后马上回去');
+});
+
+test('转发：同一对话在免费版之间也固定出口', async (t) => {
+  const x = await setup(t);
+  x.hub.reply = (realm) => (realm === 'cn' ? 503 : 200);
+  await x.send(ask('task', 'auto:hy4'));
+  assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free']);
+  x.hub.reply = undefined;
+  await x.send(ask('task', 'auto:hy4'));
+  assert.deepEqual(sentTo(x), ['intl:hy4free']);
 });
 
 test('转发：请求没被受理时换下一个出口并固定下来', async (t) => {
