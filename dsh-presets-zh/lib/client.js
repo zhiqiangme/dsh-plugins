@@ -12,6 +12,18 @@ window.__ModuleLoader__.load({
       { key: 'minimal', label: '中文极简', id: 'minimal-zh', glyph: '简', summary: '终端、读图与上下文压缩', context: false },
       { key: 'creation', label: '中文创造', id: 'cordis-zh', glyph: '创', summary: 'Cordis 检查与插件管理', context: true },
     ]
+    // 宿主的列表页和详情页共用滚动容器且切换时不归零，从滚动过的列表点进来会停在页面中下部。
+    // 面板在每个详情页首次挂载时滚回顶部；WeakSet 避免同一页内重新挂载时打断用户滚动。
+    // data-plugin-config 只在配置页上（bundle 页的 section、行页的 detailSections），其他页面直接跳过。
+    const openedPages = new WeakSet()
+    function showPanelFromTop(element) {
+      const page = element?.closest('[data-plugin-config]')
+      if (!page || openedPages.has(page)) return
+      openedPages.add(page)
+      // 滚动容器的类名由宿主打包生成，不依赖它：对不滚动的祖先赋值没有效果。
+      for (let node = page.parentElement; node; node = node.parentElement) node.scrollTop = 0
+    }
+
     // 颜色全部取宿主主题变量，跟随明暗主题；回退值只在脱离宿主预览时生效。
     const css = `
 /* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
@@ -821,7 +833,7 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
           toggle(key, label))
       }
 
-      return h('section', { className: 'dpz' },
+      return h('section', { className: 'dpz', ref: showPanelFromTop },
         h('style', null, css),
         h('header', { className: 'dpz-head' },
           h('div', null,
