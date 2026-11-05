@@ -130,6 +130,8 @@ window.__ModuleLoader__.load({
     const GATEWAY_POLL_MS = 1_000;
 
     const CSS = `
+/* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
+[data-plugin-detail="@zhiqiangme/dsh-autostart-workbuddy"] section[data-plugin-config]{order:-1}
 .dsm-wb{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-2,#2c2c2e);border-radius:14px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:1.5}
 .dsm-wb *,.dsm-wb *::before{box-sizing:border-box}
 .dsm-wb p{margin:0}

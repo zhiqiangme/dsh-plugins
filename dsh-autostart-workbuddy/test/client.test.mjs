@@ -2011,3 +2011,8 @@ test('CodeArts：有 HW 模型才多一个筛选项，排在 GL 之后，不画�
   const plain = boot(backendStates({ gateway: 'hub', version: {}, history: [] })).renderCard();
   assert.deepEqual(collectText(collectByType(plain, 'select').find((node) => node.props['aria-label'] === '全部区域')), ['全部区域', 'CN', 'GL'], '没启用 CodeArts 不出现空筛选项');
 });
+
+test('详情页把面板提到 README 上方，规则只作用于本插件', () => {
+  const { css } = boot();
+  assert.ok(css.includes('[data-plugin-detail="@zhiqiangme/dsh-autostart-workbuddy"] section[data-plugin-config]{order:-1}'));
+});
