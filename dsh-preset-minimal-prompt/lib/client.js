@@ -32,7 +32,9 @@ window.__ModuleLoader__.load({
 .dmp-btn:hover:not(:disabled){background:var(--dmp-hover)}
 .dmp-btn:disabled{opacity:.45;cursor:not-allowed}
 .dmp-btn:focus-visible{outline:2px solid var(--dmp-accent);outline-offset:2px}
-.dmp-btn.dmp-primary{border-color:transparent;background:var(--dsw-alias-button-primary-fill,var(--dmp-accent));color:var(--dsw-alias-brand-primary-invert,#fff)}
+/* 沿用 DSH 自家主按钮的配色令牌。宿主的 brand-primary-invert 与 brand-primary 同值，当文字色时字和底色一样。 */
+.dmp-btn.dmp-primary{border-color:transparent;background:var(--dsw-alias-button-primary-fill,var(--dmp-accent));color:var(--dsw-alias-label-primary-foreground,#fff)}
+.dmp-btn.dmp-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--dmp-accent))}
 .dmp-btn.dmp-danger{border-color:var(--dmp-error);color:var(--dmp-error)}
 .dmp-line{margin:6px 0 0;color:var(--dmp-muted);font-size:12px;word-break:break-all}
 .dmp-line code{font-family:var(--ds-font-family-code,ui-monospace,monospace)}

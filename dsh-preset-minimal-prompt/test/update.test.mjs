@@ -285,6 +285,12 @@ test('两条更新路都没有：说明可装 dshmarket，并给指定版本；�
   assert.equal(module.pinnedInstallSpec('latest'), undefined)
 })
 
+test('主按钮文字不用与底色同值的 brand-primary-invert', () => {
+  const css = String(loadClient().module.UpdateCard({ updater: {} }).children[0].children[0])
+  assert.match(css, /\.dmp-btn\.dmp-primary\{[^}]*color:var\(--dsw-alias-label-primary-foreground/)
+  assert.doesNotMatch(css, /color:var\(--dsw-alias-brand-primary-invert/)
+})
+
 test('详情页把面板提到 README 上方，规则只作用于本插件', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.ok(source.includes('[data-plugin-detail="@zhiqiangme/dsh-preset-minimal-prompt"] section[data-plugin-config]{order:-1}'))
