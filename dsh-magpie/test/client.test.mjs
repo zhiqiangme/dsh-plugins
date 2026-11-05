@@ -783,3 +783,18 @@ test('程序路径与输入框或占位符相同时不重复显示，解析出�
 test('详情页把面板提到 README 上方，规则只作用于本插件', () => {
   assert.ok(clientHarness(view()).styles[0].includes('[data-plugin-detail="@zhiqiangme/dsh-magpie"] section[data-plugin-config]{order:-1}'));
 });
+
+test('详情页首次挂载面板时回到顶部，同页重新挂载不打断滚动', () => {
+  const attach = clientHarness(view()).render().props.ref;
+  const scroller = { scrollTop: 900, parentElement: null };
+  const page = { parentElement: scroller };
+  const card = { closest: (selector) => (selector === '[data-plugin-config]' ? page : null) };
+  attach(card);
+  assert.equal(scroller.scrollTop, 0);
+  scroller.scrollTop = 300;
+  attach(card);
+  assert.equal(scroller.scrollTop, 300, '同一页内重新挂载不动滚动位置');
+  attach(null);
+  attach({ closest: () => null });
+  assert.equal(scroller.scrollTop, 300, '卸载和配置页以外的挂载都不动滚动位置');
+});

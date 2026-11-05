@@ -229,6 +229,18 @@ window.__ModuleLoader__.load({
       if (!response.ok) throw new Error(payload.reason || `HTTP ${response.status}`);
       return payload;
     }
+    // 宿主的列表页和详情页共用滚动容器且切换时不归零，从滚动过的列表点进来会停在页面中下部。
+    // 面板在每个详情页首次挂载时滚回顶部；WeakSet 避免同一页内重新挂载时打断用户滚动。
+    // data-plugin-config 只在配置页上（bundle 页的 section、行页的 detailSections），其他页面直接跳过。
+    const openedPages = new WeakSet();
+    function showPanelFromTop(element) {
+      const page = element?.closest('[data-plugin-config]');
+      if (!page || openedPages.has(page)) return;
+      openedPages.add(page);
+      // 滚动容器的类名由宿主打包生成，不依赖它：对不滚动的祖先赋值没有效果。
+      for (let node = page.parentElement; node; node = node.parentElement) node.scrollTop = 0;
+    }
+
     const CSS = `
       /* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
       [data-plugin-detail="@zhiqiangme/dsh-magpie"] section[data-plugin-config]{order:-1}
@@ -1081,6 +1093,8 @@ window.__ModuleLoader__.load({
       const listRef = useRef(null);
       const positions = useRef(new Map());
       const cardRef = useRef(null);
+      // 贴底保存栏要读 cardRef，挂载时还要回到页面顶部，两件事共用一个稳定的 ref 回调。
+      const attachCard = useCallback((node) => { cardRef.current = node; showPanelFromTop(node); }, []);
       const footerSpaceRef = useRef(null);
       // 优先留在卡片末尾；原位置放不下时才贴窗口底边，并保留原位高度供滚动归位。
       useLayoutEffect(() => {
@@ -1182,7 +1196,7 @@ window.__ModuleLoader__.load({
       };
       const reload = () => perform(async () => { const value = await request(); publishConfig(value.config); setView(value); setDirty(false); setKey(''); setExpanded(new Set()); }, 'reload');
       const button = (text, click, extra = {}) => h('button', { type: 'button', disabled: busy, onClick: click, ...extra }, text);
-      if (!view) return h('section', { className: 'dsm-mp' }, h('header', { className: 'head' }, h('div', { className: 'title' }, h(MagpieGlyph, { size: 20 }), h('h3', null, t('title')))),
+      if (!view) return h('section', { className: 'dsm-mp', ref: showPanelFromTop }, h('header', { className: 'head' }, h('div', { className: 'title' }, h(MagpieGlyph, { size: 20 }), h('h3', null, t('title')))),
         h('div', { className: 'panel' }, notice ? h('p', { className: 'notice error', role: 'alert' }, notice.text) : h('p', { className: 'muted loading' }, t('loading')), h('div', { className: 'bar', style: { marginTop: 12 } }, button(t('reload'), reload, { 'aria-busy': modelBusy === 'reload' }))));
       const config = view.config;
       const update = (patch) => { setView((v) => ({ ...v, config: { ...v.config, ...patch } })); setDirty(true); };
@@ -1461,7 +1475,7 @@ window.__ModuleLoader__.load({
         ],
       };
 
-      return h('section', { className: 'dsm-mp', 'aria-busy': busy, ref: cardRef },
+      return h('section', { className: 'dsm-mp', 'aria-busy': busy, ref: attachCard },
         header, tabs,
         // key 跟随页签：换页签时整块重建，样式里的逐块浮现随之重播。
         h('div', { key: tab, className: 'panel', role: 'tabpanel', id: 'dsm-mp-panel', 'aria-labelledby': `dsm-mp-tab-${tab}` }, ...panels[tab]()),
