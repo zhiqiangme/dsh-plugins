@@ -2,7 +2,7 @@
 
 独立包名：`@zhiqiangme/dsh-presets-zh`；安装别名：`presets-zh`。
 
-一个插件提供四种模式，在 DSH「插件 → 中文预设」里分别配置开关、显示名称、描述和系统提示词。修改后点击「保存设置」，无需手工改 YAML。
+一个插件提供四种模式，在 DSH「插件 → 中文预设」里每种模式一个页签，分别配置开关、显示名称、描述和系统提示词。修改后点击「保存设置」，无需手工改 YAML。
 
 | 模式 | 内部 ID | 能力 |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-presets-zh
 
 ## 插件更新
 
-设置页底部的「插件更新」显示当前运行版本与 npm 最新版本，按宿主接口在不在选择更新途径，不写死 DSH 版本号，也不自己跑 pnpm：
+设置页的「插件更新」页签显示当前运行版本与 npm 最新版本，按宿主接口在不在选择更新途径，不写死 DSH 版本号，也不自己跑 pnpm：
 
 - 版本检查走宿主路由 `/plugins/dsh-presets-zh/version`，同时问 npm 官方源与 npmmirror，取较高者，缓存 10 分钟；「检查更新」绕过缓存。
 - **官方接口**（`pluginManager` 有 `listVersions/updateBundle`）：先用 `listBundles` 核对本插件的更新资格，再选最新的兼容、未弃用正式版，把精确版本和同一注册表交给 `updateBundle`。锁、卸载、安装与失败恢复都归宿主；只有实际装上目标版本才显示成功。

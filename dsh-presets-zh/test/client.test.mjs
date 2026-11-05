@@ -4,7 +4,13 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { MODES, modeDefaults } from '../lib/modes.js'
 
-function harness({ accepted = true } = {}) {
+/** 与 lib/client.js 的「插件更新」页签搭配的更新器替身；snapshot 字段直接覆盖默认值。 */
+function fakeUpdater(snapshot = {}) {
+  const value = { version: { phase: 'ready', currentVersion: '26.11.4', latestVersion: '26.11.4', updateAvailable: false }, manager: { phase: 'ready' }, market: { phase: 'idle' }, busy: false, ...snapshot }
+  return { subscribe: () => () => {}, getSnapshot: () => value }
+}
+
+function harness({ accepted = true, updater } = {}) {
   const initial = Object.fromEntries(MODES.map(mode => [mode.key, modeDefaults(mode.definition)]))
   let snapshot = { value: structuredClone(initial), base: structuredClone(initial), revision: 5, writable: true }
   const calls = [], slots = [], states = [], dependencies = []
@@ -22,6 +28,10 @@ function harness({ accepted = true } = {}) {
       if (!dependencies[index] || deps.some((value, i) => value !== dependencies[index][i])) effects.push(callback)
       dependencies[index] = deps
     },
+    // 贴底保存栏依赖真实布局，这里只占位；定位逻辑靠浏览器验证。
+    useLayoutEffect: () => { cursor++ },
+    useRef: current => { cursor++; return { current } },
+    useCallback: callback => { cursor++; return callback },
   }
   const form = {
     subscribe: () => () => {},
@@ -51,7 +61,7 @@ function harness({ accepted = true } = {}) {
       let tree
       for (let i = 0; i < 4; i++) {
         cursor = 0; effects = []; changed = false
-        tree = module.ModeSettings({ form, view: 'page' })
+        tree = module.ModeSettings({ form, view: 'page', updater })
         for (const effect of effects) effect()
         if (!changed) break
       }
@@ -80,8 +90,8 @@ test('插件包页和行设置页均挂载同一表单，四种模式按注册�
   ])
   let tree = client.render()
   assert.deepEqual(nodes(tree, node => node.props?.role === 'tab').map(node => node.props['data-mode']), MODES.map(mode => mode.key))
-  // 每张模式卡一个开关，当前编辑面板再提供一个，二者绑定同一字段。
-  assert.equal(switches(tree).length, 5)
+  // 每个页签只渲染当前模式：一个启用开关、一个提示词框。
+  assert.equal(switches(tree).length, 1)
   assert.equal(nodes(tree, node => node.type === 'textarea').length, 1)
   for (const { key, definition } of MODES) {
     tab(tree, key).props.onClick()
@@ -92,10 +102,13 @@ test('插件包页和行设置页均挂载同一表单，四种模式按注册�
 
 test('模式开关独立，停用后显示状态并在保存时写入对应模式', async () => {
   const client = harness()
+  tab(client.render(), 'minimal').props.onClick()
   let tree = client.render()
-  switches(tree)[2].props.onChange({ target: { checked: false } })
+  switches(tree)[0].props.onChange({ target: { checked: false } })
   tree = client.render()
-  assert.match(text(tree), /已停用/)
+  assert.equal(tab(tree, 'minimal').props['data-enabled'], 'false')
+  assert.equal(tab(tree, 'standard').props['data-enabled'], 'true')
+  assert.match(text(tab(tree, 'minimal')), /已停用/)
   assert.deepEqual([...nodes(tree, node => node.type === 'b')[0].children], ['3'])
   await button(tree, '保存设置').props.onClick()
   const ops = client.calls[0].ops
@@ -146,6 +159,62 @@ test('后台变更不覆盖草稿，冲突保存保留草稿，重新载入后�
   button(tree, '重新载入').props.onClick()
   tree = client.render()
   assert.notEqual(prompt(tree).props.value, '保留 PTC 草稿')
+})
+
+test('未保存的模式在页签上标记，保存后清除', async () => {
+  const client = harness()
+  const marks = tree => nodes(tree, node => node.props?.['aria-label'] === '未保存').length
+  let tree = client.render()
+  assert.equal(marks(tree), 0)
+  prompt(tree).props.onChange({ target: { value: '改过' } })
+  tab(client.render(), 'ptc').props.onClick()
+  tree = client.render()
+  assert.equal(marks(tab(tree, 'standard')), 1, '切到其他模式后，改过的页签仍有标记')
+  assert.equal(marks(tab(tree, 'ptc')), 0)
+  await button(tree, '保存设置').props.onClick()
+  assert.equal(marks(client.render()), 0)
+})
+
+test('「插件更新」是最后一个页签：面板常驻以便检查版本，只切 hidden，没有未保存内容时不显示保存栏', () => {
+  const client = harness({ updater: fakeUpdater() })
+  const panel = tree => nodes(tree, node => node.props?.id === 'dpz-panel-update')[0]
+  let tree = client.render()
+  assert.deepEqual(nodes(tree, node => node.props?.role === 'tab').map(node => node.props['data-mode']), [...MODES.map(mode => mode.key), 'update'])
+  assert.equal(panel(tree).props.hidden, true)
+  assert.ok(button(tree, '保存设置'))
+  tab(tree, 'update').props.onClick()
+  tree = client.render()
+  assert.equal(panel(tree).props.hidden, false)
+  assert.equal(nodes(tree, node => node.type === 'textarea').length, 0)
+  assert.equal(button(tree, '保存设置'), undefined)
+})
+
+test('切到「插件更新」时有未保存的更改仍保留保存栏', () => {
+  const client = harness({ updater: fakeUpdater() })
+  prompt(client.render()).props.onChange({ target: { value: '改过' } })
+  tab(client.render(), 'update').props.onClick()
+  assert.ok(button(client.render(), '保存设置'))
+})
+
+test('头部显示当前版本；有新版本时提醒并可跳到「插件更新」，刚更新成功后不再提醒', () => {
+  const available = { phase: 'ready', currentVersion: '26.11.4', latestVersion: '26.11.9', updateAvailable: true }
+  const client = harness({ updater: fakeUpdater({ version: available }) })
+  const chip = tree => nodes(tree, node => node.type === 'button' && node.props.className === 'dpz-chip')[0]
+  let tree = client.render()
+  assert.match(text(chip(tree)), /v26\.11\.4/)
+  assert.match(text(chip(tree)), /有新版本/)
+  assert.equal(nodes(tab(tree, 'update'), node => node.props?.['aria-label'] === '有新版本').length, 1)
+  chip(tree).props.onClick()
+  tree = client.render()
+  assert.equal(tab(tree, 'update').props['aria-selected'], true)
+  const finished = harness({ updater: fakeUpdater({ version: available, operation: { state: 'succeeded', installedVersion: '26.11.9' } }) })
+  assert.doesNotMatch(text(chip(finished.render())), /有新版本/)
+})
+
+test('没有更新器时不显示版本入口与「插件更新」页签', () => {
+  const tree = harness().render()
+  assert.equal(nodes(tree, node => node.props?.id === 'dpz-panel-update').length, 0)
+  assert.equal(nodes(tree, node => node.props?.className === 'dpz-chip' && node.type === 'button').length, 0)
 })
 
 test('主按钮文字不用与底色同值的 brand-primary-invert，禁用态有独立配色', () => {

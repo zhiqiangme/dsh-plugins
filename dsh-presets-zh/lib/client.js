@@ -4,7 +4,7 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
-    const { useEffect, useState, useSyncExternalStore } = React
+    const { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } = React
     // 顺序与 lib/modes.js 的注册顺序一致；客户端是独立浏览器模块，不能直接导入服务端快照。
     const modes = [
       { key: 'standard', label: '中文标准', id: 'standard-zh', glyph: '标', summary: '标准工具与完整操作说明', context: true },
@@ -12,6 +12,8 @@ window.__ModuleLoader__.load({
       { key: 'minimal', label: '中文极简', id: 'minimal-zh', glyph: '简', summary: '终端、读图与上下文压缩', context: false },
       { key: 'creation', label: '中文创造', id: 'cordis-zh', glyph: '创', summary: 'Cordis 检查与插件管理', context: true },
     ]
+    // 「插件更新」页签与四个模式共用一个选中状态，取值不能和模式 key 重名。
+    const UPDATE_TAB = 'update'
     // 宿主的列表页和详情页共用滚动容器且切换时不归零，从滚动过的列表点进来会停在页面中下部。
     // 面板在每个详情页首次挂载时滚回顶部；WeakSet 避免同一页内重新挂载时打断用户滚动。
     // data-plugin-config 只在配置页上（bundle 页的 section、行页的 detailSections），其他页面直接跳过。
@@ -28,83 +30,107 @@ window.__ModuleLoader__.load({
     const css = `
 /* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
 [data-plugin-detail="@zhiqiangme/dsh-presets-zh"] section[data-plugin-config]{order:-1}
-.dpz{--dpz-accent:var(--dsw-alias-state-business-primary,#4d6bfe);--dpz-text:var(--dsw-alias-label-primary,currentColor);--dpz-muted:var(--dsw-alias-label-secondary,#8b919c);--dpz-faint:var(--dsw-alias-label-tertiary,#6f7682);--dpz-line:var(--dsw-alias-border-l2,#8883);--dpz-line-strong:var(--dsw-alias-border-l3,#8885);--dpz-surface:var(--dsw-alias-bg-layer-1,transparent);--dpz-base:var(--dsw-alias-bg-base,Canvas);--dpz-hover:var(--dsw-alias-interactive-bg-hover,#8881);--dpz-ok:var(--dsw-alias-state-success-primary,#22c55e);--dpz-warn:var(--dsw-alias-state-warn-primary,#f59e0b);--dpz-error:var(--dsw-alias-state-error-primary,#ef4444);max-width:960px;color:var(--dpz-text);font-size:14px;line-height:1.55}
+.dpz{--dpz-accent:var(--dsw-alias-state-business-primary,#4d6bfe);--dpz-text:var(--dsw-alias-label-primary,currentColor);--dpz-muted:var(--dsw-alias-label-secondary,#8b919c);--dpz-faint:var(--dsw-alias-label-tertiary,#6f7682);--dpz-dimmed:var(--dsw-alias-label-dimmed,#a0a5ad);--dpz-line:var(--dsw-alias-border-l2,#8883);--dpz-line-soft:var(--dsw-alias-border-l1,#8882);--dpz-line-strong:var(--dsw-alias-border-l3,#8885);--dpz-surface:var(--dsw-alias-bg-layer-2,Canvas);--dpz-base:var(--dsw-alias-bg-base,Canvas);--dpz-hover:var(--dsw-alias-interactive-bg-hover,#8881);--dpz-ok:var(--dsw-alias-state-success-primary,#22c55e);--dpz-warn:var(--dsw-alias-state-warn-primary,#f59e0b);--dpz-error:var(--dsw-alias-state-error-primary,#ef4444);--dpz-ease:cubic-bezier(.2,.8,.2,1);min-width:0;box-sizing:border-box;border:1px solid var(--dpz-line);border-radius:12px;background:var(--dpz-surface);color:var(--dpz-text);font-size:13px;line-height:1.55}
 .dpz *{box-sizing:border-box}
-.dpz-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:16px}
-.dpz-head h3{margin:0;font-size:18px;font-weight:600}
-.dpz-head p{margin:4px 0 0;color:var(--dpz-muted);font-size:13px}
-.dpz-count{flex:none;padding:3px 10px;border:1px solid var(--dpz-line);border-radius:999px;color:var(--dpz-muted);font-size:12px;font-variant-numeric:tabular-nums}
-.dpz-count b{color:var(--dpz-text);font-weight:600}
-.dpz-modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:14px}
-.dpz-mode{position:relative;display:flex;border:1px solid var(--dpz-line);border-radius:var(--dsw-radius-md,12px);background:var(--dpz-surface);transition:border-color .15s,background .15s}
-.dpz-mode:hover{background:var(--dpz-hover)}
-.dpz-mode[data-selected=true]{border-color:var(--dpz-accent);background:color-mix(in srgb,var(--dpz-accent) 9%,var(--dpz-surface))}
-.dpz-mode[data-enabled=false] .dpz-glyph,.dpz-mode[data-enabled=false] .dpz-mode-name{opacity:.5}
-.dpz-pick{flex:1;min-width:0;display:flex;gap:10px;align-items:flex-start;padding:12px 4px 12px 12px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;border-radius:inherit}
-.dpz-pick:focus-visible,.dpz-btn:focus-visible,.dpz-switch:focus-visible{outline:2px solid var(--dpz-accent);outline-offset:2px}
-.dpz-glyph{flex:none;display:grid;place-items:center;width:32px;height:32px;border-radius:var(--dsw-radius-sm,8px);background:color-mix(in srgb,var(--dpz-accent) 16%,transparent);color:var(--dpz-accent);font-weight:700;font-size:14px}
-.dpz-glyph.dpz-lg{width:40px;height:40px;font-size:16px;border-radius:10px}
-.dpz-mode-text{min-width:0;display:grid;gap:2px}
-.dpz-mode-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dpz-mode-sub{color:var(--dpz-faint);font-size:12px;line-height:1.4}
-.dpz-badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.dpz-head{padding:18px 20px 14px}
+.dpz-head h3{margin:0;font-size:16px;font-weight:600}
+.dpz-head p{margin:4px 0 0;color:var(--dpz-muted);font-size:12px}
+.dpz-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.dpz-chip{display:inline-flex;align-items:center;gap:6px;padding:1px 9px;border:0;border-radius:999px;background:var(--dpz-hover);color:var(--dpz-muted);font:inherit;font-size:12px;line-height:20px;font-variant-numeric:tabular-nums}
+.dpz-chip b{color:var(--dpz-text);font-weight:600}
+button.dpz-chip{cursor:pointer;transition:color .15s ease}
+button.dpz-chip:hover{color:var(--dpz-text)}
+.dpz-chip-dot{width:6px;height:6px;border-radius:50%;color:var(--dpz-ok);background:currentColor}
+.dpz-chip[data-tone=off] .dpz-chip-dot{color:var(--dpz-faint)}
+.dpz-new{color:var(--dpz-accent)}
+/* 横向滚动会连带裁掉纵向溢出：底线不能画在边框上，改用内阴影画分隔线，选中线压在它上面；焦点框也收进按钮内。 */
+.dpz-tabs{display:flex;gap:2px;padding:0 10px;box-shadow:inset 0 -1px 0 var(--dpz-line);overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.dpz-tab{position:relative;flex:none;display:inline-flex;align-items:center;gap:6px;max-width:15em;padding:8px 10px 9px;border:0;background:transparent;color:var(--dpz-muted);font:inherit;font-weight:500;white-space:nowrap;cursor:pointer;transition:color .15s ease}
+.dpz-tab:hover,.dpz-tab[aria-selected=true]{color:var(--dpz-text)}
+.dpz-tab:focus-visible{outline:2px solid var(--dpz-accent);outline-offset:-2px}
+.dpz-tab[aria-selected=true]::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:var(--dpz-text)}
+/* 四个模式靠左成组，「插件更新」不是模式，推到最右边。 */
+.dpz-tab-end{margin-left:auto}
+.dpz-tab-label{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.dpz-tab[data-enabled=false] .dpz-tab-label{color:var(--dpz-faint)}
+.dpz-tab small{color:var(--dpz-faint);font-size:11px;font-weight:400}
+.dpz-mark{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dpz-warn)}
+.dpz-mark[data-tone=accent]{background:var(--dpz-accent)}
+.dpz-panel{min-width:0;padding:16px 20px 20px}
+.dpz-panel-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding-bottom:14px;margin-bottom:16px;border-bottom:1px solid var(--dpz-line-soft)}
+.dpz-panel-title{flex:1;min-width:180px}
+.dpz-panel-title h4{margin:0;font-size:14px;font-weight:600}
+.dpz-panel-title p{margin:2px 0 0;color:var(--dpz-muted);font-size:12px}
+.dpz-glyph{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:color-mix(in srgb,var(--dpz-accent) 16%,transparent);color:var(--dpz-accent);font-weight:700;font-size:15px}
+.dpz-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;color:var(--dpz-faint);font-size:12px}
+.dpz-meta code{font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;padding:1px 6px;border-radius:6px;background:var(--dpz-hover);color:var(--dpz-muted)}
 .dpz-badge{padding:0 6px;border-radius:999px;font-size:11px;line-height:18px;color:var(--dpz-muted);background:var(--dpz-hover)}
+.dpz-badge[data-tone=ok]{color:var(--dpz-ok);background:color-mix(in srgb,var(--dpz-ok) 14%,transparent)}
 .dpz-badge[data-tone=warn]{color:var(--dpz-warn);background:color-mix(in srgb,var(--dpz-warn) 14%,transparent)}
 .dpz-badge[data-tone=accent]{color:var(--dpz-accent);background:color-mix(in srgb,var(--dpz-accent) 14%,transparent)}
-.dpz-switch{appearance:none;-webkit-appearance:none;flex:none;position:relative;width:34px;height:20px;margin:14px 12px 0 0;border-radius:999px;background:var(--dpz-line-strong);cursor:pointer;transition:background .15s}
+.dpz-enable{display:flex;align-items:center;gap:8px;color:var(--dpz-muted);cursor:pointer}
+.dpz-switch{appearance:none;-webkit-appearance:none;flex:none;position:relative;width:34px;height:20px;margin:0;border-radius:999px;background:var(--dsw-alias-border-l4,var(--dpz-line-strong));cursor:pointer;transition:background .15s}
 .dpz-switch::before{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0004;transition:transform .15s}
 .dpz-switch:checked{background:var(--dpz-accent)}
 .dpz-switch:checked::before{transform:translateX(14px)}
 .dpz-switch:disabled{opacity:.45;cursor:not-allowed}
-.dpz-panel{border:1px solid var(--dpz-line);border-radius:var(--dsw-radius-lg,16px);background:var(--dpz-surface);padding:20px}
-.dpz-panel-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding-bottom:16px;margin-bottom:18px;border-bottom:1px solid var(--dpz-line)}
-.dpz-panel-title{flex:1;min-width:180px}
-.dpz-panel-title h4{margin:0;font-size:16px;font-weight:600}
-.dpz-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px;color:var(--dpz-faint);font-size:12px}
-.dpz-meta code{font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;padding:1px 6px;border-radius:6px;background:var(--dpz-hover);color:var(--dpz-muted)}
-.dpz-enable{display:flex;align-items:center;gap:8px;color:var(--dpz-muted);font-size:13px;cursor:pointer}
-.dpz-enable .dpz-switch{margin:0}
+.dpz-switch:focus-visible,.dpz-btn:focus-visible,button.dpz-chip:focus-visible{outline:2px solid var(--dpz-accent);outline-offset:2px}
 .dpz-fieldset{border:0;padding:0;margin:0;min-width:0;display:grid;gap:16px}
 .dpz-fieldset:disabled{opacity:.6}
 .dpz-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
 .dpz-field{display:grid;gap:6px;min-width:0}
-.dpz-label{display:flex;justify-content:space-between;gap:8px;font-size:13px;font-weight:500}
+.dpz-label{display:flex;justify-content:space-between;gap:8px;font-weight:500}
 .dpz-label small{color:var(--dpz-faint);font-weight:400;font-size:12px;font-variant-numeric:tabular-nums}
-.dpz-input{width:100%;color:inherit;font:inherit;background:var(--dpz-base);border:1px solid var(--dpz-line);border-radius:var(--dsw-radius-sm,8px);padding:8px 11px;transition:border-color .15s,box-shadow .15s}
+.dpz-input{width:100%;color:inherit;font:inherit;background:var(--dpz-base);border:1px solid var(--dpz-line);border-radius:8px;padding:7px 11px;transition:border-color .15s,box-shadow .15s}
 .dpz-input::placeholder{color:var(--dpz-faint)}
 .dpz-input:hover{border-color:var(--dpz-line-strong)}
 .dpz-input:focus{outline:none;border-color:var(--dpz-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--dpz-accent) 22%,transparent)}
 textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
 .dpz-hint{color:var(--dpz-faint);font-size:12px}
-.dpz-bar{position:sticky;bottom:0;z-index:1;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding:12px 0;background:var(--dpz-base);border-top:1px solid var(--dpz-line)}
-.dpz-status{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 240px;color:var(--dpz-muted);font-size:13px}
+.dpz-foot{position:relative;z-index:1;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:12px 20px;border-top:1px solid var(--dpz-line);border-radius:0 0 12px 12px;background:var(--dpz-surface)}
+/* 贴底时保留底部圆角：外阴影只画在边框外，下移 6px 让顶边与栏对齐，扩展 6px 足以盖满 12px 圆角外侧（至少需 12×(√2−1)≈5px），
+   颜色取页面底色；第二层向上的柔和投影提示栏下面还压着卡片内容，收缩 16px 让它不越过两侧。 */
+.dpz-foot[data-docked]{position:fixed;bottom:0;z-index:10;border:1px solid var(--dpz-line);box-shadow:0 6px 0 6px var(--dpz-base),0 -10px 24px -16px rgb(0 0 0 / .55)}
+.dpz-status{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 240px;margin:0;color:var(--dpz-muted)}
 .dpz-status::before{content:'';flex:none;width:7px;height:7px;border-radius:50%;background:var(--dpz-faint)}
 .dpz-status[data-tone=ok]::before{background:var(--dpz-ok)}
+.dpz-status[data-tone=warn]{color:var(--dpz-text);font-weight:500}
 .dpz-status[data-tone=warn]::before{background:var(--dpz-warn)}
 .dpz-status[data-tone=error]{color:var(--dpz-error)}
 .dpz-status[data-tone=error]::before{background:var(--dpz-error)}
 .dpz-actions{display:flex;gap:8px;margin-left:auto}
-.dpz-btn{height:34px;padding:0 16px;border-radius:var(--dsw-radius-sm,8px);border:1px solid var(--dpz-line-strong);background:transparent;color:inherit;font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:background .15s,opacity .15s}
+.dpz-btn{height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--dpz-line);background:transparent;color:inherit;font:inherit;font-weight:500;white-space:nowrap;cursor:pointer;transition:background-color .15s ease,border-color .15s ease,color .15s ease,transform .12s ease}
 .dpz-btn:hover:not(:disabled){background:var(--dpz-hover)}
-.dpz-btn:disabled{opacity:.45;cursor:not-allowed}
+.dpz-btn:active:not(:disabled){transform:scale(.97)}
+.dpz-btn:disabled{color:var(--dpz-faint);cursor:not-allowed}
 /* 沿用 DSH 自家主按钮的配色令牌（深色主题为浅底深字）。宿主的 brand-primary-invert 与 brand-primary 同值，当文字色时字和底色一样。 */
 .dpz-btn.dpz-primary{border-color:transparent;background:var(--dsw-alias-button-primary-fill,var(--dpz-accent));color:var(--dsw-alias-label-primary-foreground,#fff)}
-/* 禁用态给明确的弱化配色：只降透明度时，浅色底配深字仍是一块刺眼的色块。 */
-.dpz-btn.dpz-primary:disabled{opacity:1;background:var(--dpz-hover);color:var(--dpz-faint)}
 .dpz-btn.dpz-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--dpz-accent))}
-.dpz-btn.dpz-small{height:30px;padding:0 12px;font-size:12px}
+/* 禁用态给明确的弱化配色：只降透明度时，浅色底配深字仍是一块刺眼的色块。 */
+.dpz-btn.dpz-primary:disabled{background:var(--dpz-hover);color:var(--dpz-faint)}
+.dpz-btn.dpz-small{height:28px;padding:0 10px;font-size:12px}
 .dpz-btn.dpz-danger{border-color:var(--dpz-error);color:var(--dpz-error)}
-.dpz-badge[data-tone=ok]{color:var(--dpz-ok);background:color-mix(in srgb,var(--dpz-ok) 14%,transparent)}
-.dpz-update{margin-top:14px;border:1px solid var(--dpz-line);border-radius:var(--dsw-radius-lg,16px);background:var(--dpz-surface);padding:14px 20px}
 .dpz-update-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .dpz-update-head h4{flex:1;min-width:100px;margin:0;font-size:14px;font-weight:600}
 .dpz-line{margin:6px 0 0;color:var(--dpz-muted);font-size:12px;word-break:break-all}
 .dpz-line code{font-family:var(--ds-font-family-code,ui-monospace,monospace)}
-.dpz-notice{margin:8px 0 0;font-size:13px;word-break:break-all;color:var(--dpz-ok)}
+.dpz-notice{margin:8px 0 0;word-break:break-all;color:var(--dpz-ok)}
 .dpz-notice[data-tone=error]{color:var(--dpz-error)}
 .dpz-update details summary{margin-top:8px;color:var(--dpz-muted);font-size:12px;cursor:pointer}
 .dpz-update .dpz-toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .dpz-spec{margin-top:8px;font-family:var(--ds-font-family-code,ui-monospace,monospace)}
+@media(max-width:640px){.dpz-head,.dpz-panel,.dpz-foot{padding-left:14px;padding-right:14px}}
+/* 换页签时内容从下方轻轻浮现；只动 opacity / transform，错峰延迟期间停在首帧。sibling-index() 不支持时退化为同时出现。 */
+@keyframes dpz-rise{from{opacity:0;transform:translateY(6px)}}
+.dpz-panel>*{animation:dpz-rise .32s var(--dpz-ease) backwards;animation-delay:calc(min(sibling-index() - 1, 5) * 40ms)}
+/* 页签下划线改成滑块：锚定到当前选中项，换页签时滑过去。不支持锚点定位时保留选中项自带的静态下划线。 */
+@supports (anchor-name:--a) and (anchor-scope:--a){
+.dpz-tabs{position:relative;anchor-scope:--dpz-tab}
+.dpz-tabs::before{content:"";position:absolute;position-anchor:--dpz-tab;left:calc(anchor(left) + 10px);right:calc(anchor(right) + 10px);bottom:anchor(bottom);height:2px;border-radius:2px;background:var(--dpz-text);transition:left .3s var(--dpz-ease),right .3s var(--dpz-ease)}
+.dpz-tab[aria-selected=true]{anchor-name:--dpz-tab}
+.dpz-tab[aria-selected=true]::after{content:none}
+}
+@media (prefers-reduced-motion:reduce){.dpz,.dpz *,.dpz *::before,.dpz *::after{animation:none!important;transition:none!important}}
 `
     const same = (a, b) => JSON.stringify(a ?? {}) === JSON.stringify(b ?? {})
     const fields = [
@@ -758,18 +784,63 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
 
     function ModeSettings({ form, view, updater }) {
       const snapshot = useSyncExternalStore(listener => form.subscribe(listener), () => form.getSnapshot())
+      // 头部版本号与「插件更新」页签的提醒读同一个更新器；没有更新器时不显示这两处入口。
+      const update = useSyncExternalStore(listener => updater ? updater.subscribe(listener) : () => {}, () => updater?.getSnapshot())
       const [draft, setDraft] = useState(null)
       const [dirty, setDirty] = useState(false)
       const [revision, setRevision] = useState()
       const [busy, setBusy] = useState(false)
       const [notice, setNotice] = useState(null)
       const [selected, setSelected] = useState(modes[0].key)
+      const cardRef = useRef(null)
+      // 保存栏定位要读 cardRef，挂载时还要回到页面顶部，两件事共用一个稳定的 ref 回调。
+      const attachCard = useCallback(node => { cardRef.current = node; showPanelFromTop(node) }, [])
+      const footerSpaceRef = useRef(null)
+      // 「插件更新」页没有可保存的内容；还有未保存的更改时保留保存栏，免得切过去就忘了。
+      const footerShown = selected !== UPDATE_TAB || dirty
       useEffect(() => {
         if (!dirty && snapshot.value) {
           setDraft(structuredClone(snapshot.value))
           setRevision(snapshot.revision)
         }
       }, [snapshot.value, snapshot.revision, dirty])
+      // 优先留在卡片末尾；原位置放不下时才贴窗口底边，并保留原位高度供滚动归位。
+      // 不用 sticky：宿主滚动容器有 48px 底部内边距，sticky 会悬在窗口底边上方，下面露出卡片内容。
+      useLayoutEffect(() => {
+        const card = cardRef.current, space = footerSpaceRef.current, footer = space?.firstElementChild
+        if (!card || !footer) return undefined
+        let frame
+        const clear = () => {
+          delete footer.dataset.docked
+          for (const key of ['left', 'width']) footer.style[key] = ''
+          space.style.height = ''
+        }
+        const align = () => {
+          // 先恢复自然布局再测量，避免用悬浮后的坐标判断，或沿用提示换行前的高度。
+          clear()
+          const rect = card.getBoundingClientRect()
+          const natural = footer.getBoundingClientRect()
+          if (natural.bottom <= window.innerHeight || rect.width <= 0 || rect.bottom <= 0 || rect.top >= window.innerHeight) return
+          space.style.height = `${natural.height}px`
+          footer.dataset.docked = ''
+          footer.style.left = `${rect.left}px`
+          footer.style.width = `${rect.width}px`
+        }
+        const queue = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(align) }
+        const observer = new ResizeObserver(queue)
+        observer.observe(card)
+        observer.observe(footer)
+        window.addEventListener('resize', queue)
+        window.addEventListener('scroll', queue, true)
+        align()
+        return () => {
+          observer.disconnect()
+          cancelAnimationFrame(frame)
+          window.removeEventListener('resize', queue)
+          window.removeEventListener('scroll', queue, true)
+          clear()
+        }
+      }, [view, Boolean(draft), footerShown])
 
       if (view === 'summary') return h('span', null, '四种中文模式，各自启用并设置提示词。')
       if (!draft) return h('p', { role: 'status' }, snapshot.status === 'error' ? '配置读取失败，请重新打开插件设置。' : '正在读取模式配置…')
@@ -810,67 +881,88 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
       const status = notice
         ?? (!snapshot.writable ? { tone: 'error', text: '当前配置为只读，无法保存。' }
           : dirty ? { tone: 'warn', text: '有未保存的更改' } : { tone: 'idle', text: '设置与已保存内容一致' })
+      const onUpdateTab = selected === UPDATE_TAB
       const mode = modes.find(item => item.key === selected) ?? modes[0]
       const value = draft[mode.key] ?? {}
       const base = snapshot.base?.[mode.key] ?? {}
+      const version = update?.version
+      // 刚更新成功时当前运行版本要等重启才换，此时不再提醒「有新版本」。
+      const updateReady = version?.phase === 'ready' && version.updateAvailable && update.operation?.state !== 'succeeded'
+      const unsaved = key => !same(draft[key], snapshot.value[key])
 
-      const toggle = (key, label) => h('input', {
-        type: 'checkbox', role: 'switch', className: 'dpz-switch', 'aria-label': `启用${label}`,
-        checked: draft[key]?.enabled !== false, disabled: readonly,
-        onChange: event => change(key, 'enabled', event.target.checked),
-      })
-      const card = ({ key, label, glyph, summary }) => {
+      const modeTab = ({ key, label }) => {
         const enabled = draft[key]?.enabled !== false
-        const badges = [
-          !enabled && h('span', { key: 'off', className: 'dpz-badge' }, '已停用'),
-          !same(draft[key], snapshot.value[key]) && h('span', { key: 'dirty', className: 'dpz-badge', 'data-tone': 'warn' }, '未保存'),
-          !same(draft[key], snapshot.base?.[key]) && h('span', { key: 'custom', className: 'dpz-badge', 'data-tone': 'accent' }, '已自定义'),
-        ].filter(Boolean)
-        return h('div', { key, className: 'dpz-mode', 'data-selected': String(key === mode.key), 'data-enabled': String(enabled) },
-          h('button', { type: 'button', role: 'tab', 'aria-selected': key === mode.key, 'data-mode': key, className: 'dpz-pick', onClick: () => setSelected(key) },
-            h('span', { className: 'dpz-glyph', 'aria-hidden': true }, glyph),
-            h('span', { className: 'dpz-mode-text' },
-              h('span', { className: 'dpz-mode-name' }, draft[key]?.name?.trim() || label),
-              h('span', { className: 'dpz-mode-sub' }, summary),
-              badges.length ? h('span', { className: 'dpz-badges' }, ...badges) : null)),
-          toggle(key, label))
+        return h('button', {
+          key, type: 'button', role: 'tab', id: `dpz-tab-${key}`, className: 'dpz-tab', 'data-mode': key, 'data-enabled': String(enabled),
+          'aria-selected': key === selected, 'aria-controls': 'dpz-panel-mode', onClick: () => setSelected(key),
+        },
+        h('span', { className: 'dpz-tab-label' }, draft[key]?.name?.trim() || label),
+        enabled ? null : h('small', null, '已停用'),
+        unsaved(key) ? h('span', { className: 'dpz-mark', role: 'img', 'aria-label': '未保存' }) : null)
       }
+      const updateTab = h('button', {
+        key: UPDATE_TAB, type: 'button', role: 'tab', id: 'dpz-tab-update', className: 'dpz-tab dpz-tab-end', 'data-mode': UPDATE_TAB,
+        'aria-selected': onUpdateTab, 'aria-controls': 'dpz-panel-update', onClick: () => setSelected(UPDATE_TAB),
+      },
+      h('span', { className: 'dpz-tab-label' }, updateText.title),
+      updateReady ? h('span', { className: 'dpz-mark', 'data-tone': 'accent', role: 'img', 'aria-label': updateText.available }) : null)
 
-      return h('section', { className: 'dpz', ref: showPanelFromTop },
+      const enabled = value.enabled !== false
+      const badges = [
+        !enabled && h('span', { key: 'off', className: 'dpz-badge' }, '已停用'),
+        unsaved(mode.key) && h('span', { key: 'dirty', className: 'dpz-badge', 'data-tone': 'warn' }, '未保存'),
+        !same(draft[mode.key], snapshot.base?.[mode.key]) && h('span', { key: 'custom', className: 'dpz-badge', 'data-tone': 'accent' }, '已自定义'),
+      ].filter(Boolean)
+      // key 跟随模式：换页签时整块重建，内容的浮现动效随之重播；草稿在上层，不受重建影响。
+      const modePanel = h('div', { key: mode.key, className: 'dpz-panel', role: 'tabpanel', id: 'dpz-panel-mode', 'aria-labelledby': `dpz-tab-${mode.key}` },
+        h('div', { className: 'dpz-panel-head' },
+          h('span', { className: 'dpz-glyph', 'aria-hidden': true }, mode.glyph),
+          h('div', { className: 'dpz-panel-title' },
+            h('h4', null, mode.label),
+            h('p', null, mode.summary),
+            h('div', { className: 'dpz-meta' },
+              h('code', null, mode.id),
+              h('span', null, mode.context ? '保留 AGENTS.md 与 Skills' : '不注入 AGENTS.md 与 Skills'),
+              ...badges)),
+          h('label', { className: 'dpz-enable' },
+            h('input', {
+              type: 'checkbox', role: 'switch', className: 'dpz-switch', 'aria-label': `启用${mode.label}`,
+              checked: enabled, disabled: readonly, onChange: event => change(mode.key, 'enabled', event.target.checked),
+            }),
+            '启用此模式')),
+        h('fieldset', { className: 'dpz-fieldset', disabled: readonly },
+          h('div', { className: 'dpz-row' }, ...fields.map(({ field, title, hint }) => h('label', { key: field, className: 'dpz-field' },
+            h('span', { className: 'dpz-label' }, title),
+            h('input', { className: 'dpz-input', value: value[field] ?? '', placeholder: base[field] || hint, onChange: event => change(mode.key, field, event.target.value) })))),
+          h('label', { className: 'dpz-field' },
+            h('span', { className: 'dpz-label' }, '系统提示词', h('small', null, `${(value.prompt ?? '').length} 字`)),
+            h('textarea', { className: 'dpz-input', rows: 8, value: value.prompt ?? '', placeholder: base.prompt, onChange: event => change(mode.key, 'prompt', event.target.value) }),
+            h('span', { className: 'dpz-hint' }, mode.context
+              ? '作为角色前缀；工具、团队、MCP 等操作说明仍由当前组合动态组装并汉化。留空使用默认内容。'
+              : '中文极简只使用这段提示词。留空使用默认内容。')),
+          h('div', null,
+            h('button', { type: 'button', className: 'dpz-btn dpz-small', disabled: same(value, base), onClick: () => reset(mode.key) }, '恢复此模式默认设置'))))
+
+      return h('section', { className: 'dpz', ref: attachCard },
         h('style', null, css),
         h('header', { className: 'dpz-head' },
-          h('div', null,
-            h('h3', null, '中文预设'),
-            h('p', null, '选择模式后编辑，修改后点击保存。标准、PTC 和创造模式保留 AGENTS.md 与技能原文。')),
-          h('span', { className: 'dpz-count' }, '已启用 ', h('b', null, String(enabledCount)), ' / 4')),
-        h('div', { className: 'dpz-modes', role: 'tablist', 'aria-label': '中文预设模式' }, ...modes.map(card)),
-        h('div', { className: 'dpz-panel', role: 'tabpanel', 'aria-label': mode.label },
-          h('div', { className: 'dpz-panel-head' },
-            h('span', { className: 'dpz-glyph dpz-lg', 'aria-hidden': true }, mode.glyph),
-            h('div', { className: 'dpz-panel-title' },
-              h('h4', null, mode.label),
-              h('div', { className: 'dpz-meta' },
-                h('code', null, mode.id),
-                h('span', null, mode.context ? '保留 AGENTS.md 与 Skills' : '不注入 AGENTS.md 与 Skills'))),
-            h('label', { className: 'dpz-enable' }, toggle(mode.key, mode.label), '启用此模式')),
-          h('fieldset', { className: 'dpz-fieldset', disabled: readonly },
-            h('div', { className: 'dpz-row' }, ...fields.map(({ field, title, hint }) => h('label', { key: field, className: 'dpz-field' },
-              h('span', { className: 'dpz-label' }, title),
-              h('input', { className: 'dpz-input', value: value[field] ?? '', placeholder: base[field] || hint, onChange: event => change(mode.key, field, event.target.value) })))),
-            h('label', { className: 'dpz-field' },
-              h('span', { className: 'dpz-label' }, '系统提示词', h('small', null, `${(value.prompt ?? '').length} 字`)),
-              h('textarea', { className: 'dpz-input', rows: 8, value: value.prompt ?? '', placeholder: base.prompt, onChange: event => change(mode.key, 'prompt', event.target.value) }),
-              h('span', { className: 'dpz-hint' }, mode.context
-                ? '作为角色前缀；工具、团队、MCP 等操作说明仍由当前组合动态组装并汉化。留空使用默认内容。'
-                : '中文极简只使用这段提示词。留空使用默认内容。')),
-            h('div', null,
-              h('button', { type: 'button', className: 'dpz-btn dpz-small', disabled: same(value, base), onClick: () => reset(mode.key) }, '恢复此模式默认设置')))),
-        h('div', { className: 'dpz-bar' },
-          h('p', { className: 'dpz-status', role: 'status', 'aria-live': 'polite', 'data-tone': status.tone, style: { margin: 0 } }, status.text),
+          h('h3', null, '中文预设'),
+          h('p', null, '选择模式后编辑，修改后点击保存。标准、PTC 和创造模式保留 AGENTS.md 与技能原文。'),
+          h('div', { className: 'dpz-chips' },
+            h('span', { className: 'dpz-chip', 'data-tone': enabledCount > 0 ? 'ok' : 'off' },
+              h('span', { className: 'dpz-chip-dot', 'aria-hidden': true }), '已启用 ', h('b', null, String(enabledCount)), ' / 4'),
+            updater ? h('button', { type: 'button', className: 'dpz-chip', onClick: () => setSelected(UPDATE_TAB) },
+              version?.currentVersion ? `v${version.currentVersion}` : updateText.title,
+              updateReady ? h('span', { className: 'dpz-new' }, ` · ${updateText.available}`) : null) : null)),
+        h('div', { className: 'dpz-tabs', role: 'tablist', 'aria-label': '中文预设设置' }, ...modes.map(modeTab), updater ? updateTab : null),
+        onUpdateTab ? null : modePanel,
+        // 更新面板常驻、只切 hidden：挂载时才会检查版本，头部版本号与页签提醒都依赖这次检查。
+        updater ? h('div', { className: 'dpz-panel', role: 'tabpanel', id: 'dpz-panel-update', 'aria-labelledby': 'dpz-tab-update', hidden: !onUpdateTab }, h(UpdatePanel, { updater })) : null,
+        footerShown ? h('div', { className: 'dpz-foot-space', ref: footerSpaceRef }, h('div', { className: 'dpz-foot' },
+          h('p', { className: 'dpz-status', role: 'status', 'aria-live': 'polite', 'data-tone': status.tone }, status.text),
           h('div', { className: 'dpz-actions' },
             h('button', { type: 'button', className: 'dpz-btn', disabled: busy, onClick: reload }, '重新载入'),
-            h('button', { type: 'button', className: 'dpz-btn dpz-primary', disabled: readonly || !dirty, onClick: save }, busy ? '保存中…' : '保存设置'))),
-        updater ? h(UpdatePanel, { updater }) : null)
+            h('button', { type: 'button', className: 'dpz-btn dpz-primary', disabled: readonly || !dirty, onClick: save }, busy ? '保存中…' : '保存设置')))) : null)
     }
 
     function apply(ctx) {
