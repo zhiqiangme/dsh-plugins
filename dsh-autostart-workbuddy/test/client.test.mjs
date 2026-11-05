@@ -291,6 +291,8 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'hubKeySaved', 'hubKeyMissing', 'hubKeyEnvironment', 'hubKeyUnavailable', 'hubKeyKeep', 'hubSaving',
     'hubSettingsSaved', 'hubKeysSaved', 'hubSyncFailed', 'hubInventoryFailed',
     'hubDual', 'hubDualHint', 'hubCnKey', 'hubGlKey', 'hubHwKey', 'hubApply', 'hubDualSaved', 'hubBoth', 'hubAll',
+    'hubMerge', 'hubMergeHint', 'hubPanelPassword', 'hubPanelMissing',
+    'exitExpiry', 'exitNoExpiry', 'exitNoPassword', 'exitAuthFailed', 'exitUnavailable',
     'codeartsSkipped', 'statCodeArts', 'statCodeArtsSub',
     'modelSearch', 'regionAll', 'ruleFree', 'ruleVision', 'ruleMax', 'sortUpstream', 'sortName', 'sortCredits', 'ruleHint',
     'diagnose', 'diagnoseCopy', 'diagnoseCopied', 'diagnoseWorking',
@@ -1037,10 +1039,56 @@ test('区域 Key：重新打开仍显示各项保存状态，不回填密钥', (
   assert.match(passwords[0].props.placeholder, /已保存；留空保留/);
 });
 
+function mergeSwitch(form) {
+  return collectByType(form, 'input').filter((node) => node.props.role === 'switch')[1];
+}
+
+test('合并开关：默认开启，到期情况逐行显示；面板密码没有网关 Key 兜底', () => {
+  const overview = { ready: 3, total: 3, balances: [], exits: {
+    cn: { realm: 'cn', state: 'ready', expireAt: Date.UTC(2026, 10, 6, 1, 17, 11), expiring: 68.17 },
+    intl: { realm: 'intl', state: 'none', expireAt: null },
+    codearts: { realm: 'codearts', state: 'no-password', expireAt: null },
+  } };
+  const form = hubKeyForm(boot(gatewayStates({ gateway: 'hub', overview, hubSettings: { enabled: true, keys: { panel: 'missing' } } })));
+  assert.equal(mergeSwitch(form).props.checked, true, '没存过选择时按默认开启');
+  assert.equal(mergeSwitch(form).props.disabled, false);
+  const text = collectText(form).join('|');
+  assert.match(text, /CN 最早到期 .+（68\.17 积分）/);
+  assert.doesNotMatch(text, /1793/, '时间戳要格式化成本地时间');
+  assert.match(text, /GL 没有会到期的积分/);
+  assert.match(text, /到期未知：需要填面板密码/);
+  assert.match(text, /HUB 面板密码（读取 HW 积分到期用）\|未保存/);
+});
+
+test('合并开关：HW 密码错误和读不到分开说明，只有一个出口时不需要这一项', () => {
+  const lines = (codearts) => collectText(hubKeyForm(boot(gatewayStates({ gateway: 'hub', overview: { balances: [], exits: { codearts } }, hubSettings: { enabled: true, merge: true, keys: {} } })))).join('|');
+  assert.match(lines({ realm: 'codearts', state: 'auth-failed', expireAt: null }), /面板密码不正确/);
+  assert.match(lines({ realm: 'codearts', state: 'unavailable', expireAt: null }), /到期暂时读不到/);
+  const off = hubKeyForm(boot(gatewayStates({ gateway: 'hub', overview: { balances: [], exits: { codearts: { realm: 'codearts', state: 'no-password' } } }, hubSettings: { enabled: false, merge: true, keys: {} } })));
+  assert.equal(mergeSwitch(off).props.disabled, true, '没有多个出口时合并无从谈起');
+  assert.doesNotMatch(collectText(off).join('|'), /到期未知/);
+});
+
+test('合并开关：关闭后随区域设置一起保存', async () => {
+  const posts = [];
+  const app = boot(gatewayStates({ gateway: 'hub', hubSettings: { enabled: true, merge: true, keys: {} } }), { fetchImpl: async (_path, options) => {
+    if (options.method === 'POST') {
+      posts.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ ok: true, enabled: true, settings: { enabled: true, merge: false, keys: {} }, sync: { state: 'updated' } }) };
+    }
+    return { ok: true, json: async () => ({ ok: true, enabled: true, hubDual: true, models: ROWS, only: [] }) };
+  } });
+  mergeSwitch(hubKeyForm(app)).props.onChange({ target: { checked: false } });
+  assert.equal(mergeSwitch(hubKeyForm(app)).props.checked, false);
+  await button(collectByType(hubKeyForm(app), 'button'), '应用区域模式').props.onClick();
+  assert.equal(posts[0].merge, false);
+  assert.equal(mergeSwitch(hubKeyForm(app)).props.checked, false);
+});
+
 test('区域 Key：校验中有提示，成功后就近显示已保存并解释输入框清空', async () => {
   let finish;
   const posts = [];
-  const settings = { enabled: false, keys: { cn: 'saved', global: 'saved', codearts: 'saved', follow: 'saved' } };
+  const settings = { enabled: false, keys: { cn: 'saved', global: 'saved', codearts: 'saved', follow: 'saved', panel: 'saved' } };
   const app = boot(gatewayStates({ gateway: 'hub' }), { fetchImpl: async (_path, options) => {
     if (options.method === 'POST') {
       posts.push(JSON.parse(options.body));
@@ -1048,20 +1096,20 @@ test('区域 Key：校验中有提示，成功后就近显示已保存并解释�
     }
     return { ok: true, json: async () => ({ ok: true, enabled: true, hubDual: false, models: ROWS, only: [] }) };
   } });
-  const keys = ['cn-secret', 'gl-secret', 'hw-secret', 'follow-secret'];
+  const keys = ['cn-secret', 'gl-secret', 'hw-secret', 'follow-secret', 'panel-secret'];
   collectByType(hubKeyForm(app), 'input').filter((node) => node.props.type === 'password').forEach((node, index) => node.props.onChange({ target: { value: keys[index] } }));
   const pending = button(collectByType(hubKeyForm(app), 'button'), '应用区域模式').props.onClick();
   assert.equal(button(collectByType(hubKeyForm(app), 'button'), '正在校验并保存…').props.disabled, true);
   assert.ok(collectByType(hubKeyForm(app), 'input').filter((node) => node.props.type === 'password').every((node) => node.props.value));
   finish();
   await pending;
-  assert.deepEqual(posts, [{ action: 'hubMode', enabled: false, cnKey: keys[0], globalKey: keys[1], codeartsKey: keys[2], followKey: keys[3] }]);
+  assert.deepEqual(posts, [{ action: 'hubMode', enabled: false, merge: true, cnKey: keys[0], globalKey: keys[1], codeartsKey: keys[2], followKey: keys[3], panelPassword: keys[4] }]);
   const form = hubKeyForm(app);
-  assert.equal(collectByType(form, 'span').filter((node) => node.props.className.includes('dsm-wb-key-state-saved')).length, 4);
+  assert.equal(collectByType(form, 'span').filter((node) => node.props.className.includes('dsm-wb-key-state-saved')).length, 5);
   assert.ok(collectByType(form, 'input').filter((node) => node.props.type === 'password').every((node) => node.props.value === ''));
   const notice = collectByType(form, 'p').find((node) => node.props.role === 'status');
   assert.match(collectText(notice).join(''), /Key 已保存.*输入框已清空.*继续生效/);
-  assert.doesNotMatch(collectText(form).join(''), /cn-secret|gl-secret|hw-secret|follow-secret/);
+  assert.doesNotMatch(collectText(form).join(''), /cn-secret|gl-secret|hw-secret|follow-secret|panel-secret/);
 });
 
 test('区域 Key：保存被拒时就近显示错误且保留输入，不能显示成功', async () => {

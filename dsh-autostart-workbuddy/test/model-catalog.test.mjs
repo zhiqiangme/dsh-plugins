@@ -26,7 +26,7 @@ async function fixture(t, mode, { all = false } = {}) {
   t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(done); }));
   const only = all ? [] : ['cn:flash', 'cn:kimi-k3.1-pro', ...(dual ? ['global:flash'] : [])];
   const resolved = resolvePluginConfig({ gateway: hub ? 'hub' : 'wb2api', models: {
-    enabled: true, hubDual: dual, only, baseURL: `http://127.0.0.1:${server.address().port}`,
+    enabled: true, hubDual: dual, hubMerge: false, only, baseURL: `http://127.0.0.1:${server.address().port}`,
   } }, {});
   resolved.models.hubProxyBaseURL = 'http://127.0.0.1:8787/plugins/test/hub/v1/';
   const editor = createFakeConfigEditor(profileRows({ models: { enabled: true, only } }));

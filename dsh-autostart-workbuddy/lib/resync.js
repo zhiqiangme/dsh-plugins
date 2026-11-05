@@ -118,6 +118,9 @@ export function createModelResync(options) {
       // 区域分组不随看板出口变化，切换那一轮也照常要两轮确认。
       regionGuard: manual ? undefined : removalGuard,
     });
+    // 引用没改过来时，相关的默认模型或子代理会报 UNKNOWN_MODEL，这里要留下线索。
+    if (result.refs?.state === 'updated') logger.info(`[${name}] ${label}：已把 ${result.refs.count} 处配置里的模型引用改到新 id`);
+    else if (result.refs?.state === 'failed') note('warn', `${label}未能改写模型引用：${result.refs.reason}`);
     if (watchRealm && ['updated', 'unchanged', 'deferred'].includes(result.state)) {
       syncedRealm = result.realm ?? health.realm ?? syncedRealm;
     }

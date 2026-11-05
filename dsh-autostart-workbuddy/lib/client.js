@@ -291,6 +291,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
    同时向上投一道阴影，表示保存栏此刻浮在列表之上；回到原位时阴影随 transition 淡出。 */
 @container scroll-state(stuck: bottom){.dsm-wb-dock>.dsm-wb-footer::before{content:"";position:absolute;z-index:-1;right:-1px;bottom:-1px;left:-1px;height:16px;background:var(--dsw-alias-bg-base,#161618)}.dsm-wb-dock>.dsm-wb-footer{box-shadow:0 -10px 24px -16px rgb(0 0 0 / .55)}}
 /* 区域 Key */
+.dsm-wb-exits{margin:0;padding-left:18px}
 .dsm-wb-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
 .dsm-wb-key-field{display:flex;flex-direction:column;gap:6px;min-width:0;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;font-weight:500}
 .dsm-wb-key-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
@@ -425,6 +426,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       diagnose: '一键诊断', diagnoseCopy: '复制脱敏报告', diagnoseCopied: '诊断报告已复制', diagnoseWorking: '正在诊断…',
       emptyFiltered: '没有符合筛选条件的模型', modelSearch: '搜索模型', regionAll: '全部区域', ruleFree: '只同步免费模型', ruleVision: '只同步视觉模型', ruleMax: '最高倍率（留空不限）',
       sortUpstream: '上游顺序', sortName: '按名称排序', sortCredits: '按倍率排序', ruleHint: '规则与勾选共同生效，新增模型也按规则筛选；未定价的模型不会视为免费。批量操作只影响当前筛选结果。',
+      hubPanelMissing: '未保存', hubMerge: '合并同名模型', hubMergeHint: '多个出口都勾选的同一模型在 DSH 里只显示一条，发送时优先用积分最早到期的出口；同一对话固定在一个出口，请求没被受理时才换下一个。在下方列表里没勾选的出口不参与。',
+      hubPanelPassword: 'HUB 面板密码（读取 HW 积分到期用）', exitExpiry: '{realm} 最早到期 {time}（{amount} 积分）', exitNoExpiry: '{realm} 没有会到期的积分', exitNoPassword: '{realm} 到期未知：需要填面板密码，否则排在有到期时间的出口之后', exitAuthFailed: '{realm} 到期未知：面板密码不正确，请重新填写', exitUnavailable: '{realm} 到期暂时读不到，排在有到期时间的出口之后',
       hubDual: 'CN / GL / HW 同时使用', hubDualHint: 'CN / GL 模型合并显示在一个 WorkBuddy 分组中，按模型区域自动选择出口，不随 HUB 看板切换。HUB 启用 CodeArts 后，它的模型标记为 HW 一并列出，默认不勾选。沿用网关 Key；只有网关 Key 在 HUB 里绑定了区域时，才需要另填区域 Key（只存 DSH 凭据库，留空沿用已保存的值）。',
       hubCnKey: 'CN 区域 Key（可选）', hubGlKey: 'GL 区域 Key（可选）', hubHwKey: 'HW（CodeArts）区域 Key（可选）', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存', hubBoth: 'CN + GL（同一分组，独立出口）', hubAll: 'CN + GL + HW（同一分组，独立出口）',
       codeartsSkipped: 'CodeArts 暂未接入：{reason}', statCodeArts: 'HW（CodeArts）账号', statCodeArtsSub: '积分请到 HUB 看板查看',
@@ -592,6 +595,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       diagnose: 'Diagnose', diagnoseCopy: 'Copy redacted report', diagnoseCopied: 'Report copied', diagnoseWorking: 'Diagnosing…',
       emptyFiltered: 'No models match the filters', modelSearch: 'Search models', regionAll: 'All regions', ruleFree: 'Sync free models only', ruleVision: 'Sync vision models only', ruleMax: 'Max multiplier (blank = any)',
       sortUpstream: 'Upstream order', sortName: 'Sort by name', sortCredits: 'Sort by multiplier', ruleHint: 'Rules and selections both apply, including to new models. Unknown prices are not treated as free. Bulk actions affect only filtered rows.',
+      hubPanelMissing: 'Not saved', hubMerge: 'Merge models with the same name', hubMergeHint: 'A model selected on several exits shows once in DSH and is sent through the exit whose credits expire first. A conversation stays on one exit and only moves on if a request is not accepted. Exits left unselected in the list below do not take part.',
+      hubPanelPassword: 'HUB panel password (to read HW credit expiry)', exitExpiry: '{realm}: {amount} credits expire first, at {time}', exitNoExpiry: '{realm}: no credits with an expiry date', exitNoPassword: '{realm}: expiry unknown. Enter the panel password, or it ranks after exits with a known expiry', exitAuthFailed: '{realm}: expiry unknown. The panel password is wrong, please enter it again', exitUnavailable: '{realm}: expiry cannot be read right now, so it ranks after exits with a known expiry',
       hubDual: 'Use CN, GL and HW together', hubDualHint: 'Shows CN / GL models in one WorkBuddy group, routed by the selected model region independently of the HUB dashboard. Once CodeArts is enabled in HUB, its models are listed too, tagged HW and unselected by default. Uses the gateway key; region keys are only needed when it is bound to a region (stored only in DSH credentials; blank keeps saved values).',
       hubCnKey: 'CN region key (optional)', hubGlKey: 'GL region key (optional)', hubHwKey: 'HW (CodeArts) region key (optional)', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved', hubBoth: 'CN + GL (one group, independent exits)', hubAll: 'CN + GL + HW (one group, independent exits)',
       codeartsSkipped: 'CodeArts is not connected: {reason}', statCodeArts: 'HW (CodeArts) accounts', statCodeArtsSub: 'See credits on the HUB dashboard',
@@ -2026,14 +2031,14 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         setBackendBusy('hubMode');
         setHubNotice(undefined);
         try {
-          const payload = await request(BACKEND_PATH, 'POST', { action: 'hubMode', enabled: hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, codeartsKey: hubDraft?.codeartsKey, followKey: hubDraft?.followKey });
+          const payload = await request(BACKEND_PATH, 'POST', { action: 'hubMode', enabled: hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false, merge: hubDraft?.merge ?? backend?.hubSettings?.merge ?? true, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, codeartsKey: hubDraft?.codeartsKey, followKey: hubDraft?.followKey, panelPassword: hubDraft?.panelPassword });
           if (!payload.ok) throw new Error(payload.reason || t('saveFailed'));
           // 宿主确认保存后才清空敏感草稿；同步/回读失败不能再把已落盘的 Key 说成保存失败。
           setHubDraft(undefined);
           setBackend((last) => ({ ...last, hubSettings: payload.settings }));
           setMeta((last) => ({ ...last, hubDual: payload.enabled }));
           const syncFailed = ['failed', 'skipped', 'not-ready'].includes(payload.sync?.state);
-          const hadKeys = ['cnKey', 'globalKey', 'codeartsKey', 'followKey'].some((key) => hubDraft?.[key]?.trim());
+          const hadKeys = ['cnKey', 'globalKey', 'codeartsKey', 'followKey', 'panelPassword'].some((key) => hubDraft?.[key]?.trim());
           setHubNotice(syncFailed
             ? { kind: 'error', text: t('hubSyncFailed', { reason: payload.sync.reason || payload.sync.state }) }
             : { kind: 'ok', text: t(hadKeys ? 'hubKeysSaved' : 'hubSettingsSaved') });
@@ -2375,6 +2380,15 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       }
 
       // ---- 区域与 Key 页签（仅 hub）----
+      const dualDraft = hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false;
+      const mergeDraft = hubDraft?.merge ?? backend?.hubSettings?.merge ?? true;
+      const exitLines = Object.values(overview?.exits ?? {}).map((exit) => {
+        const realm = realmName(exit.realm);
+        const text = exit.expireAt != null
+          ? t('exitExpiry', { realm, time: localTime(new Date(exit.expireAt).toISOString()), amount: formatNumber(exit.expiring) })
+          : t({ 'no-password': 'exitNoPassword', 'auth-failed': 'exitAuthFailed', unavailable: 'exitUnavailable' }[exit.state] || 'exitNoExpiry', { realm });
+        return h('li', { key: exit.realm }, text);
+      });
       const regionPanel = hub
         ? [
             h(
@@ -2388,10 +2402,18 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
               ),
               h(
                 'div',
+                { className: 'dsm-wb-stack' },
+                h('label', { className: 'dsm-wb-sync' }, h('input', { type: 'checkbox', role: 'switch', checked: mergeDraft, disabled: busy || !dualDraft, onChange: (e) => { setHubDraft((last) => ({ ...last, merge: e.target.checked })); setHubNotice(undefined); } }), t('hubMerge')),
+                h('p', { className: 'dsm-wb-hint' }, t('hubMergeHint')),
+                dualDraft && mergeDraft && exitLines.length ? h('ul', { className: 'dsm-wb-hint dsm-wb-exits' }, ...exitLines) : null,
+              ),
+              h(
+                'div',
                 { className: 'dsm-wb-fields' },
-                ...[['cnKey', 'hubCnKey', 'cn'], ['globalKey', 'hubGlKey', 'global'], ['codeartsKey', 'hubHwKey', 'codearts'], ['followKey', 'hubFollowKey', 'follow']].map(([key, label, field]) => {
+                ...[['cnKey', 'hubCnKey', 'cn'], ['globalKey', 'hubGlKey', 'global'], ['codeartsKey', 'hubHwKey', 'codearts'], ['followKey', 'hubFollowKey', 'follow'], ['panelPassword', 'hubPanelPassword', 'panel']].map(([key, label, field]) => {
                   const state = backend.hubSettings?.keys?.[field];
-                  const stateLabel = t({ saved: 'hubKeySaved', missing: 'hubKeyMissing', environment: 'hubKeyEnvironment' }[state] || 'hubKeyUnavailable');
+                  // 面板密码没有网关 Key 可以兜底，「未单独保存，使用网关 Key」放在这里是错的。
+                  const stateLabel = t({ saved: 'hubKeySaved', missing: field === 'panel' ? 'hubPanelMissing' : 'hubKeyMissing', environment: 'hubKeyEnvironment' }[state] || 'hubKeyUnavailable');
                   return h(
                     'label',
                     { key, className: 'dsm-wb-key-field' },

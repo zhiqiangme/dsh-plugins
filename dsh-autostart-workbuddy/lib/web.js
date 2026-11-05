@@ -28,6 +28,7 @@ import { diagnose } from './diagnostics.js';
 import { createAccountOverview } from './overview.js';
 import { createHubRouter } from './hub-router.js';
 import { createHubEndpoint } from './hub-endpoint.js';
+import { createExitCredits, panelLogin } from './exit-credits.js';
 import { creditValue, normalizeModelRules } from './model-rules.js';
 import { GATEWAY_IDS, backendLockHolder, gatewayDriver, withBackendLock } from './gateway.js';
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
@@ -39,6 +40,7 @@ import {
   hubRegionKeys,
   hubRegionWanted,
   HUB_KEY_REFS,
+  HUB_PANEL_PASSWORD_REF,
   HUB_ROUTER_PATH,
   providerKeyRef,
   proxyCredentialRef,
@@ -441,7 +443,7 @@ function busyReason(holder) {
  * POST 的动作：check、gateway、autoUpdate，以及会动目录的 install / update / rollback / uninstall / purge
  * （后五个与自动更新共用一把锁，同一时刻只跑一个）。
  */
-async function handleBackend(req, res, { logger, resolved, env, service, editor, credentials, autoUpdater, recovery, resync, overview }) {
+async function handleBackend(req, res, { logger, resolved, env, service, editor, credentials, autoUpdater, recovery, resync, overview, exits }) {
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
   const driver = gatewayDriver(resolved);
@@ -502,7 +504,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
   }
   const action = typeof body.value.action === 'string' ? body.value.action : '';
   if (action === 'hubMode') {
-    const result = await setHubMode({ resolved, editor, credentials, env, enabled: body.value.enabled, cnKey: body.value.cnKey, globalKey: body.value.globalKey, codeartsKey: body.value.codeartsKey, followKey: body.value.followKey });
+    const result = await setHubMode({ resolved, editor, credentials, env, exits, enabled: body.value.enabled, merge: body.value.merge, cnKey: body.value.cnKey, globalKey: body.value.globalKey, codeartsKey: body.value.codeartsKey, followKey: body.value.followKey, panelPassword: body.value.panelPassword });
     json(res, result.ok ? 200 : 400, result);
     return;
   }
@@ -619,16 +621,17 @@ export async function describeHubSettings({ resolved, editor, credentials, env =
       return result?.source === 'env' ? 'environment' : 'saved';
     } catch { return 'unavailable'; }
   };
-  const [cn, global, codearts, savedFollow] = await Promise.all([state(HUB_KEY_REFS.cn), state(HUB_KEY_REFS.intl), state(HUB_KEY_REFS.codearts), state(followRef)]);
+  const [cn, global, codearts, savedFollow, panel] = await Promise.all([state(HUB_KEY_REFS.cn), state(HUB_KEY_REFS.intl), state(HUB_KEY_REFS.codearts), state(followRef), state(HUB_PANEL_PASSWORD_REF)]);
   // 旧版跟随 Key 尚未迁移时，仍按实际读取的旧引用显示状态。
   const follow = savedFollow === 'missing' && resolved.models.apiKeyRef && resolved.models.apiKeyRef !== followRef
     ? await state(resolved.models.apiKeyRef) : savedFollow;
-  return { enabled: resolved.models.hubDual === true, keys: { cn, global, codearts, follow } };
+  return { enabled: resolved.models.hubDual === true, merge: resolved.models.hubMerge === true, keys: { cn, global, codearts, follow, panel } };
 }
 
 /** 区域 Key 只写凭据库，profile 和面板快照只保存模式开关与不含密钥的状态。 */
-export async function setHubMode({ resolved, editor, credentials, env = process.env, enabled, cnKey, globalKey, codeartsKey, followKey }) {
+export async function setHubMode({ resolved, editor, credentials, env = process.env, exits, enabled, merge, cnKey, globalKey, codeartsKey, followKey, panelPassword }) {
   if (resolved.gateway !== 'hub' || typeof enabled !== 'boolean') return { ok: false, reason: '请在 HUB 网关下设置双区域模式' };
+  if (merge !== undefined && typeof merge !== 'boolean') return { ok: false, reason: 'merge 必须是布尔值' };
   const entry = findConfigEntry(editor, { id: PLUGIN_ID });
   if (!entry || typeof editor?.edit !== 'function') return { ok: false, reason: '宿主没有可编辑的插件配置' };
   try {
@@ -637,7 +640,14 @@ export async function setHubMode({ resolved, editor, credentials, env = process.
     const typed = { cn: typeof cnKey === 'string' ? cnKey.trim() : '', intl: typeof globalKey === 'string' ? globalKey.trim() : '', codearts: typeof codeartsKey === 'string' ? codeartsKey.trim() : '' };
     const keys = { cn: typed.cn || existing.cn, intl: typed.intl || existing.intl, codearts: typed.codearts || existing.codearts };
     const keyRef = proxyCredentialRef(resolved.models);
-    if ((typed.cn || typed.intl || typed.codearts || follow) && typeof credentials?.set !== 'function') return { ok: false, reason: '保存 Key 需要 DSH 凭据服务' };
+    // 面板密码不 trim：hub 按原样校验，用户设的密码可能带空格。
+    const password = typeof panelPassword === 'string' ? panelPassword : '';
+    if ((typed.cn || typed.intl || typed.codearts || follow || password) && typeof credentials?.set !== 'function') return { ok: false, reason: '保存 Key 需要 DSH 凭据服务' };
+    if (password) {
+      if (env[HUB_PANEL_PASSWORD_REF] && env[HUB_PANEL_PASSWORD_REF] !== password) return { ok: false, reason: `${HUB_PANEL_PASSWORD_REF} 来自只读环境变量` };
+      const login = await panelLogin({ baseURL: resolved.models.baseURL, password });
+      if (login.state !== 'ok') return { ok: false, reason: { rejected: '面板密码不正确', limited: '面板登录失败次数过多，请一分钟后再试' }[login.state] ?? '无法登录 HUB 面板，请确认 HUB 正在运行' };
+    }
     if (follow) {
       if (env[keyRef] && env[keyRef] !== follow) return { ok: false, reason: `${keyRef} 来自只读环境变量` };
       const checked = await Promise.all(['cn', 'intl'].map((realm) => fetchModels({ baseURL: resolved.models.baseURL, apiKey: follow, realm, timeoutMs: resolved.models.timeoutMs })));
@@ -670,9 +680,15 @@ export async function setHubMode({ resolved, editor, credentials, env = process.
     for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (typed[realm] && env[ref] && env[ref] !== keys[realm]) return { ok: false, reason: `${ref} 来自只读环境变量，请先在启动环境中修改` };
     for (const [realm, ref] of Object.entries(HUB_KEY_REFS)) if (typed[realm] && keys[realm] !== existing[realm]) await credentials.set(ref, keys[realm]);
     if (follow) await credentials.set(keyRef, follow);
+    if (password) {
+      // 环境变量里的值已在上面核对过相同，凭据库拒绝写被环境遮蔽的引用。
+      if (!env[HUB_PANEL_PASSWORD_REF]) await credentials.set(HUB_PANEL_PASSWORD_REF, password);
+      exits?.reset();
+    }
     const keyPatch = follow ? { hubApiKeyRef: keyRef } : {};
-    await editor.edit(entry, (current) => ({ ...plainObject(current), models: { ...plainObject(current?.models), ...keyPatch, hubDual: enabled } }));
-    resolved.models = { ...resolved.models, ...keyPatch, ...(follow ? { apiKeyRef: keyRef } : {}), hubDual: enabled };
+    const mergePatch = merge === undefined ? {} : { hubMerge: merge };
+    await editor.edit(entry, (current) => ({ ...plainObject(current), models: { ...plainObject(current?.models), ...keyPatch, ...mergePatch, hubDual: enabled } }));
+    resolved.models = { ...resolved.models, ...keyPatch, ...mergePatch, ...(follow ? { apiKeyRef: keyRef } : {}), hubDual: enabled };
     let synced;
     try { synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env }); }
     catch { synced = { state: 'failed', reason: '模型同步失败，请稍后重试' }; }
@@ -766,7 +782,8 @@ function forceFrom(req) {
  * autoUpdater 同理，面板打开「自动更新」时立即查一轮。
  */
 export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, resync, autoUpdater, recovery, checkVersion = createVersionChecker() }) {
-  const overview = createAccountOverview({ resolved, env, credentials: () => credentialsOf(ctx) });
+  const exits = createExitCredits({ resolved, env, credentials: () => credentialsOf(ctx) });
+  const overview = createAccountOverview({ resolved, env, credentials: () => credentialsOf(ctx), exits });
   const mount = (scoped) => {
     const holder = scoped ?? ctx;
     const webServer =
@@ -801,7 +818,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       let router;
       let endpoint;
       if (resolved.gateway === 'hub') {
-        router = createHubRouter({ resolved, env, credentials: () => credentialsOf(ctx), editor: () => configEditorOf(ctx) });
+        router = createHubRouter({ resolved, env, credentials: () => credentialsOf(ctx), editor: () => configEditorOf(ctx), exits });
         const provider = findConfigEntry(configEditorOf(ctx), { name: LLM_PI_AI_PACKAGE })?.options?.config?.providers?.[resolved.models.provider];
         endpoint = createHubEndpoint({
           webServer, router, savedBaseURL: provider?.baseURL,
@@ -880,7 +897,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       const disposeBackend = webServer.register({
         kind: 'exact',
         path: BACKEND_PATH,
-        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), credentials: credentialsOf(ctx), autoUpdater, recovery, resync, overview })),
+        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), credentials: credentialsOf(ctx), autoUpdater, recovery, resync, overview, exits })),
       });
 
       const disposeVersion = webServer.register({

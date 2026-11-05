@@ -4,7 +4,7 @@ import { HUB_REALM_HEADER, hubRegionRoutes, resolveModelApiKey, modelsEndpoint }
 import { healthTarget } from './resync.js';
 
 const count = (value) => Number.isInteger(value) && value >= 0 ? value : null;
-export function createAccountOverview({ resolved, credentials, env = process.env, driver = gatewayDriver(resolved), now = Date.now }) {
+export function createAccountOverview({ resolved, credentials, env = process.env, driver = gatewayDriver(resolved), now = Date.now, exits }) {
   let cached, config, expires = 0, running;
   async function balance(realm, key) {
     try {
@@ -33,7 +33,8 @@ export function createAccountOverview({ resolved, credentials, env = process.env
         // hub 的积分汇总只数 WorkBuddy 账号，CodeArts 恒为空，积分只在要面板会话的 /codearts/overview 里：不显示永远未知的积分块。
       } else if (health.realm !== 'codearts') balances = [await balance('current', await resolveModelApiKey(resolved.models, env, service))];
     }
-    return { at: new Date(now()).toISOString(), ok: health.ok, ready: count(health.healthy), total: count(health.total), realm: health.realm, balances, ...(health.codearts ? { codearts: health.codearts } : {}) };
+    const merged = resolved.gateway === 'hub' && resolved.models.hubDual && resolved.models.hubMerge ? await exits?.snapshot().catch(() => undefined) : undefined;
+    return { at: new Date(now()).toISOString(), ok: health.ok, ready: count(health.healthy), total: count(health.total), realm: health.realm, balances, ...(health.codearts ? { codearts: health.codearts } : {}), ...(merged ? { exits: merged } : {}) };
   }
   return function overview() {
     if (cached && config === resolved.models && now() < expires) return Promise.resolve(cached);

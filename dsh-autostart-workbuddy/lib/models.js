@@ -23,7 +23,7 @@ import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { isFile, resolveDshHome } from './services.js';
-import { applyModelRules, hasModelRules, sortByRule } from './model-rules.js';
+import { applyModelRules, creditValue, hasModelRules, sortByRule } from './model-rules.js';
 import { assertModelSyncIdle, modelSyncBlocked, ModelSyncBusyError } from './model-sync-guard.js';
 
 /** llm-pi-ai 的包名：按包名找 Loader 条目，profile 里的行 id 可能被用户改过。 */
@@ -38,6 +38,10 @@ export const GATEWAY_KEY_REFS = Object.freeze({ wb2api: 'WORKBUDDY_WB2API_KEY', 
 /** hub 按请求选出口的请求头：Key 未绑定区域时由它决定出口（绑定了区域的 Key 优先，见 hub 的 _request_realm）。 */
 export const HUB_REALM_HEADER = 'X-Realm';
 export const HUB_ROUTER_PATH = '/plugins/dsh-autostart-workbuddy/hub/v1';
+/** 合并模型的 id 前缀：这种条目不绑定出口，转发时才按积分到期选（见 hub-router.js）。 */
+export const MERGED_PREFIX = 'auto:';
+/** hub 面板密码的凭据引用：只有读 HW 积分要用，改过的密码 hub 只存哈希，插件不存就读不到。 */
+export const HUB_PANEL_PASSWORD_REF = 'WORKBUDDY_HUB_PANEL_PASSWORD';
 
 export async function resolveModelApiKey(models, env = process.env, credentials) {
   if (models.apiKeyRef) {
@@ -179,7 +183,7 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
   const blocked = modelSyncBlocked(syncBlocker);
   if (blocked) return blocked;
   const documentPath = editor.documentPath;
-  const groups = fetched.regions.filter((region) => hubRegionWanted(region.realm, models.only)).map((region) => ({ ...region, name: dualProviderName(models.provider, region.realm), entries: planModelEntries(region.models, models) }));
+  const groups = hubRegionPlans(fetched.regions, models).map((region) => ({ ...region, name: dualProviderName(models.provider, region.realm) }));
   const hasCodeArts = fetched.regions.some((region) => region.realm === CODEARTS_REALM);
   if (groups.some((group) => group.models.length === 0)) return { state: 'skipped', reason: '某个区域返回空目录，保留现有列表', documentPath };
   const previousIds = (config, group) => {
@@ -188,8 +192,10 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     if (ownsDualProvider(config?.providers?.[group.name], group.realm)) ids.push(...providerModelIds(config, group.name));
     return [...new Set(ids)];
   };
+  // 合并条目不记录参与的出口，这里只拿它保护显式勾选；两轮移除确认仍只看带前缀的条目。
   const verifySelection = (config) => {
-    for (const group of groups) assertSelectedModelsPresent(previousIds(config, group), group.models, models, group.realm);
+    const merged = mergedKeys(config, models.provider);
+    for (const group of groups) assertSelectedModelsPresent([...previousIds(config, group), ...merged], group.models, models, group.realm);
   };
   try { verifySelection(target.options?.config); }
   catch (error) { if (error instanceof IncompleteModelCatalogError) return catalogDeferred(error, 'dual', documentPath); throw error; }
@@ -207,10 +213,6 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     }
     if (deferred) return { state: 'deferred', reason: '区域目录缺项，等待新的可靠目录再次确认后再移除', realm: 'dual', documentPath };
   }
-  const entries = groups.flatMap((group) => group.entries.map((entry) => ({ ...entry, id: selectionKey({ id: entry.id, realm: group.realm }) })));
-  const credits = new Map(groups.flatMap((group) => group.models.map((model) => [selectionKey(model), model.credits])));
-  // 面板把所有区域混在一起排，这里也要在合并后的整张清单上排；只在区域内排序的话，DSH 永远是 CN → GL → HW 三段。
-  const ordered = (list) => sortByRule(list, models.rules, { label: (entry) => entry.name, credits: (entry) => credits.get(entry.id) });
   const plan = (current) => {
     const config = plainObject(current);
     verifySelection(config);
@@ -218,7 +220,11 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     if (conflicted) throw new Error(`provider ${conflicted} 已被占用`);
     const sharedRef = proxyCredentialRef(models);
     const kept = hasCodeArts ? [] : retainedCodeArts(config, models.provider, models.only);
-    const planned = withProviderModels(config, models.provider, ordered([...entries, ...kept]), providerSkeleton(models, spec)).config;
+    // CodeArts 这轮取不到时，含 HW 的合并条目不能退回单出口 id：id 一变，正在用它的会话和引用都会断。
+    const { entries, credits } = planHubEntries(groups, models, { keepMerged: hasCodeArts ? undefined : new Set(mergedKeys(config, models.provider)) });
+    // 面板把所有区域混在一起排，这里也要在合并后的整张清单上排；只在区域内排序的话，DSH 永远是 CN → GL → HW 三段。
+    const ordered = sortByRule([...entries, ...kept], models.rules, { label: (entry) => entry.name, credits: (entry) => credits.get(entry.id) });
+    const planned = withProviderModels(config, models.provider, ordered, providerSkeleton(models, spec)).config;
     const provider = planned.providers[models.provider];
     const headers = Object.fromEntries(Object.entries(plainObject(provider.headers)).filter(([key]) => key.toLowerCase() !== 'x-realm'));
     return dropDualProviders({ ...planned, providers: { ...planned.providers, [models.provider]: { ...provider, baseURL, apiKeyEnv: sharedRef, ...(provider.headers ? { headers } : {}) } } }, models.provider);
@@ -237,7 +243,156 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     return { state: error instanceof ModelSyncBusyError ? 'busy' : 'failed', reason: error.message, documentPath };
   }
   const credential = await ensureProxyCredential({ credentials, ref: providerKeyRef(planned, models.provider), apiKey: await resolveModelApiKey(models, env, credentials), managed: providerKeyRef(planned, models.provider) === GATEWAY_KEY_REFS[models.gateway] });
-  return { state: changed ? 'updated' : 'unchanged', entries: written, credential, realm: 'dual', documentPath };
+  const refs = await retargetModelRefs({ editor, provider: models.provider, entries: written, syncBlocker });
+  return { state: changed ? 'updated' : 'unchanged', entries: written, credential, refs, realm: 'dual', documentPath };
+}
+
+/** 各出口要写进 DSH 的条目；转发端点用它还原同一份清单，两边的勾选和规则才一致。 */
+export function hubRegionPlans(regions, models) {
+  return regions.filter((region) => hubRegionWanted(region.realm, models.only)).map((region) => ({ ...region, entries: planModelEntries(region.models, models) }));
+}
+
+/** 配置里已有的合并条目的键。 */
+function mergedKeys(config, provider) {
+  return providerModelIds(config, provider).filter((id) => id.startsWith(MERGED_PREFIX)).map(mergeKey);
+}
+
+/**
+ * 合并用的键：去掉出口前缀的小写 id。
+ *
+ * 不按展示名合并：`Hy4` 同时是付费 hy4std 和免费 hy4free 的上游名称，按名称会把两者并成一个；
+ * 而同一模型的展示名大小写又可能不同（`DeepSeek-…` / `Deepseek-…`），id 才是一致的。
+ */
+export function mergeKey(id) {
+  const text = String(id);
+  const prefix = [MERGED_PREFIX, ...REGION_PREFIXES.map(([region]) => region)].find((candidate) => text.startsWith(candidate));
+  return (prefix ? text.slice(prefix.length) : text).toLowerCase();
+}
+
+function smallestField(members, field) {
+  const values = members.map(({ entry }) => entry[field]).filter(Boolean);
+  return values.length ? { [field]: Math.min(...values) } : {};
+}
+
+/** 名称取 CN → GL → HW 里第一个；各出口倍率不同时显示范围（`0.97-1.63`），不知道倍率的出口不计入。 */
+function mergedName(members) {
+  const labels = [...new Set(members.map(({ model }) => modelCreditsLabel(model)).filter(Boolean))]
+    .sort((a, b) => (creditValue(a) ?? Infinity) - (creditValue(b) ?? Infinity));
+  const credits = labels.length > 1 ? `${labels[0]}-${labels.at(-1)}` : labels[0];
+  return [modelBaseName(members[0].model), 'Auto', credits].filter(Boolean).join(' ');
+}
+
+/**
+ * 同一模型在各出口的能力可能不同。DSH 按条目能力发请求，所以：
+ *   - 上下文与最大输出取最小值，无论选到哪个出口都不超限；
+ *   - 思考档位取交集，CodeArts 对档位外的请求直接 400；
+ *   - 视觉取并集，否则 GLM-5.3 会因 HW 不支持而整条失去视觉；带图请求由转发端点跳过不支持的出口。
+ */
+function mergedEntry(key, members) {
+  const { reasoningEfforts: efforts = {}, contextWindow, maxTokens, ...first } = members[0].entry;
+  const shared = Object.keys(efforts).filter((effort) => members.every(({ entry }) => entry.reasoningEfforts?.[effort] !== undefined));
+  return {
+    ...first,
+    id: `${MERGED_PREFIX}${key}`,
+    name: mergedName(members),
+    ...smallestField(members, 'contextWindow'),
+    ...smallestField(members, 'maxTokens'),
+    input: members.some(({ entry }) => entry.input?.includes('image')) ? ['text', 'image'] : ['text'],
+    ...(shared.length ? { reasoningEfforts: Object.fromEntries(shared.map((effort) => [effort, efforts[effort]])) } : {}),
+  };
+}
+
+/**
+ * 把各出口的条目变成写进 DSH 的清单。`models.hubMerge` 时，多个出口都勾选的模型并成一条
+ * `auto:` 条目；只有一个出口的保持原 id，默认模型等引用不受影响。
+ *
+ * @param {{ realm: string, models: object[], entries: object[] }[]} plans hubRegionPlans 的结果
+ * @param {object} models
+ * @param {{ keepMerged?: Set<string> }} [options] 只剩一个出口也要保持合并的键
+ * @returns {{ entries: object[], credits: Map<string, unknown>, routes: Map<string, object[]> }}
+ *   `credits` 给排序用，合并条目取最低倍率；`routes` 不受开关影响，开关切换期间发来的旧 id 也能转发。
+ */
+export function planHubEntries(plans, models, { keepMerged = new Set() } = {}) {
+  const groups = new Map();
+  for (const plan of plans) {
+    const byId = new Map(plan.models.map((model) => [model.id, model]));
+    for (const entry of plan.entries) {
+      const key = mergeKey(entry.id);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ realm: plan.realm, bare: entry.id, model: byId.get(entry.id), entry: { ...entry, id: selectionKey({ id: entry.id, realm: plan.realm }) } });
+    }
+  }
+  const routes = new Map([...groups].map(([key, members]) => [key, members.map(({ realm, bare, model }) => ({ realm, model: bare, vision: model.supports_images === true, price: creditValue(model.credits) }))]));
+  const credits = new Map(plans.flatMap((plan) => plan.models.map((model) => [selectionKey(model), model.credits])));
+  if (models.hubMerge !== true) return { entries: plans.flatMap((plan) => plan.entries.map((entry) => ({ ...entry, id: selectionKey({ id: entry.id, realm: plan.realm }) }))), credits, routes };
+  const entries = [];
+  for (const [key, members] of groups) {
+    if (members.length === 1 && !keepMerged.has(key)) { entries.push(members[0].entry); continue; }
+    const entry = mergedEntry(key, members);
+    entries.push(entry);
+    const cheapest = [...members].sort((a, b) => (creditValue(a.model.credits) ?? Infinity) - (creditValue(b.model.credits) ?? Infinity))[0];
+    credits.set(entry.id, cheapest.model.credits);
+  }
+  return { entries, credits, routes };
+}
+
+/** 引用形如 `{ provider, model }`，散在默认模型、子代理白名单等配置里；未改动时原样返回同一对象。 */
+function replaceModelRefs(value, provider, swap) {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => replaceModelRefs(item, provider, swap));
+    if (items.every((item, index) => item === value[index])) return value;
+    // CN 和 GL 的引用会换成同一个合并条目，列表里只留一条。
+    const seen = new Set();
+    return items.filter((item) => {
+      if (typeof item?.model !== 'string' || item.provider !== provider) return true;
+      if (seen.has(item.model)) return false;
+      seen.add(item.model);
+      return true;
+    });
+  }
+  if (typeof value !== 'object' || value === null) return value;
+  if (value.provider === provider && typeof value.model === 'string') {
+    const model = swap(value.model);
+    return model === value.model ? value : { ...value, model };
+  }
+  let next = value;
+  for (const [key, item] of Object.entries(value)) {
+    const updated = replaceModelRefs(item, provider, swap);
+    if (updated !== item) next = next === value ? { ...value, [key]: updated } : Object.assign(next, { [key]: updated });
+  }
+  return next;
+}
+
+/**
+ * 条目 id 变了之后改写其它插件配置里的引用：llm-pi-ai 遇到清单里没有的模型直接报 UNKNOWN_MODEL。
+ * 开启合并时 `cn:x` → `auto:x`，关闭或只剩一个出口时 `auto:x` → `cn:x`。清单里还有的引用不动；
+ * 写入失败不影响模型同步，只在返回值里说明。
+ *
+ * @returns {Promise<{ state: 'kept' | 'updated' | 'failed', count?: number, reason?: string }>}
+ */
+export async function retargetModelRefs({ editor, provider, entries, syncBlocker }) {
+  const current = new Set(entries.map((entry) => entry.id));
+  const byKey = new Map();
+  for (const entry of entries) if (!byKey.has(mergeKey(entry.id))) byKey.set(mergeKey(entry.id), entry.id);
+  const swap = (id) => {
+    if (current.has(id) || !(id.startsWith(MERGED_PREFIX) || regionPrefixOf(id))) return id;
+    return byKey.get(mergeKey(id)) ?? id;
+  };
+  let count = 0;
+  try {
+    for (const target of editor.entries?.() ?? []) {
+      const config = target.options?.config;
+      if (replaceModelRefs(config, provider, swap) === config) continue;
+      await editor.edit(target, (latest) => {
+        assertModelSyncIdle(syncBlocker);
+        return replaceModelRefs(latest, provider, swap);
+      });
+      count += 1;
+    }
+  } catch (error) {
+    return { state: 'failed', reason: error instanceof Error ? error.message : String(error) };
+  }
+  return count ? { state: 'updated', count } : { state: 'kept' };
 }
 
 /** 默认保留的思考档位：与 DSH 既有的三档 UI 对齐（低/高/最大）。 */
@@ -433,18 +588,21 @@ function codeArtsName(name) {
   return name.split('-').map((word) => CODEARTS_NAME_WORDS.get(word.toLowerCase()) ?? word.charAt(0).toUpperCase() + word.slice(1)).join('-');
 }
 
+/** 不带区域和倍率的名称；上游名已带同款倍率时去掉，否则区域会落在倍率后面或倍率重复。 */
+function modelBaseName(model) {
+  const raw = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
+  const base = model.realm === CODEARTS_REALM ? codeArtsName(raw) : raw;
+  const suffix = modelCreditsLabel(model);
+  return suffix && base.toLowerCase().endsWith(` ${suffix.toLowerCase()}`)
+    ? base.slice(0, -suffix.length).trimEnd()
+    : base;
+}
+
 /** 展示名：`<上游名> <CN|GL|HW> <倍率>`；上游名已带同款后缀时不重复追加。 */
 export function modelDisplayName(model) {
   const prefixed = REGION_PREFIXES.find(([prefix]) => model.id.startsWith(prefix))?.[1];
   const region = prefixed ?? (typeof model.realm === 'string' ? REALM_LABELS[model.realm] : undefined);
-  const raw = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
-  const base = model.realm === CODEARTS_REALM ? codeArtsName(raw) : raw;
-  const suffix = modelCreditsLabel(model);
-  // 先去掉上游名称已有的同款倍率，再把区域插到倍率前，避免产生重复倍率或把区域放到末尾。
-  const name = suffix && base.toLowerCase().endsWith(` ${suffix.toLowerCase()}`)
-    ? base.slice(0, -suffix.length).trimEnd()
-    : base;
-  return [name, region, suffix].filter(Boolean).join(' ');
+  return [modelBaseName(model), region, modelCreditsLabel(model)].filter(Boolean).join(' ');
 }
 
 function positiveInt(value) {
