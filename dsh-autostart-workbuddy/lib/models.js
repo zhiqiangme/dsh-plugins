@@ -194,8 +194,9 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
   };
   // 合并条目不记录参与的出口，这里只拿它保护显式勾选；两轮移除确认仍只看带前缀的条目。
   const verifySelection = (config) => {
-    const merged = mergedKeys(config, models.provider);
-    for (const group of groups) assertSelectedModelsPresent([...previousIds(config, group), ...merged], group.models, models, group.realm);
+    const merged = new Set(mergedKeys(config, models.provider));
+    const picked = (models.only ?? []).filter((id) => merged.has(mergeKey(id)));
+    for (const group of groups) assertSelectedModelsPresent([...previousIds(config, group), ...picked], group.models, models, group.realm);
   };
   try { verifySelection(target.options?.config); }
   catch (error) { if (error instanceof IncompleteModelCatalogError) return catalogDeferred(error, 'dual', documentPath); throw error; }
@@ -257,16 +258,37 @@ function mergedKeys(config, provider) {
   return providerModelIds(config, provider).filter((id) => id.startsWith(MERGED_PREFIX)).map(mergeKey);
 }
 
+/** 上游给模型快照加的月日版本号（`-1017`）。限定成合法月日，`-2000` 这类数字不算版本号。 */
+const MODEL_VERSION_SUFFIX = /-(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/;
+
 /**
- * 合并用的键：去掉出口前缀的小写 id。
+ * 合并用的键：去掉出口前缀和月日版本号的小写 id。
  *
  * 不按展示名合并：`Hy4` 同时是付费 hy4std 和免费 hy4free 的上游名称，按名称会把两者并成一个；
  * 而同一模型的展示名大小写又可能不同（`DeepSeek-…` / `Deepseek-…`），id 才是一致的。
+ * 版本号不算区别：HW 的 deepseek-v4.1-flash-1017 与 CN / GL 的 deepseek-v4.1-flash 是同一模型，
+ * 而合并模型只在用户勾选的出口里选，勾了就表示接受这个版本。
  */
 export function mergeKey(id) {
   const text = String(id);
   const prefix = [MERGED_PREFIX, ...REGION_PREFIXES.map(([region]) => region)].find((candidate) => text.startsWith(candidate));
-  return (prefix ? text.slice(prefix.length) : text).toLowerCase();
+  return (prefix ? text.slice(prefix.length) : text).toLowerCase().replace(MODEL_VERSION_SUFFIX, '');
+}
+
+/** 没有版本号的算最旧：HW 的 deepseek-v4.1-flash 比 deepseek-v4.1-flash-1017 旧。 */
+function modelVersion(id) {
+  const match = MODEL_VERSION_SUFFIX.exec(id);
+  return match ? Number(match[1] + match[2]) : 0;
+}
+
+/** 同一出口勾了新旧两版时只留最新的，一个出口只出现一次；Map 保持 CN → GL → HW 的顺序。 */
+function latestPerExit(members) {
+  const byRealm = new Map();
+  for (const member of members) {
+    const kept = byRealm.get(member.realm);
+    if (!kept || modelVersion(member.bare) > modelVersion(kept.bare)) byRealm.set(member.realm, member);
+  }
+  return [...byRealm.values()];
 }
 
 function smallestField(members, field) {
@@ -279,7 +301,7 @@ function mergedName(members) {
   const labels = [...new Set(members.map(({ model }) => modelCreditsLabel(model)).filter(Boolean))]
     .sort((a, b) => (creditValue(a) ?? Infinity) - (creditValue(b) ?? Infinity));
   const credits = labels.length > 1 ? `${labels[0]}-${labels.at(-1)}` : labels[0];
-  return [modelBaseName(members[0].model), 'Auto', credits].filter(Boolean).join(' ');
+  return [modelBaseName(members[0].model).replace(MODEL_VERSION_SUFFIX, ''), 'Auto', credits].filter(Boolean).join(' ');
 }
 
 /**
@@ -322,15 +344,17 @@ export function planHubEntries(plans, models, { keepMerged = new Set() } = {}) {
       groups.get(key).push({ realm: plan.realm, bare: entry.id, model: byId.get(entry.id), entry: { ...entry, id: selectionKey({ id: entry.id, realm: plan.realm }) } });
     }
   }
-  const routes = new Map([...groups].map(([key, members]) => [key, members.map(({ realm, bare, model }) => ({ realm, model: bare, vision: model.supports_images === true, price: creditValue(model.credits) }))]));
+  const routes = new Map([...groups].map(([key, members]) => [key, latestPerExit(members).map(({ realm, bare, model }) => ({ realm, model: bare, vision: model.supports_images === true, price: creditValue(model.credits) }))]));
   const credits = new Map(plans.flatMap((plan) => plan.models.map((model) => [selectionKey(model), model.credits])));
   if (models.hubMerge !== true) return { entries: plans.flatMap((plan) => plan.entries.map((entry) => ({ ...entry, id: selectionKey({ id: entry.id, realm: plan.realm }) }))), credits, routes };
   const entries = [];
   for (const [key, members] of groups) {
-    if (members.length === 1 && !keepMerged.has(key)) { entries.push(members[0].entry); continue; }
-    const entry = mergedEntry(key, members);
+    const exits = latestPerExit(members);
+    // 只有一个出口时没有可选的，同一出口的新旧版本各自保留，用户仍能手动选。
+    if (exits.length === 1 && !keepMerged.has(key)) { entries.push(...members.map((member) => member.entry)); continue; }
+    const entry = mergedEntry(key, exits);
     entries.push(entry);
-    const cheapest = [...members].sort((a, b) => (creditValue(a.model.credits) ?? Infinity) - (creditValue(b.model.credits) ?? Infinity))[0];
+    const cheapest = [...exits].sort((a, b) => (creditValue(a.model.credits) ?? Infinity) - (creditValue(b.model.credits) ?? Infinity))[0];
     credits.set(entry.id, cheapest.model.credits);
   }
   return { entries, credits, routes };

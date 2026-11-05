@@ -38,6 +38,7 @@ const CATALOG = {
   ],
   codearts: [
     { id: 'deepseek-v4.1-flash-1017', name: 'deepseek-v4.1-flash-1017', credits: 'x0.18', context_length: 1048576, max_output_tokens: 65536, supports_images: true },
+    { id: 'deepseek-v4.1-flash', name: 'deepseek-v4.1-flash', credits: 'x0.18', context_length: 1048576, max_output_tokens: 65536, supports_images: true },
     { id: 'glm-5.3', name: 'glm-5.3', credits: 'x0.79', context_length: 1048576, max_output_tokens: 65536, reasoning_efforts: ['low', 'high'] },
     { id: 'kimi-k3.1-pro', name: 'kimi-k3.1-pro', credits: 'x1.63', context_length: 1048576, max_output_tokens: 65536, supports_images: true },
   ],
@@ -128,23 +129,53 @@ test('配置：HUB 默认开启合并，可关闭；wb2api 不支持', () => {
   assert.equal(resolvePluginConfig({ gateway: 'wb2api', models: { hubMerge: true } }, {}).models.hubMerge, false);
 });
 
-test('合并键按 id 不按展示名：大小写不同算同一模型，同名不同 id 不合并', () => {
+test('合并键按 id 不按展示名：大小写和月日版本号不算区别，同名不同 id 不合并', () => {
   assert.equal(mergeKey('cn:DeepSeek-V4.1-Flash'), mergeKey('global:deepseek-v4.1-flash'));
   assert.equal(mergeKey('auto:glm-5.3'), mergeKey('codearts:glm-5.3'));
   assert.notEqual(mergeKey('cn:hy4std'), mergeKey('cn:hy4free'));
-  assert.notEqual(mergeKey('cn:deepseek-v4.1-flash'), mergeKey('codearts:deepseek-v4.1-flash-1017'));
+  assert.equal(mergeKey('cn:deepseek-v4.1-flash'), mergeKey('codearts:deepseek-v4.1-flash-1017'));
+  assert.equal(mergeKey('cn:deepseek-r1-0528'), 'deepseek-r1');
+  for (const id of ['model-2000', 'model-1301', 'model-0132', 'glm-5.3']) assert.equal(mergeKey(id), id, '不是合法月日的数字不算版本号');
 });
 
 test('多个出口的同一模型并成一条，只有一个出口的保持原 id', async (t) => {
   const x = await setup(t);
   assert.equal((await x.sync()).state, 'updated');
   const byId = new Map(x.listed().map((entry) => [entry.id, entry]));
-  assert.deepEqual([...byId.keys()].sort(), ['auto:deepseek-v4.1-flash', 'auto:glm-5.3', 'auto:hy4free', 'auto:hy4std', 'auto:kimi-k3.1-pro', 'codearts:deepseek-v4.1-flash-1017']);
-  assert.equal(byId.get('auto:deepseek-v4.1-flash').name, 'DeepSeek-V4.1-Flash Auto 0.11', '名称取 CN，倍率相同只显示一个');
+  assert.deepEqual([...byId.keys()].sort(), ['auto:deepseek-v4.1-flash', 'auto:glm-5.3', 'auto:hy4free', 'auto:hy4std', 'auto:kimi-k3.1-pro']);
+  assert.equal(byId.get('auto:deepseek-v4.1-flash').name, 'DeepSeek-V4.1-Flash Auto 0.11-0.18', 'HW 的 -1017 并进来，名称取 CN');
   assert.equal(byId.get('auto:kimi-k3.1-pro').name, 'Kimi-K3.1-Pro Auto 0.97-1.63', '倍率不同显示范围');
   assert.equal(byId.get('auto:hy4free').name, 'Hy4 Auto Free');
-  assert.equal(byId.get('auto:hy4std').name, 'Hy4 Auto 0.29');
-  assert.equal(byId.get('codearts:deepseek-v4.1-flash-1017').name, 'DeepSeek-V4.1-Flash-1017 HW 0.18');
+  assert.equal(byId.get('auto:hy4std').name, 'Hy4 Auto 0.29', '倍率相同只显示一个');
+});
+
+test('只有一个出口的模型保持原 id；同一出口的新旧版本各自保留', async (t) => {
+  const x = await setup(t, { only: ['codearts:deepseek-v4.1-flash-1017', 'codearts:deepseek-v4.1-flash', 'cn:kimi-k3.1-pro', 'global:hy4std'] });
+  await x.sync();
+  assert.deepEqual(x.listed().map(({ id, name }) => [id, name]), [
+    ['cn:kimi-k3.1-pro', 'Kimi-K3.1-Pro CN 0.97'],
+    ['global:hy4std', 'Hy4 GL 0.29'],
+    ['codearts:deepseek-v4.1-flash-1017', 'DeepSeek-V4.1-Flash-1017 HW 0.18'],
+    ['codearts:deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash HW 0.18'],
+  ]);
+});
+
+test('名称不带版本号：排在最前的出口只有带版本号的模型时也去掉', async (t) => {
+  const x = await setup(t, { only: ['global:kimi-k3.1-pro', 'codearts:kimi-k3.1-pro', 'cn:glm-5.3'] });
+  x.hub.catalog = { ...CATALOG, intl: [{ id: 'kimi-k3.1-pro-0813', name: 'Kimi-K3.1-Pro-0813', credits: 'x0.97' }] };
+  x.resolved.models = { ...x.resolved.models, only: ['global:kimi-k3.1-pro-0813', 'codearts:kimi-k3.1-pro', 'cn:glm-5.3'] };
+  await x.sync();
+  assert.equal(x.listed().find((entry) => entry.id === 'auto:kimi-k3.1-pro').name, 'Kimi-K3.1-Pro Auto 0.97-1.63');
+});
+
+test('同一出口新旧版本都勾选时转发到新版，发给 hub 的是带版本号的真实 id', async (t) => {
+  const x = await setup(t, { stored: { [HUB_PANEL_PASSWORD_REF]: 'panel-pass' }, only: ['cn:deepseek-v4.1-flash', 'codearts:deepseek-v4.1-flash', 'codearts:deepseek-v4.1-flash-1017', 'global:hy4std'] });
+  x.hub.hwEndDate = stamp(NOW + DAY).slice(0, 10);
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
+  await x.sync();
+  assert.deepEqual(x.listed().map((entry) => entry.id), ['auto:deepseek-v4.1-flash', 'global:hy4std']);
+  await x.send(ask('a', 'auto:deepseek-v4.1-flash'));
+  assert.deepEqual(x.hub.chats.map(({ realm, model }) => [realm, model]), [['codearts', 'deepseek-v4.1-flash-1017']]);
 });
 
 test('合并条目的能力：上下文和输出取最小，档位取交集，视觉取并集', async (t) => {
@@ -158,6 +189,7 @@ test('合并条目的能力：上下文和输出取最小，档位取交集，�
   assert.deepEqual(glm.input, ['text', 'image'], 'HW 不支持视觉不能拖累整条');
   assert.deepEqual(glm.reasoningEfforts, { low: 'low', high: 'high' }, 'CodeArts 对档位外的请求直接 400');
   assert.equal(byId.get('auto:hy4std').contextWindow, 960000);
+  assert.equal(byId.get('auto:deepseek-v4.1-flash').maxTokens, 65536, 'HW 的输出上限比 CN / GL 低');
 });
 
 test('没勾选的出口不参与合并；只剩一个出口时回到原 id，引用跟着改', async (t) => {
@@ -176,13 +208,12 @@ test('没勾选的出口不参与合并；只剩一个出口时回到原 id，�
 test('开启合并改写其它插件的引用并去重，不动别的 provider；关闭后改回具体出口', async (t) => {
   const x = await setup(t);
   const result = await x.sync();
-  assert.deepEqual(result.refs, { state: 'updated', count: 1 });
+  assert.deepEqual(result.refs, { state: 'updated', count: 2 });
   assert.deepEqual(x.editor.entry('subagent').options.config.allowedModels, [
     { provider: 'workbuddy', model: 'auto:deepseek-v4.1-flash' },
     { provider: 'trae', model: 'cn:deepseek-v4.1-flash' },
-    { provider: 'workbuddy', model: 'codearts:deepseek-v4.1-flash-1017' },
   ]);
-  assert.equal(x.editor.entry('agent-default-model').options.config.model, 'codearts:deepseek-v4.1-flash-1017', '只有 HW 的模型不受影响');
+  assert.equal(x.editor.entry('agent-default-model').options.config.model, 'auto:deepseek-v4.1-flash', '-1017 并进合并条目后，默认模型跟着改');
   assert.deepEqual((await x.sync()).refs, { state: 'kept' }, '已对齐时不重复写');
 
   x.resolved.models = { ...x.resolved.models, hubMerge: false };
@@ -211,6 +242,9 @@ test('目录暂缺已勾选的模型时推迟写入，合并条目不会悄悄�
   const before = structuredClone(x.listed());
   x.hub.catalog = { ...CATALOG, intl: CATALOG.intl.filter((model) => model.id !== 'kimi-k3.1-pro') };
   assert.equal((await x.sync()).state, 'deferred');
+  assert.deepEqual(x.listed(), before);
+  x.hub.catalog = { ...CATALOG, codearts: CATALOG.codearts.filter((model) => model.id !== 'deepseek-v4.1-flash-1017') };
+  assert.equal((await x.sync()).state, 'deferred', '带版本号的勾选也受保护');
   assert.deepEqual(x.listed(), before);
 });
 
@@ -434,6 +468,8 @@ test('转发：未知的合并模型报明确错误，显式出口的 id 照旧'
   const x = await setup(t);
   assert.equal((await x.send(ask('x', 'auto:not-a-model'))).status, 404);
   assert.equal(x.hub.chats.length, 0);
+  assert.equal((await x.send(ask('x', 'auto:deepseek-v4.1-flash-1017'))).status, 200, '版本号写在 id 里也认得出');
+  x.hub.chats.length = 0;
   await x.send(ask('x', 'codearts:kimi-k3.1-pro'));
   assert.deepEqual(x.hub.chats.map(({ realm, model }) => [realm, model]), [['codearts', 'kimi-k3.1-pro']]);
 });
