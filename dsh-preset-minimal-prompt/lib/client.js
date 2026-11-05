@@ -5,6 +5,18 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
     const { useEffect, useState, useSyncExternalStore } = React
+    // 宿主的列表页和详情页共用滚动容器且切换时不归零，从滚动过的列表点进来会停在页面中下部。
+    // 面板在每个详情页首次挂载时滚回顶部；WeakSet 避免同一页内重新挂载时打断用户滚动。
+    // data-plugin-config 只在配置页上（bundle 页的 section、行页的 detailSections），其他页面直接跳过。
+    const openedPages = new WeakSet()
+    function showPanelFromTop(element) {
+      const page = element?.closest('[data-plugin-config]')
+      if (!page || openedPages.has(page)) return
+      openedPages.add(page)
+      // 滚动容器的类名由宿主打包生成，不依赖它：对不滚动的祖先赋值没有效果。
+      for (let node = page.parentElement; node; node = node.parentElement) node.scrollTop = 0
+    }
+
     // 颜色全部取宿主主题变量，跟随明暗主题；回退值只在脱离宿主预览时生效。
     const css = `
 /* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
@@ -679,7 +691,7 @@ window.__ModuleLoader__.load({
     /** 插件页卡片：本插件没有可编辑设置，只提供插件更新；summary 视图只给一句说明。 */
     function UpdateCard({ updater, view }) {
       if (view === 'summary') return h('span', null, '精简系统提示词的中文预设。')
-      return h('section', null, h('style', null, css), h(UpdatePanel, { updater }))
+      return h('section', { ref: showPanelFromTop }, h('style', null, css), h(UpdatePanel, { updater }))
     }
 
     function apply(ctx) {
