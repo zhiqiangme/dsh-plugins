@@ -1984,8 +1984,11 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       // 当前页签。与上面一样排在既有 useState 之后，不打乱它们的配对顺序。
       const [tab, setTab] = useState('models');
       // 稳定排序让已勾选项置顶，组内保留筛选器指定的顺序；保存仍按原白名单规则排序。
-      const sorted = useMemo(() => filterRows(rows, { ...meta.rules, ...filters })
-        .sort((a, b) => Number(picked.has(b.id)) - Number(picked.has(a.id))), [rows, meta.rules, filters, picked]);
+      // 已保存的勾选取消后也留在置顶区，保存后才下移：否则行一取消就从手下跑开，点错了还得去列表下面找。
+      const sorted = useMemo(() => {
+        const pinned = (row) => Number(picked.has(row.id) || savedPicked.has(row.id));
+        return filterRows(rows, { ...meta.rules, ...filters }).sort((a, b) => pinned(b) - pinned(a));
+      }, [rows, meta.rules, filters, picked, savedPicked]);
       const live = useMemo(() => ({}), []);
       live.current = { meta, rows, picked, savedPicked, saving, backendBusy, gatewaySwitch, phase };
       useEffect(() => {

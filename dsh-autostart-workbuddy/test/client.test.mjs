@@ -689,6 +689,37 @@ test('搜索隐藏的勾选仍然生效，不误提示当前区域已选择全�
   assert.ok(!collectText(app.renderCard()).includes(app.t('emptyHint')));
 });
 
+test('取消勾选的模型保存后才移出置顶，新勾选的立即置顶', async () => {
+  const rows = ['a', 'b', 'c', 'd'].map((name) => ({ id: `cn:${name}`, label: name, credits: '1', selected: false }));
+  const saved = new Set(['cn:b', 'cn:c']);
+  let only = [...saved];
+  const app = boot(['ready', rows, { enabled: true, savedEnabled: true }, '', new Set(saved), new Set(saved), false, undefined], {
+    fetchImpl: async (_path, options) => {
+      if (options.method === 'POST') {
+        only = JSON.parse(options.body).only;
+        return { ok: true, json: async () => ({ ok: true, sync: { state: 'updated', count: only.length } }) };
+      }
+      return { ok: true, json: async () => ({ ok: true, enabled: true, only, models: rows.map((row) => ({ ...row, selected: only.includes(row.id) })) }) };
+    },
+  });
+  const listed = () => collectByType(app.renderCard(), 'label').filter((node) => node.props.className?.startsWith('dsm-wb-row'));
+  const order = () => listed().map((node) => node.props.title.slice(3)).join('');
+  const toggle = (id) => collectByType(listed().find((node) => node.props.title === id), 'input')[0].props.onChange();
+
+  assert.equal(order(), 'bcad');
+  toggle('cn:b');
+  assert.equal(order(), 'bcad', '取消勾选后保存前不动');
+  assert.equal(collectByType(listed()[0], 'input')[0].props.checked, false);
+  toggle('cn:d');
+  assert.equal(order(), 'bcda', '新勾选的立即置顶');
+  toggle('cn:d');
+  assert.equal(order(), 'bcad', '没保存过的勾选撤销后直接回去');
+
+  await button(collectByType(app.renderCard(), 'button'), '保存并同步').props.onClick();
+  assert.deepEqual(only, ['cn:c']);
+  assert.equal(order(), 'cabd', '保存后才移出置顶');
+});
+
 test('一键诊断通过 POST 获取报告，提供复制入口和可选择的报告文本', async () => {
   const requests = [];
   const app = boot(modelStates(true), { fetchImpl: async (_path, options) => {
