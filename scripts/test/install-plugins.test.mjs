@@ -16,10 +16,10 @@ test('Minimal Prompt 可按别名与包名单独选择', () => {
   assert.deepEqual(resolvePlugins(plugin.name, 'install'), [plugin]);
 });
 
-test('安装全部跳过停止维护的 OpenCode，显式安装仍可用', () => {
+test('安装全部跳过停止维护的插件，显式安装仍可用', () => {
   const active = resolvePlugins('all', 'install');
-  assert.deepEqual(active.map((p) => p.alias), ['workbuddy', 'tavily-search', 'magpie', 'minimal-prompt', 'presets-zh']);
-  assert.equal(resolvePlugins('opencode2api', 'install')[0].maintained, false);
+  assert.deepEqual(active.map((p) => p.alias), ['workbuddy', 'tavily-search', 'magpie', 'presets-zh']);
+  for (const alias of ['opencode2api', 'minimal-prompt']) assert.equal(resolvePlugins(alias, 'install')[0].maintained, false);
 });
 
 test('状态和卸载的全部仍包含旧插件，避免漏查或漏卸载', () => {
