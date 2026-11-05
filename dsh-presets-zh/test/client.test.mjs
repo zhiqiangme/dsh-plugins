@@ -157,3 +157,8 @@ test('只读配置禁用输入与保存，并提示原因', () => {
   assert.equal(button(tree, '保存设置').props.disabled, true)
   assert.match(text(tree), /只读/)
 })
+
+test('详情页把面板提到 README 上方，规则只作用于本插件', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes('[data-plugin-detail="@zhiqiangme/dsh-presets-zh"] section[data-plugin-config]{order:-1}'))
+})

@@ -14,6 +14,8 @@ window.__ModuleLoader__.load({
     ]
     // 颜色全部取宿主主题变量，跟随明暗主题；回退值只在脱离宿主预览时生效。
     const css = `
+/* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
+[data-plugin-detail="@zhiqiangme/dsh-presets-zh"] section[data-plugin-config]{order:-1}
 .dpz{--dpz-accent:var(--dsw-alias-state-business-primary,#4d6bfe);--dpz-text:var(--dsw-alias-label-primary,currentColor);--dpz-muted:var(--dsw-alias-label-secondary,#8b919c);--dpz-faint:var(--dsw-alias-label-tertiary,#6f7682);--dpz-line:var(--dsw-alias-border-l2,#8883);--dpz-line-strong:var(--dsw-alias-border-l3,#8885);--dpz-surface:var(--dsw-alias-bg-layer-1,transparent);--dpz-base:var(--dsw-alias-bg-base,Canvas);--dpz-hover:var(--dsw-alias-interactive-bg-hover,#8881);--dpz-ok:var(--dsw-alias-state-success-primary,#22c55e);--dpz-warn:var(--dsw-alias-state-warn-primary,#f59e0b);--dpz-error:var(--dsw-alias-state-error-primary,#ef4444);max-width:960px;color:var(--dpz-text);font-size:14px;line-height:1.55}
 .dpz *{box-sizing:border-box}
 .dpz-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:16px}
