@@ -36,7 +36,6 @@ const CATALOG = [
   { folder: 'dsh-autostart-workbuddy', alias: 'workbuddy', title: 'WorkBuddy 自动启动 + 模型同步', legacy: ['dsh-autostart-workbuddy'] },
   { folder: 'dsh-tavily-search', alias: 'tavily-search', title: 'Tavily 网页搜索', legacy: ['dsh-tavily-search', 'dsh-autostart-websearch'] },
   { folder: 'dsh-magpie', alias: 'magpie', title: 'Magpie 模型管理', legacy: [] },
-  { folder: 'dsh-preset-minimal-prompt', alias: 'minimal-prompt', title: '极简提示词（停止维护，仅单独安装）', maintained: false, legacy: ['@zhiqiangme/dsh-preset-minimal-plus', '@zhiqiangme/dsh-preset-lean-prompt'], legacyRowIds: ['dsh-preset-minimal-plus', 'dsh-preset-lean-prompt'] },
   { folder: 'dsh-presets-zh', alias: 'presets-zh', title: '中文预设', legacy: [] },
 ].map((plugin) => {
   const dir = join(REPO_ROOT, plugin.folder);
@@ -433,12 +432,12 @@ async function uninstallFrom(profile, selected) {
 
 const ACTIONS = ['install', 'uninstall', 'status'];
 
-export function resolvePlugins(value, action) {
+export function resolvePlugins(value) {
   const result = [];
   for (const item of value.split(',')) {
     const key = item.trim().toLowerCase();
     if (!key) continue;
-    if (key === 'all') return action === 'install' ? CATALOG.filter((plugin) => plugin.maintained !== false) : CATALOG;
+    if (key === 'all') return CATALOG;
     const match = CATALOG.find((plugin) => [plugin.name, plugin.folder, plugin.alias].includes(key));
     if (!match) throw new Error(`未知插件：${item}（可选 all、${CATALOG.map((plugin) => plugin.alias).join('、')}）`);
     if (!result.includes(match)) result.push(match);
@@ -461,11 +460,10 @@ function resolveProfiles(value) {
   return result;
 }
 
-const HELP = `用法：install-plugins.cmd [--action install|uninstall|status] [--plugins all|workbuddy|tavily-search|magpie|minimal-prompt|presets-zh]
+const HELP = `用法：install-plugins.cmd [--action install|uninstall|status] [--plugins all|workbuddy|tavily-search|magpie|presets-zh]
                            [--profiles desktop|web|cli|all|<其它 profile 名>] [--yes]
 不带参数时逐项询问；--plugins / --profiles 可用逗号分隔多个值。
-安装 all 仅安装维护中的插件，不包含 minimal-prompt；卸载和状态 all 仍包含全部。
-OpenCode API 已停止维护，不在这里，用它目录内的 install-plugins.cmd。`;
+停止维护的插件不在这里，用它们目录内的 install-plugins.cmd。`;
 
 async function main() {
   const { values } = parseArgs({
@@ -496,10 +494,10 @@ async function main() {
 
   let plugins;
   if (values.plugins !== undefined) {
-    plugins = resolvePlugins(values.plugins, action);
+    plugins = resolvePlugins(values.plugins);
   } else {
     const index = await choose('选择插件：', ['全部', ...CATALOG.map((plugin) => `${plugin.name}（${plugin.title}）`)]);
-    plugins = index === 0 ? resolvePlugins('all', action) : [CATALOG[index - 1]];
+    plugins = index === 0 ? resolvePlugins('all') : [CATALOG[index - 1]];
   }
 
   let profiles;

@@ -49,13 +49,11 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-preset-minimal-prompt
 
 ### 从源码安装
 
-在仓库根目录运行：
+本目录自带安装脚本，只处理本插件。双击 `install-plugins.cmd`，或在本目录运行：
 
 ```powershell
-.\install-plugins.cmd --action install --plugins minimal-prompt --profiles desktop --yes
+.\install-plugins.cmd --action install --profiles desktop --yes
 ```
-
-或让安装脚本选择“全部”，新插件会出现在列表中。
 
 ## 安装后的行为
 

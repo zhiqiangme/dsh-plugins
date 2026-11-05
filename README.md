@@ -7,7 +7,7 @@
 | [dsh-autostart-workbuddy](dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | DSH 启动时默认拉起 WorkBuddy2API Hub（127.0.0.1:7863），可切换 wb2api，可选接管 profile 里的 workbuddy 模型列表 |
 | [dsh-magpie](dsh-magpie/) | `@zhiqiangme/dsh-magpie` | 管理 Magpie 模型清单：编辑排序、全量覆盖同步；支持下载和升级 Magpie 程序 |
 | [dsh-presets-zh](dsh-presets-zh/) | `@zhiqiangme/dsh-presets-zh` | 中文标准、中文 PTC、中文极简与中文创造，可分别设置 |
-| [dsh-preset-minimal-prompt](dsh-preset-minimal-prompt/) | `@zhiqiangme/dsh-preset-minimal-prompt` | **停止维护**，请改用 `@zhiqiangme/dsh-presets-zh`；保留源码及单独安装入口，“全部”安装不再包含它 |
+| [dsh-preset-minimal-prompt](dsh-preset-minimal-prompt/) | `@zhiqiangme/dsh-preset-minimal-prompt` | **停止维护**，请改用 `@zhiqiangme/dsh-presets-zh`；保留源码，用目录内的 `install-plugins.cmd` 单独安装 |
 | [dsh-opencode2api](dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | **停止维护**，请改用 `@zhiqiangme/dsh-magpie`；保留源码，用目录内的 `install-plugins.cmd` 单独安装 |
 | [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内同时提供旧版 Messages 与新版 Search API 的搜索接口（`127.0.0.1:8787`），插件页卡片里配 API Key、一键接入网页搜索 |
 
@@ -49,7 +49,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 双击仓库根目录的 `install-plugins.cmd`（Windows），按提示选（直接回车都是默认项）：
 
 1. 操作：**安装 / 更新**（默认）、卸载、查看安装状态
-2. 插件：**全部**（默认安装维护中的 WorkBuddy、Tavily Search、Magpie、中文预设）、或单独选择；Minimal Prompt 已停止维护，仍可单独安装，卸载和查看状态时“全部”仍包含它；OpenCode API 已停止维护，不在这里，用它目录内的 `install-plugins.cmd`
+2. 插件：**全部**（默认，即维护中的 WorkBuddy、Tavily Search、Magpie、中文预设）、或单独选择；OpenCode API 与 Minimal Prompt 已停止维护，不在这里，用它们目录内的 `install-plugins.cmd`
 3. 装到哪个 DSH：**Desktop**（默认）、Web（`dsh web`）、CLI（`dsh headless`）、全部三个
 
 完成后重启对应的 DSH 生效。也可以在终端里带参数一行跑完（参数都可省略，省略的会询问）：
