@@ -10,11 +10,11 @@
     "minimal-prompt"
   ],
   "author": "zhiqiangme",
-  "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-preset-minimal-prompt#readme",
+  "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/archive/dsh-preset-minimal-prompt#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zhiqiangme/dsh-plugins.git",
-    "directory": "dsh-preset-minimal-prompt"
+    "directory": "archive/dsh-preset-minimal-prompt"
   },
   "bugs": {
     "url": "https://github.com/zhiqiangme/dsh-plugins/issues"

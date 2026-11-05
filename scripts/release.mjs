@@ -12,7 +12,6 @@ export const PLUGINS = [
   { id: 'workbuddy', directory: 'dsh-autostart-workbuddy', name: '@zhiqiangme/dsh-autostart-workbuddy' },
   { id: 'tavily-search', directory: 'dsh-tavily-search', name: '@zhiqiangme/dsh-tavily-search' },
   { id: 'magpie', directory: 'dsh-magpie', name: '@zhiqiangme/dsh-magpie' },
-  { id: 'minimal-prompt', directory: 'dsh-preset-minimal-prompt', name: '@zhiqiangme/dsh-preset-minimal-prompt' },
   { id: 'presets-zh', directory: 'dsh-presets-zh', name: '@zhiqiangme/dsh-presets-zh' },
 ];
 

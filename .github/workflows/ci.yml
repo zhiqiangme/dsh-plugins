@@ -43,9 +43,6 @@ jobs:
       - name: Test Magpie
         working-directory: dsh-magpie
         run: node --test test/*.test.mjs
-      - name: Test Minimal Prompt
-        working-directory: dsh-preset-minimal-prompt
-        run: node --test test/*.test.mjs
       - name: Test Chinese Presets
         working-directory: dsh-presets-zh
         run: node --test test/*.test.mjs

@@ -7,7 +7,6 @@
 | [dsh-autostart-workbuddy](dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | DSH 启动时默认拉起 WorkBuddy2API Hub（127.0.0.1:7863），可切换 wb2api，可选接管 profile 里的 workbuddy 模型列表 |
 | [dsh-magpie](dsh-magpie/) | `@zhiqiangme/dsh-magpie` | 管理 Magpie 模型清单：编辑排序、全量覆盖同步；支持下载和升级 Magpie 程序 |
 | [dsh-presets-zh](dsh-presets-zh/) | `@zhiqiangme/dsh-presets-zh` | 中文标准、中文 PTC、中文极简与中文创造，可分别设置 |
-| [dsh-preset-minimal-prompt](dsh-preset-minimal-prompt/) | `@zhiqiangme/dsh-preset-minimal-prompt` | **停止维护**，请改用 `@zhiqiangme/dsh-presets-zh`；保留源码，用目录内的 `install-plugins.cmd` 单独安装 |
 | [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内同时提供旧版 Messages 与新版 Search API 的搜索接口（`127.0.0.1:8787`），插件页卡片里配 API Key、一键接入网页搜索 |
 
 插件自身的行为与配置见各自目录下的 README。
@@ -26,7 +25,7 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search
 重新打开 DSH 即生效，插件出现在「插件」页。可按需单独安装；装到 Web / CLI 就把 `desktop` 换成 `web` / `headless`。
 
 - **中文预设** 提供四种中文模式（含内置极简的中文版），可从 npm 或通过 `presets-zh` 别名从源码安装。
-- **极简提示词** 已停止维护，26.11.5 是最后一个版本，已安装的版本可以继续使用。两个插件可并存；如何选择替代模式见极简提示词 README。
+- **极简提示词** 已停止维护，26.11.5 是最后一个版本，已安装的版本可以继续使用。两个插件可并存；如何选择替代模式见[极简提示词 README](archive/dsh-preset-minimal-prompt/README.md)。
 
 更新与卸载：
 
@@ -48,7 +47,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 双击仓库根目录的 `install-plugins.cmd`（Windows），按提示选（直接回车都是默认项）：
 
 1. 操作：**安装 / 更新**（默认）、卸载、查看安装状态
-2. 插件：**全部**（默认，即维护中的 WorkBuddy、Tavily Search、Magpie、中文预设）、或单独选择；OpenCode API 与 Minimal Prompt 已停止维护，不在这里，用它们目录内的 `install-plugins.cmd`
+2. 插件：**全部**（默认，即维护中的 WorkBuddy、Tavily Search、Magpie、中文预设）、或单独选择；OpenCode API 与 Minimal Prompt 已归档，不在这里，见[已归档的插件](#已归档的插件)
 3. 装到哪个 DSH：**Desktop**（默认）、Web（`dsh web`）、CLI（`dsh headless`）、全部三个
 
 完成后重启对应的 DSH 生效。也可以在终端里带参数一行跑完（参数都可省略，省略的会询问）：
@@ -87,6 +86,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 | 插件 | npm 包 | 替代 |
 | --- | --- | --- |
 | [dsh-opencode2api](archive/dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | `@zhiqiangme/dsh-magpie` |
+| [dsh-preset-minimal-prompt](archive/dsh-preset-minimal-prompt/) | `@zhiqiangme/dsh-preset-minimal-prompt` | `@zhiqiangme/dsh-presets-zh` |
 
 ```powershell
 .\archive\dsh-opencode2api\install-plugins.cmd --action install --profiles desktop --yes
@@ -111,8 +111,8 @@ git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.1
 4. 核对 npm 包完整性后创建对应的正式 GitHub Release，记录提交、变更及安装 / 更新命令。
 
 普通代码或文档提交不发布；添加本工作流也不会自动补发现有的 `26.10.16`。
-PR 和 `main` 都会执行 [ci.yml](.github/workflows/ci.yml)：Node 22 / 24，Windows 测全部插件，
-Linux 测 Tavily Search、Magpie 和 Minimal Prompt，两种系统均测试仓库脚本。测试使用内置 runner 和宿主替身，不需要安装依赖、
+PR 和 `main` 都会执行 [ci.yml](.github/workflows/ci.yml)：Node 22 / 24，Windows 测全部维护中的插件，
+Linux 测 Tavily Search、Magpie 和中文预设，两种系统均测试仓库脚本。测试使用内置 runner 和宿主替身，不需要安装依赖、
 DSH 桌面版或真实后端。
 
 ### 首次启用
@@ -121,11 +121,10 @@ DSH 桌面版或真实后端。
 
 - `@zhiqiangme/dsh-autostart-workbuddy`
 - `@zhiqiangme/dsh-magpie`
-- `@zhiqiangme/dsh-preset-minimal-prompt`
 - `@zhiqiangme/dsh-presets-zh`
 - `@zhiqiangme/dsh-tavily-search`
 
-五个包填写相同信息：用户 `zhiqiangme`，仓库 `dsh-plugins`，工作流文件名 **`release.yml`**
+四个包填写相同信息：用户 `zhiqiangme`，仓库 `dsh-plugins`，工作流文件名 **`release.yml`**
 （只填文件名），允许直接执行 **`npm publish`**。本工作流未使用 GitHub Environment，环境名称留空。
 只授权 `npm stage publish` 会要求人工批准，不能完成这里的全自动发布。
 
