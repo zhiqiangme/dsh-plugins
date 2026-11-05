@@ -150,6 +150,18 @@ window.__ModuleLoader__.load({
       disabled: ['quiet', 'serverDisabled'],
     };
 
+    // 宿主的列表页和详情页共用滚动容器且切换时不归零，从滚动过的列表点进来会停在页面中下部。
+    // 面板在每个详情页首次挂载时滚回顶部；WeakSet 避免同一页内重新挂载时打断用户滚动。
+    // data-plugin-config 只在配置页上（bundle 页的 section、行页的 detailSections），其他页面直接跳过。
+    const openedPages = new WeakSet();
+    function showPanelFromTop(element) {
+      const page = element?.closest('[data-plugin-config]');
+      if (!page || openedPages.has(page)) return;
+      openedPages.add(page);
+      // 滚动容器的类名由宿主打包生成，不依赖它：对不滚动的祖先赋值没有效果。
+      for (let node = page.parentElement; node; node = node.parentElement) node.scrollTop = 0;
+    }
+
     const CSS = `
 /* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
 [data-plugin-detail="@zhiqiangme/dsh-tavily-search"] section[data-plugin-config]{order:-1}
@@ -1763,7 +1775,7 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { className: 'dsm-tv-card' },
+        { className: 'dsm-tv-card', ref: showPanelFromTop },
         h('div', { className: 'dsm-tv-title' }, t('title')),
         h('p', { className: 'dsm-tv-desc' }, t('description')),
         // 申请链接常驻标题下方：加第二个、第三个 key 时同样要去控制台拿，不只在一个都没配时才需要
