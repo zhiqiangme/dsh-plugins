@@ -2016,3 +2016,18 @@ test('详情页把面板提到 README 上方，规则只作用于本插件', () 
   const { css } = boot();
   assert.ok(css.includes('[data-plugin-detail="@zhiqiangme/dsh-autostart-workbuddy"] section[data-plugin-config]{order:-1}'));
 });
+
+test('详情页首次挂载面板时回到顶部，同页重新挂载不打断滚动', () => {
+  const attach = boot().renderCard().props.ref;
+  const scroller = { scrollTop: 900, parentElement: null };
+  const page = { parentElement: scroller };
+  const card = { closest: (selector) => (selector === '[data-plugin-config]' ? page : null) };
+  attach(card);
+  assert.equal(scroller.scrollTop, 0);
+  scroller.scrollTop = 300;
+  attach(card);
+  assert.equal(scroller.scrollTop, 300, '同一页内重新挂载不动滚动位置');
+  attach(null);
+  attach({ closest: () => null });
+  assert.equal(scroller.scrollTop, 300, '卸载和配置页以外的挂载都不动滚动位置');
+});
