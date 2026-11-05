@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Minimal Prompt",
-    "description": "Simplify the system prompt and optional host context, retain standard tools, AGENTS.md and Skills, and localize generated notices into Chinese."
+    "description": "(No longer maintained; use @zhiqiangme/dsh-presets-zh instead.) Simplify the system prompt and optional host context, retain standard tools, AGENTS.md and Skills, and localize generated notices into Chinese."
   }
 }

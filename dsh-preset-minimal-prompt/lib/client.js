@@ -44,6 +44,11 @@ window.__ModuleLoader__.load({
 .dmp-toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .dmp-input{width:100%;color:inherit;font:inherit;background:var(--dmp-base);border:1px solid var(--dmp-line);border-radius:var(--dsw-radius-sm,8px);padding:8px 11px}
 .dmp-spec{margin-top:8px;font-family:var(--ds-font-family-code,ui-monospace,monospace)}
+.dmp-retired{max-width:960px;box-sizing:border-box;margin-bottom:12px;padding:12px 16px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 45%,transparent);border-radius:var(--dsw-radius-lg,16px);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 10%,transparent);color:var(--dsw-alias-label-primary,currentColor);font-size:13px;line-height:1.55}
+.dmp-retired strong{display:block;margin-bottom:4px;font-weight:600}
+.dmp-retired p{margin:0}
+/* 宿主页面默认不可选中文字；包名要能一键选中，复制到「添加插件」。 */
+.dmp-retired code{font-family:var(--ds-font-family-code,ui-monospace,monospace);user-select:all}
 `
 
     // 本插件的 npm 包名：官方插件管理器与 dshmarket 都按它定位 profile 中的依赖。
@@ -690,10 +695,19 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dmp-update', role: 'region', 'aria-label': t('title') }, ...renderUpdateSection({ ...update, notice }, actions))
     }
 
-    /** 插件页卡片：本插件没有可编辑设置，只提供插件更新；summary 视图只给一句说明。 */
+    /** 已安装的用户多半不看 README，停止维护声明要放在他们打开插件时第一眼能看到的地方。 */
+    function RetiredNotice() {
+      return h('div', { className: 'dmp-retired', role: 'note' },
+        h('strong', null, '本插件已停止维护'),
+        h('p', null, '这是最后一个版本，之后不再修复问题，也不再跟进 DSH 的变化。请在「添加插件」中安装中文预设，两者可以同时启用：'),
+        h('code', null, '@zhiqiangme/dsh-presets-zh'),
+        h('p', null, '要保留标准工具、AGENTS.md 与 Skills，选「中文标准」；要最短的提示词，选「中文极简」。'))
+    }
+
+    /** 插件页卡片：本插件没有可编辑设置，只提供停止维护声明与插件更新；summary 视图只给一句说明。 */
     function UpdateCard({ updater, view }) {
-      if (view === 'summary') return h('span', null, '精简系统提示词的中文预设。')
-      return h('section', { ref: showPanelFromTop }, h('style', null, css), h(UpdatePanel, { updater }))
+      if (view === 'summary') return h('span', null, '已停止维护，请改用中文预设。')
+      return h('section', { ref: showPanelFromTop }, h('style', null, css), h(RetiredNotice), h(UpdatePanel, { updater }))
     }
 
     function apply(ctx) {
@@ -715,6 +729,6 @@ window.__ModuleLoader__.load({
       ]) ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, inject: () => ({ updater }) }, UpdateCard))
     }
     // pluginManager 不单独声明：旧宿主没有它也要能加载卡片，缺席时更新区块退回市场或手动重装。
-    return { name: 'minimal-prompt-update', inject: ['slots', 'remote'], apply, UpdateCard, UpdatePanel, renderUpdateSection, createPluginUpdater, pinnedInstallSpec }
+    return { name: 'minimal-prompt-update', inject: ['slots', 'remote'], apply, UpdateCard, RetiredNotice, UpdatePanel, renderUpdateSection, createPluginUpdater, pinnedInstallSpec }
   },
 })

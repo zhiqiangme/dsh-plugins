@@ -285,6 +285,20 @@ test('两条更新路都没有：说明可装 dshmarket，并给指定版本；�
   assert.equal(module.pinnedInstallSpec('latest'), undefined)
 })
 
+test('停止维护：面板最上方引导改用中文预设，摘要视图同样说明', () => {
+  const { module } = loadClient()
+  const card = module.UpdateCard({ updater: {} })
+  const [, notice, panel] = card.children
+  assert.equal(notice.type, module.RetiredNotice)
+  assert.equal(panel.type, module.UpdatePanel)
+  const statement = text(module.RetiredNotice())
+  assert.match(statement, /已停止维护/)
+  assert.match(statement, /@zhiqiangme\/dsh-presets-zh/)
+  assert.match(statement, /中文标准/)
+  assert.match(statement, /中文极简/)
+  assert.match(text(module.UpdateCard({ updater: {}, view: 'summary' })), /已停止维护/)
+})
+
 test('主按钮文字不用与底色同值的 brand-primary-invert', () => {
   const css = String(loadClient().module.UpdateCard({ updater: {} }).children[0].children[0])
   assert.match(css, /\.dmp-btn\.dmp-primary\{[^}]*color:var\(--dsw-alias-label-primary-foreground/)

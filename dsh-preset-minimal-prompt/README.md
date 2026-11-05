@@ -1,5 +1,21 @@
 # @zhiqiangme/dsh-preset-minimal-prompt
 
+> [!WARNING]
+> **本插件已停止维护。** 26.11.5 是最后一个版本，之后不再修复问题，也不再跟进 DSH 标准模式的变化；已安装的版本可以继续使用，但 DSH 升级后可能失效。
+>
+> 请改用 [`@zhiqiangme/dsh-presets-zh`](https://www.npmjs.com/package/@zhiqiangme/dsh-presets-zh)（中文预设）：
+>
+> ```powershell
+> dsh plugin --profile desktop add @zhiqiangme/dsh-presets-zh
+> ```
+>
+> 中文预设没有和本插件完全相同的模式，按需要选：
+>
+> - 要保留标准工具、AGENTS.md 与 Skills，选「中文标准」。它带完整操作说明，系统提示词比本插件长。
+> - 要最短的提示词，选「中文极简」。它只有持久终端、图片读取与上下文压缩，不注入 AGENTS.md 与 Skills。
+>
+> 中文预设不迁移、也不卸载本插件，两者可以同时启用。切换后不再需要本插件时，先在「插件」页关闭「极简提示词」组件，再卸载本插件；已有会话保留创建时的组合，不受影响。
+
 给 DSH 自动新增 **「极简提示词」**（preset id `minimal-prompt`）：使用中文极简系统提示词；保留标准工具、AGENTS.md 和 Skills。可选宿主上下文与内置极简模式一样关闭，工作区、技能、时间与模型切换的已知自动说明在写入会话日志前中文化。
 
 装上插件后不需要手动改 `cordis.patch.yml`，插件加载时会自动向 Agent preset 注册表注册这个模式。
