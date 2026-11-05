@@ -7,6 +7,8 @@ window.__ModuleLoader__.load({
     const { useEffect, useState, useSyncExternalStore } = React
     // 颜色全部取宿主主题变量，跟随明暗主题；回退值只在脱离宿主预览时生效。
     const css = `
+/* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
+[data-plugin-detail="@zhiqiangme/dsh-preset-minimal-prompt"] section[data-plugin-config]{order:-1}
 .dmp-update{--dmp-accent:var(--dsw-alias-state-business-primary,#4d6bfe);--dmp-text:var(--dsw-alias-label-primary,currentColor);--dmp-muted:var(--dsw-alias-label-secondary,#8b919c);--dmp-faint:var(--dsw-alias-label-tertiary,#6f7682);--dmp-line:var(--dsw-alias-border-l2,#8883);--dmp-line-strong:var(--dsw-alias-border-l3,#8885);--dmp-surface:var(--dsw-alias-bg-layer-1,transparent);--dmp-base:var(--dsw-alias-bg-base,Canvas);--dmp-hover:var(--dsw-alias-interactive-bg-hover,#8881);--dmp-ok:var(--dsw-alias-state-success-primary,#22c55e);--dmp-warn:var(--dsw-alias-state-warn-primary,#f59e0b);--dmp-error:var(--dsw-alias-state-error-primary,#ef4444);max-width:960px;box-sizing:border-box;color:var(--dmp-text);font-size:14px;line-height:1.55;border:1px solid var(--dmp-line);border-radius:var(--dsw-radius-lg,16px);background:var(--dmp-surface);padding:14px 20px}
 .dmp-update *{box-sizing:border-box}
 .dmp-update-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
