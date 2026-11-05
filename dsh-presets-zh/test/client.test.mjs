@@ -148,6 +148,13 @@ test('后台变更不覆盖草稿，冲突保存保留草稿，重新载入后�
   assert.notEqual(prompt(tree).props.value, '保留 PTC 草稿')
 })
 
+test('主按钮文字不用与底色同值的 brand-primary-invert，禁用态有独立配色', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.match(source, /\.dpz-btn\.dpz-primary\{[^}]*color:var\(--dsw-alias-label-primary-foreground/)
+  assert.match(source, /\.dpz-btn\.dpz-primary:disabled\{[^}]*background:/)
+  assert.doesNotMatch(source, /color:var\(--dsw-alias-brand-primary-invert/)
+})
+
 test('只读配置禁用输入与保存，并提示原因', () => {
   const client = harness()
   client.changeSnapshot({ writable: false })

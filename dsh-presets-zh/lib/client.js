@@ -87,7 +87,10 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
 .dpz-btn{height:34px;padding:0 16px;border-radius:var(--dsw-radius-sm,8px);border:1px solid var(--dpz-line-strong);background:transparent;color:inherit;font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:background .15s,opacity .15s}
 .dpz-btn:hover:not(:disabled){background:var(--dpz-hover)}
 .dpz-btn:disabled{opacity:.45;cursor:not-allowed}
-.dpz-btn.dpz-primary{border-color:transparent;background:var(--dsw-alias-button-primary-fill,var(--dpz-accent));color:var(--dsw-alias-brand-primary-invert,#fff)}
+/* 沿用 DSH 自家主按钮的配色令牌（深色主题为浅底深字）。宿主的 brand-primary-invert 与 brand-primary 同值，当文字色时字和底色一样。 */
+.dpz-btn.dpz-primary{border-color:transparent;background:var(--dsw-alias-button-primary-fill,var(--dpz-accent));color:var(--dsw-alias-label-primary-foreground,#fff)}
+/* 禁用态给明确的弱化配色：只降透明度时，浅色底配深字仍是一块刺眼的色块。 */
+.dpz-btn.dpz-primary:disabled{opacity:1;background:var(--dpz-hover);color:var(--dpz-faint)}
 .dpz-btn.dpz-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--dpz-accent))}
 .dpz-btn.dpz-small{height:30px;padding:0 12px;font-size:12px}
 .dpz-btn.dpz-danger{border-color:var(--dpz-error);color:var(--dpz-error)}
