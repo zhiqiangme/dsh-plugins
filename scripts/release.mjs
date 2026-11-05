@@ -10,7 +10,6 @@ import { parseArgs } from 'node:util';
 export const REPOSITORY = 'zhiqiangme/dsh-plugins';
 export const PLUGINS = [
   { id: 'workbuddy', directory: 'dsh-autostart-workbuddy', name: '@zhiqiangme/dsh-autostart-workbuddy' },
-  { id: 'opencode2api', directory: 'dsh-opencode2api', name: '@zhiqiangme/dsh-opencode2api' },
   { id: 'tavily-search', directory: 'dsh-tavily-search', name: '@zhiqiangme/dsh-tavily-search' },
   { id: 'magpie', directory: 'dsh-magpie', name: '@zhiqiangme/dsh-magpie' },
   { id: 'minimal-prompt', directory: 'dsh-preset-minimal-prompt', name: '@zhiqiangme/dsh-preset-minimal-prompt' },

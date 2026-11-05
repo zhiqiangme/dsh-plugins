@@ -49,12 +49,8 @@ jobs:
       - name: Test Chinese Presets
         working-directory: dsh-presets-zh
         run: node --test test/*.test.mjs
-      # 两个后端插件的路径和进程测试遵循 Windows 契约。
+      # WorkBuddy 的路径和进程测试遵循 Windows 契约。
       - name: Test WorkBuddy
         if: runner.os == 'Windows'
         working-directory: dsh-autostart-workbuddy
-        run: node --test test/*.test.mjs
-      - name: Test opencode2api
-        if: runner.os == 'Windows'
-        working-directory: dsh-opencode2api
         run: node --test test/*.test.mjs

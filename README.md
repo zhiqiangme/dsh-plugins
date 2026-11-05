@@ -8,7 +8,6 @@
 | [dsh-magpie](dsh-magpie/) | `@zhiqiangme/dsh-magpie` | 管理 Magpie 模型清单：编辑排序、全量覆盖同步；支持下载和升级 Magpie 程序 |
 | [dsh-presets-zh](dsh-presets-zh/) | `@zhiqiangme/dsh-presets-zh` | 中文标准、中文 PTC、中文极简与中文创造，可分别设置 |
 | [dsh-preset-minimal-prompt](dsh-preset-minimal-prompt/) | `@zhiqiangme/dsh-preset-minimal-prompt` | **停止维护**，请改用 `@zhiqiangme/dsh-presets-zh`；保留源码，用目录内的 `install-plugins.cmd` 单独安装 |
-| [dsh-opencode2api](dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | **停止维护**，请改用 `@zhiqiangme/dsh-magpie`；保留源码，用目录内的 `install-plugins.cmd` 单独安装 |
 | [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内同时提供旧版 Messages 与新版 Search API 的搜索接口（`127.0.0.1:8787`），插件页卡片里配 API Key、一键接入网页搜索 |
 
 插件自身的行为与配置见各自目录下的 README。
@@ -81,6 +80,18 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 - Magpie 可在卡片下载、升级 Windows 程序，默认独立目录并支持指定已有 exe，升级时自动退出正在运行的 Magpie，下载或升级完成后自动启动；DSH 启动时若本机没有 Magpie 在运行，在后台（托盘）打开它（可在卡片关闭），需要界面时点「打开 Magpie 界面」。可自动开启 Magpie 轻量模式、在卡片切换防止休眠；开关和下拉改完即生效，连接设置和模型清单点击「保存并同步」。可离线手工编辑；点击「从 Magpie 同步」会全量覆盖当前清单，移除上游已关闭或删除的条目，并立即保存、更新 DSH。模型写入 DSH 的 **Magpie** 分组（provider ID `dsh-magpie`）。下载中断会自动续传，再次点击也从已下载部分继续。卸载前需要移除该分组时，先在卡片关闭同步。侧边栏左上角会显示 **Magpie** 入口，默认在保存了至少一个模型后隐藏，可在卡片「偏好」页改为显示或隐藏。
 - Magpie 是新增包，npm 首次发布前请使用上述源码安装命令。
 
+## 已归档的插件
+
+停止维护的插件放在 [archive/](archive/)，不再发布，也不跑 CI。已发布的 npm 版本继续可用。根目录的安装脚本不管理它们；要从源码安装，用插件目录自带的 `install-plugins.cmd`，它只处理插件自身：
+
+| 插件 | npm 包 | 替代 |
+| --- | --- | --- |
+| [dsh-opencode2api](archive/dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | `@zhiqiangme/dsh-magpie` |
+
+```powershell
+.\archive\dsh-opencode2api\install-plugins.cmd --action install --profiles desktop --yes
+```
+
 ## 版本号
 
 各插件独立发版，版本号用发布流水线的 UTC 日期 `年.月.日`（年取后两位，不补零）：2026-10-11 发布即 `26.10.11`。
@@ -102,7 +113,7 @@ git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.1
 普通代码或文档提交不发布；添加本工作流也不会自动补发现有的 `26.10.16`。
 PR 和 `main` 都会执行 [ci.yml](.github/workflows/ci.yml)：Node 22 / 24，Windows 测全部插件，
 Linux 测 Tavily Search、Magpie 和 Minimal Prompt，两种系统均测试仓库脚本。测试使用内置 runner 和宿主替身，不需要安装依赖、
-DSH 桌面版或真实后端。opencode2api 的真实 exe 测试仍需 `OPENCODE2API_TEST_EXE`，默认跳过。
+DSH 桌面版或真实后端。
 
 ### 首次启用
 
