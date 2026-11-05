@@ -26,6 +26,9 @@
  *      `remote.pluginManager`（listVersions / updateBundle），宿主还没有这组接口时退回 dshmarket 的
  *      公开更新 API v1，两者都没有时只给按指定版本重装的指引。本插件不自己跑 pnpm。
  *
+ * 布局：头部（说明 + 状态）→ 页签。页签依次是 API Key / 网页搜索 / 搜索接口 / 插件（更新与卸载前清除）；
+ * 各面板都渲染、只切 hidden，切页签不丢未提交的 key。头部状态可点击，跳到对应页签。
+ *
  * 样式：全部自带（data-plugin-css 标记，避免重复注入），类名统一 `dsm-tv-*`，
  * 颜色只取 `--dsw-alias-*` 令牌，跟随主题。密钥输入框优先用宿主的 SettingsSecretField，
  * 与内置网页搜索页长得一样；拿不到宿主组件时退回自带的同款输入框。
@@ -150,6 +153,9 @@ window.__ModuleLoader__.load({
       disabled: ['quiet', 'serverDisabled'],
     };
 
+    /** 页签：id → 文案 key，顺序即显示顺序。 */
+    const TABS = [['keys', 'tabKeys'], ['web', 'tabWeb'], ['server', 'tabServer'], ['plugin', 'tabPlugin']];
+
     // 宿主的列表页和详情页共用滚动容器且切换时不归零，从滚动过的列表点进来会停在页面中下部。
     // 面板在每个详情页首次挂载时滚回顶部；WeakSet 避免同一页内重新挂载时打断用户滚动。
     // data-plugin-config 只在配置页上（bundle 页的 section、行页的 detailSections），其他页面直接跳过。
@@ -165,12 +171,34 @@ window.__ModuleLoader__.load({
     const CSS = `
 /* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
 [data-plugin-detail="@zhiqiangme/dsh-tavily-search"] section[data-plugin-config]{order:-1}
-.dsm-tv-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;padding:14px 16px}
-.dsm-tv-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:15px;font-weight:600;line-height:1.4}
-.dsm-tv-desc{margin:4px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
-.dsm-tv-section{margin-top:14px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px}
+.dsm-tv-card{--dsm-tv-ease:cubic-bezier(.2,.8,.2,1);min-width:0;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:12px;background:var(--dsw-alias-bg-layer-2,#25262b);color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:1.55}
+.dsm-tv-card *{box-sizing:border-box}
+.dsm-tv-head{padding:18px 20px 14px}
+.dsm-tv-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:16px;font-weight:600;line-height:1.4}
+.dsm-tv-desc{margin:4px 0 0;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;line-height:1.5}
+.dsm-tv-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.dsm-tv-chip{appearance:none;display:inline-flex;align-items:center;gap:6px;padding:1px 9px;border:0;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover,#ffffff14);color:var(--dsw-alias-label-secondary,#c6c9d0);font:inherit;font-size:12px;line-height:20px;cursor:pointer;transition:color .15s ease}
+.dsm-tv-chip:hover{color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-tv-chip b{color:var(--dsw-alias-label-primary,#e6e6e6);font-weight:500}
+.dsm-tv-chip-dot{flex:none;width:6px;height:6px;border-radius:50%;color:var(--dsw-alias-label-tertiary,#999);background:currentColor}
+.dsm-tv-chip[data-tone=ok] .dsm-tv-chip-dot{color:var(--dsw-alias-state-success-primary,#3fb950)}
+.dsm-tv-chip[data-tone=warn] .dsm-tv-chip-dot{color:var(--dsw-alias-state-warn-primary,#f59e0b)}
+.dsm-tv-chip[data-tone=error] .dsm-tv-chip-dot{color:var(--dsw-alias-state-error-primary,#d92d20)}
+.dsm-tv-new{color:var(--dsw-alias-state-business-primary,#5686fe)}
+/* 横向滚动会连带裁掉纵向溢出：底线不能画在边框上，改用内阴影画分隔线，选中线压在它上面；焦点框也收进按钮内。 */
+.dsm-tv-tabs{display:flex;gap:2px;padding:0 10px;box-shadow:inset 0 -1px 0 var(--dsw-alias-border-l2,#36373b);overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.dsm-tv-tab{appearance:none;position:relative;flex:none;display:inline-flex;align-items:center;gap:6px;padding:8px 10px 9px;border:0;background:transparent;color:var(--dsw-alias-label-secondary,#c6c9d0);font:inherit;font-weight:500;white-space:nowrap;cursor:pointer;transition:color .15s ease}
+.dsm-tv-tab:hover,.dsm-tv-tab[aria-selected=true]{color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-tv-tab[aria-selected=true]::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-tv-tab:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#5686fe);outline-offset:-2px}
+.dsm-tv-chip:focus-visible,.dsm-tv-btn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#5686fe);outline-offset:2px}
+.dsm-tv-mark{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-state-warn-primary,#f59e0b)}
+.dsm-tv-mark[data-tone=error]{background:var(--dsw-alias-state-error-primary,#d92d20)}
+.dsm-tv-mark[data-tone=accent]{background:var(--dsw-alias-state-business-primary,#5686fe)}
+.dsm-tv-panel{min-width:0;padding:16px 20px 20px}
+.dsm-tv-section+.dsm-tv-section{margin-top:18px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:16px}
 .dsm-tv-section-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.dsm-tv-section-title{flex:1;min-width:100px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600;line-height:1.5}
+.dsm-tv-section-title{flex:1;min-width:100px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:14px;font-weight:600;line-height:1.5}
 .dsm-tv-line{margin:6px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6;word-break:break-all}
 .dsm-tv-line strong{color:var(--dsw-alias-label-secondary,#c6c9d0);font-weight:500}
 .dsm-tv-code{font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);color:var(--dsw-alias-label-secondary,#c6c9d0)}
@@ -178,30 +206,29 @@ window.__ModuleLoader__.load({
 .dsm-tv-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:10px}
 .dsm-tv-btn{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 14px;font-size:13px;line-height:1.5}
 .dsm-tv-btn:disabled{cursor:default}
-/* 主按钮用"反色"：brand-primary 在深色主题下接近纯白，拿它当底再配白字就看不见字
-   （dsh-autostart-workbuddy 踩过这个坑）。label-primary 当底 + bg-layer-3 当字，明暗主题都成立。 */
-.dsm-tv-btn-primary{background:var(--dsw-alias-label-primary,#e6e6e6);color:var(--dsw-alias-bg-layer-3,#202126)}
-.dsm-tv-btn-primary:hover:not(:disabled){opacity:.88}
+/* 沿用 DSH 自家主按钮的配色令牌（深色主题为浅底深字）。宿主的 brand-primary-invert 与 brand-primary 同值，不能当文字色。 */
+.dsm-tv-btn-primary{background:var(--dsw-alias-button-primary-fill,#e6e6e6);color:var(--dsw-alias-label-primary-foreground,#202126)}
+.dsm-tv-btn-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#c6c9d0)}
 .dsm-tv-btn-outline{background:transparent;border-color:var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-secondary,#c6c9d0)}
 .dsm-tv-btn-outline:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed,#777);color:var(--dsw-alias-label-primary,#e6e6e6)}
 /* 禁用态给明确的弱化配色，而不是整体降透明度（会把字一起洗掉）。 */
-.dsm-tv-btn-primary:disabled{background:var(--dsw-alias-bg-layer-2,#25262b);color:var(--dsw-alias-label-dimmed,#8a8f99);border-color:var(--dsw-alias-border-l2,#36373b)}
+.dsm-tv-btn-primary:disabled{background:var(--dsw-alias-interactive-bg-hover,#ffffff14);color:var(--dsw-alias-label-tertiary,#999)}
 .dsm-tv-btn-outline:disabled{color:var(--dsw-alias-label-dimmed,#8a8f99)}
 .dsm-tv-btn-danger{background:transparent;border-color:var(--dsw-alias-state-error-primary,#d92d20);color:var(--dsw-alias-state-error-primary,#d92d20)}
 .dsm-tv-btn-danger:hover:not(:disabled){background:rgba(217,45,32,.12)}
 .dsm-tv-badge{flex:none;border-radius:6px;padding:1px 6px;font-size:12px;border:1px solid var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-tertiary,#999)}
 .dsm-tv-badge-ok{color:var(--dsw-alias-state-success-primary,#3fb950);border-color:currentColor}
-.dsm-tv-badge-warn{color:var(--dsw-alias-state-warning-primary,#d29922);border-color:currentColor}
+.dsm-tv-badge-warn{color:var(--dsw-alias-state-warn-primary,#d29922);border-color:currentColor}
 .dsm-tv-badge-error{color:var(--dsw-alias-state-error-primary,#d92d20);border-color:currentColor}
 .dsm-tv-notice{margin:8px 0 0;font-size:13px;line-height:1.6;word-break:break-all}
 .dsm-tv-notice-ok{color:var(--dsw-alias-state-success-primary,#3fb950)}
 .dsm-tv-notice-error{color:var(--dsw-alias-state-error-primary,#d92d20)}
-.dsm-tv-confirm{margin-top:10px;border:1px solid var(--dsw-alias-state-warning-primary,#d29922);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#25262b);padding:10px 12px}
+.dsm-tv-confirm{margin-top:10px;border:1px solid var(--dsw-alias-state-warn-primary,#d29922);border-radius:10px;background:var(--dsw-alias-bg-base,#1b1c20);padding:10px 12px}
 .dsm-tv-link{color:var(--dsw-alias-state-business-primary,#5686fe);text-decoration:none;cursor:pointer}
 .dsm-tv-link:hover{text-decoration:underline}
 .dsm-tv-key{margin-top:10px}
 .dsm-tv-keys{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
-.dsm-tv-keyrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#25262b);padding:6px 10px}
+.dsm-tv-keyrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;background:var(--dsw-alias-bg-base,#1b1c20);padding:6px 10px}
 .dsm-tv-keyrow-main{flex:1;min-width:120px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:13px;line-height:1.5}
 .dsm-tv-keyrow-index{color:var(--dsw-alias-label-tertiary,#999)}
 .dsm-tv-keyrow-ref{color:var(--dsw-alias-label-tertiary,#999);font-size:12px}
@@ -211,9 +238,21 @@ window.__ModuleLoader__.load({
 .dsm-tv-field{display:flex;flex-direction:column;gap:6px}
 .dsm-tv-field-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .dsm-tv-field-label{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-weight:600}
-.dsm-tv-input{font:inherit;font-size:13px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-2,#25262b);color:var(--dsw-alias-label-primary,#e6e6e6);padding:8px 12px}
+.dsm-tv-input{font:inherit;font-size:13px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-base,#1b1c20);color:var(--dsw-alias-label-primary,#e6e6e6);padding:8px 12px}
 .dsm-tv-install-spec{box-sizing:border-box;width:100%;margin-top:8px;font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace)}
 .dsm-tv-list{margin:4px 0 0;padding-left:18px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
+@media(max-width:640px){.dsm-tv-head,.dsm-tv-panel{padding-left:14px;padding-right:14px}}
+/* 换页签时内容从下方轻轻浮现；只动 opacity / transform，错峰延迟期间停在首帧。sibling-index() 不支持时退化为同时出现。 */
+@keyframes dsm-tv-rise{from{opacity:0;transform:translateY(6px)}}
+.dsm-tv-panel>*{animation:dsm-tv-rise .32s var(--dsm-tv-ease) backwards;animation-delay:calc(min(sibling-index() - 1, 5) * 40ms)}
+/* 页签下划线改成滑块：锚定到当前选中项，换页签时滑过去。不支持锚点定位时保留选中项自带的静态下划线。 */
+@supports (anchor-name:--a) and (anchor-scope:--a){
+.dsm-tv-tabs{position:relative;anchor-scope:--dsm-tv-tab}
+.dsm-tv-tabs::before{content:"";position:absolute;position-anchor:--dsm-tv-tab;left:calc(anchor(left) + 10px);right:calc(anchor(right) + 10px);bottom:anchor(bottom);height:2px;border-radius:2px;background:var(--dsw-alias-label-primary,#e6e6e6);transition:left .3s var(--dsm-tv-ease),right .3s var(--dsm-tv-ease)}
+.dsm-tv-tab[aria-selected=true]{anchor-name:--dsm-tv-tab}
+.dsm-tv-tab[aria-selected=true]::after{content:none}
+}
+@media (prefers-reduced-motion:reduce){.dsm-tv-card,.dsm-tv-card *,.dsm-tv-card *::before,.dsm-tv-card *::after{animation:none!important;transition:none!important}}
 `;
 
     // 字典值必须是**字符串**：DSH 的 t(key, params) 用 `{name}` 占位符插值
@@ -223,6 +262,10 @@ window.__ModuleLoader__.load({
       title: 'Tavily 联网搜索',
       description: '用 Tavily 给 DSH 的「网页搜索」供数：本插件在 DSH 进程内同时提供旧版 Messages 搜索与新版 Search API 的搜索接口，网页搜索指向它即可。',
       summary: '用 Tavily 给 DSH 的网页搜索供数。',
+      tabKeys: 'API Key',
+      tabWeb: '网页搜索',
+      tabServer: '搜索接口',
+      tabPlugin: '插件',
       keyTitle: 'API Key',
       keyCount: '{count} 个',
       keyUnset: '未配置密钥',
@@ -359,6 +402,10 @@ window.__ModuleLoader__.load({
       title: 'Tavily web search',
       description: 'Feeds DSH web search with Tavily: this plugin serves both the legacy Messages endpoint and the new Search API inside DSH; point web search at it.',
       summary: 'Feeds DSH web search with Tavily.',
+      tabKeys: 'API keys',
+      tabWeb: 'Web search',
+      tabServer: 'Search endpoint',
+      tabPlugin: 'Plugin',
       keyTitle: 'API keys',
       keyCount: '{count}',
       keyUnset: 'No key',
@@ -1455,6 +1502,31 @@ window.__ModuleLoader__.load({
       return 'other';
     }
 
+    /**
+     * 当前通道的接入状态。区块徽标、头部状态与页签提醒共用这一份判断，三处不会说法不一。
+     * 接口指向本插件还不够：凭据引用也得是本插件的占位引用且有值，搜索才会真的发请求；
+     * 新版通道的抓取提供方还是 deepseek-fetch-api 时，抓取请求会被送到本插件（本插件只提供搜索）。
+     * @returns 表单还没就绪时 undefined；否则 tone / label（文案 key）与各分项结论。
+     */
+    function wiringOf(model, endpoint, apiEndpoint) {
+      const mode = webMode(model.selection);
+      const form = mode === 'api' ? (model.api ?? { phase: 'unavailable' }) : model.web;
+      if (form.phase !== 'ready') return undefined;
+      if (mode === 'other') return { tone: 'warn', label: 'webBypassed' };
+      const wired = sameEndpoint(form.baseURL, mode === 'api' ? apiEndpoint : endpoint);
+      const keyIsolated = form.apiKeyEnv === WEB_SEARCH_SHIM_REF;
+      const fetchNeedsRepair = mode === 'api' && model.selection.fetchProvider === API_FETCH_PROVIDER;
+      const complete = wired && keyIsolated && form.keyConfigured !== false && !fetchNeedsRepair;
+      return {
+        wired,
+        keyIsolated,
+        fetchNeedsRepair,
+        complete,
+        tone: complete ? 'ok' : 'warn',
+        label: complete ? 'webWired' : wired ? 'webNeedsRepair' : 'webNotWired',
+      };
+    }
+
     /** 单个协议要撤销的字段 ops：只撤销本插件写的覆盖。 */
     function fieldRestoreOps(owned) {
       const ops = [];
@@ -1654,6 +1726,7 @@ window.__ModuleLoader__.load({
       // ---- 网页搜索接入 ----
       const apiForm = model.api ?? { phase: 'unavailable' };
       const mode = webMode(model.selection);
+      const wiring = wiringOf(model, endpoint, apiEndpoint);
       const webBusy = Boolean(model.webBusy);
       const busyLabel = (text) => (webBusy ? t('wiring') : text);
       const channelLabel =
@@ -1669,20 +1742,15 @@ window.__ModuleLoader__.load({
         } else if (apiForm.phase !== 'ready') {
           webSection.push(h('p', { key: 'loading', className: 'dsm-tv-line' }, t('webLoading')));
         } else {
-          const wired = sameEndpoint(apiForm.baseURL, apiEndpoint);
-          // 接口指向本插件还不够：凭据引用也得是本插件的占位引用且有值，新版搜索才会真的发请求
-          const keyIsolated = apiForm.apiKeyEnv === WEB_SEARCH_SHIM_REF;
+          const { wired, keyIsolated, fetchNeedsRepair, complete } = wiring;
           const owned = webOwnership(apiForm, apiEndpoint);
-          // 抓取提供方还是 deepseek-fetch-api 时，抓取请求会被送到本插件（本插件只提供搜索）
-          const fetchNeedsRepair = model.selection.fetchProvider === API_FETCH_PROVIDER;
-          const complete = wired && keyIsolated && apiForm.keyConfigured !== false && !fetchNeedsRepair;
           const writable = apiForm.writable && (model.selection.writable !== false || !fetchNeedsRepair);
           const wireLabel = wired ? t('repair') : t('wire');
           webSection[0] = h(
             'div',
             { key: 'head', className: 'dsm-tv-section-head' },
             h('span', { className: 'dsm-tv-section-title' }, t('webTitle')),
-            badge('badge', complete ? 'ok' : 'warn', complete ? t('webWired') : wired ? t('webNeedsRepair') : t('webNotWired')),
+            badge('badge', wiring.tone, t(wiring.label)),
             complete ? null : button('wire', 'primary', busyLabel(wireLabel), actions.wire, webBusy || !writable),
             wired && (owned.web || owned.webKeyRef) ? button('unwire', 'outline', busyLabel(t('unwire')), actions.unwire, webBusy || !apiForm.writable) : null,
           );
@@ -1733,10 +1801,7 @@ window.__ModuleLoader__.load({
             : h('p', { key: 'readOnly', className: 'dsm-tv-hint' }, t('webReadOnly')),
         );
       } else {
-        const wired = sameEndpoint(web.baseURL, endpoint);
-        // 接口指向本插件还不够：凭据引用也得是本插件的占位引用且有值，网页搜索才会真的发请求
-        const keyIsolated = web.apiKeyEnv === WEB_SEARCH_SHIM_REF;
-        const complete = wired && keyIsolated && web.keyConfigured !== false;
+        const { wired, keyIsolated, complete } = wiring;
         const owned = webOwnership(web, endpoint);
         const writable = web.writable;
         const wireLabel = wired ? t('repair') : t('wire');
@@ -1744,7 +1809,7 @@ window.__ModuleLoader__.load({
           'div',
           { key: 'head', className: 'dsm-tv-section-head' },
           h('span', { className: 'dsm-tv-section-title' }, t('webTitle')),
-          badge('badge', complete ? 'ok' : 'warn', complete ? t('webWired') : wired ? t('webNeedsRepair') : t('webNotWired')),
+          badge('badge', wiring.tone, t(wiring.label)),
           complete ? null : button('wire', 'primary', busyLabel(wireLabel), actions.wire, webBusy || !writable),
           wired && (owned.web || owned.webKeyRef) ? button('unwire', 'outline', busyLabel(t('unwire')), actions.unwire, webBusy || !web.writable) : null,
         );
@@ -1773,19 +1838,91 @@ window.__ModuleLoader__.load({
       // ---- 清除插件数据（卸载前用）----
       const purgeSection = renderPurgeSection(model, actions, t, { endpoint, apiEndpoint });
 
+      // ---- 头部状态与页签提醒 ----
+      const activeTab = TABS.some(([id]) => id === model.tab) ? model.tab : 'keys';
+      const configuredKeys = (Array.isArray(model.keys.slots) ? model.keys.slots : []).filter((slot) => slot.configured).length;
+      const keyTone = model.keys.phase === 'error' ? 'error' : model.keys.phase !== 'ready' ? undefined : configuredKeys > 0 ? 'ok' : 'warn';
+      const version = model.update?.version;
+      // 刚更新成功时运行版本要等重启才换，此时不再提醒「有新版本」
+      const updateReady = version?.phase === 'ready' && version.updateAvailable && model.update.operation?.state !== 'succeeded';
+      const chip = (key, target, chipTone, title, value) =>
+        h(
+          'button',
+          { key, type: 'button', className: 'dsm-tv-chip', 'data-tone': chipTone, onClick: () => actions.selectTab(target) },
+          h('span', { className: 'dsm-tv-chip-dot', 'aria-hidden': true }),
+          title,
+          value ? h('b', null, value) : null,
+        );
+      const chips = [
+        keyTone ? chip('keys', 'keys', keyTone, t('tabKeys'), keyTone === 'ok' ? t('keyCount', { count: configuredKeys }) : keyTone === 'warn' ? t('keyUnset') : undefined) : null,
+        wiring ? chip('web', 'web', wiring.tone, t('tabWeb'), t(wiring.label)) : null,
+        label ? chip('server', 'server', tone, t('tabServer'), t(label)) : null,
+        version?.currentVersion
+          ? h(
+              'button',
+              { key: 'version', type: 'button', className: 'dsm-tv-chip', onClick: () => actions.selectTab('plugin') },
+              `v${version.currentVersion}`,
+              updateReady ? h('span', { className: 'dsm-tv-new' }, ` · ${t('updateAvailable')}`) : null,
+            )
+          : null,
+      ].filter(Boolean);
+
+      // 只有要用户处理的状态才在页签上标点；一切正常时页签保持干净
+      const attention = (value) => (value === 'warn' || value === 'error' || value === 'accent' ? value : undefined);
+      const marks = { keys: attention(keyTone), web: attention(wiring?.tone), server: attention(tone), plugin: updateReady ? 'accent' : undefined };
+      const tabBar = h(
+        'div',
+        { key: 'tabs', className: 'dsm-tv-tabs', role: 'tablist', 'aria-label': t('title') },
+        TABS.map(([id, labelKey]) =>
+          h(
+            'button',
+            {
+              key: id,
+              type: 'button',
+              role: 'tab',
+              id: `dsm-tv-tab-${id}`,
+              className: 'dsm-tv-tab',
+              'aria-selected': id === activeTab,
+              'aria-controls': `dsm-tv-panel-${id}`,
+              onClick: () => actions.selectTab(id),
+            },
+            t(labelKey),
+            marks[id] ? h('span', { className: 'dsm-tv-mark', 'data-tone': marks[id], 'aria-hidden': true }) : null,
+          ),
+        ),
+      );
+      // 各面板都渲染、只切 hidden：切页签不丢输入中的 key 与二次确认状态
+      const panel = (id, ...children) =>
+        h(
+          'div',
+          { key: id, className: 'dsm-tv-panel', role: 'tabpanel', id: `dsm-tv-panel-${id}`, 'aria-labelledby': `dsm-tv-tab-${id}`, hidden: id !== activeTab },
+          ...children,
+        );
+
       return h(
         'div',
         { className: 'dsm-tv-card', ref: showPanelFromTop },
-        h('div', { className: 'dsm-tv-title' }, t('title')),
-        h('p', { className: 'dsm-tv-desc' }, t('description')),
-        // 申请链接常驻标题下方：加第二个、第三个 key 时同样要去控制台拿，不只在一个都没配时才需要
-        h('p', { key: 'get', className: 'dsm-tv-desc' }, t('keyGet'), externalLink(TAVILY_CONSOLE_URL)),
-        h('div', { key: 'key', className: 'dsm-tv-section' }, keySection),
-        // 常用的接入状态与更新排前面，排障用的搜索接口次之，卸载前才用的清除放最后
-        h('div', { key: 'web', className: 'dsm-tv-section' }, webSection),
-        model.update ? h('div', { key: 'update', className: 'dsm-tv-section' }, renderUpdateSection(model.update, actions, t)) : null,
-        h('div', { key: 'server', className: 'dsm-tv-section' }, serverSection),
-        purgeSection ? h('div', { key: 'purge', className: 'dsm-tv-section' }, purgeSection) : null,
+        h(
+          'header',
+          { key: 'head', className: 'dsm-tv-head' },
+          h('div', { className: 'dsm-tv-title' }, t('title')),
+          h('p', { className: 'dsm-tv-desc' }, t('description')),
+          chips.length > 0 ? h('div', { className: 'dsm-tv-chips' }, chips) : null,
+        ),
+        tabBar,
+        panel(
+          'keys',
+          h('div', { key: 'key', className: 'dsm-tv-section' }, keySection),
+          // 申请链接常驻本页：加第二个、第三个 key 时同样要去控制台拿，不只在一个都没配时才需要
+          h('p', { key: 'get', className: 'dsm-tv-hint' }, t('keyGet'), externalLink(TAVILY_CONSOLE_URL)),
+        ),
+        panel('web', h('div', { key: 'web', className: 'dsm-tv-section' }, webSection)),
+        panel('server', h('div', { key: 'server', className: 'dsm-tv-section' }, serverSection)),
+        panel(
+          'plugin',
+          model.update ? h('div', { key: 'update', className: 'dsm-tv-section' }, renderUpdateSection(model.update, actions, t)) : null,
+          purgeSection ? h('div', { key: 'purge', className: 'dsm-tv-section' }, purgeSection) : null,
+        ),
       );
     }
 
@@ -1871,6 +2008,7 @@ window.__ModuleLoader__.load({
       const [purgeNotice, setPurgeNotice] = useState(undefined);
       // `web` 命名空间（提供方选择）同理排在最后；旧版 DSH 没有它，selectionForm 可能是 undefined
       const [selectionSnapshot, setSelectionSnapshot] = useState(() => api.selectionForm?.getSnapshot?.());
+      const [tab, setTab] = useState('keys');
 
       const web = webModel(webSnapshot);
       const apiModel = webModel(apiSnapshot);
@@ -2086,9 +2224,11 @@ window.__ModuleLoader__.load({
           purgeBusy,
           purgeNotice,
           update: updater.model,
+          tab,
         },
         {
           ...updater.actions,
+          selectTab: setTab,
           editDraft: (text) => {
             setDraft(text);
             setKeyNotice(undefined);

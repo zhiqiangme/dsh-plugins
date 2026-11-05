@@ -1324,6 +1324,97 @@ test('指定版本安装：版本规格校验与卡片复制动作，剪贴板�
   }
 });
 
+const tabs = (tree) => collect(tree, (node) => node.props?.role === 'tab');
+const panels = (tree) => collect(tree, (node) => node.props?.role === 'tabpanel');
+const chips = (tree) => collect(tree, (node) => node.props?.className === 'dsm-tv-chip');
+const chipOf = (tree, label) => chips(tree).find((node) => collectText(node).join('').includes(label));
+const tabMark = (tree, label) => {
+  const target = tabs(tree).find((node) => collectText(node).join('') === label);
+  return collect(target, (node) => node.props?.className === 'dsm-tv-mark')[0]?.props['data-tone'];
+};
+
+test('页签：四个面板都渲染、只显示当前页；未知页签退回 API Key', () => {
+  const { module, t } = boot();
+  const tree = (tab) => render(module.renderCard({ ...updateModel(), tab }, { selectTab: noop }, t));
+  assert.deepEqual(tabs(tree('keys')).map((node) => collectText(node).join('')), ['API Key', '网页搜索', '搜索接口', '插件']);
+  assert.deepEqual(panels(tree('server')).map((node) => [node.props.id, node.props.hidden]), [
+    ['dsm-tv-panel-keys', true],
+    ['dsm-tv-panel-web', true],
+    ['dsm-tv-panel-server', false],
+    ['dsm-tv-panel-plugin', true],
+  ]);
+  assert.equal(panels(tree('nowhere'))[0].props.hidden, false);
+  assert.equal(tabs(tree('web'))[1].props['aria-selected'], true);
+});
+
+test('页签归属：插件页放更新与清除，API Key 页放申请链接', () => {
+  const { module, t } = boot();
+  const tree = render(module.renderCard(updateModel(), { selectTab: noop }, t));
+  const panel = (id) => text(panels(tree).find((node) => node.props.id === `dsm-tv-panel-${id}`));
+  assert.match(panel('keys'), /app\.tavily\.com/);
+  assert.match(panel('web'), /网页搜索接入/);
+  assert.match(panel('server'), /测试搜索/);
+  assert.match(panel('plugin'), /插件更新/);
+  assert.match(panel('plugin'), /清除插件数据/);
+});
+
+test('头部状态：汇总 key、接入、接口与版本，点击跳到对应页签', () => {
+  const { module, t } = boot();
+  const selected = [];
+  const tree = render(module.renderCard(updateModel(), { selectTab: (id) => selected.push(id) }, t));
+  assert.equal(chipOf(tree, 'API Key').props['data-tone'], 'ok');
+  assert.match(text(chipOf(tree, 'API Key')), /1 个/);
+  assert.match(text(chipOf(tree, '网页搜索')), /已接入/);
+  assert.match(text(chipOf(tree, '搜索接口')), /运行中/);
+  assert.match(text(chipOf(tree, 'v26.10.11')), /有新版本/);
+  for (const node of chips(tree)) node.props.onClick();
+  assert.deepEqual(selected, ['keys', 'web', 'server', 'plugin']);
+});
+
+test('页签提醒：只标需要处理的状态，刚更新成功后不再提醒', () => {
+  const { module, t } = boot();
+  const healthy = readyModel({ update: { ...updateModel().update, version: { phase: 'ready', currentVersion: '26.10.12', latestVersion: '26.10.12', updateAvailable: false } } });
+  let tree = render(module.renderCard(healthy, { selectTab: noop }, t));
+  assert.deepEqual(['API Key', '网页搜索', '搜索接口', '插件'].map((label) => tabMark(tree, label)), [undefined, undefined, undefined, undefined]);
+
+  tree = render(module.renderCard(updateModel(), { selectTab: noop }, t));
+  assert.equal(tabMark(tree, '插件'), 'accent');
+
+  const updated = updateModel();
+  updated.update = { ...updated.update, operation: { state: 'succeeded', installedVersion: '26.10.12' } };
+  tree = render(module.renderCard(updated, { selectTab: noop }, t));
+  assert.equal(tabMark(tree, '插件'), undefined);
+  assert.doesNotMatch(text(chipOf(tree, 'v26.10.11')), /有新版本/);
+
+  const broken = readyModel({
+    keys: { phase: 'ready', slots: slots([]) },
+    web: { ...WIRED_WEB, baseURL: '' },
+    status: { ...readyModel().status, server: { state: 'conflict', reason: '' } },
+  });
+  tree = render(module.renderCard(broken, { selectTab: noop }, t));
+  assert.equal(tabMark(tree, 'API Key'), 'warn');
+  assert.equal(tabMark(tree, '网页搜索'), 'warn');
+  assert.equal(tabMark(tree, '搜索接口'), 'error');
+  assert.equal(chipOf(tree, '搜索接口').props['data-tone'], 'error');
+});
+
+test('接入状态：头部与区块徽标说法一致，表单未就绪时头部不下结论', () => {
+  const { module, t } = boot();
+  const badgeText = (tree) => collectText(collect(panels(tree).find((node) => node.props.id === 'dsm-tv-panel-web'), (node) => /dsm-tv-badge/.test(node.props?.className ?? ''))).join('');
+  for (const [web, expected] of [[WIRED_WEB, '已接入'], [{ ...WIRED_WEB, baseURL: '' }, '未接入'], [{ ...WIRED_WEB, apiKeyEnv: 'DEEPSEEK_API_KEY' }, '待修复']]) {
+    const tree = render(module.renderCard(readyModel({ web }), { selectTab: noop }, t));
+    assert.equal(badgeText(tree), expected);
+    assert.match(text(chipOf(tree, '网页搜索')), new RegExp(expected));
+  }
+  const loading = render(module.renderCard(readyModel({ web: { phase: 'loading' } }), { selectTab: noop }, t));
+  assert.equal(chipOf(loading, '网页搜索'), undefined);
+});
+
+test('主按钮用宿主主按钮令牌，文字不用与底色同值的 brand-primary-invert', () => {
+  assert.match(SOURCE, /\.dsm-tv-btn-primary\{[^}]*color:var\(--dsw-alias-label-primary-foreground/);
+  assert.doesNotMatch(SOURCE, /color:var\(--dsw-alias-brand-primary-invert/);
+});
+
 /** 「清除插件数据」区块（没有时返回 undefined）。 */
 function purgeSectionOf(tree) {
   return collect(tree, (node) => node.props?.className === 'dsm-tv-section').find((node) =>
