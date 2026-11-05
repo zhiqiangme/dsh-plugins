@@ -1381,3 +1381,8 @@ test('官方更新：宿主卸不下运行中的本插件时说明原因、补�
     assert.match(text(pinnedOf(tree)), /先关闭「OpenCode API」组件/);
   }
 });
+
+test('详情页把面板提到 README 上方，规则只作用于本插件', () => {
+  const { css } = boot();
+  assert.ok(css.includes('[data-plugin-detail="@zhiqiangme/dsh-opencode2api"] section[data-plugin-config]{order:-1}'));
+});

@@ -120,6 +120,8 @@ window.__ModuleLoader__.load({
     };
 
     const CSS = `
+/* DSH 详情页把 README 排在面板上方，且不提供排序参数；order 把面板提到 README 前。宿主改 DOM 后规则不再命中，面板退回 README 下方。 */
+[data-plugin-detail="@zhiqiangme/dsh-opencode2api"] section[data-plugin-config]{order:-1}
 .dsm-oc-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;padding:14px 16px}
 .dsm-oc-title{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:15px;font-weight:600;line-height:1.4}
 .dsm-oc-desc{margin:4px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;line-height:1.5}
