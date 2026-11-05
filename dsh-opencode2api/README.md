@@ -22,10 +22,10 @@
 dsh plugin --profile desktop add @zhiqiangme/dsh-opencode2api@26.10.19
 ```
 
-也可以在本仓库从本地源码安装：
+也可以从本地源码安装。本目录自带安装脚本，只处理本插件；双击 `install-plugins.cmd`，或在本目录运行：
 
 ```powershell
-.\install-plugins.cmd --action install --plugins opencode2api --profiles desktop --yes
+.\install-plugins.cmd --action install --profiles desktop --yes
 ```
 
 重新打开 DSH，在「插件 → OpenCode API」中：

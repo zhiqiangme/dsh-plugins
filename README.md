@@ -8,7 +8,7 @@
 | [dsh-magpie](dsh-magpie/) | `@zhiqiangme/dsh-magpie` | 管理 Magpie 模型清单：编辑排序、全量覆盖同步；支持下载和升级 Magpie 程序 |
 | [dsh-presets-zh](dsh-presets-zh/) | `@zhiqiangme/dsh-presets-zh` | 中文标准、中文 PTC、中文极简与中文创造，可分别设置 |
 | [dsh-preset-minimal-prompt](dsh-preset-minimal-prompt/) | `@zhiqiangme/dsh-preset-minimal-prompt` | **停止维护**，请改用 `@zhiqiangme/dsh-presets-zh`；保留源码及单独安装入口，“全部”安装不再包含它 |
-| [dsh-opencode2api](dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | **停止维护**，请改用 `@zhiqiangme/dsh-magpie`；保留源码及单独安装入口，“全部”安装不再包含它 |
+| [dsh-opencode2api](dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | **停止维护**，请改用 `@zhiqiangme/dsh-magpie`；保留源码，用目录内的 `install-plugins.cmd` 单独安装 |
 | [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内同时提供旧版 Messages 与新版 Search API 的搜索接口（`127.0.0.1:8787`），插件页卡片里配 API Key、一键接入网页搜索 |
 
 插件自身的行为与配置见各自目录下的 README。
@@ -49,7 +49,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 双击仓库根目录的 `install-plugins.cmd`（Windows），按提示选（直接回车都是默认项）：
 
 1. 操作：**安装 / 更新**（默认）、卸载、查看安装状态
-2. 插件：**全部**（默认安装维护中的 WorkBuddy、Tavily Search、Magpie、中文预设）、或单独选择；OpenCode API 与 Minimal Prompt 已停止维护，仍可单独安装，卸载和查看状态时“全部”仍包含它们
+2. 插件：**全部**（默认安装维护中的 WorkBuddy、Tavily Search、Magpie、中文预设）、或单独选择；Minimal Prompt 已停止维护，仍可单独安装，卸载和查看状态时“全部”仍包含它；OpenCode API 已停止维护，不在这里，用它目录内的 `install-plugins.cmd`
 3. 装到哪个 DSH：**Desktop**（默认）、Web（`dsh web`）、CLI（`dsh headless`）、全部三个
 
 完成后重启对应的 DSH 生效。也可以在终端里带参数一行跑完（参数都可省略，省略的会询问）：
@@ -75,8 +75,8 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 - 在 DSH 插件管理里**停用**过的插件，再选"安装"会重新启用。
 - 改 desktop profile 前要**完全退出桌面版**（DSH 自己的要求）；脚本检测到对应 profile 的 DSH 进程在跑会停下等你关掉，
   也可以跳过这个 profile。desktop profile 需要先打开过一次桌面版才存在；web / CLI 的 profile 第一次安装时自动创建。
-- 卸载不删 `cordis.patch.yml` 里的配置，也不删各插件自管的后端数据（如 `~/.dsh/autostart-workbuddy`、`~/.dsh/autostart-opencode2api`）。
-  workbuddy 与 opencode2api 的卡片有「清除后端数据」按钮，卸载前点一下即可删掉各自的数据目录；
+- 卸载不删 `cordis.patch.yml` 里的配置，也不删各插件自管的后端数据（如 `~/.dsh/autostart-workbuddy`）。
+  workbuddy 的卡片有「清除后端数据」按钮，卸载前点一下即可删掉它的数据目录；
   tavily-search 的卡片有「清除插件数据」，删掉保存的 API Key 并把网页搜索接口恢复默认。
 - Magpie 可在卡片下载、升级 Windows 程序，默认独立目录并支持指定已有 exe，升级时自动退出正在运行的 Magpie，下载或升级完成后自动启动；DSH 启动时若本机没有 Magpie 在运行，在后台（托盘）打开它（可在卡片关闭），需要界面时点「打开 Magpie 界面」。可自动开启 Magpie 轻量模式、在卡片切换防止休眠；开关和下拉改完即生效，连接设置和模型清单点击「保存并同步」。可离线手工编辑；点击「从 Magpie 同步」会全量覆盖当前清单，移除上游已关闭或删除的条目，并立即保存、更新 DSH。模型写入 DSH 的 **Magpie** 分组（provider ID `dsh-magpie`）。下载中断会自动续传，再次点击也从已下载部分继续。卸载前需要移除该分组时，先在卡片关闭同步。侧边栏左上角会显示 **Magpie** 入口，默认在保存了至少一个模型后隐藏，可在卡片「偏好」页改为显示或隐藏。
 - Magpie 是新增包，npm 首次发布前请使用上述源码安装命令。
