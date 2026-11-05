@@ -1,6 +1,6 @@
 {
   "name": "@zhiqiangme/dsh-preset-minimal-prompt",
-  "version": "26.10.31",
+  "version": "26.11.5",
   "description": "（已停止维护，请改用 @zhiqiangme/dsh-presets-zh）精简系统提示词和宿主上下文，保留标准工具、AGENTS.md 与 Skills，自动说明使用中文。",
   "keywords": [
     "dsh",
