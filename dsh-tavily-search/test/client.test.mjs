@@ -1669,3 +1669,7 @@ test('恢复默认不碰提供方选择：本插件没有把标题以外的选�
   await module.purgePluginData({ api, targets: { refs: ['TAVILY_API_KEY'], readOnly: 0, owned, selection: MESSAGES_SELECTION } });
   assert.deepEqual(selectionCalls, []);
 });
+
+test('详情页把面板提到 README 上方，规则只作用于本插件', () => {
+  assert.ok(SOURCE.includes('[data-plugin-detail="@zhiqiangme/dsh-tavily-search"] section[data-plugin-config]{order:-1}'));
+});
