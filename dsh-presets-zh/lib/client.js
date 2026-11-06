@@ -290,9 +290,23 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
       return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-')
     }
 
-    /** 官方插件管理器的 Remote 命名空间；宿主没有它时 cordis 取值会抛错，这里当作没有。 */
+    /**
+     * 官方插件管理器的 Remote 命名空间。cordis 不允许读未声明的服务：connectPluginManager 接上之前，
+     * 这里取值会抛错（命名空间存在也一样），当作没有。
+     */
     function pluginManagerOf(remote) {
       try { return remote?.pluginManager } catch { return undefined }
+    }
+
+    /**
+     * 把官方插件管理器接到更新器上。不写进顶层 inject：旧宿主没有这个命名空间也要能加载设置页。
+     * 动态 inject 等命名空间就绪后给出声明过依赖的 remote，只有它读得到 pluginManager。
+     */
+    function connectPluginManager(ctx, updater) {
+      ctx.inject(['remote.pluginManager'], scoped => {
+        updater.connect(scoped.remote)
+        scoped.effect(() => () => updater.connect(undefined))
+      })
     }
 
     /** sessionStorage 读写都可能抛（隐私模式、存储被禁），失败就当没有记录。 */
@@ -338,7 +352,9 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
      *     锁、卸载、安装与失败恢复也归宿主；
      *   - dshmarket：宿主还没有官方接口时的兜底，按其公开 API v1 提交并轮询任务。
      */
-    function createPluginUpdater(remote) {
+    function createPluginUpdater(initialRemote) {
+      // connectPluginManager 换成声明过 pluginManager 的 remote；事件订阅两者都能用。
+      let remote = initialRemote
       let snapshot = { version: { phase: 'loading' }, manager: { phase: 'loading' }, market: { phase: 'idle' }, busy: false }
       const listeners = new Set()
       let checking, updating, pollTimer
@@ -517,9 +533,8 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
        * 宿主卸载前会先把本插件移出启用列表，拒绝时不撤回；不补回的话下次启动 DSH 本插件就不加载了。
        * 只在确实被移出时才动；返回补回失败的原因，成功或无需补回时返回 undefined。
        */
-      const reselect = async () => {
+      const reselect = async manager => {
         try {
-          const manager = pluginManagerOf(remote)
           const bundles = unwrap(await manager.listBundles())
           const bundle = Array.isArray(bundles) ? bundles.find(item => item.name === PACKAGE_NAME) : undefined
           if (!bundle || bundle.enabled !== false) return undefined
@@ -533,6 +548,8 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
 
       const startOfficial = (target, registry) => {
         const requestId = updateRequestId()
+        // 更新途中本插件可能被宿主卸载，动态 inject 随之撤下，重新读接口会抛错；引用先留住，补回启用状态要靠它。
+        const manager = pluginManagerOf(remote)
         patch({ busy: true, target, startFailure: undefined, operation: { channel: 'official', state: 'running', step: 'checking', requestId } })
         // 锁、卸载、安装与失败恢复都交给宿主。只显示本次 requestId 的阶段，不伪造百分比。
         updating = Promise.resolve().then(async () => {
@@ -541,10 +558,10 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
             off = remote.$on('plugin-manager/update-state', progress => {
               if (progress.requestId === requestId && UPDATE_STEPS[progress.step]) patch({ operation: { ...snapshot.operation, step: progress.step } })
             })
-            const answer = await pluginManagerOf(remote).updateBundle(PACKAGE_NAME, target, { registry, requestId })
+            const answer = await manager.updateBundle(PACKAGE_NAME, target, { registry, requestId })
             const operation = officialOutcome(unwrap(answer), target)
             if (operation.inUse) {
-              const reason = await reselect()
+              const reason = await reselect(manager)
               if (reason) operation.reselectFailure = reason
             }
             const installedVersion = operation.installedVersion ?? snapshot.manager.installedVersion
@@ -623,6 +640,14 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
         },
         check: (force = false) => run(force, false),
         refresh: () => run(false, true),
+        /** 换用声明过 pluginManager 的 remote；撤下时只换回来，下次检查自然读到。 */
+        connect: scoped => {
+          remote = scoped ?? initialRemote
+          // 还没检查过时不用动，第一次检查自然读到新接口；检查进行中时 run 会直接返回，要等它结束再重读。
+          if (scoped && (checking || snapshot.manager.phase !== 'loading')) {
+            Promise.resolve(checking).catch(() => {}).then(() => run(false, true))
+          }
+        },
         startUpdate,
         restart,
         dispose: () => {
@@ -1062,6 +1087,7 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
       // 更新器跟插件同生共死：两处设置页共用；插件卸载时停掉市场任务的轮询
       const updater = createPluginUpdater(ctx.remote)
       ctx.effect(() => () => updater.dispose())
+      connectPluginManager(ctx, updater)
       // 宿主不认识某个事件时 $on 会抛，不该连累设置页注册失败。
       const listen = (scope, event, handler) => scope.effect(() => {
         try {
@@ -1085,7 +1111,7 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
         ['plugins.row.config', '@zhiqiangme/dsh-presets-zh#dsh-presets-zh'],
       ]) ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, inject: () => ({ form, updater, defaults }) }, ModeSettings))
     }
-    // pluginManager 不单独声明：旧宿主没有它也要能加载设置页，缺席时更新区块退回市场或手动重装。
-    return { name: 'minimal-prompt-settings', inject: ['slots', 'configForms', 'remote'], apply, ModeSettings, UpdatePanel, renderUpdateSection, createPluginUpdater, pinnedInstallSpec }
+    // pluginManager 由 connectPluginManager 动态接上：旧宿主没有它也要能加载设置页，缺席时更新区块退回市场或手动重装。
+    return { name: 'minimal-prompt-settings', inject: ['slots', 'configForms', 'remote'], apply, ModeSettings, UpdatePanel, renderUpdateSection, createPluginUpdater, connectPluginManager, pinnedInstallSpec }
   },
 })

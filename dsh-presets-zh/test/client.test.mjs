@@ -77,10 +77,7 @@ function harness({ accepted = true, updater, presets, registryAccepted = true } 
   })
   module.apply({
     effect: () => {},
-    inject: (names, callback) => {
-      assert.deepEqual([...names], ['remote.agentPresets'])
-      if (presets) callback(scoped)
-    },
+    inject: (names, callback) => { if (presets && names[0] === 'remote.agentPresets') callback(scoped) },
     remote: {},
     configForms: { get: id => ({ 'dsh-presets-zh': form, 'agent-preset-registry': registry })[id] },
     slots: { inject: (_slot, callback) => callback(), register: (meta, component) => { slots.push({ meta, component }); return () => {} } },
