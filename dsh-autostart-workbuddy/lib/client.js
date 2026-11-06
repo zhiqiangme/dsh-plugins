@@ -509,12 +509,14 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       updateMismatch: '注意：装上的是 v{installed}，不是预期的 v{target}。',
       updateRestoreFailed: '恢复旧版本失败：{reason}。请在「插件」页检查并重新安装。',
       updateFailed: '更新失败：{reason}',
+      updateInUse: 'DSH 无法在本插件运行时卸下它（bundle-in-use），没有安装新版本，当前版本照常运行。请按下面的指定版本手动重新安装。',
+      updateReselectFailed: 'DSH 拒绝卸载时已把本插件移出启用列表，自动补回失败：{reason}。重启 DSH 前请在「插件」页重新启用本插件。',
       updateTooFresh: '新版本刚发布，还没过 pnpm 的发布冷却期。可以稍后再试，或强制更新。',
       updateForce: '强制更新',
       updateNoCompatible: '官方插件管理器暂未提供可更新的兼容正式版。',
       updateNotUpdatable: '官方插件管理器不支持更新此安装，请在「插件」页查看安装来源。',
       updatePinnedInstall: '按指定版本安装',
-      updatePinnedHint: '先复制下面的包名和版本，再到 DSH「插件」页卸载本插件，并在「添加插件」中粘贴安装。指定版本可避免 latest 因发布观察期选到旧版。卸载前无需清除插件数据，安装后重启 DSH。',
+      updatePinnedHint: '先复制下面的包名和版本。在「插件」页本插件详情里先关闭「WorkBuddy 连接启动」组件，再卸载本插件（插件仍在运行时 DSH 会拒绝卸载），然后在「添加插件」中粘贴安装，装好后重新打开该组件。指定版本可避免 latest 因发布观察期选到旧版。卸载前无需清除插件数据，安装后重启 DSH。',
       updateCopySpec: '复制包名和版本',
       updateSpecCopied: '已复制 {spec}。到「插件」页卸载后，添加这个指定版本。',
       updateSpecCopyFailed: '复制失败，请选中包名和版本手动复制。',
@@ -678,12 +680,14 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       updateMismatch: 'Note: v{installed} was installed, not the expected v{target}.',
       updateRestoreFailed: 'Restoring the previous version failed: {reason}. Check and reinstall on the Plugins page.',
       updateFailed: 'Update failed: {reason}',
+      updateInUse: 'DSH cannot remove this plugin while it runs (bundle-in-use). Nothing new was installed and the current version keeps running. Reinstall the exact version below by hand.',
+      updateReselectFailed: 'When DSH refused the removal it had already taken this plugin off the enabled list, and putting it back failed: {reason}. Enable the plugin again on the Plugins page before restarting DSH.',
       updateTooFresh: 'The new version is still inside pnpm\'s release cool-down. Try again later, or force the update.',
       updateForce: 'Force update',
       updateNoCompatible: 'The official plugin manager offers no compatible stable update.',
       updateNotUpdatable: 'The official plugin manager cannot update this installation. Check its source on the Plugins page.',
       updatePinnedInstall: 'Install a specific version',
-      updatePinnedHint: 'Copy the package and version below first, then uninstall this plugin on DSH\'s Plugins page and paste it into Add plugin. An exact version prevents latest from selecting an older release during the release-age wait. Keep the plugin data, then restart DSH after installation.',
+      updatePinnedHint: 'Copy the package and version below first. On this plugin\'s Plugins page, turn off the “WorkBuddy autostart” component, then uninstall the plugin (DSH refuses to uninstall it while it runs), paste it into Add plugin, and turn the component back on. An exact version prevents latest from selecting an older release during the release-age wait. Keep the plugin data, then restart DSH after installation.',
       updateCopySpec: 'Copy package and version',
       updateSpecCopied: 'Copied {spec}. Uninstall on the Plugins page, then add this exact version.',
       updateSpecCopyFailed: 'Could not copy. Select the package and version and copy it manually.',
@@ -1007,6 +1011,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
      * 以及 overridden（已写入 profile，只是启用状态被更高优先级的配置层盖住）。
      */
     const APPLIED_STATES = new Set(['applied', 'restart-required', 'overridden']);
+    /** 宿主拒绝卸载运行中插件时的错误码。 */
+    const IN_USE = 'bundle-in-use';
 
     /**
      * 官方 updateBundle 的结果 → 卡片上的任务状态。只有走到安装步骤、宿主报已装上、且装上的正是目标版本
@@ -1028,6 +1034,11 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         };
       }
       if (application === 'cancelled') return { channel: 'official', state: 'cancelled' };
+      // removeBundle 先把本插件移出启用列表并热重载，重载后本插件仍在运行才拒绝：什么都没装，旧版本照常运行，
+      // 但启用状态已被移出（见 reselect）。
+      if (value?.step === 'remove' && result?.error?.code === IN_USE) {
+        return { channel: 'official', state: 'failed', inUse: true, failure: { message: managementReason(result) } };
+      }
       if (value?.step === 'install' && APPLIED_STATES.has(application) && result.version === target) {
         return {
           channel: 'official',
@@ -1052,8 +1063,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
     }
 
     /**
-     * 官方插件管理器的 Remote 命名空间。没有声明进 inject（旧宿主也要能加载 WorkBuddy 卡片）；
-     * 宿主没有这个命名空间时 cordis 取值会抛错，这里当作没有。
+     * 官方插件管理器的 Remote 命名空间。cordis 不允许读未声明的服务：connectPluginManager 接上之前，
+     * 这里取值会抛错（命名空间存在也一样），当作没有。
      */
     function pluginManagerOf(remote) {
       try {
@@ -1061,6 +1072,17 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       } catch {
         return undefined;
       }
+    }
+
+    /**
+     * 把官方插件管理器接到更新器上。不写进顶层 inject：旧宿主没有这个命名空间也要能加载卡片。
+     * 动态 inject 等命名空间就绪后给出声明过依赖的 remote，只有它读得到 pluginManager。
+     */
+    function connectPluginManager(ctx, updater) {
+      ctx.inject(['remote.pluginManager'], (scoped) => {
+        updater.connect(scoped.remote);
+        scoped.effect(() => () => updater.connect(undefined));
+      });
     }
 
     /**
@@ -1130,7 +1152,9 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
      *     锁、卸载、安装与失败恢复也归宿主。官方接口没有任务回查，页面重载后只重新读实际安装状态；
      *   - dshmarket：宿主还没有官方接口时的兜底，按其公开 API v1 提交并轮询任务。
      */
-    function createPluginUpdater(remote) {
+    function createPluginUpdater(initialRemote) {
+      // connectPluginManager 换成声明过 pluginManager 的 remote；事件订阅两者都能用。
+      let remote = initialRemote;
       let snapshot = {
         version: { phase: 'loading' },
         manager: { phase: 'loading' },
@@ -1323,8 +1347,27 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         return checking;
       };
 
+      /**
+       * 宿主卸载前会先把本插件移出启用列表，拒绝时不撤回；不补回的话下次启动 DSH 本插件就不加载了。
+       * 只在确实被移出时才动；返回补回失败的原因，成功或无需补回时返回 undefined。
+       */
+      const reselect = async (manager) => {
+        try {
+          const bundles = unwrap(await manager.listBundles());
+          const bundle = Array.isArray(bundles) ? bundles.find((item) => item.name === PACKAGE_NAME) : undefined;
+          if (!bundle || bundle.enabled !== false) return undefined;
+          if (typeof manager.setBundleEnabled !== 'function') return 'setBundleEnabled unavailable';
+          const result = unwrap(await manager.setBundleEnabled(PACKAGE_NAME, true));
+          return APPLIED_STATES.has(result?.application) ? undefined : managementReason(result);
+        } catch (error) {
+          return errorText(error);
+        }
+      };
+
       const startOfficial = (target, registry) => {
         const requestId = updateRequestId();
+        // 更新途中本插件可能被宿主卸载，动态 inject 随之撤下，重新读接口会抛错；引用先留住，补回启用状态要靠它。
+        const manager = pluginManagerOf(remote);
         patch({
           busy: true,
           target,
@@ -1340,8 +1383,12 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
                 patch({ operation: { ...snapshot.operation, step: progress.step } });
               }
             });
-            const answer = await pluginManagerOf(remote).updateBundle(PACKAGE_NAME, target, { registry, requestId });
+            const answer = await manager.updateBundle(PACKAGE_NAME, target, { registry, requestId });
             const operation = officialOutcome(unwrap(answer), target);
+            if (operation.inUse) {
+              const reason = await reselect(manager);
+              if (reason) operation.reselectFailure = reason;
+            }
             const installedVersion = operation.installedVersion ?? snapshot.manager.installedVersion;
             patch({ operation, manager: { ...snapshot.manager, installedVersion } });
           } catch (error) {
@@ -1419,6 +1466,14 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         },
         check: (force = false) => run(force, false),
         refresh: () => run(false, true),
+        /** 换用声明过 pluginManager 的 remote；撤下时只换回来，下次检查自然读到。 */
+        connect: (scoped) => {
+          remote = scoped ?? initialRemote;
+          // 还没检查过时不用动，第一次检查自然读到新接口；检查进行中时 run 会直接返回，要等它结束再重读。
+          if (scoped && (checking || snapshot.manager.phase !== 'loading')) {
+            Promise.resolve(checking).catch(() => {}).then(() => run(false, true));
+          }
+        },
         startUpdate,
         restart,
         dispose: () => {
@@ -1626,6 +1681,11 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
             ),
           );
         }
+      } else if (operation?.state === 'failed' && operation.inUse) {
+        section.push(wbNotice('inUse', { kind: 'error', text: t('updateInUse') }));
+        if (operation.reselectFailure) {
+          section.push(wbNotice('reselectFailed', { kind: 'error', text: t('updateReselectFailed', { reason: operation.reselectFailure }) }));
+        }
       } else if (operation?.state === 'failed') {
         const code = operation.failure?.code;
         const reason = code === 'RELEASE_TOO_FRESH' ? t('updateTooFresh') : t('updateFailed', { reason: operation.failure?.message ?? code ?? '' });
@@ -1655,11 +1715,12 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         section.push(wbNotice('startFailed', { kind: 'error', text: t('updateStartFailed', { reason: update.startFailure }) }));
       }
 
-      // 官方接口在且已给出结论时不建议绕过它的更新资格；本地与托管安装另有更新方式
+      // 官方接口在且已给出结论时不建议绕过它的更新资格，宿主拒绝卸载运行中的本插件时只能手动重装；本地与托管安装另有更新方式
       const spec = outdated ? pinnedInstallSpec(version.latestVersion) : undefined;
-      if (spec && !running && !local && !managed && (viaMarket || manager.phase === 'error')) {
-        // 没有任何一键更新、市场报了冷却期 / 版本未变、或装上的仍低于最新版时自动展开
+      if (spec && !running && !local && !managed && (viaMarket || manager.phase === 'error' || operation?.inUse)) {
+        // 没有任何一键更新、卸载被拒、市场报了冷却期 / 版本未变、或装上的仍低于最新版时自动展开
         const open = (viaMarket && market.phase === 'absent')
+          || operation?.inUse === true
           || FORCEABLE_FAILURES.has(operation?.failure?.code)
           || operation?.state === 'succeeded';
         section.push(
@@ -2601,6 +2662,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       // 更新器跟插件同生共死：两处卡片共用；插件卸载时停掉市场任务的轮询
       const updater = createPluginUpdater(ctx.remote);
       ctx.effect(() => () => updater.dispose(), `${name}: plugin updater`);
+      connectPluginManager(ctx, updater);
       // 插件管理器每完成一次操作就广播 changed（含官方插件页的「更新」），据此静默重读安装状态。
       // 只是锦上添花：宿主没有这个事件时不该连累整张卡片注册失败。
       ctx.effect(() => {
@@ -2648,6 +2710,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
     exports.filterRows = filterRows;
     exports.mergeLiveSnapshot = mergeLiveSnapshot;
     exports.createPluginUpdater = createPluginUpdater;
+    exports.connectPluginManager = connectPluginManager;
     exports.pinnedInstallSpec = pinnedInstallSpec;
     exports.renderUpdateSection = renderUpdateSection;
     exports.renderAutoUpdate = renderAutoUpdate;
