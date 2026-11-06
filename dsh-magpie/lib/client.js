@@ -527,8 +527,8 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 官方插件管理器的 Remote 命名空间。inject 只声明 remote、不声明它（旧宿主也要能加载模型卡片）；
-     * 宿主没有这个命名空间时 cordis 取值会抛错，这里当作没有。
+     * 官方插件管理器的 Remote 命名空间。cordis 不允许读未声明的服务：connectPluginManager 接上之前，
+     * 这里取值会抛错（命名空间存在也一样），当作没有。
      */
     function pluginManagerOf(remote) {
       try {
@@ -536,6 +536,17 @@ window.__ModuleLoader__.load({
       } catch {
         return undefined;
       }
+    }
+
+    /**
+     * 把官方插件管理器接到更新器上。不写进顶层 inject：旧宿主没有这个命名空间也要能加载卡片。
+     * 动态 inject 等命名空间就绪后给出声明过依赖的 remote，只有它读得到 pluginManager。
+     */
+    function connectPluginManager(ctx, updater) {
+      ctx.inject(['remote.pluginManager'], (scoped) => {
+        updater.connect(scoped.remote);
+        scoped.effect(() => () => updater.connect(undefined));
+      });
     }
 
     /** 官方更新器随插件生命周期共享；卡片挂卸只增减订阅，不重复提交更新。 */
@@ -602,7 +613,9 @@ window.__ModuleLoader__.load({
      * 按宿主接口在不在选择更新路，不写死 DSH 版本号：pluginManager 有 listVersions / updateBundle 时走官方，
      * 资格、目标版本、锁、卸载、安装与失败恢复都归宿主；没有时退回 dshmarket，按其公开 API v1 提交并轮询任务。
      */
-    function createPluginUpdater(remote) {
+    function createPluginUpdater(initialRemote) {
+      // connectPluginManager 换成声明过 pluginManager 的 remote；事件订阅两者都能用。
+      let remote = initialRemote;
       let snapshot = {
         version: { phase: 'loading' },
         manager: { phase: 'loading' },
@@ -803,9 +816,8 @@ window.__ModuleLoader__.load({
        * 宿主拒绝卸下本插件时不撤回已写入的 dsh.profile.bundles：插件这次仍在运行，下次启动却不再加载。
        * 只在列表确认本插件已装、未启用时补回；成功或无需补回返回 undefined，否则返回原因。
        */
-      const reselect = async () => {
+      const reselect = async (manager) => {
         try {
-          const manager = pluginManagerOf(remote);
           const bundles = unwrap(await manager.listBundles());
           const bundle = Array.isArray(bundles) ? bundles.find((item) => item.name === PACKAGE_NAME) : undefined;
           if (!bundle || bundle.enabled !== false) return undefined;
@@ -819,6 +831,8 @@ window.__ModuleLoader__.load({
 
       const startOfficial = (target, registry) => {
         const requestId = updateRequestId();
+        // 更新途中本插件可能被宿主卸载，动态 inject 随之撤下，重新读接口会抛错；引用先留住，补回启用状态要靠它。
+        const manager = pluginManagerOf(remote);
         patch({
           busy: true,
           target,
@@ -835,10 +849,10 @@ window.__ModuleLoader__.load({
                 patch({ operation: { ...snapshot.operation, step: progress.step } });
               }
             });
-            const answer = await pluginManagerOf(remote).updateBundle(PACKAGE_NAME, target, { registry, requestId });
+            const answer = await manager.updateBundle(PACKAGE_NAME, target, { registry, requestId });
             const operation = officialOutcome(unwrap(answer), target);
             if (operation.inUse) {
-              const reason = await reselect();
+              const reason = await reselect(manager);
               if (reason) operation.reselectFailure = reason;
             }
             const installedVersion = operation.installedVersion ?? snapshot.manager.installedVersion;
@@ -919,6 +933,14 @@ window.__ModuleLoader__.load({
         },
         check: (force = false) => run(force, false),
         refresh: () => run(false, true),
+        /** 换用声明过 pluginManager 的 remote；撤下时只换回来，下次检查自然读到。 */
+        connect: (scoped) => {
+          remote = scoped ?? initialRemote;
+          // 还没检查过时不用动，第一次检查自然读到新接口；检查进行中时 run 会直接返回，要等它结束再重读。
+          if (scoped && (checking || snapshot.manager.phase !== 'loading')) {
+            Promise.resolve(checking).catch(() => {}).then(() => run(false, true));
+          }
+        },
         startUpdate,
         restart,
         dispose: () => {
@@ -1550,6 +1572,7 @@ window.__ModuleLoader__.load({
       // 更新器随插件生命周期存在：设置页的两处卡片与侧栏页面共用；插件卸载时停掉市场任务的轮询
       const pluginUpdater = createPluginUpdater(ctx.remote);
       ctx.effect(() => () => pluginUpdater.dispose(), 'dsh-magpie: plugin updater');
+      connectPluginManager(ctx, pluginUpdater);
       // 插件管理器每完成一次操作就广播 changed（含官方插件页的「更新」），据此静默重读安装状态。
       // 只是锦上添花：宿主没有这个事件时不该连累卡片注册失败。
       ctx.effect(() => {
@@ -1565,7 +1588,7 @@ window.__ModuleLoader__.load({
       }
       registerSidebar(ctx, t, pluginUpdater);
     }
-    // remote 只为官方插件管理器（pluginManager）与它的事件；pluginManager 本身不声明，旧宿主没有它也能加载。
-    return { name: 'dsh-magpie-client', inject: ['slots', 'locale', 'remote'], apply, ModelsCard, MagpiePage, MagpieGlyph, sidebarVisible, moveModel, displayModelName, sortModelIndexes, renderUpdateSection, createPluginUpdater, zh, en };
+    // remote 只为官方插件管理器与它的事件；pluginManager 由 connectPluginManager 动态接上，旧宿主没有它也能加载。
+    return { name: 'dsh-magpie-client', inject: ['slots', 'locale', 'remote'], apply, ModelsCard, MagpiePage, MagpieGlyph, sidebarVisible, moveModel, displayModelName, sortModelIndexes, renderUpdateSection, createPluginUpdater, connectPluginManager, zh, en };
   },
 });

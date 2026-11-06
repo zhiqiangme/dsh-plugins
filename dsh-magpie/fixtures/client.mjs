@@ -23,7 +23,8 @@ export function clientHarness(initial, fetchImpl = async () => { throw new Error
     locale: { register: (_ns, dicts) => { dictionaries.push(dicts); }, bind: () => t },
     // 默认模拟没有侧栏页面的旧宿主；sidebar 为 true 时声明 sidebar.panellist 槽位。
     slots: { inject: (name, run) => { if (name !== 'sidebar.panellist' || sidebar) run(); }, register: (meta, component) => { const card = { meta, component, disposed: false }; cards.push(card); return () => { card.disposed = true; }; } },
-    ...(layout ? { inject: (_names, run) => run({ layout, effect: (run) => run() }) } : {}),
+    // 真实宿主一定有 inject；只有声明的服务存在时才回调，官方插件管理器这里不接，上面的 remote 直接带着它。
+    inject: (names, run) => { if (layout && names[0] === 'layout') run({ layout, effect: (run) => run() }); },
   };
   module.apply(ctx);
   // 卡片与侧栏页面共用 apply 建的插件更新器，渲染时照宿主那样从注册信息里取。
