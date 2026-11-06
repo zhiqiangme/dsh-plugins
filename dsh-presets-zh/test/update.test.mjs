@@ -140,6 +140,7 @@ test('设置页把同一个更新器交给两处挂载，宿主不认识插件�
   module.apply({
     effect: callback => effects.push(callback()),
     remote: { $on: () => { throw new Error('unknown event') } },
+    inject: () => {},
     configForms: { get: () => ({}) },
     slots: { inject: (_slot, callback) => callback(), register: meta => slots.push(meta) },
   })

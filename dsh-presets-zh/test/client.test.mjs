@@ -10,7 +10,12 @@ function fakeUpdater(snapshot = {}) {
   return { subscribe: () => () => {}, getSnapshot: () => value }
 }
 
-function harness({ accepted = true, updater } = {}) {
+/** 宿主预设名单：四种中文模式加内置 standard；overrides 按 id 追加字段。 */
+function roster(currentId, overrides = {}) {
+  return [...MODES.map(mode => mode.definition.id), 'standard'].map(id => ({ id, isDefault: id === currentId, ...overrides[id] }))
+}
+
+function harness({ accepted = true, updater, presets, registryAccepted = true } = {}) {
   const initial = Object.fromEntries(MODES.map(mode => [mode.key, modeDefaults(mode.definition)]))
   let snapshot = { value: structuredClone(initial), base: structuredClone(initial), revision: 5, writable: true }
   const calls = [], slots = [], states = [], dependencies = []
@@ -44,24 +49,55 @@ function harness({ accepted = true, updater } = {}) {
       return accepted
     },
   }
+  // presets 留空表示宿主没有预设名单：动态 inject 的回调不会触发。
+  let rows = presets
+  const writes = [], events = {}
+  let selectedDefault
+  const registry = {
+    getSnapshot: () => ({ value: { selectedDefault } }),
+    set: async (field, value) => {
+      writes.push([field, value])
+      if (registryAccepted) {
+        selectedDefault = value
+        rows = rows.map(row => ({ ...row, isDefault: row.id === value }))
+      }
+      return registryAccepted
+    },
+  }
+  const scoped = {
+    effect: callback => callback(),
+    remote: {
+      agentPresets: { list: async () => { if (rows instanceof Error) throw rows; return { ok: true, value: { presets: rows } } } },
+      $on: (event, listener) => { events[event] = listener; return () => {} },
+    },
+  }
   vm.runInNewContext(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'), {
     structuredClone,
     window: { __ModuleLoader__: { load(spec) { registration = spec; module = spec.factory(name => { assert.equal(name, 'react'); return React }) } } },
   })
   module.apply({
     effect: () => {},
+    inject: (names, callback) => {
+      assert.deepEqual([...names], ['remote.agentPresets'])
+      if (presets) callback(scoped)
+    },
     remote: {},
-    configForms: { get: id => { assert.equal(id, 'dsh-presets-zh'); return form } },
+    configForms: { get: id => ({ 'dsh-presets-zh': form, 'agent-preset-registry': registry })[id] },
     slots: { inject: (_slot, callback) => callback(), register: (meta, component) => { slots.push({ meta, component }); return () => {} } },
   })
+  const { defaults } = slots[0].meta.inject()
   return {
-    calls, slots, registration,
+    calls, slots, registration, writes,
     changeSnapshot: value => { snapshot = { ...snapshot, ...value } },
+    changeRoster: value => { rows = value },
+    changeSelectedDefault: value => { selectedDefault = value },
+    emit: (event, ...args) => events[event](...args),
+    settle: () => new Promise(resolve => setImmediate(resolve)),
     render() {
       let tree
       for (let i = 0; i < 4; i++) {
         cursor = 0; effects = []; changed = false
-        tree = module.ModeSettings({ form, view: 'page', updater })
+        tree = module.ModeSettings({ form, view: 'page', updater, defaults })
         for (const effect of effects) effect()
         if (!changed) break
       }
@@ -80,6 +116,15 @@ const text = tree => JSON.stringify(tree)
 const tab = (tree, key) => nodes(tree, node => node.type === 'button' && node.props['data-mode'] === key)[0]
 const prompt = tree => nodes(tree, node => node.type === 'textarea')[0]
 const switches = tree => nodes(tree, node => node.type === 'input' && node.props.role === 'switch')
+const setDefault = tree => button(tree, '设为新任务默认')
+
+/** 挂载面板并等首次名单读取结束。 */
+async function opened(options) {
+  const client = harness(options)
+  client.render()
+  await client.settle()
+  return client
+}
 
 test('插件包页和行设置页均挂载同一表单，四种模式按注册顺序切换编辑', () => {
   const client = harness()
@@ -252,4 +297,175 @@ test('详情页首次挂载面板时回到顶部，同页重新挂载不打断�
   attach(null)
   attach({ closest: () => null })
   assert.equal(scroller.scrollTop, 300, '卸载和配置页以外的挂载都不动滚动位置')
+})
+
+test('当前默认的模式有徽标和页签标记，开关锁定，不再显示设为默认按钮', async () => {
+  const client = await opened({ presets: roster('standard-zh') })
+  let tree = client.render()
+  assert.match(text(tab(tree, 'standard')), /默认/)
+  assert.doesNotMatch(text(tab(tree, 'ptc')), /默认/)
+  assert.match(text(tree), /停用前先把其他模式设为默认/)
+  assert.equal(setDefault(tree), undefined)
+  assert.equal(switches(tree)[0].props.disabled, true)
+  tab(tree, 'ptc').props.onClick()
+  tree = client.render()
+  assert.equal(switches(tree)[0].props.disabled, false)
+  assert.equal(setDefault(tree).props.disabled, false)
+})
+
+test('默认是内置预设时四个模式都没有标记', async () => {
+  const tree = (await opened({ presets: roster('standard') })).render()
+  for (const { key } of MODES) assert.doesNotMatch(text(tab(tree, key)), /默认/)
+  assert.ok(setDefault(tree))
+})
+
+test('设为默认只写宿主的 selectedDefault，成功后标记跟到新模式', async () => {
+  const client = await opened({ presets: roster('standard') })
+  tab(client.render(), 'ptc').props.onClick()
+  await setDefault(client.render()).props.onClick()
+  assert.deepEqual(client.writes, [['selectedDefault', 'ptc-zh']])
+  assert.equal(client.calls.length, 0, '默认写在宿主配置项里，不碰本插件的模式设置')
+  const tree = client.render()
+  assert.match(text(tab(tree, 'ptc')), /默认/)
+  assert.equal(setDefault(tree), undefined)
+  assert.match(text(tree), /已打开的空白任务保持原模式/)
+})
+
+test('写入前按最新名单确认：未注册或加载失败的模式不写入', async () => {
+  const client = await opened({ presets: roster('standard') })
+  tab(client.render(), 'ptc').props.onClick()
+  const stale = setDefault(client.render())
+  client.changeRoster(roster('standard').filter(row => row.id !== 'ptc-zh'))
+  await stale.props.onClick()
+  assert.match(text(client.render()), /尚未加载/)
+  client.changeRoster(roster('standard', { 'ptc-zh': { broken: { message: '依赖缺失' } } }))
+  await setDefault(client.render()).props.onClick()
+  const tree = client.render()
+  assert.match(text(tree), /加载失败，不能设为默认/)
+  assert.equal(setDefault(tree).props.disabled, true)
+  assert.deepEqual(client.writes, [])
+})
+
+test('宿主拒绝写入或读不到名单时给出提示，默认不变', async () => {
+  const refused = await opened({ presets: roster('standard'), registryAccepted: false })
+  await setDefault(refused.render()).props.onClick()
+  let tree = refused.render()
+  assert.match(text(tree), /未设置，配置可能已在其他页面更新/)
+  assert.ok(setDefault(tree), '仍是原来的默认，按钮保留')
+  const offline = await opened({ presets: roster('standard') })
+  offline.changeRoster(new Error('连接断开'))
+  await setDefault(offline.render()).props.onClick()
+  tree = offline.render()
+  assert.match(text(tree), /设置失败/)
+  assert.deepEqual(offline.writes, [])
+  assert.ok(setDefault(tree), '读失败时保留上一次的状态，不收起入口')
+})
+
+test('已停用或只在草稿里启用的模式不能设为默认', async () => {
+  const client = await opened({ presets: roster('standard') })
+  tab(client.render(), 'minimal').props.onClick()
+  switches(client.render())[0].props.onChange({ target: { checked: false } })
+  assert.equal(setDefault(client.render()).props.disabled, true)
+  await button(client.render(), '保存设置').props.onClick()
+  assert.equal(setDefault(client.render()).props.disabled, true)
+  switches(client.render())[0].props.onChange({ target: { checked: true } })
+  assert.equal(setDefault(client.render()).props.disabled, true, '草稿打开但还没保存，预设尚未注册')
+})
+
+test('保存前按最新名单拦下停用当前默认的修改，草稿保留', async () => {
+  const client = await opened({ presets: roster('standard') })
+  tab(client.render(), 'ptc').props.onClick()
+  switches(client.render())[0].props.onChange({ target: { checked: false } })
+  // 面板上的名单还是旧的，其他页面刚把默认改成这个模式。
+  client.changeRoster(roster('ptc-zh'))
+  await button(client.render(), '保存设置').props.onClick()
+  const tree = client.render()
+  assert.equal(client.calls.length, 0)
+  assert.match(text(tree), /是新任务默认，请先把其他模式设为默认再停用/)
+  assert.equal(switches(tree)[0].props.checked, false)
+})
+
+test('已停用却仍是默认的模式：提示新任务会失败，不挡其他修改的保存', async () => {
+  const client = await opened({ presets: roster('standard') })
+  tab(client.render(), 'ptc').props.onClick()
+  switches(client.render())[0].props.onChange({ target: { checked: false } })
+  await button(client.render(), '保存设置').props.onClick()
+  // 停用的模式不注册：宿主名单里没有这一行，也就没有 isDefault，只有配置里还写着它。
+  client.changeRoster(roster('ptc-zh').filter(row => row.id !== 'ptc-zh'))
+  client.changeSelectedDefault('ptc-zh')
+  client.emit('settings/document-updated', 'agent-preset-registry')
+  await client.settle()
+  const tree = client.render()
+  assert.match(text(tab(tree, 'ptc')), /默认/)
+  assert.match(text(tree), /新任务会创建失败/)
+  assert.equal(switches(tree)[0].props.disabled, false, '要能把它重新启用')
+  prompt(tree).props.onChange({ target: { value: '改过' } })
+  await button(client.render(), '保存设置').props.onClick()
+  assert.equal(client.calls.length, 2)
+})
+
+test('只响应宿主预设配置的更新事件', async () => {
+  const client = await opened({ presets: roster('standard') })
+  client.changeRoster(roster('ptc-zh'))
+  client.emit('settings/document-updated', 'dsh-presets-zh')
+  await client.settle()
+  assert.doesNotMatch(text(tab(client.render(), 'ptc')), /默认/)
+  client.emit('settings/document-updated', 'agent-preset-registry')
+  await client.settle()
+  assert.match(text(tab(client.render(), 'ptc')), /默认/)
+})
+
+test('宿主没有预设名单时不显示默认入口，模式设置照常保存', async () => {
+  const client = await opened()
+  const tree = client.render()
+  assert.equal(setDefault(tree), undefined)
+  assert.doesNotMatch(text(tree), /新任务默认/)
+  assert.equal(switches(tree)[0].props.disabled, false)
+  prompt(tree).props.onChange({ target: { value: '改过' } })
+  await button(client.render(), '保存设置').props.onClick()
+  assert.equal(client.calls.length, 1)
+})
+
+test('真实 cordis：预设名单走动态 inject，命名空间晚于插件挂载也能接上，撤下后入口消失', async () => {
+  const { Context, Service } = await import('@deepseek-ai/cordis')
+  const registered = []
+  class Remote extends Service {
+    constructor(ctx) { super(ctx, 'remote'); this.owner = ctx }
+    $on() { return () => {} }
+  }
+  class Slots extends Service {
+    constructor(ctx) { super(ctx, 'slots') }
+    inject(_slot, callback) { callback() }
+    register(meta) { registered.push(meta); return () => {} }
+  }
+  class ConfigForms extends Service {
+    constructor(ctx) { super(ctx, 'configForms') }
+    get() { return { getSnapshot: () => ({}) } }
+  }
+  // 宿主把每个 Remote 命名空间挂成 remote 的子 fiber，与插件不在同一分支；读未声明的服务时 cordis 会抛错。
+  class AgentPresets extends Service {
+    constructor(ctx) { super(ctx, 'remote.agentPresets') }
+    list() { return { ok: true, value: { presets: roster('standard-zh') } } }
+  }
+  let module
+  vm.runInNewContext(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'), {
+    structuredClone,
+    window: { __ModuleLoader__: { load(spec) { module = spec.factory(() => ({})) } } },
+  })
+  const until = async condition => {
+    for (let i = 0; i < 200 && !condition(); i++) await new Promise(resolve => setTimeout(resolve, 5))
+    assert.ok(condition())
+  }
+  const root = new Context()
+  await root.plugin({ name: 'host', apply(ctx) { new Remote(ctx); new Slots(ctx); new ConfigForms(ctx) } })
+  await root.plugin({ name: 'presets-zh-client', inject: [...module.inject], apply: ctx => module.apply(ctx) })
+  const { defaults } = registered[0].inject()
+  assert.equal(defaults.getSnapshot().ready, false)
+  const namespace = root.get('remote').owner.plugin({ name: 'remote.agentPresets', apply(ctx) { new AgentPresets(ctx) } })
+  await namespace
+  await until(() => defaults.getSnapshot().ready)
+  assert.equal(defaults.getSnapshot().currentId, 'standard-zh')
+  await namespace.dispose()
+  await until(() => !defaults.getSnapshot().ready)
+  await root.dispose?.()
 })

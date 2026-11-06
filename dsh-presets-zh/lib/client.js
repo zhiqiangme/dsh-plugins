@@ -14,6 +14,8 @@ window.__ModuleLoader__.load({
     ]
     // 「插件更新」页签与四个模式共用一个选中状态，取值不能和模式 key 重名。
     const UPDATE_TAB = 'update'
+    // 新任务默认存在宿主这个配置项的 selectedDefault 字段；同组的 default 不能热更新，这里不碰。
+    const PRESET_REGISTRY = 'agent-preset-registry'
     // 宿主的列表页和详情页共用滚动容器且切换时不归零，从滚动过的列表点进来会停在页面中下部。
     // 面板在每个详情页首次挂载时滚回顶部；WeakSet 避免同一页内重新挂载时打断用户滚动。
     // data-plugin-config 只在配置页上（bundle 页的 section、行页的 detailSections），其他页面直接跳过。
@@ -68,6 +70,9 @@ button.dpz-chip:hover{color:var(--dpz-text)}
 .dpz-badge[data-tone=ok]{color:var(--dpz-ok);background:color-mix(in srgb,var(--dpz-ok) 14%,transparent)}
 .dpz-badge[data-tone=warn]{color:var(--dpz-warn);background:color-mix(in srgb,var(--dpz-warn) 14%,transparent)}
 .dpz-badge[data-tone=accent]{color:var(--dpz-accent);background:color-mix(in srgb,var(--dpz-accent) 14%,transparent)}
+.dpz-panel-title .dpz-default-note{margin-top:6px}
+.dpz-panel-title .dpz-default-note[data-tone=error]{color:var(--dpz-error)}
+.dpz-mode-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
 .dpz-enable{display:flex;align-items:center;gap:8px;color:var(--dpz-muted);cursor:pointer}
 .dpz-switch{appearance:none;-webkit-appearance:none;flex:none;position:relative;width:34px;height:20px;margin:0;border-radius:999px;background:var(--dsw-alias-border-l4,var(--dpz-line-strong));cursor:pointer;transition:background .15s}
 .dpz-switch::before{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0004;transition:transform .15s}
@@ -782,10 +787,66 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
       return h('div', { className: 'dpz-update', role: 'region', 'aria-label': t('title') }, ...renderUpdateSection({ ...update, notice }, actions))
     }
 
-    function ModeSettings({ form, view, updater }) {
+    /**
+     * 新任务默认模式：读宿主预设名单，写入走宿主配置表单，与宿主设置页的「设为新任务默认」是同一字段。
+     * 名单接口由 apply 接上；接上之前 ready 为 false，面板不显示这个入口，模式设置照常可用。
+     */
+    function createDefaultPreset(form) {
+      const empty = { ready: false, rows: [], currentId: undefined }
+      const listeners = new Set()
+      let presets
+      let snapshot = empty
+      let generation = 0
+      const publish = next => {
+        snapshot = next
+        for (const listener of listeners) listener()
+      }
+      const read = async () => {
+        const request = ++generation
+        const rows = unwrap(await presets.list()).presets
+        // 默认模式被停用后不在名单里，isDefault 找不到，只能看宿主配置里写的 id。
+        const next = { ready: true, rows, currentId: rows.find(row => row.isDefault)?.id ?? form.getSnapshot().value?.selectedDefault }
+        // 晚到的旧结果不能盖掉新结果；调用方仍拿到自己这次读到的名单。
+        if (request === generation) publish(next)
+        return next
+      }
+      // 读失败时保留上一次的结果：面板继续显示已知状态，写入前的校验另走 read。
+      const load = () => read().catch(() => snapshot)
+      return {
+        subscribe(listener) {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        getSnapshot: () => snapshot,
+        load,
+        connect(service) {
+          presets = service
+          generation++
+          if (service) load()
+          else publish(empty)
+        },
+        /** @returns 要显示在保存栏的结果 `{ tone, text }`。 */
+        async choose(id) {
+          try {
+            const row = (await read()).rows.find(item => item.id === id)
+            // 宿主不校验 selectedDefault：写入没注册成功的 id 后，新任务会直接创建失败。
+            if (row === undefined) return { tone: 'error', text: '此模式尚未加载，暂时不能设为默认，请稍后重试。' }
+            if (row.broken !== undefined) return { tone: 'error', text: '此模式加载失败，不能设为默认。' }
+            if (!await form.set('selectedDefault', id)) return { tone: 'error', text: '未设置，配置可能已在其他页面更新，请重试。' }
+            await load()
+            return { tone: 'ok', text: '已设为新任务默认。已打开的空白任务保持原模式。' }
+          } catch (error) {
+            return { tone: 'error', text: `设置失败：${errorText(error)}` }
+          }
+        },
+      }
+    }
+
+    function ModeSettings({ form, view, updater, defaults }) {
       const snapshot = useSyncExternalStore(listener => form.subscribe(listener), () => form.getSnapshot())
       // 头部版本号与「插件更新」页签的提醒读同一个更新器；没有更新器时不显示这两处入口。
       const update = useSyncExternalStore(listener => updater ? updater.subscribe(listener) : () => {}, () => updater?.getSnapshot())
+      const preset = useSyncExternalStore(listener => defaults ? defaults.subscribe(listener) : () => {}, () => defaults?.getSnapshot())
       const [draft, setDraft] = useState(null)
       const [dirty, setDirty] = useState(false)
       const [revision, setRevision] = useState()
@@ -804,6 +865,7 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
           setRevision(snapshot.revision)
         }
       }, [snapshot.value, snapshot.revision, dirty])
+      useEffect(() => { defaults?.load() }, [defaults])
       // 优先留在卡片末尾；原位置放不下时才贴窗口底边，并保留原位高度供滚动归位。
       // 不用 sticky：宿主滚动容器有 48px 底部内边距，sticky 会悬在窗口底边上方，下面露出卡片内容。
       useLayoutEffect(() => {
@@ -865,6 +927,14 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
         setBusy(true)
         setNotice(null)
         try {
+          // 默认预设被撤下后宿主不会回退，新任务会直接创建失败。默认可能刚在其他页面改过，按最新名单再查一次；
+          // 只拦这次保存新停用的模式，已经停用的默认不该挡住其他修改。
+          const currentId = (await defaults?.load())?.currentId
+          const blocked = modes.find(({ key, id }) => id === currentId && draft[key]?.enabled === false && snapshot.value[key]?.enabled !== false)
+          if (blocked) {
+            setNotice({ tone: 'error', text: `「${blocked.label}」是新任务默认，请先把其他模式设为默认再停用。` })
+            return
+          }
           // 绑定开始编辑时的版本；其他页面写入后须重新载入，不能覆盖较新的设置。
           const accepted = await form.mutate(modes.map(({ key }) => ({ op: 'set', path: [key], value: draft[key] })), revision)
           if (accepted) {
@@ -874,6 +944,12 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
         } catch (error) {
           setNotice({ tone: 'error', text: `保存失败：${error.message}` })
         } finally { setBusy(false) }
+      }
+      // 与保存共用 busy：写默认和停用模式并发时，保存前的校验可能漏掉刚写入的默认。
+      const makeDefault = async id => {
+        setBusy(true)
+        setNotice(null)
+        try { setNotice(await defaults.choose(id)) } finally { setBusy(false) }
       }
 
       const readonly = busy || !snapshot.writable
@@ -889,8 +965,9 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
       // 刚更新成功时当前运行版本要等重启才换，此时不再提醒「有新版本」。
       const updateReady = version?.phase === 'ready' && version.updateAvailable && update.operation?.state !== 'succeeded'
       const unsaved = key => !same(draft[key], snapshot.value[key])
+      const defaultId = preset?.ready ? preset.currentId : undefined
 
-      const modeTab = ({ key, label }) => {
+      const modeTab = ({ key, label, id }) => {
         const enabled = draft[key]?.enabled !== false
         return h('button', {
           key, type: 'button', role: 'tab', id: `dpz-tab-${key}`, className: 'dpz-tab', 'data-mode': key, 'data-enabled': String(enabled),
@@ -898,6 +975,7 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
         },
         h('span', { className: 'dpz-tab-label' }, draft[key]?.name?.trim() || label),
         enabled ? null : h('small', null, '已停用'),
+        id === defaultId ? h('small', null, '默认') : null,
         unsaved(key) ? h('span', { className: 'dpz-mark', role: 'img', 'aria-label': '未保存' }) : null)
       }
       const updateTab = h('button', {
@@ -908,7 +986,13 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
       updateReady ? h('span', { className: 'dpz-mark', 'data-tone': 'accent', role: 'img', 'aria-label': updateText.available }) : null)
 
       const enabled = value.enabled !== false
+      // 按钮和提示看已保存的状态：只在草稿里打开的模式还没注册，写成默认后新任务会失败。
+      const savedEnabled = snapshot.value[mode.key]?.enabled !== false
+      const isDefault = mode.id === defaultId
+      const broken = preset?.rows.find(row => row.id === mode.id)?.broken !== undefined
       const badges = [
+        isDefault && h('span', { key: 'default', className: 'dpz-badge', 'data-tone': 'ok' }, '新任务默认'),
+        broken && h('span', { key: 'broken', className: 'dpz-badge', 'data-tone': 'warn' }, '加载失败'),
         !enabled && h('span', { key: 'off', className: 'dpz-badge' }, '已停用'),
         unsaved(mode.key) && h('span', { key: 'dirty', className: 'dpz-badge', 'data-tone': 'warn' }, '未保存'),
         !same(draft[mode.key], snapshot.base?.[mode.key]) && h('span', { key: 'custom', className: 'dpz-badge', 'data-tone': 'accent' }, '已自定义'),
@@ -923,13 +1007,21 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
             h('div', { className: 'dpz-meta' },
               h('code', null, mode.id),
               h('span', null, mode.context ? '保留 AGENTS.md 与 Skills' : '不注入 AGENTS.md 与 Skills'),
-              ...badges)),
-          h('label', { className: 'dpz-enable' },
-            h('input', {
-              type: 'checkbox', role: 'switch', className: 'dpz-switch', 'aria-label': `启用${mode.label}`,
-              checked: enabled, disabled: readonly, onChange: event => change(mode.key, 'enabled', event.target.checked),
-            }),
-            '启用此模式')),
+              ...badges),
+            isDefault ? h('p', { className: 'dpz-default-note', 'data-tone': savedEnabled ? undefined : 'error' }, savedEnabled
+              ? '新建任务默认使用此模式；停用前先把其他模式设为默认。'
+              : '此模式是新任务默认但已停用，新任务会创建失败。请启用它，或把其他模式设为默认。') : null),
+          h('div', { className: 'dpz-mode-actions' },
+            preset?.ready && !isDefault ? h('button', {
+              type: 'button', className: 'dpz-btn dpz-small', disabled: readonly || !enabled || !savedEnabled || broken,
+              title: enabled && savedEnabled ? undefined : '启用并保存后才能设为默认', onClick: () => makeDefault(mode.id),
+            }, '设为新任务默认') : null,
+            h('label', { className: 'dpz-enable' },
+              h('input', {
+                type: 'checkbox', role: 'switch', className: 'dpz-switch', 'aria-label': `启用${mode.label}`,
+                checked: enabled, disabled: readonly || (isDefault && enabled), onChange: event => change(mode.key, 'enabled', event.target.checked),
+              }),
+              '启用此模式'))),
         h('fieldset', { className: 'dpz-fieldset', disabled: readonly },
           h('div', { className: 'dpz-row' }, ...fields.map(({ field, title, hint }) => h('label', { key: field, className: 'dpz-field' },
             h('span', { className: 'dpz-label' }, title),
@@ -970,19 +1062,28 @@ textarea.dpz-input{min-height:168px;resize:vertical;line-height:1.65}
       // 更新器跟插件同生共死：两处设置页共用；插件卸载时停掉市场任务的轮询
       const updater = createPluginUpdater(ctx.remote)
       ctx.effect(() => () => updater.dispose())
-      // 插件管理器每完成一次操作就广播 changed（含官方插件页的「更新」），据此静默重读安装状态；
-      // 宿主没有这个事件时不该连累设置页注册失败。
-      ctx.effect(() => {
+      // 宿主不认识某个事件时 $on 会抛，不该连累设置页注册失败。
+      const listen = (scope, event, handler) => scope.effect(() => {
         try {
-          return ctx.remote.$on('plugin-manager/changed', () => updater.refresh())
+          return scope.remote.$on(event, handler)
         } catch {
           return () => {}
         }
       })
+      // 插件管理器每完成一次操作就广播 changed（含官方插件页的「更新」），据此静默重读安装状态。
+      listen(ctx, 'plugin-manager/changed', () => updater.refresh())
+      const defaults = createDefaultPreset(ctx.configForms.get(PRESET_REGISTRY))
+      // 不写进顶层 inject：旧宿主没有这个命名空间也要能加载设置页。cordis 不允许读未声明的服务，
+      // 命名空间存在时直接读 remote.agentPresets 会抛错，只能走动态 inject；它晚于本插件挂载时也能接上。
+      ctx.inject(['remote.agentPresets'], scoped => {
+        defaults.connect(scoped.remote.agentPresets)
+        scoped.effect(() => () => defaults.connect(undefined))
+        listen(scoped, 'settings/document-updated', ns => { if (ns === PRESET_REGISTRY) defaults.load() })
+      })
       for (const [slot, key] of [
         ['plugins.bundle.config', '@zhiqiangme/dsh-presets-zh'],
         ['plugins.row.config', '@zhiqiangme/dsh-presets-zh#dsh-presets-zh'],
-      ]) ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, inject: () => ({ form, updater }) }, ModeSettings))
+      ]) ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, inject: () => ({ form, updater, defaults }) }, ModeSettings))
     }
     // pluginManager 不单独声明：旧宿主没有它也要能加载设置页，缺席时更新区块退回市场或手动重装。
     return { name: 'minimal-prompt-settings', inject: ['slots', 'configForms', 'remote'], apply, ModeSettings, UpdatePanel, renderUpdateSection, createPluginUpdater, pinnedInstallSpec }
