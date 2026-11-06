@@ -70,6 +70,7 @@ function boot(options = {}) {
   const forms = { 'web-search-deepseek': form, 'web-deepseek-api': formOf(options.apiSnapshot ?? { status: 'unavailable' }) };
   if (options.selectionSnapshot) forms.web = formOf(options.selectionSnapshot);
   const ctx = {
+    inject: () => {},
     effect: (factory) => factory(),
     locale: {
       register: (ns, dict) => {
@@ -760,7 +761,7 @@ test('官方更新：宿主没有更新接口或取不到管理器时退回 dshm
   for (const variant of ['none', 'legacy', 'throws']) {
     const h = updaterHarness({ manager: variant === 'legacy' ? legacyManager().manager : {} });
     if (variant === 'throws') {
-      // 宿主没有 remote.pluginManager 命名空间时，cordis 取值直接抛错
+      // 读未声明的 remote.pluginManager 时 cordis 直接抛错
       Object.defineProperty(h.remote, 'pluginManager', { get: () => { throw new Error('cannot get property without inject'); } });
     }
     await h.updater.check();
@@ -1779,4 +1780,42 @@ test('详情页首次挂载面板时回到顶部，同页重新挂载不打断�
   attach(null);
   attach({ closest: () => null });
   assert.equal(scroller.scrollTop, 300, '卸载和配置页以外的挂载都不动滚动位置');
+});
+
+test('官方更新：宿主拒绝卸载运行中的本插件时说明原因、补回启用状态，并展开指定版本重装', async () => {
+  const refusal = { from: '26.10.11', to: '26.10.12', step: 'remove', result: { application: 'failed', error: { code: 'bundle-in-use' } } };
+  const variants = [['applied', undefined], ['failed', 'lock-timeout'], ['missing', 'setBundleEnabled unavailable'], ['enabled', undefined]];
+  for (const [variant, expected] of variants) {
+    const reselected = [];
+    const h = updaterHarness({ manager: {
+      listBundles: async () => ({ ok: true, value: [{ name: PACKAGE_NAME, version: '26.10.11', source: PACKAGE_NAME + '@26.10.11', availability: 'profile', updatable: true, enabled: variant === 'enabled' }] }),
+      listVersions: async () => ({ ok: true, value: { status: 'listed', installed: '26.10.11', registry: 'https://registry.example/', versions: [{ version: '26.10.12', bundle: true, prerelease: false, tags: ['latest'] }] } }),
+      updateBundle: async () => ({ ok: true, value: refusal }),
+      ...(variant === 'missing' ? {} : {
+        setBundleEnabled: async (...args) => {
+          reselected.push(args);
+          return { ok: true, value: variant === 'failed' ? { application: 'failed', error: { code: 'lock-timeout' } } : { application: 'applied' } };
+        },
+      }),
+    } });
+    await h.updater.check();
+    await h.updater.startUpdate();
+    const { operation } = h.updater.getSnapshot();
+    assert.equal(operation.inUse, true, variant);
+    assert.equal(operation.reselectFailure, expected, variant);
+    assert.deepEqual(reselected, ['applied', 'failed'].includes(variant) ? [[PACKAGE_NAME, true]] : [], variant);
+  }
+});
+
+test('插件更新 UI：卸载被拒时说明原因与补回失败，并展开先关闭组件的重装步骤', () => {
+  const { module, t } = boot();
+  const operation = { channel: 'official', state: 'failed', inUse: true, failure: { message: 'bundle-in-use' } };
+  const view = (overrides) => render(module.renderCard(updateModel(overrides), actions, t));
+  const refused = view({ operation });
+  assert.match(text(refused), /bundle-in-use/);
+  assert.doesNotMatch(text(refused), /自动补回失败/);
+  assert.equal(pinnedOf(refused).props.open, true);
+  assert.match(collectText(pinnedOf(refused)).join(' '), /先关闭「Tavily 联网搜索」组件/);
+  const lost = view({ operation: { ...operation, reselectFailure: 'lock-timeout' } });
+  assert.match(text(lost), /自动补回失败：lock-timeout/);
 });
