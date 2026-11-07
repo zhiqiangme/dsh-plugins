@@ -1071,6 +1071,11 @@ test('区域 Key：重新打开仍显示各项保存状态，不回填密钥', (
   assert.match(passwords[0].props.placeholder, /已保存；留空保留/);
 });
 
+test('区域页：跟随出口 Key 的标题写明用途', () => {
+  const form = hubKeyForm(boot(gatewayStates({ gateway: 'hub', hubSettings: { enabled: true, keys: {} } })));
+  assert.match(collectText(form).join('|'), /跟随出口 Key（可选，双区关闭后使用）/);
+});
+
 test('区域页：路由组没有开关，到期情况逐行显示；面板密码没有网关 Key 兜底', () => {
   const overview = { ready: 3, total: 3, balances: [], exits: {
     cn: { realm: 'cn', state: 'ready', expireAt: Date.UTC(2026, 10, 6, 1, 17, 11), expiring: 68.17 },
