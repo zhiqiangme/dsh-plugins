@@ -273,6 +273,7 @@ test('POST refresh：自动刷新保留缺席的已选模型，手动刷新当�
   assert.deepEqual(manual.models.map((row) => row.id), [beta.id]);
   assert.deepEqual(manual.only, [beta.id]);
   assert.deepEqual(manual.pruned.map((row) => row.id), [alpha.id]);
+  assert.equal(manual.catalog, undefined, 'wb2api 没有重拉目录的接口');
   assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models.only, [beta.id]);
   assert.deepEqual(editor.entry(PLUGIN_ID).options.config.models.pruned, [alpha.id], '记下剔除项，等后端恢复');
   assert.deepEqual(resolved.models.only, [beta.id]);
@@ -715,6 +716,48 @@ test('后端路由：GET 给版本快照且默认不联网，POST 校验动作�
   assert.equal(status.body.backend.gateway, 'wb2api');
   assert.deepEqual(status.body.backend.gateways, ['wb2api', 'hub']);
   assert.match(status.body.backend.panelUrl, /\/panel$/);
+});
+
+test('手点「刷新」先让 hub 重拉再读目录；打开卡片的自动刷新不打上游', async (t) => {
+  const stale = { id: 'alpha', name: 'Alpha', credits: 'x1' };
+  const fresh = { id: 'beta', name: 'Beta', credits: 'x1' };
+  let data = [stale];
+  const hits = [];
+  const server = createHttpServer(async (req, res) => {
+    for await (const _ of req);
+    hits.push(req.url);
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/health') return res.end(JSON.stringify({ ok: true, realm: 'cn', accounts_by_realm: { cn: 1, intl: 1 } }));
+    if (req.url === '/panel/login') return res.end(JSON.stringify({ ok: true, token: 'session' }));
+    if (req.url === '/catalog/refresh') {
+      if (req.headers['x-panel-token'] !== 'session') { res.statusCode = 401; return res.end('{}'); }
+      data = [stale, fresh];
+      return res.end(JSON.stringify({ ok: true, realm: 'cn', source: 'remote', count: 2 }));
+    }
+    return res.end(JSON.stringify({ realm: 'cn', data }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, baseURL: `http://127.0.0.1:${server.address().port}` } }, {});
+  const editor = editorFor({ enabled: true });
+  const credentials = createFakeCredentials({ stored: { WORKBUDDY_HUB_KEY: 'key', WORKBUDDY_HUB_PANEL_PASSWORD: 'panel-pass' } });
+  const ctx = fakeCtx({ configEditor: editor, credentials });
+  const resync = createModelResync({
+    resolved, logger: ctx.logger, env: {}, probe: async () => ({ ok: true, servable: true }),
+    editor: () => editor, credentials: () => credentials,
+  });
+  registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: {}, resync });
+  const handler = ctx.routes.find((route) => route.path === MODELS_PATH).handler;
+  const post = async (body) => { const res = fakeRes(); await handler(fakeReq('POST', { body: JSON.stringify(body) }), res); return res.body; };
+
+  const auto = await post({ action: 'refresh' });
+  assert.equal(auto.catalog, undefined);
+  assert.ok(!hits.includes('/catalog/refresh'), '上游有 WAF，打开卡片不能重拉');
+  assert.deepEqual(auto.models.map((row) => row.id), ['cn:alpha']);
+
+  const manual = await post({ action: 'refresh', manual: true });
+  assert.deepEqual(manual.catalog, { state: 'done', exits: [{ realm: 'cn', state: 'updated', count: 2 }] });
+  assert.deepEqual(manual.models.map((row) => row.id), ['cn:alpha', 'cn:beta'], '读到的是重拉后的目录');
 });
 
 test('后端路由（hub）：快照来自 hub 的目录，面板地址是 hub 看板根路径；gateway 动作写配置', async () => {

@@ -385,6 +385,12 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       missingSelected: '后端目录暂未列出部分已选模型。自动同步会保留勾选并暂缓更新清单；点「刷新」会按当前目录移除它们，后端重新列出后刷新会自动恢复勾选。若某个区域勾选的模型全部缺席，刷新仍会保留，请取消勾选并改选其他模型后保存。',
       prunedMissing: '已移除后端暂未列出的模型（后端重新列出后刷新会自动恢复勾选）：{models}',
       restoredPruned: '后端已重新列出，已恢复勾选：{models}',
+      catalogUpdated: '已从上游刷新模型目录：{exits}。',
+      catalogCooldown: '{exits} 刚刷新过，约 {seconds} 秒后可再试。',
+      catalogFailed: '{exits} 目录没刷新成功，已保留现有清单。',
+      catalogNoPassword: '没有 HUB 面板密码，目录还是后端缓存的版本。到「区域与 Key」填写后，「刷新」才能从上游重拉。',
+      catalogAuthFailed: 'HUB 面板密码不正确，目录还是后端缓存的版本。请到「区域与 Key」重新填写。',
+      catalogUnavailable: '暂时连不上 HUB 面板，目录还是后端缓存的版本。',
       vision: '视觉',
       emptyBackend: '后端没有返回任何模型。',
       emptyHint: '一个都没勾 = 同步后端全部模型（白名单留空的既有语义）。',
@@ -427,7 +433,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       emptyFiltered: '没有符合筛选条件的模型', modelSearch: '搜索模型', regionAll: '全部区域', ruleFree: '只同步免费模型', ruleVision: '只同步视觉模型', ruleMax: '最高倍率（留空不限）',
       sortUpstream: '上游顺序', sortName: '按名称排序', sortCredits: '按倍率排序', ruleHint: '规则与勾选共同生效，新增模型也按规则筛选；未定价的模型不会视为免费。批量操作只影响当前筛选结果。',
       hubPanelMissing: '未保存', hubMergeHint: '保存后同步到 DSH 的模型都由插件路由，id 为 auto:xxx。同一模型只勾选一个时显示它本身的名称；勾选了多个出口，或同时勾选免费和付费版时名称带 Auto，发送时优先用积分最早到期的出口，免费版优先。同一对话固定在一个出口，请求没被受理时才换下一个。模型 id 末尾的月日版本号（如 -1017）和 free / std 不算区别，同一出口新旧版都勾选时用新版。在模型列表里没勾选的出口不参与。',
-      hubPanelPassword: 'HUB 面板密码（读取 HW 积分到期用）', exitExpiry: '{realm} 最早到期 {time}（{amount} 积分）', exitNoExpiry: '{realm} 没有会到期的积分', exitNoPassword: '{realm} 到期未知：需要填面板密码，否则排在有到期时间的出口之后', exitAuthFailed: '{realm} 到期未知：面板密码不正确，请重新填写', exitUnavailable: '{realm} 到期暂时读不到，排在有到期时间的出口之后',
+      hubPanelPassword: 'HUB 面板密码（刷新目录、读取 HW 积分到期用）', exitExpiry: '{realm} 最早到期 {time}（{amount} 积分）', exitNoExpiry: '{realm} 没有会到期的积分', exitNoPassword: '{realm} 到期未知：需要填面板密码，否则排在有到期时间的出口之后', exitAuthFailed: '{realm} 到期未知：面板密码不正确，请重新填写', exitUnavailable: '{realm} 到期暂时读不到，排在有到期时间的出口之后',
       hubDual: 'CN / GL / HW 同时使用', hubDualHint: 'CN / GL 模型合并显示在一个 WorkBuddy 分组中，按模型区域自动选择出口，不随 HUB 看板切换。HUB 启用 CodeArts 后，它的模型标记为 HW 一并列出，默认不勾选。沿用网关 Key；只有网关 Key 在 HUB 里绑定了区域时，才需要另填区域 Key（只存 DSH 凭据库，留空沿用已保存的值）。',
       hubCnKey: 'CN 区域 Key（可选）', hubGlKey: 'GL 区域 Key（可选）', hubHwKey: 'HW（CodeArts）区域 Key（可选）', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存', hubBoth: 'CN + GL（同一分组，独立出口）', hubAll: 'CN + GL + HW（同一分组，独立出口）',
       codeartsSkipped: 'CodeArts 暂未接入：{reason}', statCodeArts: 'HW（CodeArts）账号', statCodeArtsSub: '积分请到 HUB 看板查看',
@@ -556,6 +562,12 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       missingSelected: 'Some selected models are missing from the backend catalog. Automatic sync keeps them and defers updating the list; click Refresh to remove them based on the current catalog, and a later refresh re-selects them once the backend lists them again. If every selected model in a region is missing, Refresh keeps them, so uncheck them, pick other models and save.',
       prunedMissing: 'Removed models the backend does not list right now (a refresh re-selects them once they return): {models}',
       restoredPruned: 'The backend lists these again, re-selected: {models}',
+      catalogUpdated: 'Model catalog refreshed from upstream: {exits}.',
+      catalogCooldown: '{exits} refreshed moments ago; try again in about {seconds}s.',
+      catalogFailed: '{exits} could not be refreshed; the current list is kept.',
+      catalogNoPassword: 'No HUB panel password, so this is still the backend\'s cached catalog. Fill it in under Regions & keys for Refresh to reach upstream.',
+      catalogAuthFailed: 'The HUB panel password was rejected, so this is still the backend\'s cached catalog. Re-enter it under Regions & keys.',
+      catalogUnavailable: 'The HUB panel is unreachable right now, so this is still the backend\'s cached catalog.',
       vision: 'vision',
       emptyBackend: 'The backend returned no models.',
       emptyHint: 'Selecting nothing means “sync every backend model” (the existing meaning of an empty allow-list).',
@@ -598,7 +610,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       emptyFiltered: 'No models match the filters', modelSearch: 'Search models', regionAll: 'All regions', ruleFree: 'Sync free models only', ruleVision: 'Sync vision models only', ruleMax: 'Max multiplier (blank = any)',
       sortUpstream: 'Upstream order', sortName: 'Sort by name', sortCredits: 'Sort by multiplier', ruleHint: 'Rules and selections both apply, including to new models. Unknown prices are not treated as free. Bulk actions affect only filtered rows.',
       hubPanelMissing: 'Not saved', hubMergeHint: 'Every model synced to DSH is routed by this plugin, with an id like auto:xxx. A model selected once keeps its own name. A model selected on several exits, or in both its free and paid tiers, has Auto in its name and goes through the exit whose credits expire first, free tiers first. A conversation stays on one exit and only moves on if a request is not accepted. A month-day version (such as -1017) or free / std at the end of a model id does not make it a different model; if both versions are selected on one exit, the newer one is used. Exits left unselected in the model list do not take part.',
-      hubPanelPassword: 'HUB panel password (to read HW credit expiry)', exitExpiry: '{realm}: {amount} credits expire first, at {time}', exitNoExpiry: '{realm}: no credits with an expiry date', exitNoPassword: '{realm}: expiry unknown. Enter the panel password, or it ranks after exits with a known expiry', exitAuthFailed: '{realm}: expiry unknown. The panel password is wrong, please enter it again', exitUnavailable: '{realm}: expiry cannot be read right now, so it ranks after exits with a known expiry',
+      hubPanelPassword: 'HUB panel password (to refresh catalogs and read HW credit expiry)', exitExpiry: '{realm}: {amount} credits expire first, at {time}', exitNoExpiry: '{realm}: no credits with an expiry date', exitNoPassword: '{realm}: expiry unknown. Enter the panel password, or it ranks after exits with a known expiry', exitAuthFailed: '{realm}: expiry unknown. The panel password is wrong, please enter it again', exitUnavailable: '{realm}: expiry cannot be read right now, so it ranks after exits with a known expiry',
       hubDual: 'Use CN, GL and HW together', hubDualHint: 'Shows CN / GL models in one WorkBuddy group, routed by the selected model region independently of the HUB dashboard. Once CodeArts is enabled in HUB, its models are listed too, tagged HW and unselected by default. Uses the gateway key; region keys are only needed when it is bound to a region (stored only in DSH credentials; blank keeps saved values).',
       hubCnKey: 'CN region key (optional)', hubGlKey: 'GL region key (optional)', hubHwKey: 'HW (CodeArts) region key (optional)', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved', hubBoth: 'CN + GL (one group, independent exits)', hubAll: 'CN + GL + HW (one group, independent exits)',
       codeartsSkipped: 'CodeArts is not connected: {reason}', statCodeArts: 'HW (CodeArts) accounts', statCodeArtsSub: 'See credits on the HUB dashboard',
@@ -937,6 +949,24 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
     /** hub 的出口 / 积分区域：国际在不同接口里叫 global 或 intl，CodeArts 与模型名一样标 HW。 */
     function realmName(realm) {
       return realm === 'cn' ? 'CN' : realm === 'codearts' ? 'HW' : 'GL';
+    }
+
+    /** 手动刷新时 hub 有没有拉到新目录，要让用户看到：只看列表分不出来。 */
+    function catalogTrouble(catalog) {
+      return Boolean(catalog) && (catalog.state !== 'done' || catalog.exits.some((exit) => exit.state === 'failed'));
+    }
+
+    /** 冷却不算失败：清单还在，只是这次没到窗口。 */
+    function catalogNoticeText(catalog, t) {
+      if (!catalog) return '';
+      if (catalog.state !== 'done') return t({ 'no-password': 'catalogNoPassword', 'auth-failed': 'catalogAuthFailed' }[catalog.state] || 'catalogUnavailable');
+      const [updated, cooling, failed] = ['updated', 'cooldown', 'failed'].map((state) => catalog.exits.filter((exit) => exit.state === state));
+      const names = (list) => list.map((exit) => realmName(exit.realm)).join(' / ');
+      return [
+        updated.length ? t('catalogUpdated', { exits: updated.map((exit) => [realmName(exit.realm), exit.count].filter((part) => part !== undefined).join(' ')).join(' · ') }) : '',
+        cooling.length ? t('catalogCooldown', { exits: names(cooling), seconds: Math.ceil(Math.max(...cooling.map((exit) => exit.retryAfter ?? 1))) }) : '',
+        failed.length ? t('catalogFailed', { exits: names(failed) }) : '',
+      ].filter(Boolean).join(' ');
     }
 
     function formatNumber(value) {
@@ -1829,12 +1859,14 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
           const labels = (list) => (list?.length ? list.map((row) => row.label).join(', ') : undefined);
           const pruned = labels(payload.pruned);
           const restored = labels(payload.restored);
+          const { catalog } = payload;
+          const kind = catalogTrouble(catalog) ? 'error' : 'ok';
           if (['failed', 'skipped', 'not-ready'].includes(payload.sync?.state)) {
-            setNotice({ kind: 'error', pruned, restored, text: payload.sync.reason ?? payload.sync.state });
+            setNotice({ kind: 'error', pruned, restored, catalog, text: payload.sync.reason ?? payload.sync.state });
           } else if (['busy', 'deferred'].includes(payload.sync?.state)) {
-            setNotice({ kind: 'ok', pruned, restored, text: payload.sync.reason });
-          } else if (pruned || restored) {
-            setNotice({ kind: 'ok', pruned, restored });
+            setNotice({ kind, pruned, restored, catalog, text: payload.sync.reason });
+          } else if (pruned || restored || catalog) {
+            setNotice({ kind, pruned, restored, catalog });
           }
         } catch (error) {
           setMeta({});
@@ -2269,7 +2301,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         ? h(
             'p',
             { key: 'notice', className: `dsm-wb-notice ${notice.kind === 'error' ? 'dsm-wb-notice-error' : 'dsm-wb-notice-ok'}` },
-            [notice.restored && t('restoredPruned', { models: notice.restored }), notice.pruned && t('prunedMissing', { models: notice.pruned }), notice.text].filter(Boolean).join(' '),
+            [catalogNoticeText(notice.catalog, t), notice.restored && t('restoredPruned', { models: notice.restored }), notice.pruned && t('prunedMissing', { models: notice.pruned }), notice.text].filter(Boolean).join(' '),
           )
         : null;
       const modelPanel = [];

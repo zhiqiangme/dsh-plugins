@@ -57,10 +57,10 @@ async function setup(t, options = {}) {
   // 有哈希才算改过密码：否则插件会用出厂密码 admin 自动登录。
   writeFileSync(join(accounts, 'settings.json'), JSON.stringify({ panel_password_hash: 'x', panel_password_default: false }));
 
-  const hub = { catalog: CATALOG, codearts: true, codeartsDown: false, password: 'panel-pass', logins: [], overviews: 0, tokens: new Set(), hwEndDate: '', hwRemain: 50, chats: [], reply: undefined, replyBody: undefined, ready: { cn: 1, intl: 1 }, accounts: { cn: 1, intl: 1 } };
+  const hub = { catalog: CATALOG, codearts: true, codeartsDown: false, password: 'panel-pass', logins: [], overviews: 0, tokens: new Set(), hwEndDate: '', hwRemain: 50, chats: [], reply: undefined, replyBody: undefined, ready: { cn: 1, intl: 1 }, accounts: { cn: 1, intl: 1 }, realm: 'cn', refreshed: [], refreshReply: undefined };
   const server = createServer(async (req, res) => {
     res.setHeader('content-type', 'application/json');
-    if (req.url === '/health') return res.end(JSON.stringify({ accounts_by_realm: hub.accounts, accounts_ready_by_realm: hub.ready, ...(hub.codearts ? { codearts: { configured: true, healthy: 1 } } : {}) }));
+    if (req.url === '/health') return res.end(JSON.stringify({ realm: hub.realm, accounts_by_realm: hub.accounts, accounts_ready_by_realm: hub.ready, ...(hub.codearts ? { codearts: { configured: true, healthy: 1 } } : {}) }));
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : undefined;
@@ -75,6 +75,13 @@ async function setup(t, options = {}) {
       if (!hub.tokens.has(req.headers['x-panel-token'])) { res.writeHead(401); return res.end('{}'); }
       hub.overviews += 1;
       return res.end(JSON.stringify({ accounts: [{ disabled: false, credits: { remain: hub.hwRemain, expiring: 20, end_date: hub.hwEndDate } }] }));
+    }
+    if (req.url === '/catalog/refresh' || req.url === '/codearts/models/refresh') {
+      if (!hub.tokens.has(req.headers['x-panel-token'])) { res.writeHead(401); return res.end('{}'); }
+      const exit = body.realm ?? 'codearts';
+      hub.refreshed.push(exit);
+      // 与 hub 同形：/catalog/refresh 成败都回 200，CodeArts 只回模型数。
+      return res.end(JSON.stringify(hub.refreshReply?.(exit) ?? (exit === 'codearts' ? { ok: true, models: hub.catalog.codearts.length } : { ok: true, realm: exit, source: 'remote', count: hub.catalog[exit].length })));
     }
     const realm = req.headers['x-realm'] || 'cn';
     if (req.url.endsWith('/models')) {
@@ -430,6 +437,54 @@ test('转发：没填面板密码时 HW 排在有到期时间的出口之后，�
   assert.equal(x.hub.chats[0].realm, 'cn');
   assert.deepEqual(x.hub.logins, []);
   assert.equal((await x.exits.snapshot()).codearts.state, 'no-password');
+});
+
+test('重拉目录：双区域依次让 hub 重拉三个出口，只登录一次', async (t) => {
+  const x = await setup(t, { stored: { [HUB_PANEL_PASSWORD_REF]: 'panel-pass' } });
+  assert.deepEqual(await x.exits.refreshCatalogs(), { state: 'done', exits: [
+    { realm: 'cn', state: 'updated', count: 5 },
+    { realm: 'intl', state: 'updated', count: 4 },
+    { realm: 'codearts', state: 'updated', count: 4 },
+  ] });
+  assert.deepEqual(x.hub.refreshed, ['cn', 'intl', 'codearts']);
+  assert.deepEqual(x.hub.logins, ['panel-pass']);
+});
+
+test('重拉目录：冷却和失败只记在那个出口上，后面的出口照常', async (t) => {
+  const x = await setup(t, { stored: { [HUB_PANEL_PASSWORD_REF]: 'panel-pass' } });
+  x.hub.refreshReply = (exit) => ({ cn: { ok: false, cooldown: true, retry_after: 12.4 }, intl: { ok: false, msg: '上游未返回可用目录' } })[exit];
+  assert.deepEqual((await x.exits.refreshCatalogs()).exits, [
+    { realm: 'cn', state: 'cooldown', retryAfter: 12.4 },
+    { realm: 'intl', state: 'failed' },
+    { realm: 'codearts', state: 'updated', count: 4 },
+  ]);
+});
+
+test('重拉目录：没账号的出口不打上游；单出口模式只拉看板当前这个', async (t) => {
+  const x = await setup(t, { stored: { [HUB_PANEL_PASSWORD_REF]: 'panel-pass' } });
+  x.hub.accounts = { cn: 1, intl: 0 };
+  x.hub.codearts = false;
+  await x.exits.refreshCatalogs();
+  assert.deepEqual(x.hub.refreshed.splice(0), ['cn']);
+  x.hub.accounts = { cn: 1, intl: 1 };
+  x.hub.realm = 'intl';
+  x.resolved.models = { ...x.resolved.models, hubDual: false };
+  x.clock.now += 6000;
+  await x.exits.refreshCatalogs();
+  assert.deepEqual(x.hub.refreshed, ['intl']);
+});
+
+test('重拉目录：没有面板密码时不发请求；密码错误只试一次；hub 不通时不抛错', async (t) => {
+  const none = await setup(t);
+  assert.deepEqual(await none.exits.refreshCatalogs(), { state: 'no-password' });
+  assert.deepEqual([none.hub.logins, none.hub.refreshed], [[], []]);
+  const wrong = await setup(t, { stored: { [HUB_PANEL_PASSWORD_REF]: 'wrong' } });
+  assert.deepEqual(await wrong.exits.refreshCatalogs(), { state: 'auth-failed' });
+  assert.deepEqual(await wrong.exits.refreshCatalogs(), { state: 'auth-failed' });
+  assert.deepEqual(wrong.hub.logins, ['wrong'], 'hub 一分钟 5 次失败会连浏览器一起锁住');
+  wrong.resolved.models = { ...wrong.resolved.models, baseURL: 'http://127.0.0.1:1' };
+  wrong.clock.now += 6000;
+  assert.deepEqual(await wrong.exits.refreshCatalogs(), { state: 'unavailable' });
 });
 
 test('密码不对只试一次：hub 一分钟 5 次失败会连浏览器一起锁住', async (t) => {

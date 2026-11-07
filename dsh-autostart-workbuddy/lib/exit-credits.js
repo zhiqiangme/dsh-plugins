@@ -8,6 +8,8 @@
  *     没有每个包的到期时间，所以精度不如 CN / GL。
  *
  * 账号文件里有令牌：这里只取积分字段，其它内容不进返回值和日志。
+ *
+ * 面板会话在这里，所以手动刷新时让 hub 重拉目录也走这里（refreshCatalogs）。
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -29,6 +31,8 @@ const FIRST_READ_WAIT_MS = 3000;
 const EXPIRY_SENTINEL_MS = 730 * 86_400_000;
 /** 面板接口的超时：hub 给 overview 每个账号 8 秒上限，再留一点余量。 */
 const PANEL_TIMEOUT_MS = 12_000;
+/** 重拉目录的超时：hub 对上游最多两次 10 秒尝试，CodeArts 每个账号 20 秒，再留一点余量。 */
+const CATALOG_REFRESH_TIMEOUT_MS = 45_000;
 
 function plainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {};
@@ -171,8 +175,8 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
     return paths?.accounts && hubPanelPasswordIsDefault(paths) === true ? HUB_DEFAULT_PANEL_PASSWORD : '';
   }
 
-  /** 会话只活在 hub 内存里，hub 重启后旧 token 失效：401 时重新登录一次。 */
-  async function panelJson(path, password) {
+  /** 会话只活在 hub 内存里，hub 重启后旧 token 失效：401 时重新登录一次。给了 body 就是 POST。 */
+  async function panelJson(path, password, { body, timeoutMs = PANEL_TIMEOUT_MS } = {}) {
     const baseURL = resolved.models.baseURL;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (!token) {
@@ -181,19 +185,40 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
         if (login.state !== 'ok') return { state: login.state === 'rejected' ? 'auth-failed' : 'unavailable' };
         token = login.token;
       }
-      const response = await fetch(`${hubOrigin(baseURL)}${path}`, { headers: { 'X-Panel-Token': token }, signal: AbortSignal.timeout(PANEL_TIMEOUT_MS) });
+      const response = await fetch(`${hubOrigin(baseURL)}${path}`, {
+        ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
+        headers: { 'X-Panel-Token': token, ...(body ? { 'content-type': 'application/json' } : {}) },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
       if (response.status === 401) { token = undefined; continue; }
       return response.ok ? { state: 'ok', value: await response.json() } : { state: 'unavailable' };
     }
     return { state: 'unavailable' };
   }
 
+  /** 取密码再调面板：没密码和被拒过的密码都不发请求。 */
+  async function panelRequest(path, options) {
+    const password = await panelPassword();
+    if (!password) { token = undefined; return { state: 'no-password' }; }
+    if (password === rejected) return { state: 'auth-failed' };
+    return panelJson(path, password, options);
+  }
+
+  /** hub 的两个接口应答不同：/catalog/refresh 失败和冷却也回 200，靠字段区分；CodeArts 只回模型数。 */
+  async function refreshCatalog(realm) {
+    const hw = realm === CODEARTS_REALM;
+    try {
+      const result = await panelRequest(hw ? '/codearts/models/refresh' : '/catalog/refresh', { body: hw ? {} : { realm }, timeoutMs: CATALOG_REFRESH_TIMEOUT_MS });
+      if (result.state !== 'ok') return result.state === 'unavailable' ? { state: 'failed' } : result;
+      const { ok, cooldown, retry_after: retryAfter, count, models } = result.value ?? {};
+      if (cooldown) return { state: 'cooldown', retryAfter };
+      return ok ? { state: 'updated', count: count ?? models } : { state: 'failed' };
+    } catch { return { state: 'failed' }; }
+  }
+
   async function readCodeArts() {
     try {
-      const password = await panelPassword();
-      if (!password) { token = undefined; return { realm: CODEARTS_REALM, state: 'no-password', expireAt: null }; }
-      if (password === rejected) return { realm: CODEARTS_REALM, state: 'auth-failed', expireAt: null };
-      const result = await panelJson('/codearts/overview', password);
+      const result = await panelRequest('/codearts/overview');
       if (result.state !== 'ok') return { realm: CODEARTS_REALM, state: result.state, expireAt: null };
       return readCodeArtsExpiry(result.value, now());
     } catch { return { realm: CODEARTS_REALM, state: 'unavailable', expireAt: null }; }
@@ -219,7 +244,7 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
       const counts = payload?.accounts_by_realm ?? payload?.accounts_ready_by_realm ?? { cn: 1, intl: 1 };
       const ready = new Set(Object.entries(counts).filter(([, count]) => count > 0).map(([realm]) => realm));
       if (payload?.codearts?.configured && payload.codearts.healthy !== 0) ready.add(CODEARTS_REALM);
-      health = { ready, codearts: payload?.codearts?.configured === true };
+      health = { ready, realm: payload?.realm, codearts: payload?.codearts?.configured === true };
     } catch { health = undefined; }
     healthAt = now();
     return health;
@@ -251,12 +276,33 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
     /**
      * 有账号的出口；探不到时返回 undefined，由调用方照常发请求，让 hub 报真实错误。
      *
-     * @returns {Promise<{ ready: Set<string>, codearts: boolean } | undefined>}
+     * @returns {Promise<{ ready: Set<string>, realm?: string, codearts: boolean } | undefined>}
      */
     async readiness() {
       if (now() - healthAt < HEALTH_TTL_MS) return health;
       checking ??= readHealth().finally(() => { checking = undefined; });
       return checking;
+    },
+
+    /**
+     * 让 hub 绕过 300 秒的目录缓存，立刻从上游重拉（它面板「刷新模型清单」用的接口，只认面板会话）。
+     * 上游有 WAF，只给用户手点的刷新用，定时同步和打开卡片都不要调。没账号的出口拉不到，跳过；
+     * 单出口模式只拉看板当前这个。依次发：hub 的目录锁本来就串行，同时发还会各登录一次。
+     *
+     * @returns {Promise<{ state: 'no-password' | 'auth-failed' | 'unavailable' } |
+     *   { state: 'done', exits: { realm: string, state: 'updated' | 'cooldown' | 'failed', count?: number, retryAfter?: number }[] }>}
+     */
+    async refreshCatalogs() {
+      const health = await this.readiness();
+      const realms = (resolved.models.hubDual ? EXIT_ORDER : [health?.realm]).filter((realm) => health?.ready.has(realm));
+      if (!realms.length) return { state: 'unavailable' };
+      const refreshed = [];
+      for (const realm of realms) {
+        const result = await refreshCatalog(realm);
+        if (result.state === 'no-password' || result.state === 'auth-failed') return { state: result.state };
+        refreshed.push({ realm, ...result });
+      }
+      return { state: 'done', exits: refreshed };
     },
 
     /** 用户换了面板密码：旧会话和失败记录都作废，下一轮重新读 HW。 */

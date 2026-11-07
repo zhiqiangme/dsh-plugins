@@ -286,6 +286,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
 
   const expected = [
     'modelUnavailable', 'missingSelected', 'prunedMissing', 'restoredPruned',
+    'catalogUpdated', 'catalogCooldown', 'catalogFailed', 'catalogNoPassword', 'catalogAuthFailed', 'catalogUnavailable',
     'emptyFiltered', 'recoveryOff', 'recoveryExternal',
     'balanceUnknown', 'balanceUnsupported', 'balanceUnavailable', 'balanceHint', 'balanceUpdated',
     'hubFollowKey',
@@ -452,6 +453,30 @@ test('刷新会立即同步 DSH，沿用保存的选择；暂时消失的白名�
   await button(collectByType(renderCard(), 'button'), '保存并同步').props.onClick();
   assert.deepEqual(requests[1].body, { enabled: true, only: ['global:beta', 'cn:alpha'] });
   assert.equal(requests[2].method, 'GET', '保存已同步，之后只回读');
+});
+
+test('手点「刷新」说明每个出口的目录有没有从上游更新；失败用错误色', async () => {
+  let catalog;
+  const { renderCard } = boot(modelStates(true), {
+    fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true, enabled: true, only: [], models: [ROWS[1]], catalog, sync: { state: 'unchanged' } }) }),
+  });
+  const refresh = async (next) => {
+    catalog = next;
+    await button(collectByType(renderCard(), 'button'), '刷新').props.onClick();
+    const notice = collectByType(renderCard(), 'p').find((node) => /dsm-wb-notice/.test(node.props.className));
+    return { text: collectText(notice).join(''), error: /notice-error/.test(notice.props.className) };
+  };
+  assert.deepEqual(await refresh({ state: 'done', exits: [{ realm: 'cn', state: 'updated', count: 38 }, { realm: 'intl', state: 'updated', count: 30 }, { realm: 'codearts', state: 'updated', count: 12 }] }),
+    { text: '已从上游刷新模型目录：CN 38 · GL 30 · HW 12。', error: false });
+  assert.deepEqual(await refresh({ state: 'done', exits: [{ realm: 'cn', state: 'updated', count: 38 }, { realm: 'intl', state: 'cooldown', retryAfter: 12.4 }] }),
+    { text: '已从上游刷新模型目录：CN 38。 GL 刚刷新过，约 13 秒后可再试。', error: false });
+  assert.deepEqual(await refresh({ state: 'done', exits: [{ realm: 'cn', state: 'failed' }, { realm: 'codearts', state: 'failed' }] }),
+    { text: 'CN / HW 目录没刷新成功，已保留现有清单。', error: true });
+  const none = await refresh({ state: 'no-password' });
+  assert.match(none.text, /没有 HUB 面板密码/);
+  assert.equal(none.error, true);
+  assert.match((await refresh({ state: 'auth-failed' })).text, /面板密码不正确/);
+  assert.match((await refresh({ state: 'unavailable' })).text, /连不上 HUB 面板/);
 });
 
 test('同步全部模型时重复保存仍保留空白名单，网络恢复后自动包含 CN', async () => {
@@ -1089,7 +1114,7 @@ test('区域页：路由组没有开关，到期情况逐行显示；面板密�
   assert.doesNotMatch(text, /1793/, '时间戳要格式化成本地时间');
   assert.match(text, /GL 没有会到期的积分/);
   assert.match(text, /到期未知：需要填面板密码/);
-  assert.match(text, /HUB 面板密码（读取 HW 积分到期用）\|未保存/);
+  assert.match(text, /HUB 面板密码（刷新目录、读取 HW 积分到期用）\|未保存/);
 });
 
 test('区域页：HW 密码错误和读不到分开说明，只有一个出口时不显示这一段', () => {

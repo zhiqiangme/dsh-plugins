@@ -874,9 +874,11 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
               }
               // 打开卡片、切换网关后的自动刷新保留缺席保护（HUB 偶发缩水目录）；用户手点「刷新」则以本次目录为准：
               // 先剔除后端已不列出的勾选（名称取自同步前的 DSH 清单），再跳过两轮确认同步，当轮从 DSH 移除。
+              // hub 的 /v1/models 有 300 秒缓存，先让它重拉，下面读到的才是新目录；拉不到只提示，现有目录照用。
+              const catalog = resolved.gateway === 'hub' ? await exits.refreshCatalogs() : undefined;
               const payload = await pruneMissingSelection({ resolved, editor: configEditorOf(ctx), gateway: resolved.gateway, payload: await restore() });
               const synced = await resync.tick({ manual: true });
-              json(res, 200, { ...payload, sync: { state: synced.state, reason: synced.reason } });
+              json(res, 200, { ...payload, ...(catalog ? { catalog } : {}), sync: { state: synced.state, reason: synced.reason } });
               return;
             }
             const result = await applySelection({

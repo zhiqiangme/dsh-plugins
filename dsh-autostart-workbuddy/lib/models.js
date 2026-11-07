@@ -40,7 +40,7 @@ export const HUB_REALM_HEADER = 'X-Realm';
 export const HUB_ROUTER_PATH = '/plugins/dsh-autostart-workbuddy/hub/v1';
 /** 合并模型的 id 前缀：这种条目不绑定出口，转发时才按积分到期选（见 hub-router.js）。 */
 export const MERGED_PREFIX = 'auto:';
-/** hub 面板密码的凭据引用：只有读 HW 积分要用，改过的密码 hub 只存哈希，插件不存就读不到。 */
+/** hub 面板密码的凭据引用：读 HW 积分和手动重拉目录要用，改过的密码 hub 只存哈希，插件不存就读不到。 */
 export const HUB_PANEL_PASSWORD_REF = 'WORKBUDDY_HUB_PANEL_PASSWORD';
 
 export async function resolveModelApiKey(models, env = process.env, credentials) {
