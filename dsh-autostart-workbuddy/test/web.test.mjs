@@ -732,7 +732,7 @@ test('后端路由（hub）：快照来自 hub 的目录，面板地址是 hub �
   assert.equal(status.body.backend.exeExists, false, '没装 hub 时显示安装');
   assert.equal(status.body.backend.root, root);
   assert.match(status.body.backend.panelUrl, /:\d+\/$/);
-  assert.deepEqual(status.body.backend.hubSettings, { enabled: false, merge: true, keys: { cn: 'saved', global: 'missing', codearts: 'missing', follow: 'saved', panel: 'missing' } });
+  assert.deepEqual(status.body.backend.hubSettings, { enabled: false, keys: { cn: 'saved', global: 'missing', codearts: 'missing', follow: 'saved', panel: 'missing' } });
   assert.doesNotMatch(JSON.stringify(status.body), /cn-secret|follow-secret/);
   await credentials.set('WORKBUDDY_PROXY_KEY_GLOBAL', 'gl-secret');
   const reloaded = fakeRes();

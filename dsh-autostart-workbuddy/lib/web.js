@@ -47,6 +47,7 @@ import {
   resolveModelApiKey,
   LLM_PI_AI_PACKAGE,
   findConfigEntry,
+  mergeKey,
   modelCreditsLabel,
   modelDisplayName,
   missingSelectedModels,
@@ -262,9 +263,11 @@ export async function describeModels({ spec, models, editor, env = process.env, 
   }));
   const previous = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE })?.options?.config?.providers?.[models.provider]?.models ?? [];
   const names = new Map(previous.map((entry) => [selectionKey({ id: entry.id, realm: fetched.realm }), entry.name]));
+  // 双区域写进 DSH 的是 auto: id，勾选键对不上，按同款取名称。
+  const sameModel = new Map(previous.map((entry) => [mergeKey(entry.id), entry.name]));
   // 缺席项仍可取消勾选；不伪造倍率、视觉或上下文能力，也不把它算成后端提供的模型。
   for (const id of missingSelectedModels(fetched.models, only, models.hubDual ? undefined : fetched.realm)) {
-    rows.push({ id, label: names.get(id) || id, price: null, selected: true, unavailable: true });
+    rows.push({ id, label: names.get(id) || sameModel.get(mergeKey(id)) || id, price: null, selected: true, unavailable: true });
   }
 
   return {
@@ -504,7 +507,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
   }
   const action = typeof body.value.action === 'string' ? body.value.action : '';
   if (action === 'hubMode') {
-    const result = await setHubMode({ resolved, editor, credentials, env, exits, enabled: body.value.enabled, merge: body.value.merge, cnKey: body.value.cnKey, globalKey: body.value.globalKey, codeartsKey: body.value.codeartsKey, followKey: body.value.followKey, panelPassword: body.value.panelPassword });
+    const result = await setHubMode({ resolved, editor, credentials, env, exits, enabled: body.value.enabled, cnKey: body.value.cnKey, globalKey: body.value.globalKey, codeartsKey: body.value.codeartsKey, followKey: body.value.followKey, panelPassword: body.value.panelPassword });
     json(res, result.ok ? 200 : 400, result);
     return;
   }
@@ -625,13 +628,12 @@ export async function describeHubSettings({ resolved, editor, credentials, env =
   // 旧版跟随 Key 尚未迁移时，仍按实际读取的旧引用显示状态。
   const follow = savedFollow === 'missing' && resolved.models.apiKeyRef && resolved.models.apiKeyRef !== followRef
     ? await state(resolved.models.apiKeyRef) : savedFollow;
-  return { enabled: resolved.models.hubDual === true, merge: resolved.models.hubMerge === true, keys: { cn, global, codearts, follow, panel } };
+  return { enabled: resolved.models.hubDual === true, keys: { cn, global, codearts, follow, panel } };
 }
 
 /** 区域 Key 只写凭据库，profile 和面板快照只保存模式开关与不含密钥的状态。 */
-export async function setHubMode({ resolved, editor, credentials, env = process.env, exits, enabled, merge, cnKey, globalKey, codeartsKey, followKey, panelPassword }) {
+export async function setHubMode({ resolved, editor, credentials, env = process.env, exits, enabled, cnKey, globalKey, codeartsKey, followKey, panelPassword }) {
   if (resolved.gateway !== 'hub' || typeof enabled !== 'boolean') return { ok: false, reason: '请在 HUB 网关下设置双区域模式' };
-  if (merge !== undefined && typeof merge !== 'boolean') return { ok: false, reason: 'merge 必须是布尔值' };
   const entry = findConfigEntry(editor, { id: PLUGIN_ID });
   if (!entry || typeof editor?.edit !== 'function') return { ok: false, reason: '宿主没有可编辑的插件配置' };
   try {
@@ -686,9 +688,8 @@ export async function setHubMode({ resolved, editor, credentials, env = process.
       exits?.reset();
     }
     const keyPatch = follow ? { hubApiKeyRef: keyRef } : {};
-    const mergePatch = merge === undefined ? {} : { hubMerge: merge };
-    await editor.edit(entry, (current) => ({ ...plainObject(current), models: { ...plainObject(current?.models), ...keyPatch, ...mergePatch, hubDual: enabled } }));
-    resolved.models = { ...resolved.models, ...keyPatch, ...mergePatch, ...(follow ? { apiKeyRef: keyRef } : {}), hubDual: enabled };
+    await editor.edit(entry, (current) => ({ ...plainObject(current), models: { ...plainObject(current?.models), ...keyPatch, hubDual: enabled } }));
+    resolved.models = { ...resolved.models, ...keyPatch, ...(follow ? { apiKeyRef: keyRef } : {}), hubDual: enabled };
     let synced;
     try { synced = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env }); }
     catch { synced = { state: 'failed', reason: '模型同步失败，请稍后重试' }; }

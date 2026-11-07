@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { resolvePluginConfig } from '../lib/config.js';
 import { applySelection, describeHubSettings, describeModels, setHubMode } from '../lib/web.js';
-import { HUB_ROUTER_PATH, syncModels } from '../lib/models.js';
+import { HUB_ROUTER_PATH, mergeKey, syncModels } from '../lib/models.js';
 import { createHubRouter } from '../lib/hub-router.js';
 import { diagnose } from '../lib/diagnostics.js';
 import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
@@ -36,7 +36,7 @@ async function setup(t) {
   });
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(done); }));
-  const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, hubMerge: false, baseURL: `http://127.0.0.1:${server.address().port}` } }, {});
+  const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, baseURL: `http://127.0.0.1:${server.address().port}` } }, {});
   const editor = createFakeConfigEditor(profileRows());
   const credentials = createFakeCredentials();
   const options = { resolved, editor, credentials, env: {} };
@@ -73,11 +73,11 @@ test('HUB 双区域：只有一个 WorkBuddy 分组，CN / GL 同名模型独立
   assert.equal(saved.sync.state, 'updated');
   const { workbuddy } = config().providers;
   assert.deepEqual(Object.keys(config().providers), ['openrouter', 'workbuddy']);
-  assert.deepEqual(workbuddy.models.map(({ id, name }) => ({ id, name })), [
-    { id: 'cn:shared', name: 'Shared CN Free' }, { id: 'global:shared', name: 'Shared GL Free' },
-  ]);
+  assert.deepEqual(workbuddy.models.map(({ id, name }) => ({ id, name })), [{ id: 'auto:shared', name: 'Shared Auto Free' }]);
   assert.equal(workbuddy.apiKeyEnv, 'WORKBUDDY_HUB_KEY');
   assert.ok(!credentials.sets.some((row) => /_CN$|_GLOBAL$/.test(row.ref)));
+  assert.equal(await chatRealm(workbuddy, credentials, 'auto:shared'), 'cn');
+  // 旧会话记录的还是带前缀的 id。
   assert.equal(await chatRealm(workbuddy, credentials, 'cn:shared'), 'cn');
   assert.equal(await chatRealm(workbuddy, credentials, 'global:shared'), 'intl');
   assert.ok(hub.chats.every((chat) => chat.model === 'shared'), 'HUB 收到裸模型 id');
@@ -86,7 +86,7 @@ test('HUB 双区域：只有一个 WorkBuddy 分组，CN / GL 同名模型独立
   const switched = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} });
   assert.equal(switched.state, 'unchanged');
   assert.equal(switched.realm, 'dual');
-  assert.equal(config().providers.workbuddy.models[0].name, 'Shared CN Free');
+  assert.equal(config().providers.workbuddy.models[0].name, 'Shared Auto Free');
   assert.equal(await chatRealm(config().providers.workbuddy, credentials, 'global:shared'), 'intl', '看板切到 CN 后 GL 仍走国际');
 
   const snapshot = await describeModels({ ...options, spec: resolved.spec, models: resolved.models, gateway: 'hub' });
@@ -111,14 +111,14 @@ test('区域 Key 是可选覆盖：同一分组按区域取专用凭据，Key �
   assert.deepEqual(hub.chats.map((chat) => chat.key), ['Bearer cn-secret', 'Bearer gl-secret']);
   assert.ok(!JSON.stringify(config()).includes('cn-secret'));
   assert.ok(!JSON.stringify(saved).includes('gl-secret'));
-  assert.deepEqual(saved.settings, { enabled: true, merge: false, keys: { cn: 'saved', global: 'saved', codearts: 'missing', follow: 'saved', panel: 'missing' } });
+  assert.deepEqual(saved.settings, { enabled: true, keys: { cn: 'saved', global: 'saved', codearts: 'missing', follow: 'saved', panel: 'missing' } });
 });
 
 test('未勾选双区域时也保存表单里的三个 Key，重新读取能确认状态，留空不会删除', async (t) => {
   const { resolved, editor, credentials, options, config } = await setup(t);
   const saved = await setHubMode({ ...options, enabled: false, cnKey: 'cn-secret', globalKey: 'gl-secret', followKey: 'follow-secret' });
   assert.equal(saved.ok, true);
-  assert.deepEqual(saved.settings, { enabled: false, merge: false, keys: { cn: 'saved', global: 'saved', codearts: 'missing', follow: 'saved', panel: 'missing' } });
+  assert.deepEqual(saved.settings, { enabled: false, keys: { cn: 'saved', global: 'saved', codearts: 'missing', follow: 'saved', panel: 'missing' } });
   assert.equal(credentials.values.WORKBUDDY_PROXY_KEY_CN, 'cn-secret');
   assert.equal(credentials.values.WORKBUDDY_PROXY_KEY_GLOBAL, 'gl-secret');
   assert.equal(credentials.values.WORKBUDDY_HUB_KEY, 'follow-secret');
@@ -210,7 +210,7 @@ test('从旧版双区域升级：合并旧分组并保留区域凭据和其它 p
   await credentials.set('WORKBUDDY_PROXY_KEY_GLOBAL', 'gl-secret');
   const result = await syncModels({ spec: resolved.spec, models: { ...resolved.models, hubDual: true }, editor, credentials, env: {} });
   assert.equal(result.state, 'updated');
-  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['cn:shared', 'global:shared']);
+  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['auto:shared']);
   assert.equal(config().providers['workbuddy-hub-cn'], undefined);
   assert.equal(config().providers['workbuddy-hub-global'], undefined);
   assert.equal(credentials.values.WORKBUDDY_PROXY_KEY_CN, 'cn-secret');
@@ -253,7 +253,7 @@ test('CodeArts：启用后以 HW 列出且默认不勾选，勾选后进同一�
   hub.codearts = true;
   resolved.models.only = ['cn:shared', 'global:shared'];
   assert.equal((await setHubMode({ ...options, enabled: true })).ok, true);
-  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['cn:shared', 'global:shared'], '没勾过 CodeArts 不把整个目录灌进 DSH');
+  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['auto:shared'], '没勾过 CodeArts 不把整个目录灌进 DSH');
 
   const snapshot = await describeModels({ ...options, spec: resolved.spec, models: resolved.models, gateway: 'hub' });
   const row = snapshot.models.find((item) => item.id === 'codearts:GLM-5.2');
@@ -263,34 +263,34 @@ test('CodeArts：启用后以 HW 列出且默认不勾选，勾选后进同一�
   assert.equal((await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} })).state, 'updated');
   const { workbuddy } = config().providers;
   assert.deepEqual(workbuddy.models.map(({ id, name }) => ({ id, name })), [
-    { id: 'cn:shared', name: 'Shared CN Free' }, { id: 'global:shared', name: 'Shared GL Free' }, { id: 'codearts:GLM-5.2', name: 'GLM-5.2 HW' },
+    { id: 'auto:shared', name: 'Shared Auto Free' }, { id: 'auto:glm-5.2', name: 'GLM-5.2 HW' },
   ]);
-  assert.equal(await chatRealm(workbuddy, credentials, 'codearts:GLM-5.2'), 'codearts');
-  assert.equal(hub.chats.at(-1).model, 'GLM-5.2', 'HUB 收到裸模型 id');
-  assert.equal(await chatRealm(workbuddy, credentials, 'cn:shared'), 'cn', '同名模型按前缀分开路由');
+  assert.equal(await chatRealm(workbuddy, credentials, 'auto:glm-5.2'), 'codearts');
+  assert.equal(hub.chats.at(-1).model, 'GLM-5.2', 'HUB 收到原样的裸模型 id，不是合并键的小写');
+  assert.equal(await chatRealm(workbuddy, credentials, 'cn:shared'), 'cn', '旧会话带前缀的 id 仍按前缀路由');
 
   resolved.models.only = ['cn:shared', 'global:shared'];
   assert.equal((await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} })).state, 'updated');
-  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['cn:shared', 'global:shared'], '全部取消勾选就能去掉 CodeArts');
+  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['auto:shared'], '全部取消勾选就能去掉 CodeArts');
 });
 
 test('CodeArts：同步全部时一起进分组；没启用时不向 HUB 发 codearts 出口', async (t) => {
   const { hub, options, config } = await setup(t);
   assert.equal((await setHubMode({ ...options, enabled: true })).ok, true);
-  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['cn:shared', 'global:shared']);
+  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['auto:shared']);
   assert.ok(!hub.hits.some(([, realm]) => realm === 'codearts'), '旧 HUB 不认识这个出口，不能试探');
   hub.codearts = true;
   assert.equal((await setHubMode({ ...options, enabled: true })).ok, true);
-  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['cn:shared', 'global:shared', 'codearts:shared', 'codearts:GLM-5.2']);
+  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['auto:shared', 'auto:glm-5.2']);
 });
 
 test('CodeArts 取不到目录不拖累 CN / GL：已勾选的 HW 模型保留，面板说明原因，取消勾选才移除', async (t) => {
   const { hub, resolved, editor, credentials, options, config } = await setup(t);
   const sync = () => syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} });
   const ids = () => config().providers.workbuddy.models.map((model) => model.id);
-  const all = ['cn:shared', 'global:shared', 'codearts:GLM-5.2'];
+  const all = ['auto:shared', 'auto:glm-5.2'];
   hub.codearts = true;
-  resolved.models.only = all;
+  resolved.models.only = ['cn:shared', 'global:shared', 'codearts:GLM-5.2'];
   assert.equal((await setHubMode({ ...options, enabled: true })).ok, true);
   assert.deepEqual(ids(), all);
 
@@ -308,13 +308,15 @@ test('CodeArts 取不到目录不拖累 CN / GL：已勾选的 HW 模型保留�
   assert.deepEqual(ids(), all);
   resolved.models.only = ['cn:shared', 'global:shared'];
   assert.equal((await sync()).state, 'updated');
-  assert.deepEqual(ids(), ['cn:shared', 'global:shared']);
+  assert.deepEqual(ids(), ['auto:shared']);
 });
 
 test('规则排序跨区域生效：DSH 的顺序与面板一致，改规则后保存立即重排', async (t) => {
   const { hub, resolved, editor, credentials, options, config } = await setup(t);
   const filterRows = panelFilterRows();
   const ids = () => config().providers.workbuddy.models.map((model) => model.id);
+  // 面板按出口一行行列，DSH 里同款并成一条，位置取同款里排最前的那行。
+  const synced = (rows) => [...new Set(rows.map((id) => `auto:${mergeKey(id)}`))];
   const sync = () => syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} });
   const only = ['cn:kimi', 'cn:glm', 'cn:flash', 'global:kimi', 'global:flash', 'codearts:GLM-5.2', 'codearts:flash'];
   const save = (sort) => applySelection({ resolved, editor, credentials, env: {}, only, enabled: true, rules: { sort } });
@@ -330,24 +332,24 @@ test('规则排序跨区域生效：DSH 的顺序与面板一致，改规则后�
   };
   resolved.models.only = only;
   assert.equal((await setHubMode({ ...options, enabled: true })).ok, true);
-  assert.deepEqual(ids(), only, '上游顺序仍是区域一批一批');
+  assert.deepEqual(ids(), synced(only), '上游顺序仍是区域一批一批');
   assert.deepEqual(await panel('upstream'), only);
 
   const byName = ['cn:flash', 'global:flash', 'codearts:flash', 'cn:glm', 'codearts:GLM-5.2', 'cn:kimi', 'global:kimi'];
   assert.equal((await save('name')).sync.state, 'updated', '只改顺序也要写回 DSH');
-  assert.deepEqual(ids(), byName);
+  assert.deepEqual(ids(), synced(byName));
   assert.deepEqual(await panel('name'), byName);
   assert.equal((await sync()).state, 'unchanged', '排好后重复同步不再写入');
 
   // CodeArts 目录暂缺时保留的条目也参与排序，否则那一轮 HW 模型会被甩到末尾。
   hub.codeartsDown = true;
   assert.equal((await sync()).state, 'unchanged');
-  assert.deepEqual(ids(), byName);
+  assert.deepEqual(ids(), synced(byName));
   hub.codeartsDown = false;
 
   const byCredits = ['cn:flash', 'global:flash', 'cn:glm', 'cn:kimi', 'global:kimi', 'codearts:GLM-5.2', 'codearts:flash'];
   assert.equal((await save('credits')).sync.state, 'updated');
-  assert.deepEqual(ids(), byCredits, '未定价的 HW 排在最后');
+  assert.deepEqual(ids(), synced(byCredits), '未定价的 HW 排在最后');
   assert.deepEqual(await panel('credits'), byCredits);
 });
 
@@ -356,7 +358,7 @@ test('网关 Key 绑了区域时 CodeArts 只跳过并说明；HW Key 校验通�
   hub.codearts = true;
   hub.boundShared = true;
   assert.equal((await setHubMode({ ...options, enabled: true, cnKey: 'cn-secret' })).ok, true);
-  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['cn:shared', 'global:shared']);
+  assert.deepEqual(config().providers.workbuddy.models.map((model) => model.id), ['auto:shared']);
   const snapshot = await describeModels({ ...options, spec: resolved.spec, models: resolved.models, gateway: 'hub' });
   assert.match(snapshot.skipped, /X-Realm 无法切到 HW/);
 
@@ -368,7 +370,7 @@ test('网关 Key 绑了区域时 CodeArts 只跳过并说明；HW Key 校验通�
   const saved = await setHubMode({ ...options, enabled: true, codeartsKey: 'hw-secret' });
   assert.equal(saved.ok, true);
   assert.equal(saved.settings.keys.codearts, 'saved');
-  assert.equal(await chatRealm(config().providers.workbuddy, credentials, 'codearts:GLM-5.2'), 'codearts');
+  assert.equal(await chatRealm(config().providers.workbuddy, credentials, 'auto:glm-5.2'), 'codearts');
   assert.equal(hub.chats.at(-1).key, 'Bearer hw-secret');
   assert.doesNotMatch(JSON.stringify({ saved, config: config() }), /hw-secret/);
 });

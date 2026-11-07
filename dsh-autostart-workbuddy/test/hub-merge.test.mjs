@@ -8,7 +8,7 @@ import { resolvePluginConfig } from '../lib/config.js';
 import { createExitCredits, parseStamp, rankExits, readCodeArtsExpiry, readWorkBuddyExpiry } from '../lib/exit-credits.js';
 import { conversationKey, createHubRouter, requestHasImage } from '../lib/hub-router.js';
 import { HUB_PANEL_PASSWORD_REF, HUB_ROUTER_PATH, mergeKey, syncModels } from '../lib/models.js';
-import { describeHubSettings, setHubMode } from '../lib/web.js';
+import { setHubMode } from '../lib/web.js';
 import { createFakeConfigEditor, createFakeCredentials, profileRows } from '../fixtures/fake-config-editor.mjs';
 
 const NOW = new Date(2026, 10, 5, 12, 0, 0).getTime();
@@ -79,7 +79,7 @@ async function setup(t, options = {}) {
     const realm = req.headers['x-realm'] || 'cn';
     if (req.url.endsWith('/models')) {
       if (realm === 'codearts' && hub.codeartsDown) { res.writeHead(502); return res.end('{}'); }
-      return res.end(JSON.stringify({ realm, data: hub.catalog[realm] }));
+      return res.end(JSON.stringify({ realm, data: hub.catalog[realm], ...(hub.source?.[realm] ? { catalog: hub.source[realm] } : {}) }));
     }
     hub.chats.push({ ...body, realm });
     const answer = hub.reply?.(realm, body) ?? 200;
@@ -116,18 +116,15 @@ async function setup(t, options = {}) {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer shared' }, body: JSON.stringify(body),
   });
   const writeAccount = (name, value) => writeFileSync(join(accounts, `${name}.json`), JSON.stringify(value));
-  const sync = () => syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env });
+  const sync = (extra) => syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env, ...extra });
   const listed = () => editor.entry('llm-pi-ai').options.config.providers.workbuddy.models;
   return { hub, resolved, editor, credentials, env, exits, send, sync, listed, writeAccount, accounts, clock };
 }
 
 const ask = (text = 'hello', model = 'auto:kimi-k3.1-pro') => ({ model, messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: text }] });
 
-test('配置：HUB 默认开启合并，可关闭；wb2api 不支持', () => {
-  assert.equal(resolvePluginConfig({ gateway: 'hub' }, {}).models.hubMerge, true);
-  assert.equal(resolvePluginConfig({ gateway: 'hub', models: { hubMerge: false } }, {}).models.hubMerge, false);
-  assert.equal(resolvePluginConfig({ gateway: 'wb2api', models: { hubMerge: true } }, {}).models.hubMerge, false);
-});
+/** DSH 模型列表里看到的 id 和名称。 */
+const shown = (x) => x.listed().map(({ id, name }) => [id, name]);
 
 test('合并键按 id 不按展示名：大小写、月日版本号和计费档位不算区别，同名不同 id 不合并', () => {
   assert.equal(mergeKey('cn:DeepSeek-V4.1-Flash'), mergeKey('global:deepseek-v4.1-flash'));
@@ -143,7 +140,7 @@ test('合并键按 id 不按展示名：大小写、月日版本号和计费档�
   for (const id of ['model-2000', 'model-1301', 'model-0132', 'glm-5.3']) assert.equal(mergeKey(id), id, '不是合法月日的数字不算版本号');
 });
 
-test('多个出口的同一模型并成一条，只有一个出口的保持原 id', async (t) => {
+test('多个出口的同一模型并成一条，名称带 Auto', async (t) => {
   const x = await setup(t);
   assert.equal((await x.sync()).state, 'updated');
   const byId = new Map(x.listed().map((entry) => [entry.id, entry]));
@@ -162,23 +159,22 @@ test('只勾了免费版时显示 Free；只勾付费版时显示一个倍率', 
   assert.deepEqual(paid.listed().map(({ id, name }) => [id, name]), [['auto:hy4', 'Hy4 Auto 0.29']]);
 });
 
-test('同一出口勾了免费和付费也合并；只勾一版且只有一个出口时保持原 id', async (t) => {
+test('同一出口勾了免费和付费也算多个可选项；只勾一版时显示它本身的名称，id 不变', async (t) => {
   const x = await setup(t, { only: ['cn:hy4free', 'cn:hy4std', 'global:kimi-k3.1-pro'] });
   await x.sync();
-  assert.deepEqual(x.listed().map((entry) => entry.id).sort(), ['auto:hy4', 'global:kimi-k3.1-pro']);
+  assert.deepEqual(shown(x).sort(), [['auto:hy4', 'Hy4 Auto Free-0.29'], ['auto:kimi-k3.1-pro', 'Kimi-K3.1-Pro GL 0.97']]);
   x.resolved.models = { ...x.resolved.models, only: ['cn:hy4free', 'global:kimi-k3.1-pro'] };
   await x.sync();
-  assert.deepEqual(x.listed().map((entry) => entry.id).sort(), ['cn:hy4free', 'global:kimi-k3.1-pro']);
+  assert.deepEqual(shown(x).sort(), [['auto:hy4', 'Hy4 CN Free'], ['auto:kimi-k3.1-pro', 'Kimi-K3.1-Pro GL 0.97']]);
 });
 
-test('只有一个出口的模型保持原 id；同一出口的新旧版本各自保留', async (t) => {
+test('只勾一个的模型也是 auto: 开头，显示它本身的名称；同一出口的新旧版本只留最新的', async (t) => {
   const x = await setup(t, { only: ['codearts:deepseek-v4.1-flash-1017', 'codearts:deepseek-v4.1-flash', 'cn:kimi-k3.1-pro', 'global:hy4std'] });
   await x.sync();
-  assert.deepEqual(x.listed().map(({ id, name }) => [id, name]), [
-    ['cn:kimi-k3.1-pro', 'Kimi-K3.1-Pro CN 0.97'],
-    ['global:hy4std', 'Hy4 GL 0.29'],
-    ['codearts:deepseek-v4.1-flash-1017', 'DeepSeek-V4.1-Flash-1017 HW 0.18'],
-    ['codearts:deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash HW 0.18'],
+  assert.deepEqual(shown(x), [
+    ['auto:kimi-k3.1-pro', 'Kimi-K3.1-Pro CN 0.97'],
+    ['auto:hy4', 'Hy4 GL 0.29'],
+    ['auto:deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash-1017 HW 0.18'],
   ]);
 });
 
@@ -195,7 +191,7 @@ test('同一出口新旧版本都勾选时转发到新版，发给 hub 的是带
   x.hub.hwEndDate = stamp(NOW + DAY).slice(0, 10);
   x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
   await x.sync();
-  assert.deepEqual(x.listed().map((entry) => entry.id), ['auto:deepseek-v4.1-flash', 'global:hy4std']);
+  assert.deepEqual(x.listed().map((entry) => entry.id), ['auto:deepseek-v4.1-flash', 'auto:hy4']);
   await x.send(ask('a', 'auto:deepseek-v4.1-flash'));
   assert.deepEqual(x.hub.chats.map(({ realm, model }) => [realm, model]), [['codearts', 'deepseek-v4.1-flash-1017']]);
 });
@@ -214,20 +210,31 @@ test('合并条目的能力：上下文和输出取最小，档位取交集，�
   assert.equal(byId.get('auto:deepseek-v4.1-flash').maxTokens, 65536, 'HW 的输出上限比 CN / GL 低');
 });
 
-test('没勾选的出口不参与合并；只剩一个出口时回到原 id，引用跟着改', async (t) => {
+test('没勾选的出口不参与；增减勾选时 id 不变，只有显示名称变，引用不用改', async (t) => {
   const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:kimi-k3.1-pro'] });
   await x.sync();
-  assert.deepEqual(x.listed().map((entry) => entry.id), ['auto:kimi-k3.1-pro']);
-  assert.equal(x.listed()[0].name, 'Kimi-K3.1-Pro Auto 0.97', '没勾选的 HW 倍率不计入');
+  assert.deepEqual(shown(x), [['auto:kimi-k3.1-pro', 'Kimi-K3.1-Pro Auto 0.97']], '没勾选的 HW 倍率不计入');
   x.editor.entry('agent-default-model').options.config.model = 'auto:kimi-k3.1-pro';
   // 留一个 GL 勾选：某个出口一条都没勾时按「全部」算。
   x.resolved.models = { ...x.resolved.models, only: ['cn:kimi-k3.1-pro', 'global:hy4std'] };
   await x.sync();
-  assert.deepEqual(x.listed().map((entry) => entry.id), ['cn:kimi-k3.1-pro', 'global:hy4std']);
-  assert.equal(x.editor.entry('agent-default-model').options.config.model, 'cn:kimi-k3.1-pro');
+  assert.deepEqual(shown(x), [['auto:kimi-k3.1-pro', 'Kimi-K3.1-Pro CN 0.97'], ['auto:hy4', 'Hy4 GL 0.29']]);
+  assert.equal(x.editor.entry('agent-default-model').options.config.model, 'auto:kimi-k3.1-pro');
+  x.resolved.models = { ...x.resolved.models, only: ['cn:kimi-k3.1-pro', 'global:kimi-k3.1-pro', 'global:hy4std'] };
+  await x.sync();
+  assert.deepEqual(shown(x)[0], ['auto:kimi-k3.1-pro', 'Kimi-K3.1-Pro Auto 0.97']);
 });
 
-test('开启合并改写其它插件的引用并去重，不动别的 provider；关闭后改回具体出口', async (t) => {
+test('从旧版升级：定时同步把单出口的 cn: 条目换成 auto:，不算移除，引用跟着改', async (t) => {
+  const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:hy4std'] });
+  x.editor.entry('llm-pi-ai').options.config.providers.workbuddy.models = [{ id: 'cn:kimi-k3.1-pro', name: 'Kimi-K3.1-Pro CN 0.97' }, { id: 'global:hy4std', name: 'Hy4 GL 0.29' }];
+  x.editor.entry('agent-default-model').options.config.model = 'cn:kimi-k3.1-pro';
+  assert.equal((await x.sync({ removalGuard: {} })).state, 'updated');
+  assert.deepEqual(shown(x), [['auto:kimi-k3.1-pro', 'Kimi-K3.1-Pro CN 0.97'], ['auto:hy4', 'Hy4 GL 0.29']]);
+  assert.equal(x.editor.entry('agent-default-model').options.config.model, 'auto:kimi-k3.1-pro');
+});
+
+test('同步时把旧的出口 id 引用改到 auto: 并去重，不动别的 provider', async (t) => {
   const x = await setup(t);
   const result = await x.sync();
   assert.deepEqual(result.refs, { state: 'updated', count: 2 });
@@ -237,36 +244,44 @@ test('开启合并改写其它插件的引用并去重，不动别的 provider�
   ]);
   assert.equal(x.editor.entry('agent-default-model').options.config.model, 'auto:deepseek-v4.1-flash', '-1017 并进合并条目后，默认模型跟着改');
   assert.deepEqual((await x.sync()).refs, { state: 'kept' }, '已对齐时不重复写');
-
-  x.resolved.models = { ...x.resolved.models, hubMerge: false };
-  await x.sync();
-  assert.ok(x.listed().some((entry) => entry.id === 'cn:kimi-k3.1-pro'));
-  assert.deepEqual(x.editor.entry('subagent').options.config.allowedModels.slice(0, 2), [
-    { provider: 'workbuddy', model: 'cn:deepseek-v4.1-flash' },
-    { provider: 'trae', model: 'cn:deepseek-v4.1-flash' },
-  ]);
 });
 
-test('引用：旧的 auto:hy4free 改到 auto:hy4；关闭合并时落到免费版，不悄悄开始扣积分', async (t) => {
+test('引用：旧的 auto:hy4free 改到 auto:hy4', async (t) => {
   const x = await setup(t);
   const defaults = x.editor.entry('agent-default-model');
   defaults.options.config.model = 'auto:hy4free';
   await x.sync();
   assert.equal(x.editor.entry('agent-default-model').options.config.model, 'auto:hy4');
-  x.resolved.models = { ...x.resolved.models, hubMerge: false };
-  await x.sync();
-  assert.equal(x.editor.entry('agent-default-model').options.config.model, 'cn:hy4free');
 });
 
-test('CodeArts 这轮取不到时，含 HW 的合并条目保持 auto id，不改写引用', async (t) => {
-  const x = await setup(t, { only: ['cn:glm-5.3', 'codearts:glm-5.3', 'global:hy4std'] });
+test('CodeArts 这轮取不到时，含 HW 的条目原样留在原位，引用不动；取消勾选才移除', async (t) => {
+  const x = await setup(t, { only: ['cn:glm-5.3', 'codearts:glm-5.3', 'global:hy4std', 'codearts:kimi-k3.1-pro'] });
   await x.sync();
-  assert.deepEqual(x.listed().map((entry) => entry.id), ['auto:glm-5.3', 'global:hy4std']);
+  assert.deepEqual(shown(x), [['auto:glm-5.3', 'GLM-5.3 Auto 0.69-0.79'], ['auto:hy4', 'Hy4 GL 0.29'], ['auto:kimi-k3.1-pro', 'Kimi-K3.1-Pro HW 1.63']]);
+  const before = structuredClone(x.listed());
   x.editor.entry('agent-default-model').options.config.model = 'auto:glm-5.3';
   x.hub.codeartsDown = true;
-  await x.sync();
-  assert.deepEqual(x.listed().map((entry) => entry.id), ['auto:glm-5.3', 'global:hy4std'], 'id 一变，正在用它的会话就断了');
+  assert.equal((await x.sync({ removalGuard: {} })).state, 'unchanged', '名称和能力不跟着这一轮变，也不改写 profile');
+  assert.deepEqual(x.listed(), before);
   assert.equal(x.editor.entry('agent-default-model').options.config.model, 'auto:glm-5.3');
+  x.resolved.models = { ...x.resolved.models, only: ['cn:glm-5.3', 'global:hy4std', 'codearts:glm-5.3'] };
+  await x.sync();
+  assert.ok(!x.listed().some((entry) => entry.id === 'auto:kimi-k3.1-pro'));
+});
+
+test('移除确认：CodeArts 的种子目录没有时间戳，不能把 CN / GL 的下架一直卡住', async (t) => {
+  const x = await setup(t, { only: [] });
+  x.hub.source = { cn: { source: 'remote', fetched_at: 100 }, intl: { source: 'remote', fetched_at: 100 }, codearts: { source: 'codearts' } };
+  await x.sync();
+  assert.ok(x.listed().some((entry) => entry.id === 'auto:glm-5.3'));
+  const gone = (models) => models.filter((model) => model.id !== 'glm-5.3');
+  x.hub.catalog = { ...CATALOG, cn: gone(CATALOG.cn), codearts: gone(CATALOG.codearts) };
+  const guard = {};
+  assert.equal((await x.sync({ removalGuard: guard })).state, 'deferred', '只看一次不算');
+  x.hub.source.cn.fetched_at = 400;
+  x.hub.source.intl.fetched_at = 400;
+  assert.equal((await x.sync({ removalGuard: guard })).state, 'updated');
+  assert.ok(!x.listed().some((entry) => entry.id === 'auto:glm-5.3'));
 });
 
 test('目录暂缺已勾选的模型时推迟写入，合并条目不会悄悄少一个出口', async (t) => {
@@ -281,11 +296,10 @@ test('目录暂缺已勾选的模型时推迟写入，合并条目不会悄悄�
   assert.deepEqual(x.listed(), before);
 });
 
-test('关闭合并时清单与之前完全相同', async (t) => {
+test('路由组始终开启：profile 里残留的 hubMerge: false 不再生效', async (t) => {
   const x = await setup(t, { models: { hubMerge: false } });
   await x.sync();
-  assert.ok(x.listed().every((entry) => /^(cn|global|codearts):/.test(entry.id)));
-  assert.equal(x.listed().length, 12);
+  assert.ok(x.listed().every((entry) => entry.id.startsWith('auto:')));
 });
 
 test('积分到期：跳过用完、已过期、不过期和停用账号的包，取最早的', async (t) => {
@@ -590,6 +604,25 @@ test('转发：取消勾选某个出口后立即生效，不等出口表过期',
   assert.deepEqual(x.hub.chats.map(({ realm }) => realm), ['cn', 'intl']);
 });
 
+test('转发：只有一个可选项时走选中的出口，不读到期数据', async (t) => {
+  const x = await setup(t, { stored: { [HUB_PANEL_PASSWORD_REF]: 'panel-pass' }, only: ['cn:kimi-k3.1-pro', 'global:hy4std'] });
+  await x.sync();
+  assert.equal((await x.send(ask())).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
+  assert.deepEqual(x.hub.logins, [], '单出口模型不该等 HW 的首次读取');
+});
+
+test('转发：只勾了 HW 的模型在目录取不到时按勾选转发；取消勾选后报 404', async (t) => {
+  const x = await setup(t, { only: ['codearts:kimi-k3.1-pro', 'cn:glm-5.3', 'global:hy4std'] });
+  await x.sync();
+  x.hub.codeartsDown = true;
+  assert.equal((await x.send(ask('a'))).status, 200);
+  assert.deepEqual(sentTo(x), ['codearts:kimi-k3.1-pro']);
+  x.resolved.models = { ...x.resolved.models, only: ['cn:glm-5.3', 'global:hy4std'] };
+  assert.equal((await x.send(ask('b'))).status, 404);
+  assert.equal(x.hub.chats.length, 0);
+});
+
 test('转发：未知的合并模型报明确错误，显式出口的 id 照旧', async (t) => {
   const x = await setup(t);
   assert.equal((await x.send(ask('x', 'auto:not-a-model'))).status, 404);
@@ -622,16 +655,3 @@ test('面板密码来自环境变量时只校验，不写凭据库', async (t) =
   assert.equal((await setHubMode({ ...options, panelPassword: 'other' })).ok, false);
 });
 
-test('合并开关写进配置并立即同步；留空沿用当前设置', async (t) => {
-  const x = await setup(t);
-  const options = { resolved: x.resolved, editor: x.editor, credentials: x.credentials, env: x.env, enabled: true };
-  await setHubMode({ ...options, merge: false });
-  assert.equal(x.editor.entry('dsh-autostart-workbuddy').options.config.models.hubMerge, false);
-  assert.ok(x.listed().every((entry) => !entry.id.startsWith('auto:')));
-  assert.equal((await describeHubSettings(options)).merge, false);
-  await setHubMode(options);
-  assert.equal(x.editor.entry('dsh-autostart-workbuddy').options.config.models.hubMerge, false);
-  await setHubMode({ ...options, merge: true });
-  assert.ok(x.listed().some((entry) => entry.id.startsWith('auto:')));
-  assert.equal((await setHubMode({ ...options, merge: 'yes' })).ok, false);
-});

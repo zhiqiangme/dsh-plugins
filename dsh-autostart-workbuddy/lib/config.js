@@ -255,8 +255,6 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
   const models = resolveModelsConfig(config.models, spec);
   models.gateway = gateway;
   models.hubDual = gateway === 'hub' && rawModels.hubDual === true;
-  // 默认开启；只在双区域模式下才有多个出口可选，wb2api 不支持。
-  models.hubMerge = gateway === 'hub' && rawModels.hubMerge !== false;
   if (gateway === 'hub') {
     models.apiKeyRef = models.hubApiKeyRef || models.apiKeyRef;
     // hub 没有 wb2api 那份 config.json：密钥直接给定，不再回落去读面板配置。

@@ -10,23 +10,26 @@ const FLASH = { id: 'flash', name: 'Flash', credits: 'x0' };
 const KIMI = { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', credits: 'x0.97', context_length: 1000000 };
 const OTHER = { id: 'other', name: 'Other', credits: 'x1' };
 
+/** 写进 DSH 的 id：双区域都是 auto:，单区域 hub 是裸 id，wb2api 带区域前缀。 */
+const listedId = (mode, id) => ({ dual: `auto:${id}`, hub: id, wb2api: `cn:${id}` })[mode];
+
 async function fixture(t, mode, { all = false } = {}) {
-  const state = { data: [FLASH, KIMI], catalog: { source: 'remote', fetched_at: 100, ignored: 'do-not-forward' } };
+  const state = { data: [FLASH, KIMI], others: [FLASH, KIMI], catalog: { source: 'remote', fetched_at: 100, ignored: 'do-not-forward' } };
   const dual = mode === 'dual';
   const hub = mode !== 'wb2api';
   const server = createServer((req, res) => {
     const realm = req.headers['x-realm'] || 'cn';
     // GL 也有同名 Kimi：不能拿它代替 CN 的缺项。
-    const list = realm === 'cn' ? state.data : [FLASH, KIMI];
+    const list = realm === 'cn' ? state.data : state.others;
     const data = hub ? list : list.map((model) => ({ ...model, id: `cn:${model.id}` }));
     res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ data, ...(hub ? { realm, catalog: state.catalog } : {}) }));
+    res.end(JSON.stringify({ data, ...(hub ? { realm, catalog: realm === 'cn' ? state.catalog : state.othersCatalog ?? state.catalog } : {}) }));
   });
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(done); }));
   const only = all ? [] : ['cn:flash', 'cn:kimi-k3.1-pro', ...(dual ? ['global:flash'] : [])];
   const resolved = resolvePluginConfig({ gateway: hub ? 'hub' : 'wb2api', models: {
-    enabled: true, hubDual: dual, hubMerge: false, only, baseURL: `http://127.0.0.1:${server.address().port}`,
+    enabled: true, hubDual: dual, only, baseURL: `http://127.0.0.1:${server.address().port}`,
   } }, {});
   resolved.models.hubProxyBaseURL = 'http://127.0.0.1:8787/plugins/test/hub/v1/';
   const editor = createFakeConfigEditor(profileRows({ models: { enabled: true, only } }));
@@ -71,7 +74,7 @@ for (const mode of ['dual', 'hub', 'wb2api']) {
 
     state.data = [FLASH, { ...KIMI, context_length: 2000000 }];
     assert.equal((await syncModels(options)).state, 'updated');
-    const kimiId = mode === 'hub' ? KIMI.id : `cn:${KIMI.id}`;
+    const kimiId = listedId(mode, KIMI.id);
     assert.equal(provider().models.find((model) => model.id === kimiId).contextWindow, 2000000);
     assert.equal((await describeModels({ ...options, gateway: resolved.gateway })).models.some((row) => row.unavailable), false);
 
@@ -83,7 +86,7 @@ for (const mode of ['dual', 'hub', 'wb2api']) {
 
   test(`${mode}：持配置锁前新增的已选模型也受保护`, async (t) => {
     const { state, editor, options, provider } = await fixture(t, mode);
-    const kimiId = mode === 'hub' ? KIMI.id : `cn:${KIMI.id}`;
+    const kimiId = listedId(mode, KIMI.id);
     const kimi = provider().models.find((model) => model.id === kimiId);
     provider().models = provider().models.filter((model) => model.id !== kimiId);
     state.data = [{ ...FLASH, name: 'Changed Flash' }];
@@ -99,7 +102,7 @@ for (const mode of ['dual', 'hub', 'wb2api']) {
 
   test(`${mode}：手动刷新以当前目录为准，当轮移除缺席的已选模型并剔除白名单，重新列出后补回`, async (t) => {
     const { state, resolved, editor, options, provider } = await fixture(t, mode);
-    const kimiId = mode === 'hub' ? KIMI.id : `cn:${KIMI.id}`;
+    const kimiId = listedId(mode, KIMI.id);
     state.data = [FLASH];
     state.catalog.fetched_at += 300;
     assert.equal((await syncModels({ ...options, removalGuard: {} })).state, 'deferred', '自动同步仍保留缺席模型');
@@ -151,9 +154,9 @@ for (const mode of ['dual', 'hub', 'wb2api']) {
 
   test(`${mode}：显式排除和目录可用时的筛选规则仍能移除模型`, async (t) => {
     const { state, options, provider } = await fixture(t, mode);
-    const kimiId = mode === 'hub' ? KIMI.id : `cn:${KIMI.id}`;
+    const kimiId = listedId(mode, KIMI.id);
     state.data = [FLASH];
-    options.models.exclude = [kimiId];
+    options.models.exclude = [mode === 'hub' ? KIMI.id : `cn:${KIMI.id}`];
     assert.equal((await syncModels(options)).state, 'updated');
     assert.ok(!provider().models.some((model) => model.id === kimiId));
     options.models.exclude = [];
@@ -172,6 +175,7 @@ for (const mode of ['dual', 'hub']) {
     const sync = () => syncModels({ ...options, removalGuard: guard });
     const before = structuredClone(provider());
     state.data = [FLASH];
+    state.others = [FLASH];
     for (let i = 0; i < 6; i++) assert.equal((await sync()).state, 'deferred');
     assert.deepEqual(provider(), before);
     for (const source of ['cache', 'legacy', 'bundled', 'endpoint']) {
@@ -183,9 +187,32 @@ for (const mode of ['dual', 'hub']) {
     assert.equal((await sync()).state, 'deferred');
     state.catalog.fetched_at += 300;
     assert.equal((await sync()).state, 'updated');
-    assert.ok(!provider().models.some((model) => model.id === (mode === 'dual' ? `cn:${KIMI.id}` : KIMI.id)));
+    assert.ok(!provider().models.some((model) => model.id === listedId(mode, KIMI.id)));
   });
 }
+
+test('dual：跟随全部时只有一个出口缺这个模型，条目还在就不算移除，只是少一个出口', async (t) => {
+  const { state, options, provider } = await fixture(t, 'dual', { all: true });
+  const kimi = () => provider().models.find((model) => model.id === listedId('dual', KIMI.id));
+  assert.match(kimi().name, / Auto /);
+  state.data = [FLASH];
+  assert.equal((await syncModels({ ...options, removalGuard: {} })).state, 'updated');
+  assert.match(kimi().name, / GL /);
+});
+
+test('dual：跟随全部时 CN / GL 目录错开刷新也能确认下架，不会一直卡住', async (t) => {
+  const { state, options, provider } = await fixture(t, 'dual', { all: true });
+  const guard = {};
+  const sync = () => syncModels({ ...options, removalGuard: guard });
+  state.data = [FLASH];
+  state.others = [FLASH];
+  state.othersCatalog = { source: 'remote', fetched_at: 160 };
+  assert.equal((await sync()).state, 'deferred');
+  // 同一轮里只有 CN 换了新目录；要两边同一轮都换才算确认的话，错开的两个缓存永远等不到。
+  state.catalog = { source: 'remote', fetched_at: 400 };
+  assert.equal((await sync()).state, 'updated');
+  assert.ok(!provider().models.some((model) => model.id === listedId('dual', KIMI.id)));
+});
 
 test('目录确认：旧时间戳不能确认；同批恢复会清掉该模型的缺席记录', () => {
   const guard = {};

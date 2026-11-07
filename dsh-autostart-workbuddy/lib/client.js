@@ -426,7 +426,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       diagnose: '一键诊断', diagnoseCopy: '复制脱敏报告', diagnoseCopied: '诊断报告已复制', diagnoseWorking: '正在诊断…',
       emptyFiltered: '没有符合筛选条件的模型', modelSearch: '搜索模型', regionAll: '全部区域', ruleFree: '只同步免费模型', ruleVision: '只同步视觉模型', ruleMax: '最高倍率（留空不限）',
       sortUpstream: '上游顺序', sortName: '按名称排序', sortCredits: '按倍率排序', ruleHint: '规则与勾选共同生效，新增模型也按规则筛选；未定价的模型不会视为免费。批量操作只影响当前筛选结果。',
-      hubPanelMissing: '未保存', hubMerge: '合并同名模型', hubMergeHint: '多个出口都勾选的同一模型在 DSH 里只显示一条，发送时优先用积分最早到期的出口；同一对话固定在一个出口，请求没被受理时才换下一个。模型 id 末尾的月日版本号（如 -1017）不算区别，同一出口新旧版都勾选时用新版。id 末尾的 free / std 也不算区别，同一模型的免费和付费版并成一条，先试免费版。在模型列表里没勾选的出口不参与。',
+      hubPanelMissing: '未保存', hubMergeHint: '保存后同步到 DSH 的模型都由插件路由，id 为 auto:xxx。同一模型只勾选一个时显示它本身的名称；勾选了多个出口，或同时勾选免费和付费版时名称带 Auto，发送时优先用积分最早到期的出口，免费版优先。同一对话固定在一个出口，请求没被受理时才换下一个。模型 id 末尾的月日版本号（如 -1017）和 free / std 不算区别，同一出口新旧版都勾选时用新版。在模型列表里没勾选的出口不参与。',
       hubPanelPassword: 'HUB 面板密码（读取 HW 积分到期用）', exitExpiry: '{realm} 最早到期 {time}（{amount} 积分）', exitNoExpiry: '{realm} 没有会到期的积分', exitNoPassword: '{realm} 到期未知：需要填面板密码，否则排在有到期时间的出口之后', exitAuthFailed: '{realm} 到期未知：面板密码不正确，请重新填写', exitUnavailable: '{realm} 到期暂时读不到，排在有到期时间的出口之后',
       hubDual: 'CN / GL / HW 同时使用', hubDualHint: 'CN / GL 模型合并显示在一个 WorkBuddy 分组中，按模型区域自动选择出口，不随 HUB 看板切换。HUB 启用 CodeArts 后，它的模型标记为 HW 一并列出，默认不勾选。沿用网关 Key；只有网关 Key 在 HUB 里绑定了区域时，才需要另填区域 Key（只存 DSH 凭据库，留空沿用已保存的值）。',
       hubCnKey: 'CN 区域 Key（可选）', hubGlKey: 'GL 区域 Key（可选）', hubHwKey: 'HW（CodeArts）区域 Key（可选）', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存', hubBoth: 'CN + GL（同一分组，独立出口）', hubAll: 'CN + GL + HW（同一分组，独立出口）',
@@ -597,7 +597,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       diagnose: 'Diagnose', diagnoseCopy: 'Copy redacted report', diagnoseCopied: 'Report copied', diagnoseWorking: 'Diagnosing…',
       emptyFiltered: 'No models match the filters', modelSearch: 'Search models', regionAll: 'All regions', ruleFree: 'Sync free models only', ruleVision: 'Sync vision models only', ruleMax: 'Max multiplier (blank = any)',
       sortUpstream: 'Upstream order', sortName: 'Sort by name', sortCredits: 'Sort by multiplier', ruleHint: 'Rules and selections both apply, including to new models. Unknown prices are not treated as free. Bulk actions affect only filtered rows.',
-      hubPanelMissing: 'Not saved', hubMerge: 'Merge models with the same name', hubMergeHint: 'A model selected on several exits shows once in DSH and is sent through the exit whose credits expire first. A conversation stays on one exit and only moves on if a request is not accepted. A month-day version at the end of a model id (such as -1017) does not make it a different model; if both versions are selected on one exit, the newer one is used. The same goes for free / std at the end of an id: the free and paid tiers of a model merge, and the free one is tried first. Exits left unselected in the model list do not take part.',
+      hubPanelMissing: 'Not saved', hubMergeHint: 'Every model synced to DSH is routed by this plugin, with an id like auto:xxx. A model selected once keeps its own name. A model selected on several exits, or in both its free and paid tiers, has Auto in its name and goes through the exit whose credits expire first, free tiers first. A conversation stays on one exit and only moves on if a request is not accepted. A month-day version (such as -1017) or free / std at the end of a model id does not make it a different model; if both versions are selected on one exit, the newer one is used. Exits left unselected in the model list do not take part.',
       hubPanelPassword: 'HUB panel password (to read HW credit expiry)', exitExpiry: '{realm}: {amount} credits expire first, at {time}', exitNoExpiry: '{realm}: no credits with an expiry date', exitNoPassword: '{realm}: expiry unknown. Enter the panel password, or it ranks after exits with a known expiry', exitAuthFailed: '{realm}: expiry unknown. The panel password is wrong, please enter it again', exitUnavailable: '{realm}: expiry cannot be read right now, so it ranks after exits with a known expiry',
       hubDual: 'Use CN, GL and HW together', hubDualHint: 'Shows CN / GL models in one WorkBuddy group, routed by the selected model region independently of the HUB dashboard. Once CodeArts is enabled in HUB, its models are listed too, tagged HW and unselected by default. Uses the gateway key; region keys are only needed when it is bound to a region (stored only in DSH credentials; blank keeps saved values).',
       hubCnKey: 'CN region key (optional)', hubGlKey: 'GL region key (optional)', hubHwKey: 'HW (CodeArts) region key (optional)', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved', hubBoth: 'CN + GL (one group, independent exits)', hubAll: 'CN + GL + HW (one group, independent exits)',
@@ -2095,7 +2095,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         setBackendBusy('hubMode');
         setHubNotice(undefined);
         try {
-          const payload = await request(BACKEND_PATH, 'POST', { action: 'hubMode', enabled: hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false, merge: hubDraft?.merge ?? backend?.hubSettings?.merge ?? true, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, codeartsKey: hubDraft?.codeartsKey, followKey: hubDraft?.followKey, panelPassword: hubDraft?.panelPassword });
+          const payload = await request(BACKEND_PATH, 'POST', { action: 'hubMode', enabled: hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, codeartsKey: hubDraft?.codeartsKey, followKey: hubDraft?.followKey, panelPassword: hubDraft?.panelPassword });
           if (!payload.ok) throw new Error(payload.reason || t('saveFailed'));
           // 宿主确认保存后才清空敏感草稿；同步/回读失败不能再把已落盘的 Key 说成保存失败。
           setHubDraft(undefined);
@@ -2445,7 +2445,6 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
 
       // ---- 区域与 Key 页签（仅 hub）----
       const dualDraft = hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false;
-      const mergeDraft = hubDraft?.merge ?? backend?.hubSettings?.merge ?? true;
       const exitLines = Object.values(overview?.exits ?? {}).map((exit) => {
         const realm = realmName(exit.realm);
         const text = exit.expireAt != null
@@ -2464,13 +2463,14 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
                 h('label', { className: 'dsm-wb-sync' }, h('input', { type: 'checkbox', role: 'switch', checked: hubDraft?.enabled ?? backend.hubSettings?.enabled ?? meta.hubDual ?? false, disabled: busy, onChange: (e) => { setHubDraft((last) => ({ ...last, enabled: e.target.checked })); setHubNotice(undefined); } }), t('hubDual')),
                 h('p', { className: 'dsm-wb-hint' }, t('hubDualHint')),
               ),
-              h(
-                'div',
-                { className: 'dsm-wb-stack' },
-                h('label', { className: 'dsm-wb-sync' }, h('input', { type: 'checkbox', role: 'switch', checked: mergeDraft, disabled: busy || !dualDraft, onChange: (e) => { setHubDraft((last) => ({ ...last, merge: e.target.checked })); setHubNotice(undefined); } }), t('hubMerge')),
-                h('p', { className: 'dsm-wb-hint' }, t('hubMergeHint')),
-                dualDraft && mergeDraft && exitLines.length ? h('ul', { className: 'dsm-wb-hint dsm-wb-exits' }, ...exitLines) : null,
-              ),
+              dualDraft
+                ? h(
+                    'div',
+                    { className: 'dsm-wb-stack' },
+                    h('p', { className: 'dsm-wb-hint' }, t('hubMergeHint')),
+                    exitLines.length ? h('ul', { className: 'dsm-wb-hint dsm-wb-exits' }, ...exitLines) : null,
+                  )
+                : null,
               h(
                 'div',
                 { className: 'dsm-wb-fields' },

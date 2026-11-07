@@ -131,10 +131,15 @@ export function hubRegionWanted(realm, only = []) {
   return realm !== CODEARTS_REALM || only.length === 0 || only.some((key) => key.startsWith(REALM_KEY_PREFIXES[CODEARTS_REALM]));
 }
 
-/** 本轮没有 CodeArts 目录（HUB 关了它或暂时取不到）时要留下的条目：勾选过的不因此消失，取消勾选才移除。 */
+/**
+ * 本轮没有 CodeArts 目录（HUB 关了它或暂时取不到）时要留下的条目：勾选过的不因此消失，取消勾选才移除。
+ * 条目不记录出口，只能按合并键对勾选；整条留下，名称和能力才不会跟着这一轮变。旧版写的 codearts: id 也算。
+ */
 function retainedCodeArts(config, provider, only = []) {
   const current = plainObject(plainObject(plainObject(config).providers)[provider]).models;
-  return Array.isArray(current) ? current.filter((entry) => entry?.id?.startsWith?.(REALM_KEY_PREFIXES[CODEARTS_REALM]) && only.includes(entry.id)) : [];
+  const prefix = REALM_KEY_PREFIXES[CODEARTS_REALM];
+  const wanted = new Set(only.filter((key) => key.startsWith(prefix)).map(mergeKey));
+  return Array.isArray(current) ? current.filter((entry) => (entry?.id?.startsWith?.(MERGED_PREFIX) || entry?.id?.startsWith?.(prefix)) && wanted.has(mergeKey(entry.id))) : [];
 }
 
 function dualProviderName(provider, realm) { return `${provider}-hub-${realm === 'intl' ? 'global' : realm}`; }
@@ -170,7 +175,18 @@ function dropDualProviders(config, provider) {
 }
 
 /**
- * 双区域合并到原 provider；带区域前缀的 id 经本插件转发，HUB 始终收到裸 id。
+ * CN / GL 的目录合成一份给移除确认用。清单按合并键比较，看不出缺的模型原来在哪个出口，所以有一边是
+ * 降级结果就不能确认；时间戳取较旧的，分别确认的话两边刷新错开时永远等不到同一轮，同步会一直卡住。
+ * CodeArts 不参与：种子目录没有时间戳，确认不了任何移除。
+ */
+function removalCatalog(groups) {
+  const catalogs = groups.filter(({ realm }) => realm !== CODEARTS_REALM).map(({ catalog }) => catalog).filter(Boolean);
+  return catalogs.find(({ source }) => !REMOTE_CATALOG_SOURCES.has(source)) ??
+    catalogs.reduce((oldest, catalog) => (!oldest || (catalog.fetched_at ?? 0) < (oldest.fetched_at ?? 0) ? catalog : oldest), undefined);
+}
+
+/**
+ * 双区域合并到原 provider；写进 DSH 的 id 都是 `auto:` 开头，经本插件转发，HUB 始终收到裸 id。
  * 旧区域 provider 只删除本插件创建的两项，其它 provider 和凭据不动。
  */
 async function syncHubDual({ spec, models, editor, credentials, env, dryRun, regionGuard, syncBlocker }) {
@@ -186,17 +202,15 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
   const groups = hubRegionPlans(fetched.regions, models).map((region) => ({ ...region, name: dualProviderName(models.provider, region.realm) }));
   const hasCodeArts = fetched.regions.some((region) => region.realm === CODEARTS_REALM);
   if (groups.some((group) => group.models.length === 0)) return { state: 'skipped', reason: '某个区域返回空目录，保留现有列表', documentPath };
-  const previousIds = (config, group) => {
-    const prefix = REALM_KEY_PREFIXES[group.realm];
-    const ids = providerModelIds(config, models.provider).filter((id) => id.startsWith(prefix)).map((id) => id.slice(prefix.length));
-    if (ownsDualProvider(config?.providers?.[group.name], group.realm)) ids.push(...providerModelIds(config, group.name));
-    return [...new Set(ids)];
-  };
-  // 合并条目不记录参与的出口，这里只拿它保护显式勾选；两轮移除确认仍只看带前缀的条目。
+  // 写进 DSH 的条目不记录参与的出口，现有清单只能按合并键比较；旧版写的 cn: 等 id 和早期的区域分组也算。
+  const listedKeys = (config) => new Set([
+    ...providerModelIds(config, models.provider),
+    ...groups.flatMap((group) => (ownsDualProvider(config?.providers?.[group.name], group.realm) ? providerModelIds(config, group.name) : [])),
+  ].map(mergeKey));
   const verifySelection = (config) => {
-    const merged = new Set(mergedKeys(config, models.provider));
-    const picked = (models.only ?? []).filter((id) => merged.has(mergeKey(id)));
-    for (const group of groups) assertSelectedModelsPresent([...previousIds(config, group), ...picked], group.models, models, group.realm);
+    const listed = listedKeys(config);
+    const picked = (models.only ?? []).filter((id) => listed.has(mergeKey(id)));
+    for (const group of groups) assertSelectedModelsPresent(picked, group.models, models, group.realm);
   };
   try { verifySelection(target.options?.config); }
   catch (error) { if (error instanceof IncompleteModelCatalogError) return catalogDeferred(error, 'dual', documentPath); throw error; }
@@ -206,13 +220,11 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
   const conflict = dualProviderConflict(target.options?.config, models.provider);
   if (conflict) return { state: 'failed', reason: `provider ${conflict} 已被占用，请先修改分组名`, documentPath };
   if (regionGuard) {
-    regionGuard.regions ??= {};
-    let deferred = false;
-    for (const group of groups) {
-      const guard = regionGuard.regions[group.realm] ??= { missing: new Set() };
-      if (!confirmRemovals(guard, previousIds(target.options?.config, group), group.entries.map((entry) => entry.id), group.catalog).ok) deferred = true;
-    }
-    if (deferred) return { state: 'deferred', reason: '区域目录缺项，等待新的可靠目录再次确认后再移除', realm: 'dual', documentPath };
+    const config = target.options?.config;
+    const kept = hasCodeArts ? [] : retainedCodeArts(config, models.provider, models.only);
+    const next = [...groups.flatMap((group) => group.entries), ...kept].map((entry) => mergeKey(entry.id));
+    regionGuard.merged ??= { missing: new Set() };
+    if (!confirmRemovals(regionGuard.merged, [...listedKeys(config)], next, removalCatalog(groups)).ok) return { state: 'deferred', reason: '区域目录缺项，等待新的可靠目录再次确认后再移除', realm: 'dual', documentPath };
   }
   const plan = (current) => {
     const config = plainObject(current);
@@ -221,10 +233,13 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     if (conflicted) throw new Error(`provider ${conflicted} 已被占用`);
     const sharedRef = proxyCredentialRef(models);
     const kept = hasCodeArts ? [] : retainedCodeArts(config, models.provider, models.only);
-    // CodeArts 这轮取不到时，含 HW 的合并条目不能退回单出口 id：id 一变，正在用它的会话和引用都会断。
-    const { entries, credits } = planHubEntries(groups, models, { keepMerged: hasCodeArts ? undefined : new Set(mergedKeys(config, models.provider)) });
+    const { entries, credits } = planHubEntries(groups);
+    // 本轮还有其它出口的条目留在原位，只换回现有那一条；挪到末尾的话没有排序规则时每轮都会改写。
+    const retained = new Map(kept.map((entry) => [entry.id, entry]));
+    const ids = new Set(entries.map((entry) => entry.id));
+    const listed = [...entries.map((entry) => retained.get(entry.id) ?? entry), ...kept.filter((entry) => !ids.has(entry.id))];
     // 面板把所有区域混在一起排，这里也要在合并后的整张清单上排；只在区域内排序的话，DSH 永远是 CN → GL → HW 三段。
-    const ordered = sortByRule([...entries, ...kept], models.rules, { label: (entry) => entry.name, credits: (entry) => credits.get(entry.id) });
+    const ordered = sortByRule(listed, models.rules, { label: (entry) => entry.name, credits: (entry) => credits.get(entry.id) });
     const planned = withProviderModels(config, models.provider, ordered, providerSkeleton(models, spec)).config;
     const provider = planned.providers[models.provider];
     const headers = Object.fromEntries(Object.entries(plainObject(provider.headers)).filter(([key]) => key.toLowerCase() !== 'x-realm'));
@@ -244,18 +259,13 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     return { state: error instanceof ModelSyncBusyError ? 'busy' : 'failed', reason: error.message, documentPath };
   }
   const credential = await ensureProxyCredential({ credentials, ref: providerKeyRef(planned, models.provider), apiKey: await resolveModelApiKey(models, env, credentials), managed: providerKeyRef(planned, models.provider) === GATEWAY_KEY_REFS[models.gateway] });
-  const refs = await retargetModelRefs({ editor, provider: models.provider, entries: written, credits: planHubEntries(groups, models).credits, syncBlocker });
+  const refs = await retargetModelRefs({ editor, provider: models.provider, entries: written, syncBlocker });
   return { state: changed ? 'updated' : 'unchanged', entries: written, credential, refs, realm: 'dual', documentPath };
 }
 
 /** 各出口要写进 DSH 的条目；转发端点用它还原同一份清单，两边的勾选和规则才一致。 */
 export function hubRegionPlans(regions, models) {
   return regions.filter((region) => hubRegionWanted(region.realm, models.only)).map((region) => ({ ...region, entries: planModelEntries(region.models, models) }));
-}
-
-/** 配置里已有的合并条目的键。 */
-function mergedKeys(config, provider) {
-  return providerModelIds(config, provider).filter((id) => id.startsWith(MERGED_PREFIX)).map(mergeKey);
 }
 
 /** 上游给模型快照加的月日版本号（`-1017`）。限定成合法月日，`-2000` 这类数字不算版本号。 */
@@ -308,8 +318,12 @@ function smallestField(members, field) {
   return values.length ? { [field]: Math.min(...values) } : {};
 }
 
-/** 名称取 CN → GL → HW 里第一个；倍率不同时显示范围（`0.97-1.63`、`Free-0.29`），不知道倍率的出口不计入。 */
+/**
+ * 只有一个可选项时用它本身的名称（`Kimi-K3.1-Pro CN 0.97`），路由仍归插件，只是没什么可选的，不标 Auto。
+ * 多个时名称取 CN → GL → HW 里第一个；倍率不同时显示范围（`0.97-1.63`、`Free-0.29`），不知道倍率的出口不计入。
+ */
 function mergedName(members) {
+  if (members.length === 1) return members[0].entry.name;
   const labels = [...new Set(members.map(({ model }) => modelCreditsLabel(model)).filter(Boolean))]
     .sort((a, b) => (creditValue(a) ?? Infinity) - (creditValue(b) ?? Infinity));
   const credits = labels.length > 1 ? `${labels[0]}-${labels.at(-1)}` : labels[0];
@@ -337,16 +351,15 @@ function mergedEntry(key, members) {
 }
 
 /**
- * 把各出口的条目变成写进 DSH 的清单。`models.hubMerge` 时，有多个可选项的模型（多个出口，
- * 或同一出口的免费和付费）并成一条 `auto:` 条目；只有一个的保持原 id，默认模型等引用不受影响。
+ * 把各出口的条目变成写进 DSH 的清单：同一模型（多个出口，或同一出口的免费和付费）并成一条 `auto:` 条目，
+ * 只有一个可选项也一样，路由始终归插件，增减勾选时 id 不变，只有显示名称变，默认模型等引用不受影响。
+ * 同一出口的新旧版本共用一个键，只留最新的。
  *
  * @param {{ realm: string, models: object[], entries: object[] }[]} plans hubRegionPlans 的结果
- * @param {object} models
- * @param {{ keepMerged?: Set<string> }} [options] 只剩一个出口也要保持合并的键
  * @returns {{ entries: object[], credits: Map<string, unknown>, routes: Map<string, object[]> }}
- *   `credits` 给排序用，合并条目取最低倍率；`routes` 不受开关影响，开关切换期间发来的旧 id 也能转发。
+ *   `credits` 给排序用，合并条目取最低倍率；`routes` 是转发时各键的可选出口。
  */
-export function planHubEntries(plans, models, { keepMerged = new Set() } = {}) {
+export function planHubEntries(plans) {
   const groups = new Map();
   for (const plan of plans) {
     const byId = new Map(plan.models.map((model) => [model.id, model]));
@@ -358,12 +371,9 @@ export function planHubEntries(plans, models, { keepMerged = new Set() } = {}) {
   }
   const routes = new Map([...groups].map(([key, members]) => [key, latestPerTier(members).map(({ realm, bare, model }) => ({ realm, model: bare, vision: model.supports_images === true, price: creditValue(model.credits) }))]));
   const credits = new Map(plans.flatMap((plan) => plan.models.map((model) => [selectionKey(model), model.credits])));
-  if (models.hubMerge !== true) return { entries: plans.flatMap((plan) => plan.entries.map((entry) => ({ ...entry, id: selectionKey({ id: entry.id, realm: plan.realm }) }))), credits, routes };
   const entries = [];
   for (const [key, members] of groups) {
     const choices = latestPerTier(members);
-    // 只有一个可选项时不用合并，同一出口的新旧版本各自保留，用户仍能手动选。
-    if (choices.length === 1 && !keepMerged.has(key)) { entries.push(...members.map((member) => member.entry)); continue; }
     const entry = mergedEntry(key, choices);
     entries.push(entry);
     const cheapest = [...choices].sort((a, b) => (creditValue(a.model.credits) ?? Infinity) - (creditValue(b.model.credits) ?? Infinity))[0];
@@ -401,18 +411,15 @@ function replaceModelRefs(value, provider, swap) {
 
 /**
  * 条目 id 变了之后改写其它插件配置里的引用：llm-pi-ai 遇到清单里没有的模型直接报 UNKNOWN_MODEL。
- * 开启合并时 `cn:x` → `auto:x`，关闭或只剩一个出口时 `auto:x` → `cn:x`。清单里还有的引用不动；
+ * 旧版写下的 `cn:x` 和 `auto:hy4free` 这类引用改到同款的 `auto:` 条目。清单里还有的引用不动；
  * 写入失败不影响模型同步，只在返回值里说明。
  *
- * @param {{ editor: object, provider: string, entries: object[], credits: Map<string, unknown>, syncBlocker?: object }} options
+ * @param {{ editor: object, provider: string, entries: object[], syncBlocker?: object }} options
  * @returns {Promise<{ state: 'kept' | 'updated' | 'failed', count?: number, reason?: string }>}
  */
-export async function retargetModelRefs({ editor, provider, entries, credits, syncBlocker }) {
+export async function retargetModelRefs({ editor, provider, entries, syncBlocker }) {
   const current = new Set(entries.map((entry) => entry.id));
-  // 同款落到倍率最低的：关闭合并时，用着 auto:hy4 的配置不能悄悄变成扣积分的 hy4std。
-  const price = ({ id }) => creditValue(credits.get(id)) ?? Infinity;
-  const byKey = new Map();
-  for (const entry of [...entries].sort((a, b) => price(a) - price(b))) if (!byKey.has(mergeKey(entry.id))) byKey.set(mergeKey(entry.id), entry.id);
+  const byKey = new Map(entries.filter(({ id }) => id.startsWith(MERGED_PREFIX)).map(({ id }) => [mergeKey(id), id]));
   const swap = (id) => {
     if (current.has(id) || !(id.startsWith(MERGED_PREFIX) || regionPrefixOf(id))) return id;
     return byKey.get(mergeKey(id)) ?? id;
@@ -1038,7 +1045,7 @@ export function readPluginModelsConfig(text, entryId = 'dsh-autostart-workbuddy'
  * @param {NodeJS.ProcessEnv} [options.env]
  * @param {boolean} [options.dryRun] 只算不写
  * @param {{ missing?: Set<string> }} [options.removalGuard] 定时同步传入：移除模型需连续两轮确认（见 confirmRemovals）
- * @param {{ regions?: object }} [options.regionGuard] 双区域分组的移除确认；默认与 removalGuard 同一个对象。
+ * @param {{ merged?: object }} [options.regionGuard] 双区域分组的移除确认；默认与 removalGuard 同一个对象。
  *   看板切出口那一轮跟随分组不做确认，但区域分组不受切换影响，仍要确认，所以分开传。
  * @param {() => string | undefined} [options.syncBlocker] 自动同步调用方传入；在开始、拉目录后与持锁写入前检查
  */

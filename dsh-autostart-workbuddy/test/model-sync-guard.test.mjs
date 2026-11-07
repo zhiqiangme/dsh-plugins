@@ -30,7 +30,7 @@ for (const hubDual of [false, true]) {
       });
       await new Promise((done) => server.listen(0, '127.0.0.1', done));
       t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(done); }));
-      const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, hubDual, hubMerge: false, baseURL: `http://127.0.0.1:${server.address().port}` } }, {});
+      const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true, hubDual, baseURL: `http://127.0.0.1:${server.address().port}` } }, {});
       resolved.models.hubProxyBaseURL = 'http://127.0.0.1:8787/plugins/test/hub/v1/';
       const editor = createFakeConfigEditor(profileRows());
       const credentials = createFakeCredentials();
@@ -55,7 +55,7 @@ for (const hubDual of [false, true]) {
       const before = hits;
       assert.equal((await syncModels(options)).state, 'updated');
       assert.ok(hits > before);
-      assert.deepEqual(editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((m) => m.id), hubDual ? ['cn:fresh', 'global:fresh'] : ['fresh']);
+      assert.deepEqual(editor.entry('llm-pi-ai').options.config.providers.workbuddy.models.map((m) => m.id), hubDual ? ['auto:fresh'] : ['fresh']);
     });
   }
 }

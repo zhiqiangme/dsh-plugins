@@ -1,10 +1,10 @@
 /**
- * 把 CN / GL / HW（CodeArts）放进一个 OpenAI provider：模型 id 带区域前缀，转发时还原 HUB 的裸 id。
+ * 把 CN / GL / HW（CodeArts）放进一个 OpenAI provider，转发时还原 HUB 的裸 id。
  * llm-pi-ai 只能在 provider 层设置 Key / headers，不能给同组模型分别指定出口，故在已有
  * webServer 上做一层转发；不另开端口、不接管上游程序，SSE 原样流式传输。
  *
- * `auto:` 开头的合并模型不绑定出口：这里按积分到期选一个（规则见 exit-credits.js 的 rankExits），
- * 同一对话固定在一个出口，请求没被受理时才换下一个。
+ * 写进 DSH 的模型都是 `auto:` 开头，不绑定出口：这里按积分到期选一个（规则见 exit-credits.js 的 rankExits），
+ * 同一对话固定在一个出口，请求没被受理时才换下一个。带区域前缀的 id 只有旧会话还会发来，照旧直接转发。
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
@@ -68,6 +68,14 @@ export function parseHubModel(id) {
   return match ? { realm: match[1] === 'global' ? 'intl' : match[1], model: match[2] } : undefined;
 }
 
+/**
+ * 出口表里没有这个模型时按勾选转发。CodeArts 是可选出口，目录取不到不算同步失败，条目还留在 DSH 里；
+ * 只勾了 HW 的模型不能因此 404，能不能用由 hub 回答。没有目录所以不知道倍率和视觉，排序退回固定顺序。
+ */
+function selectedRoutes(key, only = []) {
+  return only.filter((id) => mergeKey(id) === key).map(parseHubModel).filter(Boolean);
+}
+
 /** 带图请求只能发给支持视觉的出口。 */
 export function requestHasImage(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : [];
@@ -128,7 +136,7 @@ function createRouteTable({ resolved, env, now }) {
     const models = resolved.models;
     loading ??= fetchHubRegions({ models, credentials, env }).then((fetched) => {
       if (!fetched.ok) return;
-      routes = planHubEntries(hubRegionPlans(fetched.regions, models), models).routes;
+      routes = planHubEntries(hubRegionPlans(fetched.regions, models)).routes;
       loadedFor = models;
       loadedAt = now();
     }).catch(() => undefined).finally(() => { loading = undefined; });
@@ -154,7 +162,11 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
 
   /** 到期数据读不到不能挡住对话：排序退回固定顺序，真实错误由 hub 报。 */
   async function mergedAttempts(body, store) {
-    const members = await table.members(mergeKey(body.model), store);
+    const key = mergeKey(body.model);
+    const listed = await table.members(key, store);
+    const members = listed.length ? listed : selectedRoutes(key, resolved.models.only);
+    // 只有一个可选项时没什么可比的：不读到期数据，也就不用等 HW 的首次读取。
+    if (members.length < 2) return { attempts: members };
     const [credits, readiness] = await Promise.all([exits.snapshot(), exits.readiness()]).catch(() => [{}, undefined]);
     const ranked = rankExits(members, credits, { ready: readiness?.ready, image: requestHasImage(body) });
     const pin = conversationKey(body);
@@ -181,7 +193,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
         if (req.method === 'GET' && path === `${HUB_ROUTER_PATH}/models`) {
           const fetched = await fetchHubRegions({ models, credentials: store, env });
           if (!fetched.ok) return reply(res, 502, fetched.reason);
-          const { entries } = planHubEntries(hubRegionPlans(fetched.regions, models), models);
+          const { entries } = planHubEntries(hubRegionPlans(fetched.regions, models));
           res.writeHead(200, { 'content-type': 'application/json' });
           return res.end(JSON.stringify({ object: 'list', data: entries }));
         }
