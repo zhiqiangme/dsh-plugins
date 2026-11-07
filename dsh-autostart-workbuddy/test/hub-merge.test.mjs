@@ -630,6 +630,38 @@ test('转发：对话回退到付费版后下一轮仍先试免费版，付费�
   assert.deepEqual(sentTo(x), ['cn:hy4free'], '免费版恢复后马上回去');
 });
 
+test('转发：冷缓存且目录不可用时仍先免费后付费，同一对话下一轮重试免费', async (t) => {
+  // 付费排在勾选清单前面，不能被当成调用优先级。
+  const x = await setup(t, { only: ['cn:hy4std', 'global:hy4std', 'cn:hy4free', 'global:hy4free'] });
+  x.hub.catalogDown = true;
+  assert.equal((await x.send(ask('task', 'auto:hy4'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:hy4free']);
+  x.hub.reply = (_realm, body) => body.model.endsWith('free') ? 429 : 200;
+  assert.equal((await x.send(ask('task', 'auto:hy4'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free', 'cn:hy4std']);
+  x.hub.reply = undefined;
+  assert.equal((await x.send(ask('task', 'auto:hy4'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:hy4free']);
+});
+
+test('转发：目录不可用的兜底仍遵守排除和免费规则，不将未知价格当作免费', async (t) => {
+  const x = await setup(t, { only: ['cn:hy4std', 'cn:hy4free', 'global:hy4std', 'global:hy4free'], models: { rules: { freeOnly: true }, exclude: ['cn:hy4free'] } });
+  x.hub.catalogDown = true;
+  x.hub.reply = () => 429;
+  assert.equal((await x.send(ask('task', 'auto:hy4'))).status, 429);
+  assert.deepEqual(sentTo(x), ['intl:hy4free'], '不回退到被排除的免费版，也不使用付费或未知价格成员');
+  x.resolved.models = { ...x.resolved.models, only: ['cn:kimi-k3.1-pro'] };
+  assert.equal((await x.send(ask('unknown-price'))).status, 404);
+  assert.equal(x.hub.chats.length, 0);
+});
+
+test('转发：兜底认出带日期版本的免费档，并沿用同档只选最新版的规则', async (t) => {
+  const x = await setup(t, { only: ['cn:hy4std-1106', 'cn:hy4free-1017', 'cn:hy4free-1106', 'global:kimi-k3.1-pro'] });
+  x.hub.catalogDown = true;
+  assert.equal((await x.send(ask('task', 'auto:hy4'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:hy4free-1106']);
+});
+
 test('转发：同一对话在免费版之间也固定出口', async (t) => {
   const x = await setup(t);
   x.hub.reply = (realm) => (realm === 'cn' ? 503 : 200);

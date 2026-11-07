@@ -10,7 +10,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createExitCredits, rankExits } from './exit-credits.js';
-import { fetchHubRegions, hubRegionPlans, hubRegionRoutes, HUB_ROUTER_PATH, mergeKey, MERGED_PREFIX, planHubEntries, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE, providerBaseURL, resolveModelApiKey } from './models.js';
+import { fetchHubRegions, hubRegionPlans, hubRegionRoutes, HUB_ROUTER_PATH, mergeKey, modelTier, MERGED_PREFIX, planHubEntries, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE, providerBaseURL, resolveModelApiKey } from './models.js';
 
 // 视觉请求含 base64 图像，不能沿用面板 64KiB 的限制；仍给整个 JSON 请求设 32MiB 上限。
 const MAX_CHAT_BYTES = 32 * 1024 * 1024;
@@ -70,10 +70,19 @@ export function parseHubModel(id) {
 
 /**
  * 出口表里没有这个模型时按勾选转发。CodeArts 是可选出口，目录取不到不算同步失败，条目还留在 DSH 里；
- * 只勾了 HW 的模型不能因此 404，能不能用由 hub 回答。没有目录所以不知道倍率和视觉，排序退回固定顺序。
+ * 只勾了 HW 的模型不能因此 404，能不能用由 hub 回答。明确的 free 档仍要先于付费尝试；
+ * 其它倍率与视觉未知，不能绕过排除、免费或能力筛选，仍用正常的规划器决定能否参与。
  */
-function selectedRoutes(key, only = []) {
-  return only.filter((id) => mergeKey(id) === key).map(parseHubModel).filter(Boolean);
+function selectedRoutes(key, models) {
+  const regions = new Map();
+  for (const id of models.only ?? []) {
+    if (mergeKey(id) !== key) continue;
+    const route = parseHubModel(id);
+    if (!route) continue;
+    if (!regions.has(route.realm)) regions.set(route.realm, { realm: route.realm, models: [] });
+    regions.get(route.realm).models.push({ id: route.model, realm: route.realm, ...(modelTier(route.model) === 'free' ? { credits: 0 } : {}) });
+  }
+  return planHubEntries(hubRegionPlans([...regions.values()], models)).routes.get(key) ?? [];
 }
 
 /** 带图请求只能发给支持视觉的出口。 */
@@ -173,7 +182,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
   async function mergedAttempts(body, store) {
     const key = mergeKey(body.model);
     const listed = await table.members(key, store);
-    const members = listed.length ? listed : selectedRoutes(key, resolved.models.only);
+    const members = listed.length ? listed : selectedRoutes(key, resolved.models);
     // 只有一个可选项时没什么可比的：不读到期数据，也就不用等 HW 的首次读取。
     if (members.length < 2) return { attempts: members };
     const [credits, readiness] = await Promise.all([exits.snapshot(), exits.readiness()]).catch(() => [{}, undefined]);
