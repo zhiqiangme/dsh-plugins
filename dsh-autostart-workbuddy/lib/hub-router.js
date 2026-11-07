@@ -134,21 +134,30 @@ function createRouteTable({ resolved, env, now }) {
   let loading;
   const load = (credentials) => {
     const models = resolved.models;
-    loading ??= fetchHubRegions({ models, credentials, env }).then((fetched) => {
-      if (!fetched.ok) return;
+    // 旧配置的在途查询不能充当新配置的刷新；等它结束后再查，仍只保留一条请求链。
+    if (loading) return loading.models === models ? loading.promise : loading.promise.then(() => load(credentials));
+    const task = { models };
+    task.promise = fetchHubRegions({ models, credentials, env }).then((fetched) => {
+      if (!fetched.ok || resolved.models !== models) return;
       routes = planHubEntries(hubRegionPlans(fetched.regions, models)).routes;
       loadedFor = models;
       loadedAt = now();
-    }).catch(() => undefined).finally(() => { loading = undefined; });
-    return loading;
+    }).catch(() => undefined).finally(() => { if (loading === task) loading = undefined; });
+    loading = task;
+    return task.promise;
   };
   return {
     async members(key, credentials) {
       // 配置一变 resolved.models 就换新对象：刚取消勾选的出口不能再收请求，这时要等新表。
-      if (!routes || loadedFor !== resolved.models) await load(credentials);
-      else if (now() - loadedAt >= ROUTE_TABLE_TTL_MS) void load(credentials);
-      if (!routes?.has(key) && now() - loadedAt >= ROUTE_TABLE_MISS_MS) await load(credentials);
-      return routes?.get(key) ?? [];
+      let models;
+      do {
+        models = resolved.models;
+        if (!routes || loadedFor !== models) await load(credentials);
+        else if (!routes.has(key) && now() - loadedAt >= ROUTE_TABLE_MISS_MS) await load(credentials);
+        else if (now() - loadedAt >= ROUTE_TABLE_TTL_MS) void load(credentials);
+      } while (models !== resolved.models);
+      // 刷新失败时不能复用旧配置的表，交给调用方按最新勾选兜底。
+      return loadedFor === models ? routes?.get(key) ?? [] : [];
     },
   };
 }

@@ -85,6 +85,8 @@ async function setup(t, options = {}) {
     }
     const realm = req.headers['x-realm'] || 'cn';
     if (req.url.endsWith('/models')) {
+      await hub.beforeCatalog?.(realm);
+      if (hub.catalogDown) { res.writeHead(503); return res.end('{}'); }
       if (realm === 'codearts' && hub.codeartsDown) { res.writeHead(502); return res.end('{}'); }
       return res.end(JSON.stringify({ realm, data: hub.catalog[realm], ...(hub.source?.[realm] ? { catalog: hub.source[realm] } : {}) }));
     }
@@ -714,6 +716,36 @@ test('转发：取消勾选某个出口后立即生效，不等出口表过期',
   x.resolved.models = { ...x.resolved.models, only: x.resolved.models.only.filter((id) => id !== 'cn:kimi-k3.1-pro') };
   await x.send(ask('b'));
   assert.deepEqual(x.hub.chats.map(({ realm }) => realm), ['cn', 'intl']);
+});
+
+test('转发：目录刷新失败时不复用已取消勾选的出口，即使对话之前固定在该出口', async (t) => {
+  const x = await setup(t);
+  await x.send(ask('same-task'));
+  assert.equal(x.hub.chats.at(-1).realm, 'cn');
+  x.resolved.models = { ...x.resolved.models, only: ['cn:glm-5.3', 'global:kimi-k3.1-pro'] };
+  x.hub.catalogDown = true;
+  assert.equal((await x.send(ask('same-task'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro', 'intl:kimi-k3.1-pro']);
+  x.resolved.models = { ...x.resolved.models, only: ['cn:glm-5.3', 'global:hy4std'] };
+  assert.equal((await x.send(ask('same-task'))).status, 404);
+  assert.equal(x.hub.chats.length, 0);
+});
+
+test('转发：旧目录查询未完成时改勾选，并发请求都等待新配置的路由表', { timeout: 5000 }, async (t) => {
+  const x = await setup(t);
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  t.after(() => release.resolve());
+  x.hub.beforeCatalog = async () => { entered.resolve(); await release.promise; };
+  const first = x.send(ask('first'));
+  await entered.promise;
+  x.resolved.models = { ...x.resolved.models, only: ['cn:glm-5.3', 'global:kimi-k3.1-pro'] };
+  const second = x.send(ask('second'));
+  x.hub.beforeCatalog = undefined;
+  release.resolve();
+  const results = await Promise.all([first, second]);
+  assert.deepEqual(results.map((result) => result.status), [200, 200]);
+  assert.deepEqual(sentTo(x), ['intl:kimi-k3.1-pro', 'intl:kimi-k3.1-pro']);
 });
 
 test('转发：只有一个可选项时走选中的出口，不读到期数据', async (t) => {
