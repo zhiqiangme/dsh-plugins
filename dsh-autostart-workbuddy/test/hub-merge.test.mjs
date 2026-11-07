@@ -261,6 +261,63 @@ test('引用：旧的 auto:hy4free 改到 auto:hy4', async (t) => {
   assert.equal(x.editor.entry('agent-default-model').options.config.model, 'auto:hy4');
 });
 
+test('区域模式往返切换：裸 id 与 auto: 引用双向迁移，子代理去重且不动其它 provider', async (t) => {
+  const x = await setup(t, { models: { hubDual: false } });
+  const defaults = x.editor.entry('agent-default-model');
+  const subagent = x.editor.entry('subagent');
+  defaults.options.config.model = 'deepseek-v4.1-flash';
+  subagent.options.config.allowedModels = [
+    { provider: 'workbuddy', model: 'deepseek-v4.1-flash' },
+    { provider: 'workbuddy', model: 'cn:deepseek-v4.1-flash' },
+    { provider: 'trae', model: 'deepseek-v4.1-flash' },
+  ];
+  for (const enabled of [true, false]) {
+    const result = await setHubMode({ ...x, enabled });
+    const id = `${enabled ? 'auto:' : ''}deepseek-v4.1-flash`;
+    assert.equal(result.ok, true);
+    assert.equal(result.sync.state, 'updated');
+    assert.equal(defaults.options.config.model, id);
+    assert.ok(x.listed().some((entry) => entry.id === id));
+    assert.deepEqual(subagent.options.config.allowedModels, [
+      { provider: 'workbuddy', model: id },
+      { provider: 'trae', model: 'deepseek-v4.1-flash' },
+    ]);
+  }
+});
+
+test('关闭双区域：合并计费档位的引用优先回到免费版，原始付费引用仍保留原模型', async (t) => {
+  const x = await setup(t);
+  const defaults = x.editor.entry('agent-default-model');
+  defaults.options.config.model = 'auto:hy4';
+  x.editor.entry('subagent').options.config.allowedModels = [{ provider: 'workbuddy', model: 'cn:hy4std' }];
+  assert.equal((await setHubMode({ ...x, enabled: false })).ok, true);
+  assert.equal(defaults.options.config.model, 'hy4free');
+  assert.equal(x.editor.entry('subagent').options.config.allowedModels[0].model, 'hy4std');
+});
+
+test('单区域清单已写入但引用失败时，下次同步补迁移；预览不写引用', async (t) => {
+  const x = await setup(t, { models: { hubDual: false } });
+  const defaults = x.editor.entry('agent-default-model');
+  defaults.options.config.model = 'auto:deepseek-v4.1-flash';
+  const edit = x.editor.edit.bind(x.editor);
+  x.editor.edit = async (entry, change) => {
+    if (entry === defaults) throw new Error('模拟引用写入失败');
+    return edit(entry, change);
+  };
+  const first = await x.sync();
+  assert.equal(first.state, 'updated');
+  assert.equal(first.refs.state, 'failed');
+  x.editor.edit = edit;
+  const before = x.editor.edits.length;
+  assert.equal((await x.sync({ dryRun: true })).state, 'unchanged');
+  assert.equal(x.editor.edits.length, before);
+  assert.equal(defaults.options.config.model, 'auto:deepseek-v4.1-flash');
+  const retry = await x.sync();
+  assert.equal(retry.state, 'unchanged');
+  assert.equal(retry.refs.state, 'updated');
+  assert.equal(defaults.options.config.model, 'deepseek-v4.1-flash');
+});
+
 test('CodeArts 这轮取不到时，含 HW 的条目原样留在原位，引用不动；取消勾选才移除', async (t) => {
   const x = await setup(t, { only: ['cn:glm-5.3', 'codearts:glm-5.3', 'global:hy4std', 'codearts:kimi-k3.1-pro'] });
   await x.sync();

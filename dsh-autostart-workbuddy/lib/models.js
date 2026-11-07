@@ -271,7 +271,12 @@ export function hubRegionPlans(regions, models) {
 /** 上游给模型快照加的月日版本号（`-1017`）。限定成合法月日，`-2000` 这类数字不算版本号。 */
 const MODEL_VERSION_SUFFIX = /-(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/;
 /** 上游把计费档位写在 id 末尾（hy4free / hy4std）。前面必须还有内容，否则单独叫 free 的模型会变成空键。 */
-const MODEL_TIER_SUFFIX = /(?<=[a-z0-9])[-_]?(?:free|std)$/i;
+const MODEL_TIER_SUFFIX = /(?<=[a-z0-9])[-_]?(free|std)$/i;
+
+/** 只认上游明确写在 id 中的计费档位；没有标记时不能推断免费。 */
+export function modelTier(id) {
+  return MODEL_TIER_SUFFIX.exec(String(id).replace(MODEL_VERSION_SUFFIX, ''))?.[1]?.toLowerCase();
+}
 
 /** 去掉版本号和档位词后剩下的模型本身。 */
 function modelFamily(text) {
@@ -411,7 +416,8 @@ function replaceModelRefs(value, provider, swap) {
 
 /**
  * 条目 id 变了之后改写其它插件配置里的引用：llm-pi-ai 遇到清单里没有的模型直接报 UNKNOWN_MODEL。
- * 旧版写下的 `cn:x` 和 `auto:hy4free` 这类引用改到同款的 `auto:` 条目。清单里还有的引用不动；
+ * 单区域裸 id、旧区域 id 与 auto: id 双向匹配；清单里还有的引用不动。
+ * 合并条目拆回多个计费档位时优先免费版，不能因切换模式悄悄增加消费；
  * 写入失败不影响模型同步，只在返回值里说明。
  *
  * @param {{ editor: object, provider: string, entries: object[], syncBlocker?: object }} options
@@ -419,9 +425,17 @@ function replaceModelRefs(value, provider, swap) {
  */
 export async function retargetModelRefs({ editor, provider, entries, syncBlocker }) {
   const current = new Set(entries.map((entry) => entry.id));
-  const byKey = new Map(entries.filter(({ id }) => id.startsWith(MERGED_PREFIX)).map(({ id }) => [mergeKey(id), id]));
+  const byKey = new Map();
+  for (const { id } of entries) {
+    const key = mergeKey(id);
+    if (!byKey.has(key) || modelTier(id) === 'free') byKey.set(key, id);
+  }
   const swap = (id) => {
-    if (current.has(id) || !(id.startsWith(MERGED_PREFIX) || regionPrefixOf(id))) return id;
+    if (current.has(id)) return id;
+    // 区域前缀去掉后仍有同款原始 id 时保留它，例如 cn:hy4std → hy4std。
+    const prefix = regionPrefixOf(id);
+    const bare = prefix ? id.slice(prefix.length) : id;
+    if (current.has(bare)) return bare;
     return byKey.get(mergeKey(id)) ?? id;
   };
   let count = 0;
@@ -1127,7 +1141,9 @@ async function syncFollowProvider(options) {
     const credential = await ensureProxyCredential({
       credentials, ref: providerKeyRef(planned.config, models.provider), apiKey, managed: providerKeyRef(planned.config, models.provider) === GATEWAY_KEY_REFS[models.gateway],
     });
-    return { state: 'unchanged', entries, credential, realm, documentPath };
+    // 上次可能只写成了模型清单，引用写入失败；清单没变时也需要补迁移。
+    const refs = await retargetModelRefs({ editor, provider: models.provider, entries, syncBlocker });
+    return { state: 'unchanged', entries, credential, refs, realm, documentPath };
   }
 
   // change 回调拿的是 configEditor 在锁内重新读出的最新配置：在它上面重算，
@@ -1149,7 +1165,8 @@ async function syncFollowProvider(options) {
   const credential = await ensureProxyCredential({
     credentials, ref: providerKeyRef(written, models.provider), apiKey, managed: providerKeyRef(written, models.provider) === GATEWAY_KEY_REFS[models.gateway],
   });
-  return { state: 'updated', entries, created, credential, realm, documentPath };
+  const refs = await retargetModelRefs({ editor, provider: models.provider, entries, syncBlocker });
+  return { state: 'updated', entries, created, credential, refs, realm, documentPath };
 }
 
 /**
