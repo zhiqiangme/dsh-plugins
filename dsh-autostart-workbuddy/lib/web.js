@@ -782,8 +782,7 @@ function forceFrom(req) {
  * resync 与入口处的定时器共用，面板刷新通过 tick() 立即对齐模型清单；
  * autoUpdater 同理，面板打开「自动更新」时立即查一轮。
  */
-export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, resync, autoUpdater, recovery, checkVersion = createVersionChecker() }) {
-  const exits = createExitCredits({ resolved, env, credentials: () => credentialsOf(ctx) });
+export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, resync, autoUpdater, recovery, checkVersion = createVersionChecker(), exits = createExitCredits({ resolved, env, credentials: () => credentialsOf(ctx) }) }) {
   const overview = createAccountOverview({ resolved, env, credentials: () => credentialsOf(ctx), exits });
   const mount = (scoped) => {
     const holder = scoped ?? ctx;

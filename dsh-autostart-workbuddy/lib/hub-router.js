@@ -193,6 +193,10 @@ function createRouteTable({ resolved, env, now }) {
     return task.promise;
   };
   return {
+    async reload(credentials) {
+      if (loading) await loading.promise;
+      await load(credentials);
+    },
     async members(key, credentials) {
       // 配置一变 resolved.models 就换新对象：刚取消勾选的出口不能再收请求，这时要等新表。
       let models;
@@ -219,7 +223,16 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
   /** 到期数据读不到不能挡住对话：排序退回固定顺序，真实错误由 hub 报。 */
   async function mergedAttempts(body, store) {
     const key = mergeKey(body.model);
-    const listed = await table.members(key, store);
+    let listed = await table.members(key, store);
+    const selected = selectedRoutes(key, resolved.models);
+    if (!listed.length || selected.some((route) => !listed.some((member) => member.realm === route.realm && member.model === route.model))) {
+      const refreshed = await exits.refreshMissingCatalogs?.();
+      if (refreshed?.state === 'done' && refreshed.exits.some((exit) => exit.state === 'updated')) {
+        await table.reload(store);
+      }
+      // 等待刷新期间用户可能修改勾选，必须再次通过配置代际检查。
+      listed = await table.members(key, store);
+    }
     const members = listed.length ? listed : selectedRoutes(key, resolved.models);
     // 只有一个可选项时没什么可比的：不读到期数据，也就不用等 HW 的首次读取。
     if (members.length < 2) return { pin: conversationKey(body), attempts: members };
@@ -307,6 +320,12 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
             continue;
           }
           if (controller.signal.aborted) return;
+          if (upstream.status === 404) {
+            // 网关目录可能仍缓存着已下架的模型；不重发同一候选，刷新供后续路由使用。
+            const refreshed = await exits.refreshMissingCatalogs?.();
+            if (refreshed?.state === 'done' && refreshed.exits.some((exit) => exit.state === 'updated')) await table.reload(store);
+            if (controller.signal.aborted) { await upstream.body?.cancel().catch(() => undefined); return; }
+          }
           if (RETRY_STATUSES.has(upstream.status) && !await restrictionHold(upstream)) {
             if (controller.signal.aborted) return;
             failures.mark(pin, attempt);

@@ -10,6 +10,26 @@ const READY = async () => ({ ok: true, servable: true });
 const ALPHA = { id: 'cn:alpha', name: 'Alpha', credits: 'x0.11' };
 const BETA = { id: 'global:beta', name: 'Beta', credits: 'x0.00' };
 
+test('同步检测缺失时刷新 HUB 目录，保持当前清单且不绕过对话保护', async () => {
+  let busy = false;
+  let refreshes = 0;
+  let syncs = 0;
+  const resolved = resolvePluginConfig({ gateway: 'hub', models: { enabled: true } }, {});
+  const resync = createModelResync({
+    resolved, logger: memoryLogger(), editor: () => ({}), credentials: () => ({}), probe: READY,
+    syncBlocker: () => busy ? 'busy' : undefined,
+    exits: { refreshMissingCatalogs: async () => { refreshes++; return { state: 'done' }; } },
+    sync: async () => { syncs++; return { state: 'deferred', missing: ['cn:gone'], reason: 'missing' }; },
+  });
+  assert.equal((await resync.tick()).state, 'deferred');
+  assert.equal(refreshes, 1);
+  assert.equal(syncs, 1);
+  busy = true;
+  assert.equal((await resync.tick()).state, 'busy');
+  assert.equal(refreshes, 1);
+  assert.equal(syncs, 1);
+});
+
 function memoryLogger() {
   const lines = [];
   const push = (level) => (line) => lines.push([level, line]);

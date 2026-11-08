@@ -224,7 +224,8 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
     const kept = hasCodeArts ? [] : retainedCodeArts(config, models.provider, models.only);
     const next = [...groups.flatMap((group) => group.entries), ...kept].map((entry) => mergeKey(entry.id));
     regionGuard.merged ??= { missing: new Set() };
-    if (!confirmRemovals(regionGuard.merged, [...listedKeys(config)], next, removalCatalog(groups)).ok) return { state: 'deferred', reason: '区域目录缺项，等待新的可靠目录再次确认后再移除', realm: 'dual', documentPath };
+    const removal = confirmRemovals(regionGuard.merged, [...listedKeys(config)], next, removalCatalog(groups));
+    if (!removal.ok) return { state: 'deferred', reason: '区域目录缺项，等待新的可靠目录再次确认后再移除', missing: removal.missing, realm: 'dual', documentPath };
   }
   const plan = (current) => {
     const config = plainObject(current);

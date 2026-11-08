@@ -133,6 +133,34 @@ async function setup(t, options = {}) {
 
 const ask = (text = 'hello', model = 'auto:kimi-k3.1-pro') => ({ model, messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: text }] });
 
+test('目录缺失自动刷新后重新路由，恢复的模型当次可用', async (t) => {
+  const { hub, send } = await setup(t, { stored: { [HUB_PANEL_PASSWORD_REF]: 'panel-pass' } });
+  hub.catalog = structuredClone(CATALOG);
+  hub.catalog.cn = hub.catalog.cn.filter((m) => m.id !== 'kimi-k3.1-pro');
+  hub.catalog.intl = hub.catalog.intl.filter((m) => m.id !== 'kimi-k3.1-pro');
+  hub.catalog.codearts = hub.catalog.codearts.filter((m) => m.id !== 'kimi-k3.1-pro');
+  hub.refreshReply = (realm) => {
+    hub.catalog[realm] = structuredClone(CATALOG[realm]);
+    return { ok: true, source: 'remote', count: hub.catalog[realm].length, models: hub.catalog[realm].length };
+  };
+  assert.equal((await send(ask())).status, 200);
+  assert.ok(hub.refreshed.length > 0);
+  assert.equal(hub.chats.length, 1);
+});
+
+test('自动目录刷新合并并发，失败也冷却五分钟', async (t) => {
+  const { exits, clock } = await setup(t);
+  let calls = 0;
+  exits.refreshCatalogs = async () => { calls++; throw new Error('offline'); };
+  const results = await Promise.all([exits.refreshMissingCatalogs(), exits.refreshMissingCatalogs()]);
+  assert.equal(calls, 1);
+  assert.ok(results.every((r) => r.state === 'unavailable'));
+  assert.equal((await exits.refreshMissingCatalogs()).state, 'cooldown');
+  clock.now += 5 * 60_000;
+  await exits.refreshMissingCatalogs();
+  assert.equal(calls, 2);
+});
+
 /** DSH 模型列表里看到的 id 和名称。 */
 const shown = (x) => x.listed().map(({ id, name }) => [id, name]);
 

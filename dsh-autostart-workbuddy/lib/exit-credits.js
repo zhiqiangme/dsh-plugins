@@ -164,6 +164,8 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
   // hub 限流是同一地址一分钟 5 次失败，会把用户的浏览器登录一起锁住。
   // 被拒过的密码不再重试，等用户换了密码再说。
   let rejected;
+  let recoveringCatalog;
+  let catalogRetryAt = -Infinity;
 
   const accountsDir = () => (resolved.backend?.paths ?? resolved.paths)?.accounts;
 
@@ -286,7 +288,7 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
 
     /**
      * 让 hub 绕过 300 秒的目录缓存，立刻从上游重拉（它面板「刷新模型清单」用的接口，只认面板会话）。
-     * 上游有 WAF，只给用户手点的刷新用，定时同步和打开卡片都不要调。没账号的出口拉不到，跳过；
+     * 上游有 WAF，自动缺失恢复必须走下方带冷却的入口。没账号的出口拉不到，跳过；
      * 单出口模式只拉看板当前这个。依次发：hub 的目录锁本来就串行，同时发还会各登录一次。
      *
      * @returns {Promise<{ state: 'no-password' | 'auth-failed' | 'unavailable' } |
@@ -303,6 +305,17 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
         refreshed.push({ realm, ...result });
       }
       return { state: 'done', exits: refreshed };
+    },
+
+    /** 仅在检测到缺失时重拉；共享在途请求，失败也冷却五分钟，避免重试风暴触发上游 WAF。 */
+    refreshMissingCatalogs() {
+      if (recoveringCatalog) return recoveringCatalog;
+      if (now() < catalogRetryAt) return Promise.resolve({ state: 'cooldown' });
+      catalogRetryAt = now() + 5 * 60_000;
+      recoveringCatalog = Promise.resolve().then(() => this.refreshCatalogs())
+        .catch(() => ({ state: 'unavailable' }))
+        .finally(() => { recoveringCatalog = undefined; });
+      return recoveringCatalog;
     },
 
     /** 用户换了面板密码：旧会话和失败记录都作废，下一轮重新读 HW。 */

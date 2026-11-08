@@ -40,6 +40,16 @@ test('区域模型只接受 cn:/global:/codearts: 前缀，裸 id 和空模型�
   for (const id of ['', 'cn:', 'intl:m', 'codearts:', 'hw:m', 'm', null]) assert.equal(parseHubModel(id), undefined);
 });
 
+test('上游模型 404 触发目录刷新，但其它错误不触发', async (t) => {
+  let refreshes = 0;
+  const exits = { refreshMissingCatalogs: async () => { refreshes++; return { state: 'unavailable' }; } };
+  const { send } = await setup(t, (_req, res, body) => { res.writeHead(body.model === 'gone' ? 404 : 500); res.end('{}'); }, { exits });
+  assert.equal((await send({ model: 'cn:gone' })).status, 404);
+  assert.equal(refreshes, 1);
+  assert.equal((await send({ model: 'cn:error' })).status, 500);
+  assert.equal(refreshes, 1);
+});
+
 test('同组模型按区域 Key 路由，保留图像、工具与推理参数，Key 修改后立即生效', async (t) => {
   const { send, calls, credentials } = await setup(t, (_req, res) => res.end('{}'));
   const body = { model: 'cn:model', messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } }] }], tools: [{ type: 'function' }], reasoning_effort: 'high', temperature: 0.5 };

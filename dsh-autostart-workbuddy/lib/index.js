@@ -39,6 +39,7 @@ import { hubKeyHooks } from './hub.js';
 import { syncModels } from './models.js';
 import { modelSyncBlockReason } from './model-sync-guard.js';
 import { createModelResync } from './resync.js';
+import { createExitCredits } from './exit-credits.js';
 import { createRecovery } from './recovery.js';
 import { ManagedService, isFile } from './services.js';
 import { configEditorOf, credentialsOf, hostService, registerPanelRoutes } from './web.js';
@@ -91,8 +92,9 @@ export function apply(ctx, config) {
 
   // 定时器与面板刷新共用同步器，避免并发写入，并共用模型移除的确认状态。
   const syncBlocker = () => modelSyncBlockReason(hostService(ctx, 'agents', (candidate) => typeof candidate?.list === 'function'));
+  const exits = createExitCredits({ resolved, env: hostEnv, credentials: () => credentialsOf(ctx) });
   const resync = createModelResync({
-    resolved, logger, env: hostEnv, name, syncBlocker,
+    resolved, logger, env: hostEnv, name, syncBlocker, exits,
     editor: () => configEditorOf(ctx), credentials: () => credentialsOf(ctx),
   });
   const recovery = createRecovery({ service, resolved, logger, onRecovered: () => resync.tick() });
@@ -105,7 +107,7 @@ export function apply(ctx, config) {
   const autoUpdater = createAutoUpdater({ resolved, logger, service, env: hostEnv, name });
 
   // 后端还没起来（或没装）时打开面板也能看到状态、并就地安装。
-  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service, resync, autoUpdater, recovery });
+  registerPanelRoutes(ctx, { logger, resolved, env: hostEnv, service, resync, autoUpdater, recovery, exits });
 
   // 白名单等 models.* 与自动更新开关的改动就地生效，不重启插件（见 watchConfigUpdates）。
   const unwatchConfig = watchConfigUpdates(ctx, resolved, hostEnv, logger, config, resync);

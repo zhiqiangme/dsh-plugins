@@ -54,7 +54,7 @@ export function healthTarget(baseURL, spec) {
 export function createModelResync(options) {
   const {
     resolved, logger, editor, credentials, env = process.env, probe = gatewayDriver(options.resolved).probe, sync = syncModels,
-    name = 'dsh-autostart-workbuddy', realmPollMs = REALM_POLL_MS, syncBlocker,
+    name = 'dsh-autostart-workbuddy', realmPollMs = REALM_POLL_MS, syncBlocker, exits,
   } = options;
   const removalGuard = { missing: new Set() };
   // 只有 hub 一次只服务一个出口；wb2api 两个出口同时列出，不需要盯。
@@ -118,6 +118,11 @@ export function createModelResync(options) {
       // 区域分组不随看板出口变化，切换那一轮也照常要两轮确认。
       regionGuard: manual ? undefined : removalGuard,
     });
+    if (resolved.gateway === 'hub' && result.missing?.length) {
+      // 只刷新网关，下一轮再按完整的运行状态和移除保护检查 DSH 配置。
+      const refreshed = await exits?.refreshMissingCatalogs();
+      if (refreshed) logger.info(`[${name}] 检测到模型缺失，网关目录刷新：${refreshed.state}`);
+    }
     // 引用没改过来时，相关的默认模型或子代理会报 UNKNOWN_MODEL，这里要留下线索。
     if (result.refs?.state === 'updated') logger.info(`[${name}] ${label}：已把 ${result.refs.count} 处配置里的模型引用改到新 id`);
     else if (result.refs?.state === 'failed') note('warn', `${label}未能改写模型引用：${result.refs.reason}`);
