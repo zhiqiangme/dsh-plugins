@@ -570,12 +570,12 @@ test('转发：带图请求跳过不支持视觉的出口', async (t) => {
   assert.deepEqual(x.hub.chats.map(({ realm }) => realm), ['codearts', 'cn']);
 });
 
-test('转发：同一对话固定出口，到期变化也不换；新对话重新选；空闲一小时后重选', async (t) => {
+test('转发：三天以外继续固定出口；新对话重新选；空闲一小时后重选', async (t) => {
   const x = await setup(t);
   x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
   x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + 6 * DAY) }]));
   await x.send(ask('task'));
-  x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + DAY) }]));
+  x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + 4 * DAY) }]));
   x.clock.now += 2 * 60_000;
   await x.send({ ...ask('task'), messages: [...ask('task').messages, { role: 'assistant', content: 'ok' }, { role: 'user', content: 'next' }] });
   await x.send(ask('new task'));
@@ -583,6 +583,93 @@ test('转发：同一对话固定出口，到期变化也不换；新对话重�
   x.clock.now += 61 * 60_000;
   await x.send(ask('task'));
   assert.equal(x.hub.chats.at(-1).realm, 'intl');
+});
+
+test('转发：跨入三天边界时临期渠道抢占固定出口，两边都临期后仍保持固定', async (t) => {
+  const x = await setup(t);
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
+  x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + 6 * DAY) }]));
+  await x.send(ask('task'));
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
+  x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + 3 * DAY + 120_000) }]));
+  x.clock.now += 119_999;
+  await x.send(ask('task'));
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro'], '超过三天 1ms 仍保留原出口');
+  x.clock.now += 1;
+  await x.send(ask('task'));
+  assert.deepEqual(sentTo(x), ['intl:kimi-k3.1-pro'], '恰好三天即抢占，不必等模型报错或快照刷新');
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + DAY) }]));
+  x.clock.now += 60_000;
+  await x.send(ask('task'));
+  assert.deepEqual(sentTo(x), ['intl:kimi-k3.1-pro'], '两边都临期，保留已经成功的 GL');
+  await x.send(ask('new task'));
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro'], '新对话在同档内沿用最早到期排序');
+});
+
+test('转发：免费优先于临期；免费均失败时临期付费渠道抢占原付费出口', async (t) => {
+  const x = await setup(t);
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
+  x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + 6 * DAY) }]));
+  x.hub.reply = (_realm, body) => body.model === 'hy4free' ? 429 : 200;
+  await x.send(ask('task', 'auto:hy4'));
+  assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free', 'cn:hy4std']);
+  x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + DAY) }]));
+  x.clock.now += 60_000;
+  await x.send(ask('task', 'auto:hy4'));
+  assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free', 'intl:hy4std']);
+  x.hub.reply = undefined;
+  await x.send(ask('task', 'auto:hy4'));
+  assert.deepEqual(sentTo(x), ['cn:hy4free'], '免费恢复后优先于刚固定的临期付费渠道');
+});
+
+test('转发：未知、用尽和快照中已过期的积分不抢占固定出口', async (t) => {
+  const x = await setup(t);
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
+  await x.send(ask('task'));
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
+  x.writeAccount('gl', account('intl', [{ remain: 0, expire_time: stamp(NOW + DAY) }]));
+  x.clock.now += 60_000;
+  await x.send(ask('task'));
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
+  x.clock.now += 60_000;
+  x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(x.clock.now + 1000) }]));
+  await x.exits.snapshot();
+  x.clock.now += 1000;
+  await x.send(ask('task'));
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro'], '缓存里的到期时间恰好到达，不再算临期');
+});
+
+test('转发：临期 HW 可抢占非临期固定出口，但仍受视觉能力限制', async (t) => {
+  const x = await setup(t, { stored: { [HUB_PANEL_PASSWORD_REF]: 'panel-pass' } });
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
+  x.hub.hwEndDate = stamp(NOW + 6 * DAY).slice(0, 10);
+  await x.send(ask('task', 'auto:glm-5.3'));
+  assert.deepEqual(sentTo(x), ['cn:glm-5.3']);
+  x.hub.hwEndDate = stamp(NOW + DAY).slice(0, 10);
+  x.exits.reset();
+  await x.send(ask('task', 'auto:glm-5.3'));
+  assert.deepEqual(sentTo(x), ['codearts:glm-5.3']);
+  const body = ask('task', 'auto:glm-5.3');
+  body.messages.push({ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AA' } }] });
+  await x.send(body);
+  assert.deepEqual(sentTo(x), ['cn:glm-5.3'], 'HW 不支持该模型的视觉，临期也不能选它');
+});
+
+test('转发：临期渠道没有账号时不抢占；临期请求被风控拒绝仍不跨渠道重试', async (t) => {
+  const x = await setup(t);
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
+  await x.send(ask('task'));
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
+  x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + DAY) }]));
+  x.hub.accounts = { cn: 1, intl: 0 };
+  x.clock.now += 60_000;
+  await x.send(ask('task'));
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
+  x.hub.accounts = { cn: 1, intl: 1 };
+  x.clock.now += 5000;
+  x.hub.reply = () => 403;
+  assert.equal((await x.send(ask('task'))).status, 403);
+  assert.deepEqual(sentTo(x), ['intl:kimi-k3.1-pro']);
 });
 
 test('转发：固定的出口没有账号时换一个，之后固定在新出口', async (t) => {

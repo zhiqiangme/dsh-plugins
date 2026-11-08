@@ -4,7 +4,7 @@
  * webServer 上做一层转发；不另开端口、不接管上游程序，SSE 原样流式传输。
  *
  * 写进 DSH 的模型都是 `auto:` 开头，不绑定出口：这里按积分到期选一个（规则见 exit-credits.js 的 rankExits），
- * 同一对话固定在一个出口，请求没被受理时才换下一个。带区域前缀的 id 只有旧会话还会发来，照旧直接转发。
+ * 免费、三天内积分到期的出口优先，同一优先级内尽量固定对话出口。带区域前缀的旧 id 照旧直接转发。
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
@@ -20,6 +20,8 @@ const ROUTE_TABLE_TTL_MS = 5 * 60_000;
 const ROUTE_TABLE_MISS_MS = 30_000;
 /** 对话空闲超过一小时，上游缓存基本已失效，换出口不再有代价，重新按到期选。 */
 const PIN_IDLE_MS = 60 * 60_000;
+/** 按请求时刻滚动计算 72 小时，包含恰好三天；临期积分优先于非临期出口的缓存复用。 */
+const EXPIRING_SOON_MS = 3 * 24 * 60 * 60_000;
 /** 固定记录的上限：每条只有一个哈希和时间，够覆盖同时进行的对话，超出丢最久没用的。 */
 const MAX_PINS = 500;
 /**
@@ -123,15 +125,21 @@ function createExitPins(now) {
 }
 
 /**
- * 把固定的成员提到同档位最前；ranked 已按免费在前排好。
- * 免费的始终排在付费前：对话换到付费只因免费暂时不可用，固定住的话长对话会一直扣积分，
- * 而回到免费丢掉缓存也不花钱。
+ * 免费 → 三天内到期 → 其它；同档内沿用原排序，并把固定成员提到该档最前。
+ * 两个出口都临期时仍保持对话固定，避免在它们之间反复切换；免费恢复时始终优先。
  */
-function holdPinned(ranked, pinned) {
-  const held = ranked.find(({ realm, model }) => realm === pinned?.realm && model === pinned?.model);
-  if (!held) return ranked;
-  const rest = ranked.filter((member) => member !== held);
-  rest.splice(held.price === 0 ? 0 : rest.filter((member) => member.price === 0).length, 0, held);
+function holdPinned(ranked, pinned, credits, now) {
+  const priority = (member) => {
+    if (member.price === 0) return 0;
+    const expiry = credits[member.realm]?.expireAt;
+    // 快照可能暂未刷新：已过期和未知日期不能继续享受临期优先。
+    return Number.isFinite(expiry) && expiry > now && expiry - now <= EXPIRING_SOON_MS ? 1 : 2;
+  };
+  const ordered = [...ranked].sort((a, b) => priority(a) - priority(b));
+  const held = ordered.find(({ realm, model }) => realm === pinned?.realm && model === pinned?.model);
+  if (!held) return ordered;
+  const rest = ordered.filter((member) => member !== held);
+  rest.splice(rest.filter((member) => priority(member) < priority(held)).length, 0, held);
   return rest;
 }
 
@@ -188,7 +196,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
     const [credits, readiness] = await Promise.all([exits.snapshot(), exits.readiness()]).catch(() => [{}, undefined]);
     const ranked = rankExits(members, credits, { ready: readiness?.ready, image: requestHasImage(body) });
     const pin = conversationKey(body);
-    return { pin, attempts: holdPinned(ranked, pin ? pins.get(pin) : undefined) };
+    return { pin, attempts: holdPinned(ranked, pin ? pins.get(pin) : undefined, credits, now()) };
   }
 
   return {
