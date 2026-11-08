@@ -24,6 +24,8 @@ const PIN_IDLE_MS = 60 * 60_000;
 const EXPIRING_SOON_MS = 3 * 24 * 60 * 60_000;
 /** 固定记录的上限：每条只有一个哈希和时间，够覆盖同时进行的对话，超出丢最久没用的。 */
 const MAX_PINS = 500;
+/** DSH 会重试同一轮模型请求；五分钟内不再请求该对话刚失败的候选，避免免费/临期规则反复选回它。 */
+const FAILURE_COOLDOWN_MS = 5 * 60_000;
 /**
  * 这些状态说明请求没被受理，换出口可能成功。403 不在内：账号被上游风控时跨出口重打只会牵连另一边
  * （hub 的跨出口回退同样不重打）；400 / 401 换出口也没用，要让用户看到真实错误。
@@ -124,6 +126,33 @@ function createExitPins(now) {
   };
 }
 
+/** 只隔离当前对话的具体渠道和模型，不因一条长请求失败影响其它对话。仅保存哈希与到期时刻。 */
+function createFailedAttempts(now) {
+  const conversations = new Map();
+  const routeKey = ({ realm, model }) => JSON.stringify([realm, model]);
+  return {
+    mark(key, attempt) {
+      if (!key) return;
+      const routes = conversations.get(key) ?? new Map();
+      for (const [route, until] of routes) if (until <= now()) routes.delete(route);
+      routes.set(routeKey(attempt), now() + FAILURE_COOLDOWN_MS);
+      conversations.delete(key);
+      conversations.set(key, routes);
+      if (conversations.size > MAX_PINS) conversations.delete(conversations.keys().next().value);
+    },
+    remaining(key, attempt) {
+      const routes = conversations.get(key);
+      if (!routes) return 0;
+      const route = routeKey(attempt);
+      const remaining = (routes.get(route) ?? 0) - now();
+      if (remaining > 0) return remaining;
+      routes.delete(route);
+      if (!routes.size) conversations.delete(key);
+      return 0;
+    },
+  };
+}
+
 /**
  * 免费 → 三天内到期 → 其它；同档内沿用原排序，并把固定成员提到该档最前。
  * 两个出口都临期时仍保持对话固定，避免在它们之间反复切换；免费恢复时始终优先。
@@ -183,6 +212,7 @@ function createRouteTable({ resolved, env, now }) {
 export function createHubRouter({ resolved, credentials, editor, env = process.env, maxBodyBytes = MAX_CHAT_BYTES, now = Date.now, exits = createExitCredits({ resolved, credentials, env, now }) }) {
   const active = new Set();
   const pins = createExitPins(now);
+  const failures = createFailedAttempts(now);
   const table = createRouteTable({ resolved, env, now });
   let stopped = false;
 
@@ -192,7 +222,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
     const listed = await table.members(key, store);
     const members = listed.length ? listed : selectedRoutes(key, resolved.models);
     // 只有一个可选项时没什么可比的：不读到期数据，也就不用等 HW 的首次读取。
-    if (members.length < 2) return { attempts: members };
+    if (members.length < 2) return { pin: conversationKey(body), attempts: members };
     const [credits, readiness] = await Promise.all([exits.snapshot(), exits.readiness()]).catch(() => [{}, undefined]);
     const ranked = rankExits(members, credits, { ready: readiness?.ready, image: requestHasImage(body) });
     const pin = conversationKey(body);
@@ -239,8 +269,15 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
         const merged = typeof body?.model === 'string' && body.model.startsWith(MERGED_PREFIX);
         const route = merged ? undefined : parseHubModel(body?.model);
         if (!merged && !route) return reply(res, 400, '请选择带 CN / GL / HW 区域的 WorkBuddy 模型');
-        const { pin, attempts } = merged ? await mergedAttempts(body, store) : { attempts: [route] };
-        if (!attempts.length) return reply(res, 404, '这个合并模型暂时没有可用出口，请刷新模型列表');
+        const { pin, attempts: candidates } = merged ? await mergedAttempts(body, store) : { attempts: [route] };
+        if (!candidates.length) return reply(res, 404, '这个合并模型暂时没有可用出口，请刷新模型列表');
+        // 在免费、临期和对话固定排序之后过滤，故障候选不能靠高优先级再次抢占。
+        const attempts = candidates.filter((attempt) => !failures.remaining(pin, attempt));
+        if (!attempts.length) {
+          const retryAfter = Math.max(1, Math.ceil(Math.min(...candidates.map((attempt) => failures.remaining(pin, attempt))) / 1000));
+          res.setHeader('retry-after', String(retryAfter));
+          return reply(res, 503, `本对话的可选渠道均处于失败冷却中，请在 ${retryAfter} 秒后重试，或改选其它模型`);
+        }
         const keys = await hubRegionRoutes({ models, credentials: store, env });
 
         /** timeoutMs 只管等响应头；长对话由 DSH 的流空闲超时和客户端取消控制，不能在 60s 截断。 */
@@ -263,13 +300,20 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
           let upstream;
           try { upstream = await send(attempt); }
           catch (error) {
-            if (last || controller.signal.aborted) throw error;
+            // 客户端取消（含宿主流空闲超时）与插件关闭不是渠道故障。
+            if (controller.signal.aborted) throw error;
+            failures.mark(pin, attempt);
+            if (last) return reply(res, 502, `HUB 候选渠道连接失败或等待响应超时${pin ? '，已记录失败并暂时跳过' : ''}，请稍后重试`);
             continue;
           }
           if (controller.signal.aborted) return;
-          if (!last && RETRY_STATUSES.has(upstream.status) && !await restrictionHold(upstream)) {
-            await upstream.body?.cancel().catch(() => undefined);
-            continue;
+          if (RETRY_STATUSES.has(upstream.status) && !await restrictionHold(upstream)) {
+            if (controller.signal.aborted) return;
+            failures.mark(pin, attempt);
+            if (!last) {
+              await upstream.body?.cancel().catch(() => undefined);
+              continue;
+            }
           }
           if (pin && upstream.ok) pins.set(pin, attempt);
           res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': 'no-store' });

@@ -91,6 +91,7 @@ async function setup(t, options = {}) {
       return res.end(JSON.stringify({ realm, data: hub.catalog[realm], ...(hub.source?.[realm] ? { catalog: hub.source[realm] } : {}) }));
     }
     hub.chats.push({ ...body, realm });
+    if (hub.handleChat) return hub.handleChat(req, res, body, realm);
     const answer = hub.reply?.(realm, body) ?? 200;
     res.writeHead(answer);
     res.end(JSON.stringify(answer === 200 ? { realm } : { error: { message: hub.replyBody ?? `from ${realm}` } }));
@@ -121,8 +122,8 @@ async function setup(t, options = {}) {
   const proxy = createServer((req, res) => router.handle(req, res));
   await new Promise((done) => proxy.listen(0, '127.0.0.1', done));
   t.after(() => new Promise((done) => { router.stop(); proxy.closeAllConnections(); proxy.close(done); }));
-  const send = (body) => fetch(`http://127.0.0.1:${proxy.address().port}${HUB_ROUTER_PATH}/chat/completions`, {
-    method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer shared' }, body: JSON.stringify(body),
+  const send = (body, extra = {}) => fetch(`http://127.0.0.1:${proxy.address().port}${HUB_ROUTER_PATH}/chat/completions`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer shared' }, body: JSON.stringify(body), ...extra,
   });
   const writeAccount = (name, value) => writeFileSync(join(accounts, `${name}.json`), JSON.stringify(value));
   const sync = (extra) => syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env, ...extra });
@@ -616,8 +617,9 @@ test('转发：免费优先于临期；免费均失败时临期付费渠道抢�
   x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + DAY) }]));
   x.clock.now += 60_000;
   await x.send(ask('task', 'auto:hy4'));
-  assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free', 'intl:hy4std']);
+  assert.deepEqual(sentTo(x), ['intl:hy4std'], '失败的免费候选仍在冷却，临期付费渠道可抢占其它付费出口');
   x.hub.reply = undefined;
+  x.clock.now += 4 * 60_000;
   await x.send(ask('task', 'auto:hy4'));
   assert.deepEqual(sentTo(x), ['cn:hy4free'], '免费恢复后优先于刚固定的临期付费渠道');
 });
@@ -701,7 +703,7 @@ test('转发：先试免费版，都不可用才用付费版，付费版按积�
   assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free', 'intl:hy4std']);
 });
 
-test('转发：对话回退到付费版后下一轮仍先试免费版，付费版之间不换出口', async (t) => {
+test('转发：免费失败后冷却期间沿用付费，冷却结束后优先重试免费', async (t) => {
   const x = await setup(t);
   x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 5 * DAY) }]));
   x.writeAccount('gl', account('intl', [{ remain: 5, expire_time: stamp(NOW + DAY) }]));
@@ -711,13 +713,14 @@ test('转发：对话回退到付费版后下一轮仍先试免费版，付费�
   x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + 3600_000) }]));
   x.clock.now += 2 * 60_000;
   await x.send(ask('task', 'auto:hy4'));
-  assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free', 'intl:hy4std'], '到期变了也留在原来的付费出口');
+  assert.deepEqual(sentTo(x), ['intl:hy4std'], '免费冷却期间不重试，两边都临期时保留付费出口');
   x.hub.reply = undefined;
+  x.clock.now += 3 * 60_000;
   await x.send(ask('task', 'auto:hy4'));
   assert.deepEqual(sentTo(x), ['cn:hy4free'], '免费版恢复后马上回去');
 });
 
-test('转发：冷缓存且目录不可用时仍先免费后付费，同一对话下一轮重试免费', async (t) => {
+test('转发：冷缓存且目录不可用时仍先免费后付费，失败冷却结束后重试免费', async (t) => {
   // 付费排在勾选清单前面，不能被当成调用优先级。
   const x = await setup(t, { only: ['cn:hy4std', 'global:hy4std', 'cn:hy4free', 'global:hy4free'] });
   x.hub.catalogDown = true;
@@ -727,6 +730,7 @@ test('转发：冷缓存且目录不可用时仍先免费后付费，同一对�
   assert.equal((await x.send(ask('task', 'auto:hy4'))).status, 200);
   assert.deepEqual(sentTo(x), ['cn:hy4free', 'intl:hy4free', 'cn:hy4std']);
   x.hub.reply = undefined;
+  x.clock.now += 5 * 60_000;
   assert.equal((await x.send(ask('task', 'auto:hy4'))).status, 200);
   assert.deepEqual(sentTo(x), ['cn:hy4free']);
 });
@@ -757,6 +761,108 @@ test('转发：同一对话在免费版之间也固定出口', async (t) => {
   x.hub.reply = undefined;
   await x.send(ask('task', 'auto:hy4'));
   assert.deepEqual(sentTo(x), ['intl:hy4free']);
+});
+
+test('转发：等待响应超时后切换渠道，DSH 连续重试不会又选回临期故障渠道', { timeout: 5000 }, async (t) => {
+  const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:kimi-k3.1-pro'] });
+  x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + DAY) }]));
+  await x.send(ask('task'));
+  sentTo(x);
+  // 先预热目录再缩短等待响应头的超时，避免把目录查询的耗时也纳入测试。
+  x.resolved.models.timeoutMs = 50;
+  x.hub.handleChat = (_req, res, _body, realm) => {
+    if (realm !== 'cn') res.end(JSON.stringify({ realm }));
+  };
+  assert.equal((await x.send(ask('task'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro', 'intl:kimi-k3.1-pro']);
+  for (let retry = 0; retry < 7; retry++) assert.equal((await x.send(ask('task'))).status, 200);
+  assert.deepEqual(sentTo(x), Array(7).fill('intl:kimi-k3.1-pro'));
+});
+
+test('转发：所有渠道连接失败后连续七次重试不再访问上游，冷却按对话隔离且到期可恢复', async (t) => {
+  const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:kimi-k3.1-pro'] });
+  x.hub.handleChat = (req) => req.socket.destroy();
+  const first = await x.send(ask('task'));
+  assert.equal(first.status, 502);
+  assert.match((await first.json()).error.message, /连接失败或等待响应超时/);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro', 'intl:kimi-k3.1-pro']);
+  for (let retry = 0; retry < 7; retry++) {
+    const response = await x.send(ask('task'));
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('retry-after'), '300');
+    assert.match((await response.json()).error.message, /失败冷却/);
+  }
+  assert.deepEqual(sentTo(x), []);
+  assert.equal((await x.send(ask('different task'))).status, 502);
+  assert.equal(sentTo(x).length, 2, '其它对话不受该对话的失败记录影响');
+  x.clock.now += 299_999;
+  const waiting = await x.send(ask('task'));
+  assert.equal(waiting.status, 503);
+  assert.equal(waiting.headers.get('retry-after'), '1');
+  assert.deepEqual(sentTo(x), []);
+  x.clock.now += 1;
+  x.hub.handleChat = undefined;
+  assert.equal((await x.send(ask('task'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
+});
+
+for (const status of [429, 503]) test(`转发：HTTP ${status} 包括最后一个候选都进入冷却，首次仍保留上游错误正文`, async (t) => {
+  const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:kimi-k3.1-pro'] });
+  x.hub.reply = () => status;
+  const first = await x.send(ask('task'));
+  assert.equal(first.status, status);
+  assert.deepEqual(await first.json(), { error: { message: 'from intl' } });
+  assert.equal(sentTo(x).length, 2);
+  const next = await x.send(ask('task'));
+  assert.equal(next.status, 503);
+  assert.match((await next.json()).error.message, /失败冷却/);
+  assert.deepEqual(sentTo(x), []);
+});
+
+test('转发：只有一个候选也记失败，不能因没有可切换渠道而每轮重打', async (t) => {
+  const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:hy4std'] });
+  x.hub.reply = () => 503;
+  await x.send(ask('task'));
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
+  const next = await x.send(ask('task'));
+  assert.equal(next.headers.get('retry-after'), '300');
+  assert.deepEqual(sentTo(x), []);
+});
+
+for (const streaming of [false, true]) test(`转发：客户端在${streaming ? '流已开始' : '等待响应头'}时取消，不记为失败或切换渠道`, { timeout: 5000 }, async (t) => {
+  const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:kimi-k3.1-pro'] });
+  const entered = Promise.withResolvers();
+  const closed = Promise.withResolvers();
+  x.hub.handleChat = (_req, res) => {
+    res.once('close', closed.resolve);
+    if (streaming) {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"first"}}]}\n\n');
+    }
+    entered.resolve();
+  };
+  const controller = new AbortController();
+  const request = x.send(ask('task'), { signal: controller.signal });
+  const rejected = streaming ? undefined : assert.rejects(request);
+  await entered.promise;
+  const reader = streaming ? (await request).body.getReader() : undefined;
+  if (reader) await reader.read();
+  controller.abort();
+  if (reader) await assert.rejects(reader.read());
+  else await rejected;
+  await closed.promise;
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
+  x.hub.handleChat = undefined;
+  assert.equal((await x.send(ask('task'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro'], '取消不制造冷却，仍可沿用同一渠道');
+});
+
+for (const status of [400, 401, 403, 429]) test(`转发：${status === 429 ? '风控暂停 429' : status} 不记冷却，宿主重试也不绕到其它渠道`, async (t) => {
+  const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:kimi-k3.1-pro'] });
+  x.hub.reply = () => status;
+  if (status === 429) x.hub.replyBody = 'restriction code 11140';
+  for (let round = 0; round < 2; round++) assert.equal((await x.send(ask('task'))).status, status);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro', 'cn:kimi-k3.1-pro']);
 });
 
 test('转发：请求没被受理时换下一个出口并固定下来', async (t) => {
