@@ -303,6 +303,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'backendInstall', 'backendInstalled', 'backendLatest', 'backendNoAccounts', 'backendNoHistory', 'backendRollback',
     'backendTitle', 'backendUninstall', 'backendUninstalled', 'backendUnmanaged', 'backendUpdate',
     'backendUpdated', 'backendUpToDate', 'backendWorking', 'backendRolledBack', 'cancel',
+    'backendChecking', 'backendDownloading', 'backendVerifying', 'backendInstalling', 'backendHealthCheck', 'backendRollingBack',
     'clearAll', 'count', 'disabledHint', 'emptyBackend', 'emptyHint', 'loading',
     'panelHint', 'panelKeyCopied', 'panelKeyCopy', 'panelKeyManual', 'panelKeyNone', 'panelKeyWorking',
     'patchPath', 'refresh', 'retry', 'save', 'saveFailed', 'saveSync', 'savedDisabled', 'savedNoSync', 'savedSync',
@@ -933,6 +934,52 @@ test('后端区（未安装）：显示 安装，不显示 更新/卸载/回滚'
   assert.equal(labels.includes('回滚'), false, '未安装没有可回滚的版本');
   assert.ok(labels.includes('检查更新'), '检查更新始终可用');
   assert.deepEqual(labels.slice(-2), ['检查更新', '安装'], '未安装时后端按钮应为 检查更新 → 安装');
+});
+
+test('手动更新：轮询显示下载百分比和后续阶段，完成后移除进度并停止轮询', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const post = Promise.withResolvers();
+  const backend = { exeExists: true, version: { tag: 'v1.0.0' }, history: [] };
+  const progress = [
+    { phase: 'downloading', received: 256, total: 0 },
+    { phase: 'downloading', received: 512, total: 1024 },
+    { phase: 'health-check' },
+  ];
+  const effects = [];
+  const app = boot(backendStates(backend), { effects, fetchImpl: async (path) => {
+    if (path.endsWith('/backend')) return post.promise;
+    const payload = path.endsWith('?progress=1') ? { progress: progress.shift() } : { ok: true, models: [] };
+    return { ok: true, json: async () => payload };
+  } });
+  const section = () => backendSection(app.renderCard());
+  const bar = () => collectByType(section(), 'progress')[0];
+  const button = collectByType(section(), 'button').find((node) => collectText(node).join('') === '更新');
+  const updating = button.props.onClick();
+  assert.equal(bar().props['aria-label'], '正在检查上游版本…');
+  const stop = effects.at(-2)();
+  t.after(stop);
+  const poll = async () => {
+    t.mock.timers.tick(500);
+    await new Promise((done) => setImmediate(done));
+  };
+  await poll();
+  assert.equal(bar().props['aria-label'], '正在下载后端安装包…');
+  assert.equal(bar().props.value, undefined);
+  await poll();
+  assert.equal(bar().props.value, 50);
+  assert.ok(collectText(section()).includes('50%'));
+  await poll();
+  assert.equal(bar().props['aria-label'], '正在启动后端并检查运行状态…');
+  assert.equal(bar().props.value, undefined);
+
+  post.resolve({ ok: true, json: async () => ({ ok: true, latest: { tag: 'v2.0.0' }, backend }) });
+  await updating;
+  assert.equal(bar(), undefined);
+  assert.ok(collectText(section()).includes('已更新到 v2.0.0，健康检查通过。'));
+  stop();
+  progress.push({ phase: 'checking' });
+  await poll();
+  assert.equal(progress.length, 1, '完成后不再查询进度');
 });
 
 test('卸载二次确认：弹出 Modal，含确认与取消两个按钮', () => {

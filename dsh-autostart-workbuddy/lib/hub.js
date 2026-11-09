@@ -334,7 +334,7 @@ function checkStagedHub(stagedDir, latest) {
  * 更新的前半段：下载 → 校验 → 读包内 manifest → 整包解到 cache/ 暂存目录。不停服务、不碰 current/。
  * 与 backend.js 的 prepareUpdate 同一套语义与返回形状（staged.path 是目录）。
  */
-export async function prepareHubUpdate({ paths, env = process.env, apiBase, logger, target, signal } = {}) {
+export async function prepareHubUpdate({ paths, env = process.env, apiBase, logger, target, signal, onProgress } = {}) {
   const latest = target ?? (await fetchLatestHubRelease({ env, apiBase, signal }));
   const local = localHubVersion(paths);
   if (local.tag && local.tag === latest.tag && isHubDir(paths.current)) {
@@ -343,7 +343,11 @@ export async function prepareHubUpdate({ paths, env = process.env, apiBase, logg
 
   const asset = pickWindowsAsset(latest.assets, HUB_ASSET_PATTERN, 'workbuddy2api-hub 便携包');
   logger?.info?.(`[workbuddy] 下载 ${asset.name} …`);
-  const archive = await downloadAsset(asset, { env, timeoutMs: 300_000, signal });
+  onProgress?.({ phase: 'downloading', received: 0, total: asset.size || 0 });
+  const archive = await downloadAsset(asset, {
+    env, timeoutMs: 300_000, signal, onProgress: onProgress && ((received, total) => onProgress({ phase: 'downloading', received, total })),
+  });
+  onProgress?.({ phase: 'verifying' });
   const checksums = await fetchChecksums(latest, { env, apiBase, names: HUB_CHECKSUM_NAMES, signal });
   const verified = verifyChecksum(archive, asset.name, checksums);
   if (!verified.ok) return { ok: false, state: 'verify-failed', reason: verified.reason, latest, asset: asset.name };
@@ -393,6 +397,7 @@ export async function commitHubUpdate({
   staged,
   keepStaged = false,
   source = 'github-release',
+  onProgress,
 } = {}) {
   const stagedDir = staged?.path;
   const discardStaged = (result) => {
@@ -420,8 +425,10 @@ export async function commitHubUpdate({
     return { ok: false, state: 'swap-failed', reason: error instanceof Error ? error.message : String(error), latest };
   }
 
+  onProgress?.({ phase: 'health-check' });
   const health = await startAndProbe(service);
   if (!health.ok) {
+    onProgress?.({ phase: 'rolling-back' });
     logger?.error?.(`[workbuddy] hub 新版本启动后健康检查失败，回滚：${health.reason}`);
     await service.stop('健康检查失败，回滚');
     await rollbackSwapDir(paths, swap, latest.tag);
@@ -447,10 +454,11 @@ export async function commitHubUpdate({
  * 更新 / 首次安装（面板「更新」/「安装」）：prepareHubUpdate 紧接 commitHubUpdate。
  * 与 backend.js 的 applyUpdate 同一套语义与返回形状。
  */
-export async function applyHubUpdate({ paths, env = process.env, apiBase, service, logger, keepVersions = DEFAULT_HUB_KEEP_VERSIONS, target } = {}) {
-  const prepared = await prepareHubUpdate({ paths, env, apiBase, logger, target });
+export async function applyHubUpdate({ paths, env = process.env, apiBase, service, logger, keepVersions = DEFAULT_HUB_KEEP_VERSIONS, target, onProgress } = {}) {
+  const prepared = await prepareHubUpdate({ paths, env, apiBase, logger, target, onProgress });
   if (prepared.state !== 'prepared') return prepared;
-  return commitHubUpdate({ paths, service, logger, keepVersions, latest: prepared.latest, staged: prepared.staged });
+  onProgress?.({ phase: 'installing' });
+  return commitHubUpdate({ paths, service, logger, keepVersions, latest: prepared.latest, staged: prepared.staged, onProgress });
 }
 
 export async function installHub(options = {}) {

@@ -152,6 +152,13 @@ function fakeReq(method, { origin, body, url, contentType = method === 'POST' ? 
   };
 }
 
+async function backendProgress(handler) {
+  const res = fakeRes();
+  await handler(fakeReq('GET', { url: `${BACKEND_PATH}?progress=1` }), res);
+  assert.equal(res.status, 200);
+  return res.body.progress;
+}
+
 function fakeCtx(services = {}) {
   const routes = [];
   const lines = [];
@@ -835,8 +842,40 @@ for (const gateway of ['wb2api', 'hub']) {
       const ctx = fakeCtx();
       registerPanelRoutes(ctx, { logger: ctx.logger, ...x, service });
       const handler = ctx.routes.find((route) => route.path === BACKEND_PATH).handler;
+      const halfway = Promise.withResolvers();
+      const resume = Promise.withResolvers();
+      const fetchRelease = globalThis.fetch;
+      t.mock.method(globalThis, 'fetch', async (url, options) => {
+        const response = await fetchRelease(url, options);
+        if (!String(url).endsWith('.zip')) return response;
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const split = Math.floor(bytes.length / 2);
+        return new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes.subarray(0, split));
+            setImmediate(() => halfway.resolve({ phase: 'downloading', received: split, total: bytes.length }));
+          },
+          async pull(controller) {
+            await resume.promise;
+            controller.enqueue(bytes.subarray(split));
+            controller.close();
+          },
+        }), { headers: response.headers });
+      });
       const res = fakeRes();
-      await handler(fakeReq('POST', { body: JSON.stringify({ action }) }), res);
+      const update = handler(fakeReq('POST', { body: JSON.stringify({ action }) }), res);
+      try {
+        const expected = await Promise.race([halfway.promise, update.then(() => assert.fail(JSON.stringify(res.body)))]);
+        assert.deepEqual(await backendProgress(handler), expected);
+        const concurrent = fakeRes();
+        await handler(fakeReq('POST', { body: JSON.stringify({ action }) }), concurrent);
+        assert.equal(concurrent.status, 409);
+        assert.deepEqual(await backendProgress(handler), expected);
+      } finally {
+        resume.resolve();
+        await update;
+      }
+      assert.equal(await backendProgress(handler), null);
       assert.equal(res.status, 200, JSON.stringify(res.body));
       assert.equal(res.body.backend.version.tag, x.tag);
       assert.equal(res.body.backend.version.source, 'github-release', '手动安装不冒充自动安装');
@@ -886,6 +925,7 @@ test('手动更新校验失败不能清掉原有自动更新错误与保护记�
   await handler(fakeReq('POST', { body: JSON.stringify({ action: 'update' }) }), res);
   assert.equal(res.status, 400);
   assert.equal(res.body.state, 'verify-failed');
+  assert.equal(await backendProgress(handler), null);
   assert.deepEqual(readAutoState(x.paths), x.state);
 });
 

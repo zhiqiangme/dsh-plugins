@@ -99,9 +99,10 @@ export const PANEL_KEY_PATH = `${PANEL_BASE}/panel-key`;
 const MAX_BODY_BYTES = 64 * 1024;
 
 /** 统一的 JSON 应答。 */
-export function json(res, status, body) {
+export function json(res, status, body, headers) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
+    ...headers,
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(payload),
   });
@@ -443,10 +444,16 @@ function busyReason(holder) {
  * 后端版本端点。
  *
  * GET 默认**不联网**（首屏要快，GitHub 也可能慢甚至不通），带 `?check=1` 才真去查 release。
+ * `?progress=1` 只读内存里的手动安装/更新进度，避免每次轮询都读取凭据和后端快照。
  * POST 的动作：check、gateway、autoUpdate，以及会动目录的 install / update / rollback / uninstall / purge
  * （后五个与自动更新共用一把锁，同一时刻只跑一个）。
  */
-async function handleBackend(req, res, { logger, resolved, env, service, editor, credentials, autoUpdater, recovery, resync, overview, exits }) {
+async function handleBackend(req, res, { logger, resolved, env, service, editor, credentials, autoUpdater, recovery, resync, overview, exits, updateProgress }) {
+  const query = req.method === 'GET' ? new URL(req.url ?? '/', 'http://127.0.0.1').searchParams : undefined;
+  if (query?.get('progress') === '1') {
+    json(res, 200, { ok: true, progress: updateProgress.current }, { 'Cache-Control': 'no-store' });
+    return;
+  }
   const paths = resolved.backend?.paths ?? resolved.paths;
   const apiBase = resolved.backend?.apiBase || undefined;
   const driver = gatewayDriver(resolved);
@@ -465,12 +472,11 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
   });
 
   if (req.method === 'GET') {
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    if (url.searchParams.get('overview') === '1') {
+    if (query.get('overview') === '1') {
       json(res, 200, { ok: true, backend: { ...snapshot(), overview: await overview() }, check: null });
       return;
     }
-    if (url.searchParams.get('check') !== '1' || resolved.backend?.enabled === false) {
+    if (query.get('check') !== '1' || resolved.backend?.enabled === false) {
       json(res, 200, { ok: true, backend: snapshot(), check: null });
       return;
     }
@@ -564,17 +570,24 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
   }
 
   // 会动目录的动作与自动更新共用一把锁（见 gateway.js 的 withBackendLock）。
-  const locked = await withBackendLock(action, () => {
+  const locked = await withBackendLock(action, async () => {
     if (action === 'start') { recovery?.reset(); return service.ensureRunning().then((result) => ({ ...result, ok: result.state !== 'failed' })); }
     if (action === 'install' || action === 'update') {
-      return driver[action]({
-        paths,
-        env,
-        apiBase,
-        service,
-        logger,
-        keepVersions: resolved.backend?.keepVersions,
-      });
+      // 只有成功持锁的请求能设置和清理进度，并发请求被拒绝时不会干扰它。
+      updateProgress.current = { phase: 'checking' };
+      try {
+        return await driver[action]({
+          paths,
+          env,
+          apiBase,
+          service,
+          logger,
+          keepVersions: resolved.backend?.keepVersions,
+          onProgress: (progress) => { updateProgress.current = progress; },
+        });
+      } finally {
+        updateProgress.current = null;
+      }
     }
     if (action === 'purge') return driver.purge({ paths, service, logger, env });
     return driver[action]({ paths, service, logger });
@@ -784,6 +797,7 @@ function forceFrom(req) {
  */
 export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, service, resync, autoUpdater, recovery, checkVersion = createVersionChecker(), exits = createExitCredits({ resolved, env, credentials: () => credentialsOf(ctx) }) }) {
   const overview = createAccountOverview({ resolved, env, credentials: () => credentialsOf(ctx), exits });
+  const updateProgress = { current: null };
   const mount = (scoped) => {
     const holder = scoped ?? ctx;
     const webServer =
@@ -899,7 +913,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       const disposeBackend = webServer.register({
         kind: 'exact',
         path: BACKEND_PATH,
-        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), credentials: credentialsOf(ctx), autoUpdater, recovery, resync, overview, exits })),
+        handler: guard((req, res) => handleBackend(req, res, { logger, resolved, env, service, editor: configEditorOf(ctx), credentials: credentialsOf(ctx), autoUpdater, recovery, resync, overview, exits, updateProgress })),
       });
 
       const disposeVersion = webServer.register({

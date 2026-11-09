@@ -544,7 +544,7 @@ function checkStagedExe(stagedExe, latest) {
  * @returns 'up-to-date'；'prepared'（带 staged：暂存路径、资产名与包的 sha256）；
  *          或 ok:false 的校验失败——此时暂存文件已删掉，cache/ 里不留未通过校验的 exe。
  */
-export async function prepareUpdate({ paths, env = process.env, apiBase, logger, target, signal } = {}) {
+export async function prepareUpdate({ paths, env = process.env, apiBase, logger, target, signal, onProgress } = {}) {
   const latest = target ?? (await fetchLatestRelease({ env, apiBase, signal }));
   const local = localVersion(paths);
   if (local.revision && local.revision === latest.commit) {
@@ -553,7 +553,11 @@ export async function prepareUpdate({ paths, env = process.env, apiBase, logger,
 
   const asset = pickWindowsAsset(latest.assets);
   logger?.info?.(`[workbuddy] 下载 ${asset.name} …`);
-  const archive = await downloadAsset(asset, { env, signal });
+  onProgress?.({ phase: 'downloading', received: 0, total: asset.size || 0 });
+  const archive = await downloadAsset(asset, {
+    env, signal, onProgress: onProgress && ((received, total) => onProgress({ phase: 'downloading', received, total })),
+  });
+  onProgress?.({ phase: 'verifying' });
   const checksums = await fetchChecksums(latest, { env, apiBase, signal });
   const verified = verifyChecksum(archive, asset.name, checksums);
   if (!verified.ok) return { ok: false, state: 'verify-failed', reason: verified.reason, latest, asset: asset.name };
@@ -587,7 +591,7 @@ export async function prepareUpdate({ paths, env = process.env, apiBase, logger,
  *
  * @param {{ paths: object, service?: object, logger?: object, keepVersions?: number,
  *           latest: { tag: string, commit?: string }, staged: { path: string, asset?: string, sha256?: string },
- *           keepStaged?: boolean, source?: string }} options
+ *           keepStaged?: boolean, source?: string, onProgress?: Function }} options
  *   keepStaged：端口上是别人起的进程、这次换不了时保留暂存文件（自动更新下次启动再试）；
  *   source：写进清单的安装来源，自动更新记 'auto-update'。
  */
@@ -600,6 +604,7 @@ export async function commitUpdate({
   staged,
   keepStaged = false,
   source = 'github-release',
+  onProgress,
 } = {}) {
   const stagedExe = staged?.path;
   // 暂存文件只在换上去时被挪走；之前任何一步拒绝安装，都把它删掉，不在 cache/ 里留一个未通过校验的 exe。
@@ -623,12 +628,14 @@ export async function commitUpdate({
 
   const swap = swapIn(paths, stagedExe, { from: local, to: latest });
 
+  onProgress?.({ phase: 'health-check' });
   const started = await service.ensureRunning();
   const health = started?.state === 'failed'
     ? { ok: false, reason: started.reason ?? '启动失败' }
     : await probeHealthz({ host: service.spec?.host ?? '127.0.0.1', port: service.port });
 
   if (!health.ok) {
+    onProgress?.({ phase: 'rolling-back' });
     logger?.error?.(`[workbuddy] 新版本启动后健康检查失败，回滚：${health.reason}`);
     // 先停掉刚拉起的新进程再挪文件：Windows 允许给运行中的 exe 改名，不停的话它会
     // 在 -failed 目录里继续跑着占住端口，下面 ensureRunning 就会把它当成"已在运行"。
@@ -667,7 +674,7 @@ export async function commitUpdate({
  * 即 下载 → 校验 → 解压 → 落地校验 → 停服 → 切换 → 起服 → 健康检查（失败回滚）。
  *
  * @param {{ paths: object, env?: object, apiBase?: string, service?: object, logger?: object,
- *           keepVersions?: number, target?: object }} options
+ *           keepVersions?: number, target?: object, onProgress?: Function }} options
  */
 export async function applyUpdate({
   paths,
@@ -677,10 +684,12 @@ export async function applyUpdate({
   logger,
   keepVersions = DEFAULT_KEEP_VERSIONS,
   target,
+  onProgress,
 } = {}) {
-  const prepared = await prepareUpdate({ paths, env, apiBase, logger, target });
+  const prepared = await prepareUpdate({ paths, env, apiBase, logger, target, onProgress });
   if (prepared.state !== 'prepared') return prepared;
-  return commitUpdate({ paths, service, logger, keepVersions, latest: prepared.latest, staged: prepared.staged });
+  onProgress?.({ phase: 'installing' });
+  return commitUpdate({ paths, service, logger, keepVersions, latest: prepared.latest, staged: prepared.staged, onProgress });
 }
 
 /** 回滚到清单里记录的上一版本。 */
@@ -755,11 +764,11 @@ export function adoptCurrentBinary(paths, { tag = null, source = 'adopted', prev
  * 已经装了就拒绝——那应该走更新。允许"安装"覆盖会让人以为能装成任意版本，
  * 而版本只能来自 release（见 release.js）。
  */
-export async function installBackend({ paths, env = process.env, apiBase, service, logger, target, keepVersions } = {}) {
+export async function installBackend({ paths, env = process.env, apiBase, service, logger, target, keepVersions, onProgress } = {}) {
   if (isFile(paths.exe)) {
     return { ok: false, state: 'already-installed', reason: '后端已安装；升级请用「更新」' };
   }
-  const result = await applyUpdate({ paths, env, apiBase, service, logger, target, keepVersions });
+  const result = await applyUpdate({ paths, env, apiBase, service, logger, target, keepVersions, onProgress });
   if (!result.ok) return result;
   return { ...result, state: 'installed' };
 }

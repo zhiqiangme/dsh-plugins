@@ -120,6 +120,15 @@ window.__ModuleLoader__.load({
       uninstall: 'backendUninstalled',
       purge: 'backendPurged',
     };
+    const BACKEND_PROGRESS = {
+      checking: 'backendChecking',
+      downloading: 'backendDownloading',
+      verifying: 'backendVerifying',
+      installing: 'backendInstalling',
+      'health-check': 'backendHealthCheck',
+      'rolling-back': 'backendRollingBack',
+    };
+    const BACKEND_PROGRESS_POLL_MS = 500;
 
     /** 模型区失败状态（lib/web.js 的 BACKEND_NOT_INSTALLED）：后端没装，提示去点「安装」。 */
     const BACKEND_NOT_INSTALLED = 'backend-not-installed';
@@ -202,6 +211,7 @@ window.__ModuleLoader__.load({
 .dsm-wb-backend-title{flex:1;min-width:100px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:14px;font-weight:600;line-height:1.5}
 .dsm-wb-backend-line{color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6;word-break:break-all}
 .dsm-wb-backend-line strong{color:var(--dsw-alias-label-secondary,#c6c9d0);font-weight:500}
+.dsm-wb-backend-progress{display:block;width:100%;height:6px;accent-color:var(--dsw-alias-state-business-primary,#7aaaff)}
 .dsm-wb-hint{color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:1.6}
 .dsm-wb-notice{font-size:13px;line-height:1.6}
 .dsm-wb-notice-ok{color:var(--dsw-alias-state-success-primary,#22c55e)}
@@ -415,6 +425,12 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       backendUpdate: '更新',
       backendRollback: '回滚',
       backendWorking: '处理中…',
+      backendChecking: '正在检查上游版本…',
+      backendDownloading: '正在下载后端安装包…',
+      backendVerifying: '正在校验并解压安装包…',
+      backendInstalling: '正在安装后端…',
+      backendHealthCheck: '正在启动后端并检查运行状态…',
+      backendRollingBack: '启动检查失败，正在回滚…',
       backendUpdated: '已更新到 {tag}，健康检查通过。',
       backendRolledBack: '已回滚到 {tag}。',
       backendUnmanaged: '未纳管',
@@ -592,6 +608,12 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       backendUpdate: 'Update',
       backendRollback: 'Roll back',
       backendWorking: 'Working…',
+      backendChecking: 'Checking the upstream version…',
+      backendDownloading: 'Downloading the backend package…',
+      backendVerifying: 'Verifying and extracting the package…',
+      backendInstalling: 'Installing the backend…',
+      backendHealthCheck: 'Starting the backend and checking its health…',
+      backendRollingBack: 'Health check failed. Rolling back…',
       backendUpdated: 'Updated to {tag}; health check passed.',
       backendRolledBack: 'Rolled back to {tag}.',
       backendUnmanaged: 'unmanaged',
@@ -1964,8 +1986,11 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         async (action, extra) => {
           setBackendBusy(action);
           setBackendNotice(undefined);
+          const trackProgress = action === 'install' || action === 'update';
+          if (trackProgress) setBackendProgress({ phase: 'checking' });
           try {
             const payload = await request(BACKEND_PATH, 'POST', { action, ...(extra ?? {}) });
+            if (trackProgress) setBackendProgress(undefined);
             if (payload.backend) setBackend(payload.backend);
             if (action === 'check') {
               setCheck(payload.check?.error ? { error: payload.check.error } : payload.check);
@@ -1991,6 +2016,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
               setBackendNotice({ kind: 'error', text: payload.reason ?? payload.state ?? '' });
             }
           } catch (error) {
+            if (trackProgress) setBackendProgress(undefined);
             setBackendNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) });
           } finally {
             setBackendBusy(undefined);
@@ -2076,6 +2102,22 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       const [hubNotice, setHubNotice] = useState(undefined);
       // 当前页签。与上面一样排在既有 useState 之后，不打乱它们的配对顺序。
       const [tab, setTab] = useState('models');
+      const [backendProgress, setBackendProgress] = useState(undefined);
+      const trackingBackend = Boolean(backendProgress);
+      useEffect(() => {
+        if (!trackingBackend) return;
+        let active = true;
+        let timer;
+        const poll = async () => {
+          try {
+            const { progress } = await request(`${BACKEND_PATH}?progress=1`, 'GET');
+            if (active && progress) setBackendProgress((current) => current && progress);
+          } catch { /* 进度查询失败时保留最后的进度，更新结果由原 POST 请求返回。 */ }
+          finally { if (active) timer = setTimeout(poll, BACKEND_PROGRESS_POLL_MS); }
+        };
+        timer = setTimeout(poll, BACKEND_PROGRESS_POLL_MS);
+        return () => { active = false; clearTimeout(timer); };
+      }, [trackingBackend]);
       // 稳定排序让已勾选项置顶，组内保留筛选器指定的顺序；保存仍按原白名单规则排序。
       // 已保存的勾选取消后也留在置顶区，保存后才下移：否则行一取消就从手下跑开，点错了还得去列表下面找。
       const sorted = useMemo(() => {
@@ -2630,6 +2672,19 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
             installed ? wbButton('rollback', 'outline', backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'), () => runBackend('rollback'), busy, { 'aria-busy': backendBusy === 'rollback' }) : null,
           ),
         ];
+        if (backendProgress) {
+          const { phase, received, total } = backendProgress;
+          const percent = phase === 'downloading' && total > 0 && received >= 0 && received <= total
+            ? Math.floor((received / total) * 100) : undefined;
+          const label = t(BACKEND_PROGRESS[phase] ?? 'backendWorking');
+          versionGroup.push(h('div', { key: 'progress', className: 'dsm-wb-stack' },
+            h('p', { className: 'dsm-wb-backend-line dsm-wb-split' },
+              h('span', { role: 'status' }, label),
+              percent === undefined ? null : h('span', { 'aria-hidden': true }, `${percent}%`),
+            ),
+            h('progress', { className: 'dsm-wb-backend-progress', 'aria-label': label, max: 100, value: percent }),
+          ));
+        }
         // 没装就没有可更新的东西：首次安装永远由用户点。
         const auto = installed ? renderAutoUpdate(backend.autoUpdate, version.tag ?? null, { busy: backendBusy, onToggle: toggleAutoUpdate }, t) : [];
         if (auto.length) versionGroup.push(h('div', { key: 'auto', className: 'dsm-wb-stack dsm-wb-divided' }, auto));
