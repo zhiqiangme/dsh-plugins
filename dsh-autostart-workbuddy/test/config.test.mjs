@@ -182,3 +182,15 @@ test('describeConfig 给出排障所需的概要', () => {
   assert.ok(info.exe.endsWith(join('python', 'python.exe')));
   assert.ok(info.logDir.endsWith(join('autostart-workbuddy', 'logs')));
 });
+
+test('对话等待独立于目录拉取超时，默认两分钟，非法值退回默认', () => {
+  const defaults = resolvePluginConfig({}, ENV).models;
+  assert.equal(defaults.timeoutMs, 60_000);
+  assert.equal(defaults.chatTimeoutMs, 120_000);
+  const custom = resolvePluginConfig({ models: { timeoutMs: 5000, chatTimeoutMs: '90000' } }, ENV).models;
+  assert.equal(custom.timeoutMs, 5000);
+  assert.equal(custom.chatTimeoutMs, 90_000);
+  for (const chatTimeoutMs of [undefined, null, '', 'bad', 0, -1, Infinity]) {
+    assert.equal(resolvePluginConfig({ models: { timeoutMs: 5000, chatTimeoutMs } }, ENV).models.chatTimeoutMs, 120_000);
+  }
+});

@@ -26,6 +26,13 @@ const EXPIRING_SOON_MS = 3 * 24 * 60 * 60_000;
 const MAX_PINS = 500;
 /** DSH 会重试同一轮模型请求；五分钟内不再请求该对话刚失败的候选，避免免费/临期规则反复选回它。 */
 const FAILURE_COOLDOWN_MS = 5 * 60_000;
+/** 长上下文偶发慢响应不代表渠道持续不可用；超时仅短暂避让，避免一次慢请求封住两边五分钟。 */
+const TIMEOUT_COOLDOWN_MS = 30_000;
+const TIMEOUT_CODES = new Set(['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT']);
+
+function requestTimedOut(error) {
+  return error?.name === 'TimeoutError' || TIMEOUT_CODES.has(error?.code) || TIMEOUT_CODES.has(error?.cause?.code);
+}
 /**
  * 这些状态说明请求没被受理，换出口可能成功。403 不在内：账号被上游风控时跨出口重打只会牵连另一边
  * （hub 的跨出口回退同样不重打）；400 / 401 换出口也没用，要让用户看到真实错误。
@@ -131,11 +138,11 @@ function createFailedAttempts(now) {
   const conversations = new Map();
   const routeKey = ({ realm, model }) => JSON.stringify([realm, model]);
   return {
-    mark(key, attempt) {
+    mark(key, attempt, cooldownMs = FAILURE_COOLDOWN_MS) {
       if (!key) return;
       const routes = conversations.get(key) ?? new Map();
       for (const [route, until] of routes) if (until <= now()) routes.delete(route);
-      routes.set(routeKey(attempt), now() + FAILURE_COOLDOWN_MS);
+      routes.set(routeKey(attempt), now() + cooldownMs);
       conversations.delete(key);
       conversations.set(key, routes);
       if (conversations.size > MAX_PINS) conversations.delete(conversations.keys().next().value);
@@ -293,10 +300,10 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
         }
         const keys = await hubRegionRoutes({ models, credentials: store, env });
 
-        /** timeoutMs 只管等响应头；长对话由 DSH 的流空闲超时和客户端取消控制，不能在 60s 截断。 */
+        /** 对话用独立的响应头等待上限；收到响应头即清理计时器，后续长流由宿主控制。 */
         const send = async ({ realm, model }) => {
           const waiting = new AbortController();
-          const timer = setTimeout(() => waiting.abort(), models.timeoutMs);
+          const timer = setTimeout(() => waiting.abort(new DOMException('HUB response headers timed out', 'TimeoutError')), models.chatTimeoutMs);
           timer.unref?.();
           try {
             const apiKey = keys[realm].apiKey;
@@ -315,7 +322,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
           catch (error) {
             // 客户端取消（含宿主流空闲超时）与插件关闭不是渠道故障。
             if (controller.signal.aborted) throw error;
-            failures.mark(pin, attempt);
+            failures.mark(pin, attempt, requestTimedOut(error) ? TIMEOUT_COOLDOWN_MS : FAILURE_COOLDOWN_MS);
             if (last) return reply(res, 502, `HUB 候选渠道连接失败或等待响应超时${pin ? '，已记录失败并暂时跳过' : ''}，请稍后重试`);
             continue;
           }
@@ -328,7 +335,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
           }
           if (RETRY_STATUSES.has(upstream.status) && !await restrictionHold(upstream)) {
             if (controller.signal.aborted) return;
-            failures.mark(pin, attempt);
+            failures.mark(pin, attempt, [408, 504].includes(upstream.status) ? TIMEOUT_COOLDOWN_MS : FAILURE_COOLDOWN_MS);
             if (!last) {
               await upstream.body?.cancel().catch(() => undefined);
               continue;

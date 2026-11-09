@@ -22,6 +22,8 @@ const MODELS_DEFAULTS = Object.freeze({
   provider: 'workbuddy',
   // 面板的模型列表是缓存 1h 的；冷缓存时要等上游，给它 60s（面板自己那侧上限是 120s）。
   timeoutMs: 60_000,
+  // 长上下文的首个响应可能超过目录拉取的 60s；单渠道等 120s，CN/GL 各试一次仍在宿主 300s 空闲窗口内。
+  chatTimeoutMs: 120_000,
   // 本地目录已有缓存，每分钟检查恢复；只有清单变化时才写配置。
   resyncIntervalMs: 60_000,
 });
@@ -184,6 +186,7 @@ function resolveModelsConfig(raw, spec) {
     hubApiKeyRef: typeof models.hubApiKeyRef === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(models.hubApiKeyRef) ? models.hubApiKeyRef : '',
     baseURL: stringOr(models.baseURL, `http://${spec.host}:${spec.port}`),
     timeoutMs: positiveNumber(models.timeoutMs, MODELS_DEFAULTS.timeoutMs),
+    chatTimeoutMs: positiveNumber(models.chatTimeoutMs, MODELS_DEFAULTS.chatTimeoutMs),
     resyncIntervalMs: resyncInterval(models.resyncIntervalMs),
   };
 }

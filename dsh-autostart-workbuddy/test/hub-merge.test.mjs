@@ -796,8 +796,7 @@ test('转发：等待响应超时后切换渠道，DSH 连续重试不会又选�
   x.writeAccount('cn', account('cn', [{ remain: 5, expire_time: stamp(NOW + DAY) }]));
   await x.send(ask('task'));
   sentTo(x);
-  // 先预热目录再缩短等待响应头的超时，避免把目录查询的耗时也纳入测试。
-  x.resolved.models.timeoutMs = 50;
+  x.resolved.models.chatTimeoutMs = 50;
   x.hub.handleChat = (_req, res, _body, realm) => {
     if (realm !== 'cn') res.end(JSON.stringify({ realm }));
   };
@@ -805,6 +804,47 @@ test('转发：等待响应超时后切换渠道，DSH 连续重试不会又选�
   assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro', 'intl:kimi-k3.1-pro']);
   for (let retry = 0; retry < 7; retry++) assert.equal((await x.send(ask('task'))).status, 200);
   assert.deepEqual(sentTo(x), Array(7).fill('intl:kimi-k3.1-pro'));
+  x.clock.now += 30_000;
+  x.hub.handleChat = undefined;
+  assert.equal((await x.send(ask('task'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro'], '短冷却结束后，恢复的临期 CN 可以重新参与');
+});
+
+test('转发：目录的短超时不会截断慢响应，对话响应头之后不再受等待上限限制', { timeout: 5000 }, async (t) => {
+  const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:kimi-k3.1-pro'] });
+  await x.send(ask('warmup'));
+  sentTo(x);
+  x.resolved.models.timeoutMs = 25;
+  x.resolved.models.chatTimeoutMs = 500;
+  x.hub.handleChat = async (_req, res) => {
+    await new Promise((done) => setTimeout(done, 100));
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: first\n\n');
+    await new Promise((done) => setTimeout(done, 600));
+    res.end('data: [DONE]\n\n');
+  };
+  const response = await x.send({ ...ask('slow response'), stream: true });
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), 'data: first\n\ndata: [DONE]\n\n');
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
+});
+
+test('转发：两个渠道响应超时后只冷却三十秒，期满即可恢复', { timeout: 5000 }, async (t) => {
+  const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:kimi-k3.1-pro'], models: { chatTimeoutMs: 50 } });
+  x.hub.handleChat = () => {};
+  assert.equal((await x.send(ask('task'))).status, 502);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro', 'intl:kimi-k3.1-pro']);
+  const waiting = await x.send(ask('task'));
+  assert.equal(waiting.status, 503);
+  assert.equal(waiting.headers.get('retry-after'), '30');
+  assert.deepEqual(sentTo(x), []);
+  x.clock.now += 29_999;
+  assert.equal((await x.send(ask('task'))).headers.get('retry-after'), '1');
+  assert.deepEqual(sentTo(x), []);
+  x.clock.now += 1;
+  x.hub.handleChat = undefined;
+  assert.equal((await x.send(ask('task'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
 });
 
 test('转发：所有渠道连接失败后连续七次重试不再访问上游，冷却按对话隔离且到期可恢复', async (t) => {
@@ -834,7 +874,7 @@ test('转发：所有渠道连接失败后连续七次重试不再访问上游�
   assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
 });
 
-for (const status of [429, 503]) test(`转发：HTTP ${status} 包括最后一个候选都进入冷却，首次仍保留上游错误正文`, async (t) => {
+for (const status of [408, 429, 500, 503, 504]) test(`转发：HTTP ${status} 包括最后一个候选都进入冷却，首次仍保留上游错误正文`, async (t) => {
   const x = await setup(t, { only: ['cn:kimi-k3.1-pro', 'global:kimi-k3.1-pro'] });
   x.hub.reply = () => status;
   const first = await x.send(ask('task'));
@@ -843,8 +883,14 @@ for (const status of [429, 503]) test(`转发：HTTP ${status} 包括最后一�
   assert.equal(sentTo(x).length, 2);
   const next = await x.send(ask('task'));
   assert.equal(next.status, 503);
+  const cooldownSeconds = [408, 504].includes(status) ? 30 : 300;
+  assert.equal(next.headers.get('retry-after'), String(cooldownSeconds));
   assert.match((await next.json()).error.message, /失败冷却/);
   assert.deepEqual(sentTo(x), []);
+  x.clock.now += cooldownSeconds * 1000;
+  x.hub.reply = undefined;
+  assert.equal((await x.send(ask('task'))).status, 200);
+  assert.deepEqual(sentTo(x), ['cn:kimi-k3.1-pro']);
 });
 
 test('转发：只有一个候选也记失败，不能因没有可切换渠道而每轮重打', async (t) => {
