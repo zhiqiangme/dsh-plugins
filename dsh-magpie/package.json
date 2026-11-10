@@ -11,7 +11,7 @@
   "main": "lib/index.js",
   "icon": "icons/magpie.svg",
   "engines": { "node": ">=22.12.0" },
-  "files": ["lib", "icons", "locale/*.json", "cordis.patch.yml", "README.md"],
+  "files": ["lib", "icons", "locale/*.json", "locale/detail.*.md", "cordis.patch.yml", "README.md"],
   "exports": {
     ".": { "default": "./lib/index.js" },
     "./client": "./lib/client.js",
