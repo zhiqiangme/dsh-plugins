@@ -29,6 +29,7 @@
     "lib",
     "icons",
     "locale/*.json",
+    "locale/detail.*.md",
     "cordis.patch.yml",
     "README.md"
   ],
