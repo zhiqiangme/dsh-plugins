@@ -6,7 +6,6 @@ import vm from 'node:vm'
 import { checkLatestVersion, compareVersions, createVersionChecker, PACKAGE_NAME, RUNNING_VERSION } from '../lib/update.js'
 import { registerVersionRoute, requestRejection, VERSION_PATH } from '../lib/web.js'
 
-const MARKET = '/dsh-market/api/v1'
 const flush = async (rounds = 6) => { for (let i = 0; i < rounds; i++) await new Promise(resolve => setImmediate(resolve)) }
 
 function nodes(tree, predicate) {
@@ -19,13 +18,11 @@ const updateButton = tree => nodes(tree, node => node.type === 'button' && Strin
 const pinned = tree => nodes(tree, node => node.type === 'details')[0]
 
 /** 在 vm 里加载浏览器半侧，拿到它导出的更新器与渲染函数；fetch 由各测试按路径应答。 */
-function loadClient({ respond, storage = new Map() } = {}) {
+function loadClient({ respond } = {}) {
   const calls = []
   const React = { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() }) }
   let module
   vm.runInNewContext(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'), {
-    setTimeout: callback => setImmediate(callback),
-    clearTimeout: () => {},
     fetch: async (path, options = {}) => {
       const body = options.body === undefined ? undefined : JSON.parse(options.body)
       calls.push([options.method ?? 'GET', path, body])
@@ -34,11 +31,10 @@ function loadClient({ respond, storage = new Map() } = {}) {
     },
     window: {
       crypto: webcrypto,
-      sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
       __ModuleLoader__: { load(spec) { module = spec.factory(() => React) } },
     },
   })
-  return { module, calls, storage }
+  return { module, calls }
 }
 
 const versionPayload = { ok: true, currentVersion: '26.10.30', latestVersion: '26.10.31', updateAvailable: true }
@@ -209,75 +205,18 @@ test('官方更新：宿主卸不下运行中的本插件时说明原因、补�
   }
 })
 
-test('dshmarket 兜底：宿主没有官方接口时探测市场，提交纯包名并轮询到成功，带重启按钮', async () => {
-  const operations = [{ state: 'running', progress: { percent: 40 } }, { state: 'succeeded', installedVersion: '26.10.31', outcome: { restartRequired: true } }]
-  const { module, calls, storage } = loadClient({
-    respond: (method, path) => {
-      if (path.startsWith(VERSION_PATH)) return [200, versionPayload]
-      if (path === `${MARKET}/capabilities`) return [200, { schema: 'dsh-market/update-api/v1', bootId: 'boot', features: { update: true }, restart: { supported: true } }]
-      if (path.startsWith(`${MARKET}/updates?name=`)) return [200, { package: { source: 'npm' } }]
-      if (method === 'POST' && path === `${MARKET}/updates`) return [202, { operation: { operationId: 'boot-1', state: 'queued' } }]
-      if (path.startsWith(`${MARKET}/operations?operationId=boot-1`)) return [200, { operation: operations.shift() }]
-      if (method === 'POST' && path === `${MARKET}/restart`) return [202, {}]
-    },
-  })
-  const updater = module.createPluginUpdater({ pluginManager: { listBundles: async () => ({ ok: true, value: [bundle] }) } })
-  await updater.check()
-  assert.deepEqual([updater.getSnapshot().manager.phase, updater.getSnapshot().market.phase], ['unsupported', 'ready'])
-  assert.ok(updateButton(module.renderUpdateSection(updater.getSnapshot(), {})))
-  await updater.startUpdate()
-  assert.deepEqual(calls.find(call => call[0] === 'POST')[2], { packageName: '@zhiqiangme/dsh-presets-zh' })
-  assert.match(storage.get('dsh-presets-zh:update-operation'), /boot-1/)
-  await flush()
-  assert.equal(updater.getSnapshot().operation.state, 'succeeded')
-  assert.equal(storage.has('dsh-presets-zh:update-operation'), false)
-  const tree = module.renderUpdateSection(updater.getSnapshot(), {})
-  assert.match(text(tree), /已更新到 v26\.10\.31/)
-  assert.ok(nodes(tree, node => node.type === 'button' && node.children[0] === '立即重启 DSH').length)
-  await updater.restart()
-  assert.equal(updater.getSnapshot().restart.phase, 'done')
-})
-
-test('dshmarket 兜底：市场报 bundle-in-use 时说明原因并展开手动重装；冷却期给强制更新', async () => {
-  for (const failure of [{ message: 'exit=1 err=这个插件正在使用中 (bundle-in-use)' }, { code: 'RELEASE_TOO_FRESH', message: 'too fresh' }]) {
-    const { module, calls } = loadClient({
-      respond: (method, path) => {
-        if (path.startsWith(VERSION_PATH)) return [200, versionPayload]
-        if (path === `${MARKET}/capabilities`) return [200, { schema: 'dsh-market/update-api/v1', bootId: 'boot', features: { update: true } }]
-        if (method === 'POST' && path === `${MARKET}/updates`) return [202, { operation: { operationId: 'boot-2', state: 'queued' } }]
-        if (path.startsWith(`${MARKET}/operations`)) return [200, { operation: { state: 'failed', failure } }]
-      },
-    })
-    const updater = module.createPluginUpdater(undefined)
-    await updater.check()
-    await updater.startUpdate()
-    await flush()
-    const tree = module.renderUpdateSection(updater.getSnapshot(), { startUpdate: force => updater.startUpdate(force) })
-    assert.equal(pinned(tree).props.open, true)
-    const force = nodes(tree, node => node.type === 'button' && node.children[0] === '强制更新')[0]
-    if (failure.code) {
-      assert.match(text(tree), /发布冷却期/)
-      await force.props.onClick()
-      assert.equal(calls.filter(call => call[0] === 'POST').at(-1)[2].force, true)
-    } else {
-      assert.equal(updater.getSnapshot().operation.inUse, true)
-      assert.match(text(tree), /无法在本插件运行时卸下它/)
-      assert.equal(force, undefined)
-    }
-  }
-})
-
-test('两条更新路都没有：说明可装 dshmarket，并给指定版本；本地安装只提示重跑安装脚本', async () => {
-  const { module } = loadClient({ respond: versionOnly })
+test('旧宿主：缺少官方接口时只读取版本信息；本地安装提示重跑安装脚本', async () => {
+  const { module, calls } = loadClient({ respond: versionOnly })
   const updater = module.createPluginUpdater({})
   await updater.check()
-  assert.equal(updater.getSnapshot().market.phase, 'absent')
+  assert.equal(updater.getSnapshot().manager.phase, 'unsupported')
   let tree = module.renderUpdateSection(updater.getSnapshot(), {})
   assert.equal(updateButton(tree), undefined)
-  assert.match(text(tree), /dshmarket/)
+  assert.match(text(tree), /缺少官方插件更新接口。请升级 DSH/)
   assert.equal(pinned(tree).props.open, true)
   await updater.startUpdate()
   assert.equal(updater.getSnapshot().operation, undefined)
+  assert.deepEqual(calls.map(call => call.slice(0, 2)), [['GET', VERSION_PATH]])
 
   const local = module.createPluginUpdater({ pluginManager: { listBundles: async () => ({ ok: true, value: [{ ...bundle, source: 'file:D:/dsh-presets-zh' }] }) } })
   await local.check()

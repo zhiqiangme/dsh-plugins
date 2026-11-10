@@ -1,8 +1,7 @@
 /**
  * 版本检查：本插件当前运行的版本 vs npm 上的 latest。
  *
- * 只负责“看”，不负责“装”：真正的更新交给 DSH 官方 pluginManager（浏览器半侧调用 Remote），
- * 旧宿主上交给 dshmarket。本插件不自己跑 pnpm——那要和插件管理器抢 profile 锁，还得重做回滚。
+ * 这里提供版本信息。浏览器半侧通过 DSH 官方 pluginManager 安装更新，由宿主管理 profile 锁和失败恢复。
  *
  * 放在宿主半侧而不是浏览器直接 fetch 注册表：DSH 页面的 CSP / 跨源限制不归本插件管，
  * 宿主的 fetch 还走 DSH 的代理策略。

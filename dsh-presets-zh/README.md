@@ -69,12 +69,11 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-presets-zh
 
 ## 插件更新
 
-设置页的「插件更新」页签显示当前运行版本与 npm 最新版本，按宿主接口在不在选择更新途径，不写死 DSH 版本号，也不自己跑 pnpm：
+设置页的「插件更新」页签显示当前运行版本与 npm 最新版本，并使用 DSH 官方插件管理器安装更新。
 
 - 版本检查走宿主路由 `/plugins/dsh-presets-zh/version`，同时问 npm 官方源与 npmmirror，取较高者，缓存 10 分钟；「检查更新」绕过缓存。
 - **官方接口**（`pluginManager` 有 `listVersions/updateBundle`）：先用 `listBundles` 核对本插件的更新资格，再选最新的兼容、未弃用正式版，把精确版本和同一注册表交给 `updateBundle`。锁、卸载、安装与失败恢复都归宿主；只有实际装上目标版本才显示成功。
-- **dshmarket 兜底**：宿主还没有官方接口时（如 DSH 0.2.1-rc.5），装了 [dshmarket](https://www.npmjs.com/package/dshmarket) 就交给它的公开更新 API v1（只传纯包名），卡片轮询任务进度；发布冷却期挡下时给「强制更新」。Web 版市场支持时显示「立即重启 DSH」。
-- 两条路都没有、或宿主拒绝卸载正在运行的本插件（`bundle-in-use`）时，展开「按指定版本安装」：复制 `@zhiqiangme/dsh-presets-zh@版本号`，在「插件」页本插件详情里先关闭「中文预设」组件，再卸载本插件，通过「添加插件」安装，装好后重新打开该组件。官方更新被拒时宿主已把本插件移出启用列表，卡片会用 `setBundleEnabled` 补回；dshmarket 会自己补回。
+- 宿主缺少官方更新接口时，可升级 DSH 或按指定版本重装。宿主报 `bundle-in-use` 时，卡片会用 `setBundleEnabled` 补回被移出的启用状态，并展开重装指引。复制 `@zhiqiangme/dsh-presets-zh@版本号`，在「插件」页本插件详情里先关闭「中文预设」组件，再卸载本插件，通过「添加插件」安装，装好后重新打开该组件。
 - 本地 `file:/link:` 安装请更新源码并重新运行安装脚本；DSH 托管的安装随宿主更新。
 
 ## 从本机测试预设迁移
@@ -115,7 +114,7 @@ npm ci --ignore-scripts
 npm test
 ```
 
-依赖宿主同款 `@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` peer。测试覆盖预设注册、独立设置更新、提示词汉化、SDK 保留、上下文隔离、设置页保存冲突、新任务默认及插件更新的官方与 dshmarket 两条路，不需要真实模型账号。
+依赖宿主同款 `@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` peer。测试覆盖预设注册、独立设置更新、提示词汉化、SDK 保留、上下文隔离、设置页保存冲突、新任务默认及 DSH 官方插件更新，使用测试替身即可运行。
 
 ## 停用与卸载
 
