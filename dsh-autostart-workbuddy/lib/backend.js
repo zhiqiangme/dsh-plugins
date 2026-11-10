@@ -818,8 +818,8 @@ export async function uninstallBackend({ paths, service, logger, alsoCache = tru
  * 清除后端数据：停掉本插件拉起的后端，再整个删掉数据根目录（程序、历史版本、config.json、
  * data/ 里的凭证、缓存、日志）。
  *
- * 为什么要用户手动点：DSH 卸载插件时不通知插件（dshmarket 与 dsh CLI 都只跑 pnpm remove，
- * pnpm 也不执行 preuninstall），插件的 dispose 又分不清"卸载"与"停用 / 重启 / 更新"，
+ * 为什么要用户手动点：DSH 卸载插件时不通知插件，pnpm 也不执行 preuninstall。
+ * 插件的 dispose 分不清"卸载"与"停用 / 重启 / 更新"，
  * 在那里自动删会在更新插件时误删已装好的后端。所以只给一个显式入口，卸载插件前点一下。
  */
 export async function purgeBackendData({ paths, service, logger, env = process.env } = {}) {
