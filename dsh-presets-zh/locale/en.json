@@ -1,6 +1,7 @@
 {
   "meta": {
     "title": "Chinese Agent Presets",
-    "description": "Configure Chinese Standard, PTC, Minimal and Creation independently."
+    "description": "Configure Chinese Standard, PTC, Minimal and Creation independently.",
+    "detail": "locale/detail.en.md"
   }
 }

@@ -1,6 +1,7 @@
 {
   "meta": {
     "title": "中文预设",
-    "description": "提供中文标准、中文 PTC、中文极简和中文创造四种预设，各模式可独立配置。"
+    "description": "提供中文标准、中文 PTC、中文极简和中文创造四种预设，各模式可独立配置。",
+    "detail": "locale/detail.zh.md"
   }
 }
