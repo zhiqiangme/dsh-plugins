@@ -578,18 +578,25 @@ test('持续规则可从卡片保存，搜索与区域过滤不写入配置', as
   assert.deepEqual(requests, [{ enabled: true, only: [], rules: { freeOnly: true } }]);
 });
 
-test('装好后端：自动打开同步（不带 only，沿用白名单）并刷新模型区', async () => {
+test('模型页首次安装后端：原地显示进度，装好后打开同步并刷新模型区', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const requests = [];
+  const effects = [];
+  const post = Promise.withResolvers();
+  let progress;
   const notInstalled = { exeExists: false, version: {}, history: [] };
   const { renderCard } = boot(
     ['error', [], {}, 'backend-not-installed', new Set(), new Set(), false, undefined, notInstalled],
     {
+      effects,
       fetchImpl: async (path, options) => {
         const body = options.body ? JSON.parse(options.body) : undefined;
         requests.push({ path, method: options.method, body });
         let payload;
-        if (path.endsWith('/backend')) {
-          payload = { ok: true, state: 'installed', latest: { tag: 'v9.9.9' }, backend: { exeExists: true, version: { tag: 'v9.9.9' }, history: [] } };
+        if (path.endsWith('/backend?progress=1')) {
+          payload = { ok: true, progress };
+        } else if (path.endsWith('/backend')) {
+          return post.promise;
         } else if (options.method === 'POST') {
           payload = { ok: true, enabled: true, sync: { state: 'updated', count: 2 } };
         } else {
@@ -605,11 +612,38 @@ test('装好后端：自动打开同步（不带 only，沿用白名单）并刷
   assert.ok(before.some((text) => text.includes('后端还没有安装') && text.includes('「安装」')));
   assert.equal(before.includes('backend-not-installed'), false);
 
-  await button(collectByType(renderCard(), 'button'), '安装').props.onClick();
+  const models = () => tabPanel(renderCard(), '模型');
+  const bar = () => collectByType(models(), 'progress')[0];
+  assert.equal(models().props.hidden, false);
+  assert.equal(bar(), undefined);
+  const installing = button(collectByType(models(), 'button'), '安装').props.onClick();
+  assert.equal(bar()?.props['aria-label'], '正在检查上游版本…');
+  const stop = effects.at(-2)();
+  t.after(stop);
 
-  assert.deepEqual(requests.map((item) => `${item.method} ${item.path.split('/').pop()}`), ['POST backend', 'POST models', 'GET models']);
-  assert.deepEqual(requests[1].body, { enabled: true }, '只开同步，不带 only，避免清空已有勾选');
+  progress = { phase: 'downloading', received: 512, total: 1024 };
+  t.mock.timers.tick(500);
+  await new Promise((done) => setImmediate(done));
+  assert.equal(bar()?.props.value, 50);
+  assert.ok(collectText(models()).includes('50%'));
+
+  progress = { phase: 'installing' };
+  t.mock.timers.tick(500);
+  await new Promise((done) => setImmediate(done));
+  assert.equal(bar()?.props['aria-label'], '正在安装后端…');
+  assert.equal(bar().props.value, undefined);
+
+  post.resolve({ ok: true, json: async () => ({
+    ok: true, state: 'installed', latest: { tag: 'v9.9.9' }, backend: { exeExists: true, version: { tag: 'v9.9.9' }, history: [] },
+  }) });
+  await installing;
+
+  assert.deepEqual(requests.map((item) => `${item.method} ${item.path.split('/').pop()}`), [
+    'POST backend', 'GET backend?progress=1', 'GET backend?progress=1', 'POST models', 'GET models',
+  ]);
+  assert.deepEqual(requests[3].body, { enabled: true }, '只开同步，不带 only，避免清空已有勾选');
   const tree = renderCard();
+  assert.equal(bar(), undefined);
   assert.equal(syncCheckbox(tree).props.checked, true, '同步开关应已勾上');
   assert.ok(collectText(tree).includes('已保存，并已重新生成模型清单：2 个模型。'));
 });

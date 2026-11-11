@@ -1327,6 +1327,21 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       return Number.isFinite(time) ? new Date(time).toLocaleString() : String(iso ?? '');
     }
 
+    function renderBackendProgress(progress, t) {
+      if (!progress) return null;
+      const { phase, received, total } = progress;
+      const percent = phase === 'downloading' && total > 0 && received >= 0 && received <= total
+        ? Math.floor((received / total) * 100) : undefined;
+      const label = t(BACKEND_PROGRESS[phase] ?? 'backendWorking');
+      return h('div', { key: 'progress', className: 'dsm-wb-stack' },
+        h('p', { className: 'dsm-wb-backend-line dsm-wb-split' },
+          h('span', { role: 'status' }, label),
+          percent === undefined ? null : h('span', { 'aria-hidden': true }, `${percent}%`),
+        ),
+        h('progress', { className: 'dsm-wb-backend-progress', 'aria-label': label, max: 100, value: percent }),
+      );
+    }
+
     /**
      * 「后端版本」区里的自动更新开关与状态（纯渲染）。老宿主的快照没有 autoUpdate 字段，返回空数组。
      *
@@ -2040,6 +2055,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         : null;
       const modelPanel = [];
       if (phase === 'error') {
+        const needsBackend = reason === BACKEND_NOT_INSTALLED;
         modelPanel.push(
           h(
             'div',
@@ -2049,7 +2065,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
               'div',
               { className: 'dsm-wb-actions' },
               // 没装后端时就地给「安装」，不用先去「后端」页签里找。
-              reason === BACKEND_NOT_INSTALLED && backend
+              needsBackend && backend
                 ? wbButton('install', 'primary', backendBusy === 'install' ? t('backendWorking') : t('backendInstall'), () => runBackend('install'), busy, { 'aria-busy': backendBusy === 'install' })
                 : null,
               // 自动恢复连续失败后已暂停：模型区读不到目录的根因在这里，同样就地给出重试。
@@ -2058,6 +2074,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
                 : null,
               wbButton('retry', 'outline', t('retry'), () => load(), busy),
             ),
+            needsBackend && backendBusy === 'install' ? renderBackendProgress(backendProgress, t) : null,
           ),
           modelNotice,
         );
@@ -2363,20 +2380,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
               : wbButton('install', 'primary', backendBusy === 'install' ? t('backendWorking') : t('backendInstall'), () => runBackend('install'), busy, { 'aria-busy': backendBusy === 'install' }),
             installed ? wbButton('rollback', 'outline', backendBusy === 'rollback' ? t('backendWorking') : t('backendRollback'), () => runBackend('rollback'), busy, { 'aria-busy': backendBusy === 'rollback' }) : null,
           ),
+          renderBackendProgress(backendProgress, t),
         ];
-        if (backendProgress) {
-          const { phase, received, total } = backendProgress;
-          const percent = phase === 'downloading' && total > 0 && received >= 0 && received <= total
-            ? Math.floor((received / total) * 100) : undefined;
-          const label = t(BACKEND_PROGRESS[phase] ?? 'backendWorking');
-          versionGroup.push(h('div', { key: 'progress', className: 'dsm-wb-stack' },
-            h('p', { className: 'dsm-wb-backend-line dsm-wb-split' },
-              h('span', { role: 'status' }, label),
-              percent === undefined ? null : h('span', { 'aria-hidden': true }, `${percent}%`),
-            ),
-            h('progress', { className: 'dsm-wb-backend-progress', 'aria-label': label, max: 100, value: percent }),
-          ));
-        }
         // 没装就没有可更新的东西：首次安装永远由用户点。
         const auto = installed ? renderAutoUpdate(backend.autoUpdate, version.tag ?? null, { busy: backendBusy, onToggle: toggleAutoUpdate }, t) : [];
         if (auto.length) versionGroup.push(h('div', { key: 'auto', className: 'dsm-wb-stack dsm-wb-divided' }, auto));
