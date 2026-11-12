@@ -11,6 +11,11 @@
       "translated": "当前会话支持智能体团队。\n\n团队负责人和所有成员共用工作目录与文件系统，修改会立即对所有成员可见。将写入任务分配到互不重叠的范围，在共享任务中记录预期写入范围；需要先后执行时设置任务依赖。写入范围提示仅用于协调，不是文件锁。\n\n修改文件优先使用 read、edit、write。文件操作返回 FS_STALE_VERSION 时，先读取当前文件，将预期修改调整到新内容上再重试。Bash、格式化器、代码生成器和脚本不完全受文件版本检查保护，必须明确协调，并由负责人审查最终差异、运行测试。\n\n调用 send_message、interrupt_agent，或分配、筛选共享任务负责人时，使用 spawn_teammate 或 list_agents 返回的 target。send_message 会在正在运行的目标最近的步骤边界传入新要求，并启动或恢复不活跃目标。inactive 仅表示当前没有轮次运行，不代表任务完成、成功、失败或正在等待其他成员；provisioning 表示成员正在创建，failed 表示创建失败。成员消息以发送者名称开头；发送成功不代表对方已处理。\n\n共享任务按 list、get、使用当前 revision 认领、执行、complete 的顺序处理。任务就绪不会自动启动负责人。调用 wait_agent 前先用 list_agents 确认另一个必要成员正在 running 或 provisioning；必要成员 inactive 时先调用 send_message。wait_agent 只观察调用开始后的变化，不会唤醒成员；没有其他成员能产生变化时立即返回 noProgress。唤醒或超时后重新查询成员列表。负责人必须等待必要成员完成后再给出最终回答。"
     },
     {
+      "name": "team:policy",
+      "original": "Agent Teams is available in this session.\n\nThe Team Lead and all teammates share the same working directory and filesystem. Edits are immediately visible to every member. Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.\n\nUse the names returned by subagent, subagent_fork, or list_agents as owner when assigning or filtering shared tasks. The root can reassign tasks to itself or any continuable descendant; other agents claim ready tasks themselves. Shared-task workflow is list, get, claim with the current revision, perform the work, then complete. Task readiness never starts an owner. The root agent must wait for required teammates before giving the final answer.\n\nTask changes do not end wait_agent calls, add inbox messages, or start idle agents. Use send_message when another agent needs to act on a task.",
+      "translated": "当前会话已启用智能体团队。\n\n团队负责人和所有成员共用工作目录与文件系统，修改会立即对所有成员可见。将写入任务分配到互不重叠的范围，在共享任务中记录预期写入范围。需要按顺序执行时设置任务依赖。写入范围重叠提示仅用于协调，不会锁定文件。\n\n分配或筛选共享任务时，owner 使用 subagent、subagent_fork 或 list_agents 返回的成员名称。根智能体可以把任务改派给自己或任何可继续执行的后代，其他成员自行认领已就绪的任务。先列出并读取任务，使用当前 revision 认领，完成工作后将任务标记为已完成。任务就绪不会自动启动负责人。根智能体必须等必要成员完成后再给出最终答复。\n\n任务变更不会结束 wait_agent、向收件箱投递消息或启动空闲智能体。需要其他成员处理任务时，使用 send_message 通知对方。"
+    },
+    {
       "name": "context:file-reference",
       "original": "Tokens prefixed with @ are paths the user explicitly referenced. Relative paths resolve from the workspace root; absolute paths identify files or directories on the host. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @\"...\" quotes a path containing spaces.",
       "translated": "以 @ 开头的内容表示用户明确引用的路径。相对路径以工作区根目录为基准，绝对路径指向本机文件或目录。末尾带斜杠的是目录，内容与任务相关时先列出目录；其余视为文件，需要内容时使用 read 读取，读取前不要声称已经检查。含空格的路径写作 @\"...\"。"
@@ -26,14 +31,34 @@
       "translated": "使用 read 工具查看文本文件，避免用 cat 等 shell 命令代替。通过 offset 和 limit 分段读取大文件。"
     },
     {
+      "name": "tool:read",
+      "original": "Use the read tool — not shell commands like cat, sed, head, or tail — to inspect text files. Use offset and limit to read a line range or continue a large file.",
+      "translated": "使用 read 查看文本文件，避免用 cat、sed、head 或 tail 等 Shell 命令读取。使用 offset 和 limit 读取指定行范围或继续读取大文件。"
+    },
+    {
       "name": "tool:write",
       "original": "Read an existing file before overwriting it with write (the default fs-observation-policy requires it) and prefer edit for targeted changes.",
       "translated": "使用 write 覆盖已有文件前必须先读取该文件，默认文件观察策略要求如此；局部修改优先使用 edit。"
     },
     {
+      "name": "tool:write",
+      "original": "Read an existing file before overwriting it with write and prefer edit for targeted changes.",
+      "translated": "用 write 覆盖已有文件前先读取该文件。局部修改优先使用 edit。"
+    },
+    {
+      "name": "tool:write",
+      "original": "Read an existing file before overwriting it with write.",
+      "translated": "用 write 覆盖已有文件前先读取该文件。"
+    },
+    {
       "name": "tool:edit",
       "original": "Read a file before editing it (the default fs-observation-policy requires it), unless you just created or edited it in this session.",
       "translated": "编辑文件前先读取文件，这是默认文件观察策略的要求；刚在本会话创建或编辑过的文件除外。"
+    },
+    {
+      "name": "tool:edit",
+      "original": "Read a file before editing it unless you just created or edited it in this session.",
+      "translated": "编辑文件前先读取，刚在本会话中创建或编辑过的文件除外。"
     },
     {
       "name": "tool:glob",
@@ -89,6 +114,21 @@
       "name": "tool:subagent",
       "original": "Start independent delegations with `subagent` or `subagent_fork` together in one assistant message and continue useful work while they run.",
       "translated": "互相独立的委派可在同一条助手消息中一起调用 subagent 或 subagent_fork 启动；运行期间继续处理独立且有用的工作。"
+    },
+    {
+      "name": "tool:subagent",
+      "original": "Start independent delegations with `subagent` or `subagent_fork` together in one assistant message and continue useful work while they run. When only waiting for their results remains, end your turn instead of sleeping or polling; the next result starts a new turn. Collect the subagent results required to complete the task before giving the user a final answer.\n\nBash, formatters, code generators, and scripts can overwrite concurrent edits without conflict detection; coordinate their changes explicitly. The agent integrating the work must review the final diff and run relevant tests.",
+      "translated": "将互相独立的委派在同一条助手消息中通过 subagent 或 subagent_fork 一起启动。等待期间继续处理可独立开展的工作。只剩等待结果时，结束当前轮次，下一条结果会开启新轮次。给用户最终答复前，收齐完成任务所需的子智能体结果。\n\nBash、格式化器、代码生成器和脚本可能覆盖并行修改而无法检测冲突，须事先协调。负责合并工作的智能体应审查最终差异并运行相关测试。"
+    },
+    {
+      "name": "tool:subagent",
+      "original": "Start independent delegations with `subagent` together in one assistant message and continue useful work while they run. When only waiting for their results remains, end your turn instead of sleeping or polling; the next result starts a new turn. Collect the subagent results required to complete the task before giving the user a final answer.\n\nBash, formatters, code generators, and scripts can overwrite concurrent edits without conflict detection; coordinate their changes explicitly. The agent integrating the work must review the final diff and run relevant tests.",
+      "translated": "将互相独立的委派在同一条助手消息中通过 subagent 一起启动。等待期间继续处理可独立开展的工作。只剩等待结果时，结束当前轮次，下一条结果会开启新轮次。给用户最终答复前，收齐完成任务所需的子智能体结果。\n\nBash、格式化器、代码生成器和脚本可能覆盖并行修改而无法检测冲突，须事先协调。负责合并工作的智能体应审查最终差异并运行相关测试。"
+    },
+    {
+      "name": "tool:subagent_fork",
+      "original": "Start independent delegations with `subagent_fork` together in one assistant message and continue useful work while they run. When only waiting for their results remains, end your turn instead of sleeping or polling; the next result starts a new turn. Collect the subagent results required to complete the task before giving the user a final answer.\n\nBash, formatters, code generators, and scripts can overwrite concurrent edits without conflict detection; coordinate their changes explicitly. The agent integrating the work must review the final diff and run relevant tests.",
+      "translated": "将互相独立的委派在同一条助手消息中通过 subagent_fork 一起启动。等待期间继续处理可独立开展的工作。只剩等待结果时，结束当前轮次，下一条结果会开启新轮次。给用户最终答复前，收齐完成任务所需的子智能体结果。\n\nBash、格式化器、代码生成器和脚本可能覆盖并行修改而无法检测冲突，须事先协调。负责合并工作的智能体应审查最终差异并运行相关测试。"
     },
     {
       "name": "mcp-resource-servers",

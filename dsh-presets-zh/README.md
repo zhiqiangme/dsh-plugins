@@ -102,6 +102,8 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-presets-zh
 
 `26.11.4` 已同步 DSH `0.2.2-rc.1` 的子代理配置：`list_agents` 由 `@deepseek-ai/dsh-tool-subagent-control` 统一注册，不再加载已移除的 `/list-agents` 子入口；模型选择与发现使用 `modelSelection`、`modelDiscovery`。修复中文标准、中文 PTC 和中文创造因旧入口失效而无法加载的问题。
 
+已同步 DSH `0.2.2-rc.2` 的具名子智能体、团队任务板和收件箱等待说明。三个完整模式随内置预设默认关闭 `interrupt_agent`。宿主提供新版 PTC 执行器时直接使用该执行器，支持汉化 TypeScript 和 Python SDK 说明。宿主提供 Office 工具时，中文标准和中文 PTC 按宿主规则在加载相关技能后提供这些工具。
+
 汉化仅命中已知段落名和原文；未知或变化后的说明原样保留，避免误改。特定宿主身份、源码路径和 Web 界面的系统段落按名称省略。SDK 只替换已知说明前缀，不替换动态代码声明。
 
 这不能保证第三方模型服务始终兼容；三个完整模式的普通回复、PTC 只读终端调用及创造模式只读检查此前已在本机通过，偶发连接错误仍可能发生。实际安装插件、修改预设等创造模式写入流程尚未全面验证。

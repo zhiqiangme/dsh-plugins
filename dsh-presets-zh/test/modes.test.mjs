@@ -64,6 +64,7 @@ test('完整模式适配 DSH 0.2.2 的子代理控制入口与模型发现配置
     const delegation = row(definition, 'delegation').config
     // list_agents 已由控制插件统一注册；旧子路径不再导出，会导致整个预设加载失败。
     assert.deepEqual(delegation.filter(plugin => plugin.name.startsWith('@deepseek-ai/dsh-tool-subagent-control')).map(plugin => plugin.name), ['@deepseek-ai/dsh-tool-subagent-control'])
+    assert.equal(delegation.find(plugin => plugin.id === 'tool-subagent-control').config.interrupt, false)
     assert.deepEqual(delegation.find(plugin => plugin.id === 'tool-subagent').config, {
       provider: 'spawn', toolName: 'subagent', modelSelection: true, modelDiscovery: true,
     })
@@ -71,6 +72,31 @@ test('完整模式适配 DSH 0.2.2 的子代理控制入口与模型发现配置
       provider: 'fork', toolName: 'subagent_fork',
     })
   }
+})
+
+test('新版宿主加载原生 PTC 和 Office 工具，旧宿主沿用兼容配置', async () => {
+  const fake = host()
+  const packages = new Set(['@deepseek-ai/dsh-tool-executor-ptc', '@deepseek-ai/dsh-tool-office'])
+  fake.ctx.baseUrl = 'file:///profile/'
+  fake.ctx.get = name => name === 'pluginPackages' ? {
+    packageOf: (pkg, base) => {
+      assert.equal(base, fake.ctx.baseUrl)
+      return packages.has(pkg) ? {} : undefined
+    },
+  } : undefined
+  await apply(fake.ctx)
+  for (const id of ['standard-zh', 'ptc-zh', 'cordis-zh', 'minimal-zh']) {
+    assert.equal(Boolean(row(fake.records.get(id), 'tool-office')), ['standard-zh', 'ptc-zh'].includes(id))
+  }
+  const ptc = fake.records.get('ptc-zh')
+  assert.equal(row(ptc, 'tool-executor-ptc').name, '@deepseek-ai/dsh-tool-executor-ptc')
+  assert.equal(row(ptc, 'tool-presentation'), undefined)
+  await fake.cleanup()
+
+  const legacyPtc = mode(configuredModes(), 'ptc').definition
+  assert.equal(row(legacyPtc, 'tool-presentation').config.mode, 'ptc')
+  assert.equal(row(legacyPtc, 'tool-office'), undefined)
+  assert.equal(row(legacyPtc, 'tool-executor-ptc'), undefined)
 })
 
 test('汉化命中精确原文；省略指定宿主段落，未知说明、属性及其他内容原样保留', () => {
@@ -91,7 +117,7 @@ test('汉化命中精确原文；省略指定宿主段落，未知说明、属�
   assert.equal(assembly.sections[0].text, dictionary.entries[0].original)
 })
 
-test('PTC 两种 SDK 前缀汉化且动态工具声明逐字保留，普通模式不误改 SDK', () => {
+test('PTC 的 TypeScript 和 Python SDK 说明汉化，动态工具声明逐字保留', () => {
   const declarations = '```typescript\n/** Keep DSH user descriptions */\ndeclare const tools: { example(args: {path: string}): Promise<string> };\n```'
   for (const variant of data('translations/ptc-sdk.json')) {
     const input = { sections: [{ name: 'tools:sdk', text: variant.original + declarations }] }
@@ -100,6 +126,22 @@ test('PTC 两种 SDK 前缀汉化且动态工具声明逐字保留，普通模�
   }
   const unknown = { sections: [{ name: 'tools:sdk', text: 'new format ' + declarations }] }
   assert.deepEqual(transformAssembly(unknown, { ptc: true }), unknown)
+})
+
+test('PTC 汉化 Bash 示例的说明并保留调用代码及 SDK 声明', () => {
+  const variant = data('translations/ptc-sdk.json')[0]
+  const example = '`run_code({ code: "return await tools.bash({ description: \'Show current directory\', command: \'pwd\' })", description: "Show current directory" })`'
+  const intro = ' When no separate `bash` schema is supplied, invoke a declared `bash` binding inside `run_code`:\n\n'
+  const declarations = '```ts\ndeclare const tools: { bash(args: unknown): Promise<unknown> };\n```'
+  const text = variant.original.replace('\n\nInside the program:', intro + example + '\n\nInside the program:') + declarations
+  const section = { name: 'tools:sdk', text }
+  const translate = section => transformAssembly({ sections: [section] }, { ptc: true }).sections[0]
+  const localized = translate(section)
+  assert.match(localized.text, /没有单独的 bash 工具 schema/)
+  assert.ok(localized.text.includes(example))
+  assert.ok(localized.text.endsWith(declarations))
+  const unknown = { ...section, text: text.replace('pwd', 'ls') }
+  assert.deepEqual(translate(unknown), unknown)
 })
 
 function host() {

@@ -20,13 +20,21 @@ export function modeDefaults(definition) {
 }
 
 /** 每次注册使用独立副本，配置与运行时不能改写其他预设或后续重载的快照。 */
-export function configuredModes(config = {}) {
+export function configuredModes(config = {}, { office = false, ptcExecutor = false } = {}) {
   return MODES.map(({ key, definition }) => {
     const defaults = modeDefaults(definition)
     const value = config[key]
     const raw = (typeof value?.get === 'function' ? value.get() : value) ?? {}
     const options = { ...defaults, ...raw }
     const preset = structuredClone(definition)
+    if (office && (key === 'standard' || key === 'ptc')) {
+      const index = preset.plugins.findIndex(row => row.id === 'present')
+      preset.plugins.splice(index + 1, 0, { id: 'tool-office', name: '@deepseek-ai/dsh-tool-office' })
+    }
+    if (ptcExecutor && key === 'ptc') {
+      const index = preset.plugins.findIndex(row => row.id === 'tool-presentation')
+      preset.plugins[index] = { id: 'tool-executor-ptc', name: '@deepseek-ai/dsh-tool-executor-ptc' }
+    }
     preset.name = options.name?.trim() || defaults.name
     preset.description = typeof options.description === 'string' ? options.description : defaults.description
     preset.plugins.find(row => row.id === 'persona').config.prefix = options.prompt?.trim() || defaults.prompt

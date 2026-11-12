@@ -1,9 +1,24 @@
+import { createRequire } from 'node:module'
 import { configuredModes } from './modes.js'
 import { registerVersionRoute } from './web.js'
 export { Config } from './config.js'
 
 export const name = 'dsh-presets-zh'
 export const inject = ['agentPresets', 'loader']
+
+function supportsPackage(ctx, name) {
+  if (!ctx.baseUrl) return false
+  // 桌面宿主的内置包可位于 app.asar，使用与宿主加载预设相同的包目录探测。
+  const packages = ctx.get?.('pluginPackages')
+  if (packages) return packages.packageOf(name, ctx.baseUrl) !== undefined
+  try {
+    createRequire(ctx.baseUrl).resolve(name + '/package.json')
+    return true
+  } catch (error) {
+    if (error.code !== 'MODULE_NOT_FOUND' && error.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw error
+    return false
+  }
+}
 
 /**
  * 判断 profile 里是否已经有同 id 的声明式预设。
@@ -33,11 +48,15 @@ function hasDeclaredPreset(ctx, id) {
 export async function apply(ctx, config = {}) {
   // 设置页“插件更新”区块的版本检查；与预设注册互不影响。
   registerVersionRoute(ctx, { logger: ctx.logger })
+  const capabilities = {
+    office: supportsPackage(ctx, '@deepseek-ai/dsh-tool-office'),
+    ptcExecutor: supportsPackage(ctx, '@deepseek-ai/dsh-tool-executor-ptc'),
+  }
   const owned = new Map()
   let closed = false
   let pending = Promise.resolve()
   const synchronize = () => {
-    const modes = configuredModes(config)
+    const modes = configuredModes(config, capabilities)
     const task = pending.catch(() => {}).then(async () => {
       if (closed) return
       // 声明式行可能在本插件之后才加载；注册表也覆盖 entries() 看不到的声明。

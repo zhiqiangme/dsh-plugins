@@ -1,5 +1,47 @@
 export const name = 'presets-zh-context'
 
+export function installSubagentIdentity(ctx) {
+  const installed = new WeakSet()
+  ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
+    const decision = await next()
+    if (decision.kind === 'reject' || signal.aborted || installed.has(agent)) return decision
+    if (typeof agent.ctx.get('subagents')?.namesOf !== 'function') return decision
+    // 宿主在发请求前重读已注册的运行时上下文。用单个 agent 的作用域覆盖身份段，
+    // 让刷新、重试和会话日志都使用同一份译文，同时保留宿主实时计算的名称与工具可见性。
+    // 在会话开始执行后再注册，避免空白会话切换到其他预设时继承这份覆盖。
+    await agent.ctx.inject(['systemPrompt', 'tools', 'subagents'], scope => {
+      const { systemPrompt, tools, subagents } = scope
+      systemPrompt.context({
+        name: 'subagent:identity',
+        order: systemPrompt.getContextOrder('SUBAGENT_DELEGATION'),
+        required: true,
+        interpolate: false,
+        text: ({ scope: toolScope, toolSet }) => {
+          try {
+            const names = subagents.namesOf(agent)
+            const identity = names.parent === undefined
+              ? `你是根智能体，名称为 ${JSON.stringify(names.self)}。`
+              : `你是由 ${JSON.stringify(names.parent)} 委派的子智能体，名称为 ${JSON.stringify(names.self)}。\n协作树的根智能体是 ${JSON.stringify(subagents.namesOf(subagents.rootOf(agent)).self)}。`
+            const guidance = []
+            if (tools.get('send_message', toolScope, toolSet)) {
+              guidance.push('使用 send_message({ agent: "<agent-name>", message: "..." }) 给其他智能体发消息。')
+            }
+            if (tools.get('list_agents', toolScope, toolSet)) {
+              guidance.push('使用 list_agents({}) 查找协作者及其名称。')
+            }
+            return [identity, ...guidance].join('\n')
+          } catch (error) {
+            if (error?.name !== 'SubagentError' || error.code !== 'UNAUTHORIZED') throw error
+            return `你的智能体 ID 是 ${JSON.stringify(agent.id)}。协作树的根智能体当前不可用，请继续独立工作。查找其他智能体和发送消息需要根智能体在线。`
+          }
+        },
+      })
+    })
+    installed.add(agent)
+    return decision
+  })
+}
+
 const INTRO = '以下工作区指令可能适用于当前任务。请在适用时遵循；更具体的指令优先于更宽泛的指令，但不能覆盖系统、开发者或用户的直接指令。'
 const INSTRUCTION_INTROS = new Map([
   ['The following workspace instructions may be relevant to your work. Use them as guidance when applicable. More specific instructions take precedence over broader ones. They do not override system, developer, or direct user instructions.', INTRO],
