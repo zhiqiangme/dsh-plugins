@@ -214,12 +214,13 @@ export async function tavilySearch(query, apiKey, options, signal) {
       body: JSON.stringify({ ...payload, api_key: apiKey }),
     });
   } catch (error) {
-    if (error?.name === 'AbortError') throw new UpstreamError(`Tavily 请求超时（${options.timeoutMs} ms）`);
+    signal?.throwIfAborted();
     throw new UpstreamError(`Tavily 请求失败：${error?.message ?? error}`);
   }
   const text = await response.text();
   if (!response.ok) {
-    throw new UpstreamError(`Tavily 返回 HTTP ${response.status}：${text.slice(0, 300)}`, response.status);
+    const detail = text.replaceAll(apiKey, '[redacted]').slice(0, 300);
+    throw new UpstreamError(`Tavily 返回 HTTP ${response.status}：${detail}`, response.status);
   }
   let data;
   try {
@@ -347,6 +348,33 @@ export async function searchWithKeys(query, keys, start, options, signal) {
   throw lastError;
 }
 
+export class MissingTavilyKey extends Error {}
+
+/** 原生提供方和兼容接口共享凭据轮询。每次调用都重读凭据。 */
+export function createTavilySearch(input) {
+  const options = { ...SHIM_DEFAULTS, ...input };
+  let cursor = 0;
+  return async ({ query, maxResults }, signal) => {
+    signal?.throwIfAborted();
+    const keys = normalizeKeys(await options.resolveApiKey());
+    signal?.throwIfAborted();
+    if (keys.length === 0) throw new MissingTavilyKey(`未配置 Tavily API Key。${options.missingKeyHint}`);
+
+    const start = cursor % keys.length;
+    cursor = (cursor + 1) % Number.MAX_SAFE_INTEGER;
+    const timeout = AbortSignal.timeout(options.timeoutMs);
+    const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    try {
+      return await searchWithKeys(query, keys, start, { ...options, maxResults }, requestSignal);
+    } catch (error) {
+      if (timeout.aborted && requestSignal.reason === timeout.reason) {
+        throw new UpstreamError(`Tavily 请求超时（${options.timeoutMs} ms）`);
+      }
+      throw error;
+    }
+  };
+}
+
 function sendJson(res, status, body) {
   // 响应已发出（例如客户端断开后触发的迟到错误）时不再写入，避免二次写头崩溃
   if (res.headersSent) return;
@@ -399,25 +427,20 @@ export function createShimServer(input) {
   if (typeof options.resolveApiKey !== 'function') {
     throw new TypeError('createShimServer 需要 resolveApiKey()');
   }
-  /** 轮询游标：每个请求从下一个 key 开始，多个 key 的额度均摊消耗，而不是先把第一个用光。 */
-  let cursor = 0;
+  const search = options.search ?? createTavilySearch(options);
 
-  /** 取 key、上超时、调 Tavily；两种协议共用，只由调用方决定 maxResults 与结果信封。 */
+  /** 客户端关闭连接时取消 Tavily 请求。 */
   const runSearch = async (res, { route, query, maxResults }) => {
-    // 每次请求现取 key：凭据库里的 key 被轮换后，下一次搜索就用新值
-    const keys = normalizeKeys(await options.resolveApiKey());
-    if (keys.length === 0) {
-      return { error: errorFor(route, 401, 'authentication_error', `未配置 Tavily API Key。${options.missingKeyHint}`) };
-    }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-    res.on('close', () => controller.abort());
+    const abort = () => controller.abort();
+    res.once('close', abort);
     try {
-      const start = cursor % keys.length;
-      cursor = (cursor + 1) % Number.MAX_SAFE_INTEGER;
-      const results = await searchWithKeys(query, keys, start, { ...options, maxResults }, controller.signal);
+      const results = await search({ query, maxResults }, controller.signal);
       return { results };
     } catch (error) {
+      if (error instanceof MissingTavilyKey) {
+        return { error: errorFor(route, 401, 'authentication_error', error.message) };
+      }
       if (error instanceof UpstreamError) {
         return {
           error: errorFor(
@@ -430,7 +453,7 @@ export function createShimServer(input) {
       }
       return { error: errorFor(route, 500, 'api_error', `搜索适配服务内部错误：${error?.message ?? error}`) };
     } finally {
-      clearTimeout(timer);
+      res.off('close', abort);
     }
   };
 

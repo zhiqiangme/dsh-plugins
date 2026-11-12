@@ -16,7 +16,8 @@
  *      同一条路），值只往宿主写、从不读回；列表走宿主半侧的 keys 路由，只拿到"有没有配置、能不能改"
  *      和末 4 位（用来分辨要删哪个）。第 1 个 key 的引用名是 TAVILY_API_KEY，之后是 _2、_3…；
  *   2. 搜索接口状态与测试 —— 宿主半侧（lib/web.js）的 loopback 路由；
- *   3. 网页搜索接入 —— 按 `configForms.get('web')` 的提供方选择走两套协议之一：
+ *   3. 网页搜索接入 —— 新宿主在 `configForms.get('web')` 里直接选择 Tavily。
+ *      旧宿主按提供方选择走两套兼容协议之一：
  *      新版开关关闭（`deepseek-official`，或旧版 DSH 没有该命名空间）时操作
  *      `configForms.get('web-search-deepseek')` 的 Messages 接口地址；打开（`deepseek-search-api`）
  *      时操作 `configForms.get('web-deepseek-api')` 的 Search API 基础地址。两套都是把接口地址改成
@@ -71,6 +72,7 @@ window.__ModuleLoader__.load({
     const WEB_SEARCH_NS = 'web-search-deepseek';
     /** 新版 Search API 提供方的设置命名空间（DSH 0.2.1-rc.2 起随内置网页搜索页一起下发）。 */
     const WEB_API_NS = 'web-deepseek-api';
+    const NATIVE_SEARCH_PROVIDER = 'dsh-tavily-search';
     const WEB_SEARCH_DEFAULT_REF = 'DEEPSEEK_API_KEY';
     /**
      * 接入时让网页搜索改读的专用凭据引用与占位值。
@@ -232,7 +234,7 @@ window.__ModuleLoader__.load({
     // React 拿它当 child 直接抛错，整块卡片从页面上消失。
     const zh = {
       title: 'Tavily 联网搜索',
-      description: '用 Tavily 给 DSH 的「网页搜索」供数：本插件在 DSH 进程内同时提供旧版 Messages 搜索与新版 Search API 的搜索接口，网页搜索指向它即可。',
+      description: '让 DSH 的网页搜索使用 Tavily。API Key 由 DSH 凭据库保存。',
       summary: '用 Tavily 给 DSH 的网页搜索供数。',
       tabKeys: 'API Key',
       tabWeb: '网页搜索',
@@ -260,6 +262,7 @@ window.__ModuleLoader__.load({
       keyAdded: '已添加，下一次搜索起参与轮换。',
       keyRemoved: '已删除 {name}。',
       serverTitle: '搜索接口',
+      nativeTestTitle: 'Tavily 搜索',
       serverEndpoint: 'Messages 地址：',
       serverApiEndpoint: '新版 API 地址：',
       serverListening: '运行中',
@@ -277,6 +280,7 @@ window.__ModuleLoader__.load({
       testOk: '搜索成功：「{query}」返回 {count} 条结果，用时 {ms} ms。',
       testFailed: '搜索失败：{reason}',
       webTitle: '网页搜索接入',
+      nativeHint: '也可在「网页搜索与获取」的「网页搜索提供方」里选择 Tavily 并保存。',
       webLoading: '正在读取网页搜索设置…',
       webUnavailable: '内置的网页搜索插件当前未加载，无法接入。',
       webApiUnavailable: '内置的新版搜索插件（web-deepseek-api）当前未加载，无法接入新版 API；可在「网页搜索」页关掉新版开关后，再用 Messages 搜索接入。',
@@ -305,19 +309,21 @@ window.__ModuleLoader__.load({
       unwireHint: '恢复后网页搜索改回 DeepSeek 官方接口，凭据也改回读 DeepSeek 的 API Key。',
       unwireApiHint: '恢复后新版搜索改回 DeepSeek 官方 Search API 地址与凭据，网页抓取改回 DeepSeek Fetch API。',
       wired: '已接入：网页搜索现在使用本插件的接口与占位凭据。',
+      wiredNative: '网页搜索已切换到 Tavily。',
+      unwiredNative: '已恢复默认网页搜索提供方。',
       wiredApi: '已接入：新版 Web 搜索 API 现在使用本插件的搜索接口。',
       unwired: '已恢复网页搜索的默认接口地址与凭据。',
       unwiredApi: '已恢复新版 Search API 的默认地址与凭据。',
       purgeTitle: '清除插件数据',
-      purgeHint: 'DSH 卸载插件时不会删除这里保存的 Tavily API Key，也不会把网页搜索的接口地址改回默认（卸载后 127.0.0.1:8787 没人监听，网页搜索会直接失败）。卸载前点一下即可清干净。',
+      purgeHint: '卸载前可在这里删除已保存的 Tavily API Key，并撤销 Tavily 的网页搜索接入。',
       purge: '清除插件数据',
       purging: '清除中…',
       purgeConfirmTitle: '清除插件数据？',
       purgeConfirmKeys: '删除 {count} 个 Tavily API Key（凭据库里的值会被清掉，无法撤销）。',
-      purgeConfirmWeb: '把网页搜索的接口地址与凭据恢复为 DSH 默认（两套协议一并恢复，抓取提供方也改回开关配对值）。',
+      purgeConfirmWeb: '撤销本插件的网页搜索接入。',
       purgeConfirm: '确认清除',
       purgeKeysRemoved: '已删除 {count} 个 API Key。',
-      purgeWebRestored: '网页搜索接口已恢复为默认。',
+      purgeWebRestored: '已撤销 Tavily 的网页搜索接入。',
       purgeKeysFailed: '{count} 个 Key 没删掉：{reason}',
       purgeWebFailed: '网页搜索接口没能恢复：{reason}',
       purgeSkipped: '{count} 个 Key 来自环境变量等只读来源，需要在外部删除。',
@@ -363,7 +369,7 @@ window.__ModuleLoader__.load({
 
     const en = {
       title: 'Tavily web search',
-      description: 'Feeds DSH web search with Tavily: this plugin serves both the legacy Messages endpoint and the new Search API inside DSH; point web search at it.',
+      description: 'Use Tavily for DSH web search. API keys are stored in the DSH credential store.',
       summary: 'Feeds DSH web search with Tavily.',
       tabKeys: 'API keys',
       tabWeb: 'Web search',
@@ -391,6 +397,7 @@ window.__ModuleLoader__.load({
       keyAdded: 'Added; it joins the rotation from the next search.',
       keyRemoved: 'Removed {name}.',
       serverTitle: 'Search endpoint',
+      nativeTestTitle: 'Tavily search',
       serverEndpoint: 'Messages: ',
       serverApiEndpoint: 'New API: ',
       serverListening: 'running',
@@ -408,6 +415,7 @@ window.__ModuleLoader__.load({
       testOk: 'Search OK: "{query}" returned {count} results in {ms} ms.',
       testFailed: 'Search failed: {reason}',
       webTitle: 'Web search wiring',
+      nativeHint: 'You can also select Tavily as the web search provider in Web search and fetch, then save.',
       webLoading: 'Reading web-search settings…',
       webUnavailable: 'The built-in web-search plugin is not loaded, so it cannot be wired.',
       webApiUnavailable: 'The built-in new-API plugin (web-deepseek-api) is not loaded, so the new Search API cannot be wired; turn the new API switch off on the Web search page to wire Messages search instead.',
@@ -436,19 +444,21 @@ window.__ModuleLoader__.load({
       unwireHint: 'Web search goes back to the DeepSeek official endpoint and the DeepSeek API key.',
       unwireApiHint: 'The new search goes back to the DeepSeek official Search API endpoint and credential, and web fetch goes back to the DeepSeek Fetch API.',
       wired: 'Wired: web search now uses the endpoint and placeholder credential of this plugin.',
+      wiredNative: 'Web search now uses Tavily.',
+      unwiredNative: 'The default web search provider has been restored.',
       wiredApi: 'Wired: the new Web Search API now uses the search endpoint of this plugin.',
       unwired: 'Web-search endpoint and credential reset to default.',
       unwiredApi: 'The new Search API endpoint and credential reset to default.',
       purgeTitle: 'Clear plugin data',
-      purgeHint: 'Uninstalling this plugin in DSH keeps the Tavily API keys saved here and leaves web search pointing at this plugin (nothing listens on 127.0.0.1:8787 afterwards, so web search fails). Click this before uninstalling to clean up.',
+      purgeHint: 'Before uninstalling, use this to delete saved Tavily API keys and disconnect Tavily from web search.',
       purge: 'Clear plugin data',
       purging: 'Clearing…',
       purgeConfirmTitle: 'Clear plugin data?',
       purgeConfirmKeys: 'Delete {count} Tavily API key(s) from the credential store. This cannot be undone.',
-      purgeConfirmWeb: 'Reset the web-search endpoint and credential to the DSH defaults (both protocols, and the fetch provider back to the switch pairing).',
+      purgeConfirmWeb: 'Disconnect this plugin from web search.',
       purgeConfirm: 'Clear',
       purgeKeysRemoved: 'Deleted {count} API key(s).',
-      purgeWebRestored: 'Web-search endpoint reset to default.',
+      purgeWebRestored: 'Tavily disconnected from web search.',
       purgeKeysFailed: '{count} key(s) could not be deleted: {reason}',
       purgeWebFailed: 'Could not reset the web-search endpoint: {reason}',
       purgeSkipped: '{count} key(s) come from read-only sources such as environment variables; remove them there.',
@@ -1144,17 +1154,22 @@ window.__ModuleLoader__.load({
      */
     function ownershipOf(model, endpoint, apiEndpoint) {
       const messages = webOwnership(model.web, endpoint);
-      const searchApi = webOwnership(model.api, apiEndpoint);
+      const native = model.status?.nativeProvider === NATIVE_SEARCH_PROVIDER;
+      // 新宿主忽略旧版 Search API 的 baseURL / apiKeyEnv，且搜索和获取是独立选择。
+      const searchApi = webOwnership(native ? undefined : model.api, apiEndpoint);
       const selection = model.selection;
+      const restoreNative =
+        selection?.searchProvider === NATIVE_SEARCH_PROVIDER && selection.base?.searchProvider !== NATIVE_SEARCH_PROVIDER;
       const ownsAny = messages.web || messages.webKeyRef || searchApi.web || searchApi.webKeyRef;
       return {
         messages,
         api: searchApi,
-        any: ownsAny,
+        any: ownsAny || restoreNative,
+        restoreNative,
         deletePlaceholder: messages.webKeyRef || searchApi.webKeyRef,
         // 新版接入时本插件把抓取从 deepseek-fetch-api 改成了本地 HTTP；恢复时改回开关配对值
         restoreFetch:
-          ownsAny &&
+          !native && ownsAny &&
           selection?.phase === 'ready' &&
           selection.searchProvider === API_SEARCH_PROVIDER &&
           selection.fetchProvider === HTTP_FETCH_PROVIDER,
@@ -1207,10 +1222,15 @@ window.__ModuleLoader__.load({
      * 占位凭据已有值时不覆盖——配了 shimApiKey 的用户会在内置网页搜索页把它改成真正的校验值。
      *
      * @param api - 卡片拿到的宿主能力（见 apply 里的 api 对象）
-     * @param {{mode: 'messages'|'api', endpoint: string, apiEndpoint: string, selection: object}} options
+     * @param {{mode: 'native'|'messages'|'api', endpoint: string, apiEndpoint: string, selection: object}} options
      *   mode 是这次要接的协议，不是当前正在用的协议：网页提供方被别的插件占用时，卡片优先接新版 API。
      */
     async function wireWebSearch(api, { mode, endpoint, apiEndpoint, selection }) {
+      if (mode === 'native') {
+        if (!api.selectionForm || selection?.phase !== 'ready' || selection.writable === false) return false;
+        if (selection.searchProvider === NATIVE_SEARCH_PROVIDER) return true;
+        return writeWebFields(api.selectionForm, [providerOp(selection, 'searchProvider', NATIVE_SEARCH_PROVIDER)]);
+      }
       const form = mode === 'api' ? api.apiForm : api.webForm;
       if (!form) return false;
       const target = mode === 'api' ? apiEndpoint : endpoint;
@@ -1263,6 +1283,11 @@ window.__ModuleLoader__.load({
      * @returns 表单还没就绪时 undefined；否则 tone / label（文案 key）与各分项结论。
      */
     function wiringOf(model, endpoint, apiEndpoint) {
+      if (model.status?.nativeProvider === NATIVE_SEARCH_PROVIDER) {
+        if (model.selection?.phase !== 'ready') return undefined;
+        const complete = model.selection.searchProvider === NATIVE_SEARCH_PROVIDER;
+        return { complete, tone: complete ? 'ok' : 'warn', label: complete ? 'webWired' : 'webNotWired' };
+      }
       const mode = webMode(model.selection);
       const form = mode === 'api' ? (model.api ?? { phase: 'unavailable' }) : model.web;
       if (form.phase !== 'ready') return undefined;
@@ -1296,11 +1321,20 @@ window.__ModuleLoader__.load({
      * @returns 宿主是否接受；没有要撤销的覆盖时返回 undefined。
      */
     async function restoreWebSearch(api, owned, selection) {
+      if (owned.restoreNative) {
+        if (!api.selectionForm || selection?.phase !== 'ready' || selection.writable === false) return false;
+        const latest = api.selectionForm.getSnapshot?.();
+        const current = latest ? selectionModel(latest) : selection;
+        if (current.phase !== 'ready' || current.writable === false) return false;
+        if (current.searchProvider === NATIVE_SEARCH_PROVIDER && current.base?.searchProvider !== NATIVE_SEARCH_PROVIDER) {
+          if (await writeWebFields(api.selectionForm, [{ op: 'unset', path: ['searchProvider'] }]) === false) return false;
+        }
+      }
       const tasks = [];
-      if (api.webForm && (owned.messages.web || owned.messages.webKeyRef)) {
+      if (api.webForm && (owned.messages?.web || owned.messages?.webKeyRef)) {
         tasks.push({ form: api.webForm, ops: fieldRestoreOps(owned.messages) });
       }
-      if (api.apiForm && (owned.api.web || owned.api.webKeyRef)) {
+      if (api.apiForm && (owned.api?.web || owned.api?.webKeyRef)) {
         tasks.push({ form: api.apiForm, ops: fieldRestoreOps(owned.api) });
       }
       let accepted = true;
@@ -1318,7 +1352,7 @@ window.__ModuleLoader__.load({
           // 占位值留在凭据库里无害
         }
       }
-      if (tasks.length === 0 && !owned.restoreFetch) return undefined;
+      if (tasks.length === 0 && !owned.restoreFetch && !owned.restoreNative) return undefined;
       return accepted;
     }
 
@@ -1428,6 +1462,7 @@ window.__ModuleLoader__.load({
      */
     function renderCard(model, actions, t) {
       const { status, web, test } = model;
+      const native = status.nativeProvider === NATIVE_SEARCH_PROVIDER;
       const endpoint = status.endpoint ?? DEFAULT_ENDPOINT;
       /** 新版 Search API 的基础地址（宿主 /status 下发；拿不到时按同端口推算，与 lib/config.js 一致）。 */
       const apiEndpoint = status.apiEndpoint ?? `${endpoint}/tools`;
@@ -1436,30 +1471,31 @@ window.__ModuleLoader__.load({
       const keySection = renderKeySection(model, actions, t);
 
       // ---- 搜索接口 ----
-      const serverSection = [];
+      const state = status.server?.state;
+      const [tone, label] = native ? [] : SERVER_BADGE[state] ?? [];
+      const canTest = native || state === 'listening' || state === 'external';
+      const serverSection = [
+        h(
+          'div',
+          { key: 'head', className: 'dsm-tv-section-head' },
+          h('span', { className: 'dsm-tv-section-title' }, t(native ? 'nativeTestTitle' : 'serverTitle')),
+          label ? badge('badge', tone, t(label)) : null,
+          button('refresh', 'outline', t('refresh'), actions.reload, status.phase === 'loading'),
+          button('test', 'primary', test.busy ? t('testing') : t('test'), actions.runTest, test.busy || !canTest),
+        ),
+      ];
+      if (!native) {
+        serverSection.push(
+          h('p', { key: 'endpoint', className: 'dsm-tv-line' }, t('serverEndpoint'), h('span', { className: 'dsm-tv-code' }, endpoint)),
+          h('p', { key: 'apiEndpoint', className: 'dsm-tv-line' }, t('serverApiEndpoint'), h('span', { className: 'dsm-tv-code' }, apiEndpoint)),
+        );
+      }
       if (status.phase === 'loading') {
         serverSection.push(h('p', { key: 'loading', className: 'dsm-tv-line' }, t('statusLoading')));
       } else if (status.phase === 'error') {
         serverSection.push(notice('statusError', { kind: 'error', text: t('statusError', { reason: status.reason }) }));
       }
-      const state = status.server?.state;
-      const [tone, label] = SERVER_BADGE[state] ?? [];
-      const canTest = state === 'listening' || state === 'external';
-      serverSection.unshift(
-        h(
-          'div',
-          { key: 'head', className: 'dsm-tv-section-head' },
-          h('span', { className: 'dsm-tv-section-title' }, t('serverTitle')),
-          label ? badge('badge', tone, t(label)) : null,
-          button('refresh', 'outline', t('refresh'), actions.reload, status.phase === 'loading'),
-          button('test', 'primary', test.busy ? t('testing') : t('test'), actions.runTest, test.busy || !canTest),
-        ),
-        h('p', { key: 'endpoint', className: 'dsm-tv-line' }, t('serverEndpoint'), h('span', { className: 'dsm-tv-code' }, endpoint)),
-        h('p', { key: 'apiEndpoint', className: 'dsm-tv-line' }, t('serverApiEndpoint'), h('span', { className: 'dsm-tv-code' }, apiEndpoint)),
-      );
-      if (status.server?.reason) {
-        serverSection.push(h('p', { key: 'reason', className: 'dsm-tv-line' }, status.server.reason));
-      }
+      if (!native && status.server?.reason) serverSection.push(h('p', { key: 'reason', className: 'dsm-tv-line' }, status.server.reason));
       if (test.result) {
         const result = test.result;
         serverSection.push(
@@ -1488,9 +1524,28 @@ window.__ModuleLoader__.load({
           ? t('channelOther', { provider: model.selection.searchProvider })
           : t(mode === 'api' ? 'channelApi' : 'channelMessages');
       const webSection = [h('div', { key: 'head', className: 'dsm-tv-section-head' }, h('span', { className: 'dsm-tv-section-title' }, t('webTitle')))];
-      webSection.push(h('p', { key: 'channel', className: 'dsm-tv-line' }, t('webChannel'), h('span', { className: 'dsm-tv-code' }, channelLabel)));
+      if (!native) {
+        webSection.push(h('p', { key: 'channel', className: 'dsm-tv-line' }, t('webChannel'), h('span', { className: 'dsm-tv-code' }, channelLabel)));
+      }
 
-      if (mode === 'api') {
+      if (native) {
+        const selection = model.selection;
+        const writable = selection?.phase === 'ready' && selection.writable !== false;
+        const canRestore = wiring?.complete && selection.base?.searchProvider !== NATIVE_SEARCH_PROVIDER;
+        webSection[0] = h(
+          'div',
+          { key: 'head', className: 'dsm-tv-section-head' },
+          h('span', { className: 'dsm-tv-section-title' }, t('webTitle')),
+          wiring ? badge('badge', wiring.tone, t(wiring.label)) : null,
+          wiring && !wiring.complete ? button('wire', 'primary', busyLabel(t('wire')), actions.wire, webBusy || !writable) : null,
+          canRestore ? button('unwire', 'outline', busyLabel(t('unwire')), actions.unwire, webBusy || !writable) : null,
+        );
+        webSection.push(h('p', { key: 'nativeHint', className: 'dsm-tv-hint' }, t('nativeHint')));
+        if (!wiring || !writable) {
+          const hint = selection?.phase === 'loading' ? 'webLoading' : selection?.phase === 'unavailable' ? 'webUnavailable' : 'webReadOnly';
+          webSection.push(h('p', { key: 'selectionStatus', className: 'dsm-tv-hint' }, t(hint)));
+        }
+      } else if (mode === 'api') {
         if (apiForm.phase === 'unavailable') {
           webSection.push(h('p', { key: 'unavailable', className: 'dsm-tv-line' }, t('webApiUnavailable')));
         } else if (apiForm.phase !== 'ready') {
@@ -1768,7 +1823,8 @@ window.__ModuleLoader__.load({
       const selection = selectionModel(selectionSnapshot);
       const mode = webMode(selection);
       /** 当前搜索通道实际读哪个凭据引用：新版走 web-deepseek-api，旧版走 web-search-deepseek。 */
-      const activeKeyRef = (mode === 'api' ? apiModel : web).apiKeyEnv;
+      const native = status.nativeProvider === NATIVE_SEARCH_PROVIDER;
+      const activeKeyRef = native ? undefined : (mode === 'api' ? apiModel : web).apiKeyEnv;
 
       const loadStatus = useCallback(async () => {
         setStatus((previous) => ({ ...previous, phase: 'loading' }));
@@ -1891,14 +1947,17 @@ window.__ModuleLoader__.load({
 
       const writeWeb = useCallback(
         async (op) => {
+          if (op === 'set' && (status.phase !== 'ready' || status.server?.state === 'disabled')) return;
           const endpoint = status.endpoint ?? DEFAULT_ENDPOINT;
           const apiEndpoint = status.apiEndpoint ?? `${endpoint}/tools`;
-          const currentSelection = selectionModel(selectionSnapshot);
+          const currentSelection = selectionModel(api.selectionForm?.getSnapshot?.() ?? selectionSnapshot);
           const currentMode = webMode(currentSelection);
           const currentApi = webModel(apiSnapshot);
-          // "接入"要接哪套协议：已在新版就接新版；被别的提供方占着优先接新版；否则接旧版 Messages
-          const wireMode = currentMode === 'messages' ? 'messages' : currentApi.phase === 'ready' ? 'api' : 'messages';
-          const owned = ownershipOf({ web: webModel(webSnapshot), api: currentApi, selection: currentSelection }, endpoint, apiEndpoint);
+          // 新宿主直接选择 Tavily；旧宿主按当前搜索提供方决定兼容协议。
+          const wireMode = native ? 'native' : currentMode !== 'messages' && currentApi.phase === 'ready' ? 'api' : 'messages';
+          const owned = native
+            ? { restoreNative: true }
+            : ownershipOf({ web: webModel(webSnapshot), api: currentApi, selection: currentSelection }, endpoint, apiEndpoint);
           setWebBusy(true);
           setWebNotice(undefined);
           try {
@@ -1908,14 +1967,9 @@ window.__ModuleLoader__.load({
             if (accepted === false) {
               setWebNotice({ kind: 'error', text: t('writeRejected') });
             } else {
-              const noticeKey =
-                op === 'set'
-                  ? wireMode === 'api'
-                    ? 'wiredApi'
-                    : 'wired'
-                  : currentMode === 'api'
-                    ? 'unwiredApi'
-                    : 'unwired';
+              const noticeKey = op === 'set'
+                ? { native: 'wiredNative', api: 'wiredApi', messages: 'wired' }[wireMode]
+                : native ? 'unwiredNative' : currentMode === 'api' ? 'unwiredApi' : 'unwired';
               setWebNotice({ kind: 'ok', text: t(noticeKey) });
             }
           } catch (error) {
@@ -1924,7 +1978,7 @@ window.__ModuleLoader__.load({
             setWebBusy(false);
           }
         },
-        [api, status.endpoint, status.apiEndpoint, webSnapshot, apiSnapshot, selectionSnapshot, t],
+        [api, native, status, webSnapshot, apiSnapshot, selectionSnapshot, t],
       );
 
       const purge = useCallback(
@@ -1946,15 +2000,14 @@ window.__ModuleLoader__.load({
       );
 
       const runTest = useCallback(async () => {
-        // 按当前通道选请求形状：新版开关打开时 DSH 发的是 Search API 请求，测它就对了
-        const testMode = webMode(selectionModel(selectionSnapshot)) === 'api' ? 'api' : 'messages';
+        const testMode = native ? 'native' : webMode(selectionModel(selectionSnapshot)) === 'api' ? 'api' : 'messages';
         setTest({ busy: true, result: undefined });
         try {
           setTest({ busy: false, result: await request(TEST_PATH, 'POST', { mode: testMode }) });
         } catch (error) {
           setTest({ busy: false, result: { ok: false, reason: errorText(error) } });
         }
-      }, [selectionSnapshot]);
+      }, [native, selectionSnapshot]);
 
       // 行详情页在缺少包描述时才用 summary 视图；本包有 description，正常走完整卡片。
       if (view === 'summary') return h('p', { className: 'dsm-tv-desc' }, t('summary'));

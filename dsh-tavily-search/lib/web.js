@@ -2,7 +2,7 @@
  * 插件页卡片的宿主半侧：四条面板路由（经宿主浏览器会话鉴权）。
  *
  *   GET  /plugins/dsh-tavily-search/status   搜索接口状态（在不在监听、端点、凭据引用名）
- *   POST /plugins/dsh-tavily-search/test     端到端测试一次搜索：按 DSH 的请求形状打本插件的接口
+ *   POST /plugins/dsh-tavily-search/test     测试原生提供方或旧版兼容接口
  *   GET  /plugins/dsh-tavily-search/version  当前运行版本 vs npm latest（?force=1 绕过缓存，见 lib/update.js）
  *   GET  /plugins/dsh-tavily-search/keys     各 key 槽位：是否配置、能否修改、末 4 位（多 key 列表用）
  *
@@ -101,7 +101,7 @@ async function readJsonBody(req) {
 }
 
 /** 状态应答：插件被配置成 enabled:false 时 runtime 为空，照样回一份能渲染的状态。 */
-export function describeStatus({ resolved, runtime }) {
+export function describeStatus({ resolved, runtime, nativeProvider }) {
   return {
     ok: true,
     endpoint: resolved.endpoint,
@@ -109,6 +109,7 @@ export function describeStatus({ resolved, runtime }) {
     apiEndpoint: resolved.apiEndpoint,
     apiKeyRef: resolved.apiKeyRef,
     apiKeyRefs: resolved.apiKeyRefs,
+    ...(nativeProvider ? { nativeProvider: nativeProvider.id } : {}),
     server: runtime ? runtime.status() : { state: 'disabled', reason: '' },
     tavily: { maxResults: resolved.shim.maxResults, searchDepth: resolved.shim.searchDepth },
   };
@@ -143,9 +144,25 @@ function testRequestFor({ resolved, mode, text, secret }) {
  * 真正会走的那条路（端口、请求形状、key 现取、Tavily 连通性），端口上是外部实例时也测得到。
  * mode 由卡片按当前接入的那套协议给出：messages = 旧版 Messages 搜索，api = 新版 Search API。
  */
-export async function runTestSearch({ resolved, query, mode = 'messages' }) {
+export async function runTestSearch({ resolved, query, mode = 'messages', nativeProvider }) {
   const text = typeof query === 'string' && query.trim() ? query.trim().slice(0, 200) : DEFAULT_TEST_QUERY;
   const started = Date.now();
+  if (mode === 'native') {
+    if (!nativeProvider) return { ok: false, mode, query: text, reason: 'Tavily 搜索提供方尚未注册。' };
+    try {
+      const { sources } = await nativeProvider.search({ query: text }, AbortSignal.timeout(TEST_TIMEOUT_MS));
+      return {
+        ok: true,
+        mode,
+        query: text,
+        count: sources.length,
+        titles: sources.slice(0, TEST_PREVIEW_TITLES).map((source) => source.title ?? source.url),
+        elapsedMs: Date.now() - started,
+      };
+    } catch (error) {
+      return { ok: false, mode, query: text, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
   const secret = resolved.shim.shimApiKey || 'dsh-tavily-search-test';
   const request = testRequestFor({ resolved, mode, text, secret });
   let response;
@@ -249,11 +266,11 @@ function forceFrom(req) {
  * 注册面板路由；宿主没有 webServer 时只记一条 warn。
  *
  * @param {object} ctx
- * @param {{ logger: object, resolved: object, runtime?: object, inspectKeys?: () => Promise<object[]>, checkVersion?: (options: { force: boolean }) => Promise<object> }} options
+ * @param {{ logger: object, resolved: object, runtime?: object, inspectKeys?: () => Promise<object[]>, getNativeProvider?: () => object, checkVersion?: (options: { force: boolean }) => Promise<object> }} options
  *   inspectKeys 见 lib/runtime.js 的 createKeyInspector；缺省时 keys 路由回空列表。
  *   checkVersion 只给测试注入，缺省用 lib/update.js 的带缓存检查器
  */
-export function registerPanelRoutes(ctx, { logger, resolved, runtime, inspectKeys, checkVersion = createVersionChecker() }) {
+export function registerPanelRoutes(ctx, { logger, resolved, runtime, inspectKeys, getNativeProvider, checkVersion = createVersionChecker() }) {
   const mount = (scoped) => {
     const webServer = resolveWebServer(scoped ?? ctx) ?? resolveWebServer(ctx);
     if (!webServer) {
@@ -290,7 +307,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, runtime, inspectKey
             json(res, 405, { ok: false, reason: 'method not allowed' });
             return;
           }
-          json(res, 200, describeStatus({ resolved, runtime }));
+          json(res, 200, describeStatus({ resolved, runtime, nativeProvider: getNativeProvider?.() }));
         }),
       });
 
@@ -308,7 +325,12 @@ export function registerPanelRoutes(ctx, { logger, resolved, runtime, inspectKey
             return;
           }
           // 测试失败也是 200：失败原因是要展示给用户的结果，不是路由本身出错
-          json(res, 200, await runTestSearch({ resolved, query: body.value.query, mode: body.value.mode }));
+          json(res, 200, await runTestSearch({
+            resolved,
+            query: body.value.query,
+            mode: body.value.mode,
+            nativeProvider: getNativeProvider?.(),
+          }));
         }),
       });
 

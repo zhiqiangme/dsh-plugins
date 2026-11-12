@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Tavily web search",
-    "description": "Feeds DSH web search with Tavily: both the legacy Messages endpoint and the new Search API live inside DSH, with the API key kept in the DSH credential store.",
+    "description": "Registers Tavily as a DSH web search provider, with legacy endpoint support and API keys stored in the DSH credential store.",
     "detail": "locale/detail.en.md"
   }
 }

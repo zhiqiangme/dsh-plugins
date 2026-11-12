@@ -53,13 +53,13 @@ export function getService(ctx, name) {
 export function whenService(ctx, name, callback) {
   if (typeof ctx?.inject === 'function') {
     try {
-      ctx.inject([name], (scoped) => callback(getService(scoped, name) ?? getService(ctx, name)));
+      ctx.inject([name], (scoped) => callback(getService(scoped, name) ?? getService(ctx, name), scoped ?? ctx));
       return;
     } catch {
       /* 老版本没有这个签名时退回直接读取 */
     }
   }
-  callback(getService(ctx, name));
+  callback(getService(ctx, name), ctx);
 }
 
 /** 单个引用现取：凭据库优先（它内部已经包含"启动环境变量"这一层），凭据服务缺席时才退回本进程的环境变量。 */
@@ -166,13 +166,13 @@ export class ShimRuntime {
   #state = { state: 'stopped', reason: '' };
   #stopping = false;
 
-  constructor({ host, port, endpoint, shim, resolveApiKey, missingKeyHint, logger, label }) {
+  constructor({ host, port, endpoint, shim, resolveApiKey, missingKeyHint, search, logger, label }) {
     this.host = host;
     this.port = port;
     this.endpoint = endpoint;
     this.logger = logger;
     this.label = label;
-    this.#server = createShimServer({ ...shim, resolveApiKey, ...(missingKeyHint ? { missingKeyHint } : {}) });
+    this.#server = createShimServer({ ...shim, resolveApiKey, search, ...(missingKeyHint ? { missingKeyHint } : {}) });
   }
 
   status() {

@@ -1,14 +1,8 @@
 /**
  * dsh-tavily-search —— 用 Tavily 给 DSH 的「网页搜索」供数。
  *
- * DSH 有两代搜索提供方，本插件在同一个端口上把两套请求都翻译成 Tavily 检索
- * （细节见 lib/shim.js）：
- *   - 旧版 @deepseek-ai/dsh-web-search-deepseek 向 `{接口地址}/messages` 发 Anthropic
- *     Messages 请求；网页搜索的接口地址指向 `http://127.0.0.1:8787/v1` 即接入。
- *   - 新版 @deepseek-ai/dsh-web-deepseek-api 向 `{基础地址}/search` 发 Search API 请求；
- *     网页搜索页打开「启用新版 Web 搜索 API」后，把 Search API 基础地址指向
- *     `http://127.0.0.1:8787/v1/tools` 即接入（插件页卡片一键完成）。
- *   - 新版 Fetch API（`/fetch`）不模拟：网页抓取仍由 DSH 的本地 HTTP 抓取提供方负责。
+ * 支持提供方下拉框的 DSH 直接通过 ctx.web 调用 Tavily。
+ * 旧宿主和独立客户端仍可用兼容的 Messages / Search API HTTP 接口（见 lib/shim.js）。
  *
  * 行为约定：
  *   - 随插件加载监听，随插件卸载关闭；不再有外部进程；
@@ -23,6 +17,7 @@
 
 import { parseEnvFile, resolvePluginConfig } from './config.js';
 import { createKeyInspector, createKeyResolver, importLegacyKey, ShimRuntime, whenService } from './runtime.js';
+import { createTavilySearch, parseSearchApiRequest } from './shim.js';
 import { registerPanelRoutes } from './web.js';
 
 /** 插件名（日志前缀）。 */
@@ -53,17 +48,28 @@ export function apply(ctx, config) {
     return;
   }
 
-  const runtime = new ShimRuntime({
-    ...resolved,
-    resolveApiKey: createKeyResolver(ctx, resolved.apiKeyRefs),
-    // 这句会经由 DSH 的搜索错误原样交给模型/用户，所以写清楚去哪里补
-    missingKeyHint: `请在 DSH「插件」页的 Tavily 联网搜索卡片里填写（凭据引用 ${resolved.apiKeyRef}）。`,
-    logger,
-    label: name,
+  const resolveApiKey = createKeyResolver(ctx, resolved.apiKeyRefs);
+  const missingKeyHint = `请在 DSH「插件」页的 Tavily 联网搜索卡片里填写（凭据引用 ${resolved.apiKeyRef}）。`;
+  const search = createTavilySearch({ ...resolved.shim, resolveApiKey, missingKeyHint });
+  let nativeProvider;
+  whenService(ctx, 'web', (web, scoped) => {
+    // 只有能枚举提供方的宿主才在内置页面显示第三方选项，旧宿主继续使用兼容接口。
+    if (typeof web?.listProviders !== 'function' || typeof web.registerSearchProvider !== 'function') return;
+    scoped.effect(() => {
+      const provider = createSearchProvider(search, resolved.shim);
+      const dispose = web.registerSearchProvider(provider);
+      nativeProvider = provider;
+      return () => {
+        nativeProvider = undefined;
+        dispose();
+      };
+    }, `${name}: web search provider`);
   });
 
+  const runtime = new ShimRuntime({ ...resolved, resolveApiKey, missingKeyHint, search, logger, label: name });
+
   // 卡片的状态 / 测试路由：与监听结果无关，先挂上，端口冲突时打开卡片也能看到原因
-  registerPanelRoutes(ctx, { logger, resolved, runtime, inspectKeys });
+  registerPanelRoutes(ctx, { logger, resolved, runtime, inspectKeys, getNativeProvider: () => nativeProvider });
 
   const startup = runtime.start();
 
@@ -81,6 +87,30 @@ export function apply(ctx, config) {
     },
     `${name}: search endpoint`,
   );
+}
+
+function createSearchProvider(search, options) {
+  return {
+    id: name,
+    title: 'Tavily',
+    description: {
+      zh: '使用 Tavily 联网搜索，额度由插件中配置的 Tavily API Key 提供。',
+      en: 'Search the web with Tavily using the API keys configured in the plugin.',
+    },
+    available: () => true,
+    async search({ query, maxResults }, signal) {
+      const request = parseSearchApiRequest({ query, count: maxResults }, options);
+      if (request.body) throw new Error(request.body.error.message);
+      const results = await search(request, signal);
+      const sources = results.slice(0, request.maxResults).map(({ url, title, snippet, publishedDate }) => ({
+        url,
+        ...(title ? { title } : {}),
+        ...(snippet ? { snippet } : {}),
+        ...(publishedDate ? { publishedAt: publishedDate } : {}),
+      }));
+      return { sources, truncated: sources.length < results.length };
+    },
+  };
 }
 
 /** 等凭据服务就绪后做一次旧 key 导入；任何失败只记日志。 */

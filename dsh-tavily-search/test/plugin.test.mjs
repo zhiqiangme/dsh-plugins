@@ -101,6 +101,50 @@ test('apply 后监听端口，key 从凭据服务现取；卸载后端口释放'
   assert.equal(await healthy(port), false, '卸载后端口应释放');
 });
 
+test('提供方下拉框：注册 Tavily 并通过宿主搜索，兼容端口被占用时仍能使用', async (t) => {
+  const scenario = {
+    requests: [],
+    handler: okTavily([
+      { title: 'T', url: 'https://example.com/x', content: 's', published_date: '2026-11-11' },
+      { url: 'https://example.com/y' },
+    ]),
+  };
+  const mock = await startMockTavily(scenario);
+  t.after(() => mock.server.close());
+  const providers = new Map();
+  const credentials = fakeCredentials({ TAVILY_API_KEY: 'tvly-first', TAVILY_API_KEY_2: 'tvly-second' });
+  const ctx = fakeContext({
+    credentials,
+    web: {
+      listProviders: () => ({ search: [...providers.values()], fetch: [] }),
+      registerSearchProvider(provider) {
+        providers.set(provider.id, provider);
+        return () => providers.delete(provider.id);
+      },
+    },
+  });
+  // 模拟兼容接口绑定失败，同时保留可用的 Tavily 上游。
+  apply(ctx, { port: mock.port, tavilyBaseUrl: `http://127.0.0.1:${mock.port}` });
+  t.after(() => ctx.dispose());
+  const provider = providers.get('dsh-tavily-search');
+  assert.equal(provider.title, 'Tavily');
+  assert.equal(provider.available(), true);
+  assert.deepEqual(await provider.search({ query: ' q ', maxResults: 1 }), {
+    sources: [{ title: 'T', url: 'https://example.com/x', snippet: 's', publishedAt: '2026-11-11' }],
+    truncated: true,
+  });
+  await provider.search({ query: 'q' });
+  assert.deepEqual(scenario.requests.filter((request) => request.method === 'POST').map(({ auth, body }) => [auth, body.query, body.max_results]), [
+    ['Bearer tvly-first', 'q', 1],
+    ['Bearer tvly-second', 'q', 8],
+  ]);
+  await assert.rejects(provider.search({ query: 'q' }, AbortSignal.abort()), { name: 'AbortError' });
+  credentials.values.clear();
+  await assert.rejects(provider.search({ query: 'q' }), /未配置 Tavily API Key/);
+  await ctx.dispose();
+  assert.equal(providers.size, 0);
+});
+
 test('凭据库里没有 key：请求返回 401，提示去插件页填写', async (t) => {
   const port = await freePort();
   const ctx = fakeContext({ credentials: fakeCredentials() });

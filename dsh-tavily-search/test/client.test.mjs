@@ -1140,7 +1140,7 @@ test('清除插件数据：有可删的 key 或接口正指向本插件时显示
   assert.ok(section, '已配 key 且已接入时应显示');
   const purge = buttonByLabel(section, '清除插件数据');
   assert.match(purge.props.className, /dsm-tv-btn-danger/);
-  assert.match(collectText(section).join('|'), /卸载前点一下/);
+  assert.match(collectText(section).join('|'), /卸载前可在这里删除/);
   purge.props.onClick();
   assert.deepEqual(calls, [['askPurge']]);
 
@@ -1171,7 +1171,7 @@ test('清除插件数据二次确认：列出要删的 key 数与接口恢复，
   const text = collectText(section).join('|');
   assert.match(text, /清除插件数据？/);
   assert.match(text, /删除 2 个 Tavily API Key/, '只读来源的 key 不算在内');
-  assert.match(text, /恢复为 DSH 默认/);
+  assert.match(text, /撤销本插件的网页搜索接入/);
   buttonByLabel(section, '确认清除').props.onClick();
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], 'purge');
@@ -1396,6 +1396,30 @@ test('卡片组件从 web 命名空间读选择：新版开关打开时渲染 Se
   const legacy = textOf(boot({ webSnapshot }));
   assert.match(legacy, /Messages 搜索（旧版）/);
   assert.match(legacy, /网页搜索接入\|已接入/);
+});
+
+test('原生 Tavily 接入和恢复默认只修改搜索提供方', async () => {
+  const { module, t } = boot();
+  const calls = [];
+  const api = { selectionForm: { mutate: async (ops) => (calls.push(ops), true) } };
+  const selection = { ...API_SELECTION, fetchProvider: 'deepseek-fetch-api' };
+  assert.equal(await module.wireWebSearch(api, { mode: 'native', selection }), true);
+  const current = { ...selection, searchProvider: 'dsh-tavily-search' };
+  const model = readyModel({
+    status: { ...readyModel().status, nativeProvider: 'dsh-tavily-search', server: { state: 'conflict' } },
+    selection: current,
+  });
+  const targets = module.purgeTargets(model, 'http://127.0.0.1:8787/v1', 'http://127.0.0.1:8787/v1/tools');
+  assert.equal(targets.owned.restoreNative, true);
+  assert.equal(targets.owned.restoreFetch, false);
+  assert.equal(await module.restoreWebSearch(api, { restoreNative: true }, current), true);
+  assert.deepEqual(calls, [
+    [{ op: 'set', path: ['searchProvider'], value: 'dsh-tavily-search' }],
+    [{ op: 'unset', path: ['searchProvider'] }],
+  ]);
+  const tree = render(module.renderCard(model, {}, t));
+  assert.match(collectText(tree).join('|'), /已接入.*恢复默认/);
+  assert.doesNotMatch(collectText(tree).join('|'), /端口被占用/);
 });
 
 test('selectionWireOps：新版要求 searchProvider=deepseek-search-api 并把抓取从 deepseek-fetch-api 改回本地 HTTP；旧版改回 Messages', () => {

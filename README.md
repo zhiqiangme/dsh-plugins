@@ -7,7 +7,7 @@
 | [dsh-autostart-workbuddy](dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | DSH 启动时默认拉起 WorkBuddy2API Hub（127.0.0.1:7863），可切换 wb2api，可选接管 profile 里的 workbuddy 模型列表 |
 | [dsh-magpie](dsh-magpie/) | `@zhiqiangme/dsh-magpie` | 管理 Magpie 模型清单：编辑排序、全量覆盖同步；支持下载和升级 Magpie 程序 |
 | [dsh-presets-zh](dsh-presets-zh/) | `@zhiqiangme/dsh-presets-zh` | 中文标准、中文 PTC、中文极简与中文创造，可分别设置 |
-| [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 用 Tavily 给 DSH 的网页搜索供数：在 DSH 进程内同时提供旧版 Messages 与新版 Search API 的搜索接口（`127.0.0.1:8787`），插件页卡片里配 API Key、一键接入网页搜索 |
+| [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 在 DSH「网页搜索与获取」中选择 Tavily，或在插件卡片里一键接入。兼容旧版 DSH 的搜索接口 |
 
 插件自身的行为与配置见各自目录下的 README。
 

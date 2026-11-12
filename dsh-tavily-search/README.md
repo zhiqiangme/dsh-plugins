@@ -2,12 +2,21 @@
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件：用 **Tavily** 给 DSH 的「网页搜索」供数。
 
-DSH 有两代搜索提供方，本插件在 **DSH 进程内**监听 `127.0.0.1:8787`，把两套请求都转成 Tavily 检索
-——不调用任何模型：
+## DSH 0.2.2-rc.2
+
+1. 在「插件 → Tavily 联网搜索 → API Key」添加密钥。升级时沿用 DSH 凭据库中已保存的 Tavily 密钥。
+2. 在「插件 → 内置插件配置 → 网页搜索与获取」的「网页搜索提供方」选择 **Tavily** 并保存，也可以在 Tavily 卡片的「网页搜索」页签点「接入网页搜索」。从旧版接入升级的用户需要重新选择一次。
+3. 在 Tavily 卡片的「搜索接口」页签点「测试搜索」，确认 Tavily 能返回结果。
+
+DSH 直接调用 Tavily 提供方（`dsh-tavily-search`）。「恢复默认」清除 Tavily 的搜索提供方选择。网页获取在内置页面独立配置。原生搜索使用插件的 `maxResults` 及 DSH `web_search` 的结果上限。
+
+## 旧版 DSH
+
+插件在 DSH 进程内监听 `127.0.0.1:8787`，给旧宿主提供两套兼容接口：
 
 - 旧版 `@deepseek-ai/dsh-web-search-deepseek`：向「接口地址」发 Anthropic Messages 请求，
   只解析响应里的 `web_search_tool_result` 结构化块；
-- 新版 `@deepseek-ai/dsh-web-deepseek-api`（DSH 0.2.1-rc.2 起）：向「基础地址」发 Search API 请求，
+- DSH 0.2.1-rc.2 的 `@deepseek-ai/dsh-web-deepseek-api`：向「基础地址」发 Search API 请求，
   解析 `{results:[{url,title,snippet,date}]}`。
 
 ```
@@ -27,12 +36,12 @@ DSH 网页搜索 ─ 旧版 POST /v1/messages ─────┐
 | 区块 | 做什么 | 走哪条通道 |
 | --- | --- | --- |
 | **API Key** | 可添加多个 Tavily API Key（最多 10 个），逐个列出、各自单独删除（删除前二次确认）；列表只显示末 4 位用于辨认，从不回显完整值 | 写入 / 删除走 DSH 凭据库（`remote.credentials`），与内置「网页搜索」页同一条路；列表走宿主半侧路由 `/plugins/dsh-tavily-search/keys` |
-| **网页搜索接入** | 显示当前搜索通道与接口地址；未接入时一键把**当前通道**的接口地址改成本插件的端点、凭据引用改成本插件的占位凭据，已接入时可恢复默认；只改了接口地址的接入显示「待修复」。新版开关打开时接的是 `web-deepseek-api` 的 Search API 基础地址，并把抓取提供方从 `deepseek-fetch-api` 改回本地 HTTP（本插件只做搜索，见下文） | 开关关闭时读 `configForms.get('web-search-deepseek')`（Messages 接口地址）；打开时读 `configForms.get('web-deepseek-api')`（Search API 基础地址）；提供方选择读 `configForms.get('web')`；占位凭据走 `remote.credentials` |
+| **网页搜索接入** | 接入 Tavily 或恢复默认搜索。旧宿主通过兼容接口接入 | 新宿主写入 `web.searchProvider`；旧宿主用搜索接口地址与占位凭据 |
 | **插件更新** | 显示当前运行版本与 npm 最新版本，可通过 DSH 官方插件管理器一键更新到兼容正式版 | `/plugins/dsh-tavily-search/version` 查询 npm 官方源与 npmmirror，取较高版本并缓存 10 分钟。`pluginManager.listBundles/listVersions` 确定更新资格、目标版本和注册表，`updateBundle` 执行安装 |
-| **搜索接口** | 显示 `127.0.0.1:8787/v1` 的状态（运行中 / 外部实例 / 端口被占用 / 启动失败）；「测试搜索」按 DSH 的请求形状真打一次 | 宿主半侧路由 `/plugins/dsh-tavily-search/status`、`/test` |
-| **清除插件数据** | 卸载本插件前点一下：二次确认后删除卡片里保存的全部 Tavily API Key，并把网页搜索里本插件写的接口地址与凭据引用恢复为 DSH 默认（卸载后 `127.0.0.1:8787` 没人监听，不恢复的话网页搜索会失败）。环境变量等只读来源的 key 只提示、不删。没有可清的内容时整块不显示 | 删 key 走 `remote.credentials.unset`，恢复走 `configForms.get('web-search-deepseek')`，与上面两块同一条路 |
+| **搜索接口** | 「测试搜索」调用 Tavily。旧宿主会显示本地兼容接口状态，并通过该接口测试 | 宿主半侧路由 `/plugins/dsh-tavily-search/status`、`/test` |
+| **清除插件数据** | 卸载前可删除卡片里保存的 Tavily API Key，并撤销网页搜索接入。环境变量等只读来源需要在外部清理 | 凭据库与网页搜索设置 |
 
-几点说明：
+旧版接入和插件更新说明：
 
 - **为什么要改凭据引用**：DSH 的网页搜索在它那栏 API Key（`apiKeyEnv` 指向的凭据，默认 `DEEPSEEK_API_KEY`）为空时
   直接报错、不发请求（DeepSeek 账号模型除外），而 `DEEPSEEK_API_KEY` 同时是 DeepSeek 聊天的 key——
@@ -41,7 +50,7 @@ DSH 网页搜索 ─ 旧版 POST /v1/messages ─────┐
   再把 `apiKeyEnv` 与接口地址一次改指向本插件。之后内置网页搜索页那栏显示的就是这个占位凭据，不用再填。
 - 恢复默认时只撤销本插件写的覆盖（接口地址、凭据引用），并删掉占位凭据，网页搜索回到 DeepSeek 官方接口与 `DEEPSEEK_API_KEY`。
   不会让网页搜索指向 Tavily 的 key。
-- **新版 Web 搜索 API 开关（DSH 0.2.1-rc.2 起）**：内置网页搜索页多了「启用新版 Web 搜索 API」。打开后它把
+- **Web 搜索 API 开关（DSH 0.2.1-rc.2）**：内置网页搜索页的「启用新版 Web 搜索 API」打开后把
   `web.searchProvider` / `web.fetchProvider` 设为 `deepseek-search-api` / `deepseek-fetch-api`，搜索改走
   `web-deepseek-api`（默认 `https://api.deepseek.com/v1/tools/search`）。卡片读同一个 `web` 设置命名空间：
   开关打开时，「网页搜索接入」改为操作 `web-deepseek-api` 的**基础地址**——接入后是
@@ -138,8 +147,8 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-tavily-search"
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `enabled` | `true` | 只有显式 `false` 才不监听 |
-| `host` / `port` | `127.0.0.1` / `8787` | 监听地址；改了端口要同步改网页搜索的接口地址（旧版 `/v1`、新版 `/v1/tools`） |
+| `enabled` | `true` | 显式 `false` 时关闭提供方与兼容接口 |
+| `host` / `port` | `127.0.0.1` / `8787` | 兼容接口的监听地址；旧宿主使用自定义端口时需同步修改搜索接口地址 |
 | `apiKeyRef` | `TAVILY_API_KEY` | 第 1 个 key 的凭据引用名（环境变量名形状）；其余 key 为 `<apiKeyRef>_2` … `_10` |
 | `importEnvFile` | 空 | 一次性导入：凭据库里还没有 key 时，从这个 `.env` 里取同名变量写进凭据库 |
 | `tavilyBaseUrl` | `https://api.tavily.com` | Tavily 端点，测试时可指向 mock |
