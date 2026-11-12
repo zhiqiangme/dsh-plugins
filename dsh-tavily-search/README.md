@@ -4,11 +4,11 @@
 
 ## DSH 0.2.2-rc.2
 
-1. 在「插件 → Tavily 联网搜索 → API Key」添加密钥。升级时沿用 DSH 凭据库中已保存的 Tavily 密钥。
-2. 在「插件 → 内置插件配置 → 网页搜索与获取」的「网页搜索提供方」选择 **Tavily** 并保存，也可以在 Tavily 卡片的「网页搜索」页签点「接入网页搜索」。从旧版接入升级的用户需要重新选择一次。
+1. 首次安装并加载后，使用 DSH 默认搜索配置的 profile 会自动选择 **Tavily**。已有搜索提供方选择或旧版接入配置的用户，可在 Tavily 卡片里点「接入网页搜索」，或到「网页搜索与获取」手动选择。
+2. 在「插件 → Tavily 联网搜索 → API Key」添加密钥。升级时可沿用 DSH 凭据库中已保存的 Tavily 密钥。
 3. 在 Tavily 卡片的「搜索接口」页签点「测试搜索」，确认 Tavily 能返回结果。
 
-DSH 直接调用 Tavily 提供方（`dsh-tavily-search`）。「恢复默认」清除 Tavily 的搜索提供方选择。网页获取在内置页面独立配置。原生搜索使用插件的 `maxResults` 及 DSH `web_search` 的结果上限。
+DSH 直接调用 Tavily 提供方（`dsh-tavily-search`）。「恢复默认」会恢复 profile 的默认搜索提供方，之后重启也会沿用该选择。网页获取在内置页面独立配置。原生搜索使用插件的 `maxResults` 及 DSH `web_search` 的结果上限。
 
 ## 旧版 DSH
 

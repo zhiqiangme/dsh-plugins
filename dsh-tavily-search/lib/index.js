@@ -15,8 +15,9 @@
  * 本插件刻意只依赖 node: 内置模块；Host Service 一律软取（见 lib/runtime.js）。
  */
 
+import { autoConnect } from './auto-connect.js';
 import { parseEnvFile, resolvePluginConfig } from './config.js';
-import { createKeyInspector, createKeyResolver, importLegacyKey, ShimRuntime, whenService } from './runtime.js';
+import { createKeyInspector, createKeyResolver, getService, importLegacyKey, ShimRuntime, whenService } from './runtime.js';
 import { createTavilySearch, parseSearchApiRequest } from './shim.js';
 import { registerPanelRoutes } from './web.js';
 
@@ -64,6 +65,24 @@ export function apply(ctx, config) {
         dispose();
       };
     }, `${name}: web search provider`);
+    whenService(scoped, 'configEditor', (editor, setup) => {
+      if (!editor) return;
+      setup.effect(() => {
+        const controller = new AbortController();
+        const start = () => {
+          const profile = getService(setup, 'profileContext');
+          autoConnect({ profile, editor, providerId: name, resolved, signal: controller.signal })
+            .catch((error) => logger.warn(`[${name}] 自动接入失败：${error.message}`));
+        };
+        const ready = getService(setup, 'appReady');
+        // 安装或热重载期间不等待写配置，避免和宿主持有的 profile 锁相互等待。
+        const cancel = typeof ready?.onReady === 'function' ? ready.onReady(start) : scheduleSetup(start);
+        return () => {
+          controller.abort();
+          cancel?.();
+        };
+      }, `${name}: first-install search setup`);
+    });
   });
 
   const runtime = new ShimRuntime({ ...resolved, resolveApiKey, missingKeyHint, search, logger, label: name });
@@ -87,6 +106,11 @@ export function apply(ctx, config) {
     },
     `${name}: search endpoint`,
   );
+}
+
+function scheduleSetup(start) {
+  const timer = setImmediate(start);
+  return () => clearImmediate(timer);
 }
 
 function createSearchProvider(search, options) {
