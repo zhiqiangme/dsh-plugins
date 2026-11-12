@@ -1,6 +1,6 @@
 {
   "name": "@zhiqiangme/dsh-tavily-search",
-  "version": "26.11.11",
+  "version": "26.11.12",
   "description": "为 DSH 注册 Tavily 网页搜索提供方，兼容旧版搜索接口，API Key 保存在 DSH 凭据库。",
   "keywords": [
     "dsh",
