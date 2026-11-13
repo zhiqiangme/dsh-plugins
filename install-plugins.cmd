@@ -55,6 +55,12 @@ rem Double-clicking closes the window as soon as the script ends; keep it open s
 rem can be read. Skipped when arguments are given (scripted use) or when run inside a cmd prompt.
 rem find.exe / where.exe are called by full path: Git's GNU find can come first on PATH.
 if not "%~1"=="" goto done
+rem The .mjs ends with "press Enter to launch DSH"; after it launched the desktop app the flag
+rem below exists, so skip the extra pause and let the installer window close right away.
+if exist "%TEMP%\dsh-install-plugins.launched" (
+  del /q "%TEMP%\dsh-install-plugins.launched"
+  goto done
+)
 echo %CMDCMDLINE% | "%SystemRoot%\System32\find.exe" /i "/c" >nul
 if not errorlevel 1 pause
 

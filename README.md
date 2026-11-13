@@ -50,7 +50,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 2. 插件：**全部**（默认，即维护中的 WorkBuddy、Tavily Search、Magpie、中文预设）、或单独选择；OpenCode API 与 Minimal Prompt 已归档，不在这里，见[已归档的插件](#已归档的插件)
 3. 装到哪个 DSH：**Desktop**（默认）、Web（`dsh web`）、CLI（`dsh headless`）、全部三个
 
-完成后重启对应的 DSH 生效。也可以在终端里带参数一行跑完（参数都可省略，省略的会询问）：
+完成后重启对应的 DSH 生效。双击交互安装到 Desktop 时，最后一步会询问「按回车启动 DSH 桌面版」：回车即启动（桌面版还在运行时会先要求完全退出，否则只会唤醒旧实例），输入其它内容跳过；启动后安装窗口自动关闭。带参数的脚本化调用不询问。也可以在终端里带参数一行跑完（参数都可省略，省略的会询问）：
 
 ```powershell
 .\install-plugins.cmd --action install --plugins all --profiles desktop --yes

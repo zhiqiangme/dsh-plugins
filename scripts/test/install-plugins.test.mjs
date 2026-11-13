@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolvePlugins } from '../install-plugins.mjs';
+import { join } from 'node:path';
+import { desktopExeFrom, resolvePlugins } from '../install-plugins.mjs';
 
 test('Magpie 可按别名与包名单独选择', () => {
   const [plugin] = resolvePlugins('magpie');
@@ -20,4 +21,9 @@ test('停止维护的插件改由各自目录内的脚本安装，这里不再�
 
 test('安装中文预设不会移除旧极简提示词', () => {
   assert.deepEqual(resolvePlugins('presets-zh')[0].legacy, []);
+});
+
+test('桌面版 exe 从 dsh.cmd 的安装目录推导', () => {
+  const cli = join('C:', 'Programs', 'DeepSeek Harness', 'resources', 'runtime', 'cli', 'bin', 'dsh.cmd');
+  assert.equal(desktopExeFrom(cli), join('C:', 'Programs', 'DeepSeek Harness', 'DeepSeek Harness.exe'));
 });

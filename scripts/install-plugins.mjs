@@ -12,11 +12,11 @@
 // 为什么"更新"要先 remove 再 add：插件以 file: 依赖拷贝进 profile 的 node_modules，源码改动后
 // 再次 add（包括 --force）pnpm 都认为"已是最新"不会重新拷贝；只有先移除再添加才会拿到新代码。
 // 移除只动 package.json，插件写在 cordis.patch.yml 里的配置行（如模型白名单）原样保留。
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { delimiter, join, relative, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { delimiter, dirname, join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -140,6 +140,49 @@ function resolveDshCli() {
   const fallback = join(process.env.LOCALAPPDATA ?? '', 'Programs', 'DeepSeek Harness', 'resources', 'runtime', 'cli', 'bin', 'dsh.cmd');
   if (existsSync(fallback)) return fallback;
   throw new Error('找不到 DSH 的命令行入口 dsh.cmd。请先安装 DeepSeek Harness 桌面版，或用环境变量 DSH_CLI 指向 dsh.cmd。');
+}
+
+/** 安装收尾回车启动桌面版后写的标记：install-plugins.cmd 见它就不再 pause，让安装窗口直接关闭。 */
+const LAUNCH_FLAG = join(tmpdir(), 'dsh-install-plugins.launched');
+
+/** 桌面版 exe 与 dsh.cmd 同属一个安装目录：cli\bin 向上四级即安装根。 */
+export function desktopExeFrom(cliPath) {
+  return resolve(dirname(cliPath), '..', '..', '..', '..', 'DeepSeek Harness.exe');
+}
+
+function desktopExePath() {
+  const derived = desktopExeFrom(dshCli);
+  if (existsSync(derived)) return derived;
+  const fallback = join(process.env.LOCALAPPDATA ?? '', 'Programs', 'DeepSeek Harness', 'DeepSeek Harness.exe');
+  return existsSync(fallback) ? fallback : null;
+}
+
+/**
+ * 安装收尾的最后一步：回车启动 DSH 桌面版，输入其它内容跳过。
+ * 桌面版还在运行时启动只会唤醒旧实例（新插件不生效），所以先要求完全退出再回车；
+ * 读不到键盘（脚本化调用）时不替用户做启动决定。
+ */
+async function offerDesktopLaunch() {
+  const exe = desktopExePath();
+  if (!exe) {
+    warn('找不到 DSH 桌面版程序，请手动打开 DSH。');
+    return;
+  }
+  for (;;) {
+    const running = profileProcesses('desktop');
+    const answer = await ask(running.length > 0
+      ? 'DSH 桌面版仍在运行。请完全退出（包括托盘图标里的"退出"）后按回车启动；输入其它内容跳过：'
+      : '按回车启动 DSH 桌面版；输入其它内容跳过：');
+    if (answer === null || answer.trim() !== '') return;
+    if (running.length > 0) {
+      warn('仍检测到 DSH 桌面版进程，未启动。');
+      continue;
+    }
+    writeFileSync(LAUNCH_FLAG, String(process.pid));
+    spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+    ok('已启动 DSH 桌面版。');
+    return;
+  }
 }
 
 /** 与 DSH 的 resolveDshHome 一致：DSH_HOME 优先，否则 ~/.dsh。 */
@@ -486,6 +529,7 @@ async function main() {
     }
   }
   dshCli = resolveDshCli();
+  rmSync(LAUNCH_FLAG, { force: true });
 
   console.log(`DSH 插件安装脚本   仓库：${REPO_ROOT}`);
   console.log(`DSH_HOME：${dshHome()}`);
@@ -532,6 +576,8 @@ async function main() {
     return 1;
   }
   ok('全部完成。重启 DSH 后生效（桌面版要完全退出再打开；dsh web / dsh headless 重新启动即可）。');
+  // 双击交互安装的最后一步：回车启动桌面版；带参数的脚本化调用不询问。
+  if (action === 'install' && profiles.includes('desktop') && process.argv.length <= 2) await offerDesktopLaunch();
   return 0;
 }
 
