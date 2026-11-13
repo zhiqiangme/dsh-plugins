@@ -51,6 +51,8 @@ test('前端和 DSH 统一 Flash 别名并保留尾缀，不误改其他版本�
     ['DeepSeek Flashlight', 'DeepSeek Flashlight'],
     ['我的 DeepSeek Flash', '我的 DeepSeek Flash'],
     ['Qwen3.8-Flash', 'Qwen3.8-Flash'],
+    ['Qwen4-Max 预览版', 'Qwen4-Max Preview'],
+    ['Qwen4-Max（预览版）', 'Qwen4-Max Preview'],
   ]) {
     const row = { id: 'qoder-cn/dfmodel', name };
     const label = expected.endsWith(' Qoder') ? expected : `${expected} Qoder`;

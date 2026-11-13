@@ -25,7 +25,7 @@ test('别名 ID 看不出同款时按带版本号的显示名合并，Preview �
     { id: 'qwenwork/frontier-1', name: 'Qwen4-Max 预览版', contextWindow: 1000000, input: ['text', 'image'] },
     { id: 'qoder-cn/qmodel_latest', name: 'Qwen4-Max-Preview', contextWindow: 1000000, input: ['text', 'image'], reasoningEfforts: ['low', 'high', 'xhigh'] },
   ]));
-  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [['auto:frontier-1', 'Qwen4-Max 预览版 Auto']]);
+  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [['auto:frontier-1', 'Qwen4-Max Preview Auto']]);
   assert.deepEqual(planned.routes.get('auto:frontier-1').map((row) => row.id), ['qwenwork/frontier-1', 'qoder-cn/qmodel_latest']);
   assert.deepEqual(planned.entries[0].reasoningEfforts, [], '思考档位仍取交集');
 });

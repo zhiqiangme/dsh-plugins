@@ -406,7 +406,8 @@ window.__ModuleLoader__.load({
     }
     function normalizeDisplayName(name) {
       // 与服务端保持相同别名规则；仅影响展示及排序，不改写上游名称或完整路由 ID。
-      return name.replace(/^deepseek[\s_-]+(?:v4\.1[\s_-]+)?flash(?=$|[\s(_-])/i, 'DeepSeek V4.1 Flash');
+      return name.replace(/^deepseek[\s_-]+(?:v4\.1[\s_-]+)?flash(?=$|[\s(_-])/i, 'DeepSeek V4.1 Flash')
+        .replace(/\s*[（(]?\s*预览版\s*[)）]?/g, ' Preview').trim();
     }
     // 简称由服务端统一提供；本地派生名称让编辑 ID / 名称时立即预览，不改写手工输入。
     function displayModelName(row, providers = {}) {

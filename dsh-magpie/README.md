@@ -108,7 +108,7 @@ Magpie 也有完全无界面的 `magpie serve`（只运行网关，没有托盘�
 
 管理列表与 DSH 模型选择器会在模型名后追加供应商简称，例如 `DeepSeek V4.1 Flash WorkBuddy`、`Step-5-Preview WorkBuddy GL`、`DeepSeek V4.1 Flash Free OpenCode`。`workbuddy-ai` 为国际版，显示为 `WorkBuddy GL`；`workbuddy` 为国内版，显示为 `WorkBuddy`。Qoder / Trae 国际版同样使用 `GL`。名称已带对应简称时不重复追加；手工名称、模型 ID 与排序保持不变，未知供应商或路由组不追加简称。
 
-`DeepSeek-Flash`、`Deepseek-V4.1-Flash` 等写法统一显示为 `DeepSeek V4.1 Flash`，保留 `Free`、`(Max)` 等尾缀和供应商简称；搜索、快捷排序、分类与 DSH 模型名称同步使用这一显示规则。此规则仅派生显示名称，不改写保存的名称或模型 ID，其他 DeepSeek 版本不受影响。
+`DeepSeek-Flash`、`Deepseek-V4.1-Flash` 等写法统一显示为 `DeepSeek V4.1 Flash`，保留 `Free`、`(Max)` 等尾缀和供应商简称；中文「预览版」（含括号写法）统一显示为 `Preview`，展示名默认不出现中文；搜索、快捷排序、分类与 DSH 模型名称同步使用这一显示规则。此规则仅派生显示名称，不改写保存的名称或模型 ID，其他 DeepSeek 版本不受影响。
 
 支持搜索、全选、取消全选、删除和离线编辑。批量勾选只影响当前搜索和分类筛选结果。保存只写 DSH 配置，不要求 Magpie 正在运行；模型 ID 是否可用，取决于 Magpie 和上游实际支持。
 
