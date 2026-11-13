@@ -8,6 +8,8 @@ const MODEL_VERSION_SUFFIX = /-(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/;
 const MODEL_TIER_SUFFIX = /(?<=[a-z0-9])[-_]?(free|std)$/i;
 /** Preview 与中文“预览版”是同一变体标记，合并时不算型号差异。 */
 const MODEL_PREVIEW_SUFFIX = /[-_\s]?(preview|预览版)$/i;
+/** (Max) 是同一模型的推理档位变体标记（Trae 命名），合并时不算型号差异。 */
+const MODEL_TIER_MARKER = /\s*[(（]\s*max\s*[)）]$/i;
 
 /**
  * 同款模型的合并键：供应商只看路由前缀，型号看裸 ID，不按 DeepSeek / GLM 大系列合并。
@@ -25,8 +27,11 @@ export function routeKey(id) {
  * 别名 ID（如 frontier-1 / qmodel_latest）看不出同款，只能靠显示名识别。
  * 仅带版本号的名称才参与按名合并：search_agent_qwen_fast 这类通用别名同名也不并，避免误合不同模型。
  */
+function baseName(row) {
+  return displayModelName(row, {}).replace(MODEL_TIER_MARKER, '').trim();
+}
 function nameKey(row) {
-  const text = displayModelName(row, {}).toLowerCase().replace(/[\s_-]+/g, '-').replace(MODEL_PREVIEW_SUFFIX, '');
+  const text = baseName(row).toLowerCase().replace(/[\s_-]+/g, '-').replace(MODEL_PREVIEW_SUFFIX, '');
   return /\d/.test(text) ? text : '';
 }
 
@@ -38,7 +43,7 @@ function smallest(members, field) {
 function mergedEntry(key, members) {
   const first = members[0];
   // 单个候选保留供应商简称；多个候选只显示型号和 Auto，避免误以为固定到某家供应商。
-  const name = members.length === 1 ? displayModelName(first) : `${displayModelName(first, {})} Auto`;
+  const name = members.length === 1 ? displayModelName(first) : `${baseName(first)} Auto`;
   const reasoningEfforts = (first.reasoningEfforts ?? []).filter((level) => members.every((row) => row.reasoningEfforts?.includes(level)));
   return {
     id: `${AUTO_PREFIX}${key}`, name,

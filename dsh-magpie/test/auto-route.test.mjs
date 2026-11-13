@@ -30,6 +30,24 @@ test('别名 ID 看不出同款时按带版本号的显示名合并，Preview �
   assert.deepEqual(planned.entries[0].reasoningEfforts, [], '思考档位仍取交集');
 });
 
+test('(Max) 档位变体与不带后缀的同款合并，合并名去掉档位标记', () => {
+  const planned = planAutoRoute(config([
+    { id: 'qoder-cn/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' },
+    { id: 'trae-cn/deepseek-v4.1-flash-max', name: 'DeepSeek-V4.1-Flash (Max)' },
+    { id: 'trae-cn/qwen3.8-max', name: 'Qwen3.8-Max' },
+    { id: 'trae-cn/qwen3.8-max-max', name: 'Qwen3.8-Max (Max)' },
+    { id: 'trae-cn/glm-5.3', name: 'GLM-5.3' },
+    { id: 'trae-cn/glm-5.3-flash-max', name: 'GLM-5.3-Flash (Max)' },
+  ]));
+  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [
+    ['auto:deepseek-v4.1-flash', 'DeepSeek V4.1 Flash Auto'],
+    ['auto:qwen3.8-max', 'Qwen3.8-Max Auto'],
+    ['auto:glm-5.3', 'GLM-5.3 Trae'],
+    ['auto:glm-5.3-flash-max', 'GLM-5.3-Flash (Max) Trae'],
+  ], '型号自带 Max 与档位 (Max) 不混淆，Flash 变体不与基础款合并');
+  assert.deepEqual(planned.routes.get('auto:deepseek-v4.1-flash').map((row) => row.id), ['qoder-cn/deepseek-v4.1-flash', 'trae-cn/deepseek-v4.1-flash-max']);
+});
+
 test('不带版本号的通用别名同名也不按名称合并，避免误并不同模型', () => {
   const planned = planAutoRoute(config([
     { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' },
