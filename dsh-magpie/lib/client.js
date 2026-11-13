@@ -449,7 +449,8 @@ window.__ModuleLoader__.load({
       const keys = modelKeys(row, providers);
       const family = modelFamilyName(keys.name);
       const canonical = FAMILY_LABELS.get(family.toLowerCase()) ?? family;
-      const other = mode === 'model' && Boolean(canonical) && !COMMON_MODEL_FAMILIES.has(canonical.toLowerCase());
+      // 空白草稿行（未填名称/ID）没有系列可言，一并归入“其他”，不单独占一个“新模型”分类。
+      const other = mode === 'model' && (!canonical || !COMMON_MODEL_FAMILIES.has(canonical.toLowerCase()));
       const value = mode === 'provider' ? keys.supplier : other ? emptyLabels.other : canonical;
       const label = value || emptyLabels[mode];
       return { key: other ? '__other__' : label.toLowerCase(), label, empty: !value, other };

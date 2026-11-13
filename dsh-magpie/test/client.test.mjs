@@ -609,6 +609,16 @@ test('Seed 系列归入 Doubao 分类，标签首字母大写且与 doubao-* 同
     ['trae-cn/seed-2.0-code', 'trae-cn/seed-evolving', 'trae-cn/doubao-for-auto']);
 });
 
+test('未填写的空白草稿行归入其他，下拉不再单独出现新模型分类', () => {
+  const client = clientHarness(view({ models: [{ id: 'workbuddy/glm', name: 'GLM-5.3', enabled: false }] }));
+  // 空白行只存在于未保存草稿（手动添加后未填写），保存校验会拒绝空 ID。
+  client.states[0] = { ...client.states[0], config: { ...client.states[0].config, models: [...client.states[0].config.models, { id: '', name: '', enabled: true, input: ['text'], reasoningEfforts: [] }] } };
+  const options = nodes(control(client.render(), '按模型分类'), (n) => n.type === 'option').map((n) => n.children[0]);
+  assert.deepEqual(options, ['全部模型', 'GLM', '其他']);
+  control(client.render(), '按模型分类').props.onChange({ target: { value: '__other__' } });
+  assert.deepEqual(nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title), [''], '空白行在其他分类中可见');
+});
+
 test('快速排序只重排搜索结果所在位置，隐藏条目、筛选及展开状态保留', () => {
   const client = clientHarness(view({ models: [
     { id: 'hidden/one' }, { id: 'visible/z', name: 'Zebra' }, { id: 'hidden/two' },
