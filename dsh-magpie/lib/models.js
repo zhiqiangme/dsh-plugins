@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { gatewayURL, isLocal, KEY_REF, LOCAL_KEY, object, PROVIDER_ID, REASONING_LEVELS, normalizeModel } from './config.js';
 import { displayModelName } from './names.js';
+import { planAutoRoute, routeKey, ROUTER_BASE_PATH } from './auto-route.js';
 
 export const LLM_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
 export function findEntry(editor, name, id) {
@@ -53,13 +54,56 @@ export function catalogModels(payload) {
 }
 
 export function modelEntries(config) {
-  return config.models.filter((m) => m.enabled).map(({ enabled: _enabled, reasoningEfforts, ...m }) => ({
-    ...m, name: displayModelName(m), ...(reasoningEfforts.length ? { reasoningEfforts: Object.fromEntries(reasoningEfforts.map((e) => [e, e])) } : {}),
+  const models = config.autoRoute ? planAutoRoute(config).entries : config.models.filter((m) => m.enabled);
+  return models.map(({ enabled: _enabled, reasoningEfforts, ...m }) => ({
+    ...m, name: config.autoRoute ? m.name : displayModelName(m), ...(reasoningEfforts.length ? { reasoningEfforts: Object.fromEntries(reasoningEfforts.map((e) => [e, e])) } : {}),
   }));
 }
 
+/** 引用形如 `{ provider, model }`，开关 auto 后把旧 ID 映射到同款新 ID；未改动时返回原对象。 */
+function replaceModelRefs(value, provider, swap) {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => replaceModelRefs(item, provider, swap));
+    if (items.every((item, index) => item === value[index])) return value;
+    const seen = new Set();
+    return items.filter((item) => {
+      if (typeof item?.model !== 'string' || item.provider !== provider) return true;
+      if (seen.has(item.model)) return false;
+      seen.add(item.model); return true;
+    });
+  }
+  if (typeof value !== 'object' || value === null) return value;
+  if (value.provider === provider && typeof value.model === 'string') {
+    const updated = swap(value.model);
+    return updated === value.model ? value : { ...value, model: updated };
+  }
+  let next = value;
+  for (const [key, item] of Object.entries(value)) {
+    const updated = replaceModelRefs(item, provider, swap);
+    if (updated !== item) next = next === value ? { ...value, [key]: updated } : Object.assign(next, { [key]: updated });
+  }
+  return next;
+}
+
+/** auto 开关改变条目 ID 后修复其它插件引用；同步主清单失败时不阻断，单独报告。 */
+export async function retargetModelRefs({ editor, entries }) {
+  const current = new Set(entries.map((entry) => entry.id));
+  const byKey = new Map();
+  for (const entry of entries) if (!byKey.has(routeKey(entry.id))) byKey.set(routeKey(entry.id), entry.id);
+  const swap = (id) => current.has(id) ? id : byKey.get(routeKey(id)) ?? id;
+  let count = 0;
+  try {
+    for (const target of editor.entries?.() ?? []) {
+      if (replaceModelRefs(target.options?.config, PROVIDER_ID, swap) === target.options?.config) continue;
+      await editor.edit(target, (latest) => replaceModelRefs(latest, PROVIDER_ID, swap));
+      count++;
+    }
+    return { state: count ? 'updated' : 'kept', count };
+  } catch (error) { return { state: 'failed', reason: error.message }; }
+}
+
 /** 只替换自己持有的 provider；Magpie 原生分组和用户其它 provider 原样保留。 */
-export function withProvider(current, config) {
+export function withProvider(current, config, { routeOrigin } = {}) {
   const base = object(current);
   const providers = { ...object(base.providers) };
   const previous = providers[PROVIDER_ID];
@@ -69,9 +113,11 @@ export function withProvider(current, config) {
   if (!config.enabled || !config.syncEnabled || entries.length === 0) delete providers[PROVIDER_ID];
   else {
     const { reasoning: _reasoning, ...kept } = object(previous);
+    const origin = typeof routeOrigin === 'function' ? routeOrigin() : routeOrigin;
+    if (config.autoRoute && !origin) throw new Error('自动路由需要宿主 webServer 与可用的本机路由地址');
     providers[PROVIDER_ID] = {
       ...kept, displayName: 'Magpie', apiKeyEnv: KEY_REF,
-      baseURL: `${config.baseURL}${config.api === 'anthropic-messages' ? '' : '/v1/'}`,
+      baseURL: config.autoRoute ? `${origin}${ROUTER_BASE_PATH}${config.api === 'anthropic-messages' ? '' : '/v1/'}` : `${config.baseURL}${config.api === 'anthropic-messages' ? '' : '/v1/'}`,
       api: config.api, models: entries,
       ...(previous?.reasoning && entries.every((m) => m.reasoningEfforts?.[previous.reasoning]) ? { reasoning: previous.reasoning } : {}),
     };
@@ -80,11 +126,11 @@ export function withProvider(current, config) {
   return { changed: !isDeepStrictEqual(base, next), config: next, count: entries.length };
 }
 
-export async function syncModels(config, { editor, credentials, env = process.env }) {
+export async function syncModels(config, { editor, credentials, env = process.env, routeOrigin }) {
   const target = findEntry(editor, LLM_PACKAGE);
   if (!target || typeof editor?.edit !== 'function') throw new Error('宿主 llm-pi-ai / configEditor 尚未就绪');
   // 先检查归属；禁用或清空时不要求网关在线或凭据服务可写。
-  const planned = withProvider(target.options.config, config);
+  const planned = withProvider(target.options.config, config, { routeOrigin });
   if (config.enabled && config.syncEnabled && planned.count > 0) {
     const key = await credential(credentials, env, config.baseURL);
     if (!key) throw new Error('远程 Magpie 需要有效的网关 Key，请在连接设置中保存');
@@ -98,6 +144,7 @@ export async function syncModels(config, { editor, credentials, env = process.en
       }
     }
   }
-  if (planned.changed) await editor.edit(target, (current) => withProvider(current, config).config);
-  return { state: planned.changed ? 'updated' : 'unchanged', count: config.enabled && config.syncEnabled ? planned.count : 0 };
+  if (planned.changed) await editor.edit(target, (current) => withProvider(current, config, { routeOrigin }).config);
+  const refs = await retargetModelRefs({ editor, entries: config.enabled && config.syncEnabled ? modelEntries(config) : [] });
+  return { state: planned.changed ? 'updated' : 'unchanged', count: config.enabled && config.syncEnabled ? planned.count : 0, refs };
 }

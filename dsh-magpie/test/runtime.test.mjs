@@ -231,7 +231,7 @@ test('插件入口立即返回，等待宿主服务，释放路由，配置热�
   assert.equal(host.routes.length, 0);
   await pending.find((p) => p.names.includes('webServer')).run(host.ctx);
   await pending.find((p) => p.names.includes('configEditor')).run();
-  assert.equal(host.routes.length, 2);
+  assert.equal(host.routes.length, 3);
   assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].id, 'manual/unlisted');
   await host.editor.edit(host.own, (raw) => ({ ...raw, syncEnabled: false }));
   await new Promise((resolve) => setImmediate(resolve));
@@ -301,6 +301,22 @@ test('开关即时修改只接受白名单字段和当前版本，不带入草�
   assert.equal(host.llm.options.config.providers[PROVIDER_ID], undefined);
   // 新版本号可直接用于后续保存。
   assert.equal((await host.manager.handle({ action: 'save', revision: off.revision, config: off.config })).saved, true);
+});
+
+test('自动路由开关即时保存并重写 provider，引用与后续版本号连续', async () => {
+  const host = setup();
+  host.manager.routeOrigin = 'http://127.0.0.1:9876';
+  const before = await host.manager.describe();
+  const saved = await host.manager.handle({ action: 'save', revision: before.revision, config: { syncEnabled: true, models: [{ id: 'a/deepseek' }] } });
+  const enabled = await host.manager.handle({ action: 'patch', revision: saved.revision, patch: { autoRoute: true } });
+  assert.equal(enabled.config.autoRoute, true);
+  assert.equal(enabled.sync.ok, true);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].id, 'auto:deepseek');
+  assert.match(host.llm.options.config.providers[PROVIDER_ID].baseURL, /\/plugins\/dsh-magpie\/router\/v1\/$/);
+  const disabled = await host.manager.handle({ action: 'patch', revision: enabled.revision, patch: { autoRoute: false } });
+  assert.equal(disabled.sync.ok, true);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].id, 'a/deepseek');
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].baseURL, 'http://127.0.0.1:3425/v1/');
 });
 
 test('网关状态检查不报错：应答为 Magpie 时在线，失败或身份不符时未连接', async () => {

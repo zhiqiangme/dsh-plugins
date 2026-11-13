@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { handlerFor, rejection, versionHandlerFor, registerPanel, MODELS_PATH, VERSION_PATH } from '../lib/web.js';
 import { ModelManager } from '../lib/runtime.js';
+import { ROUTER_BASE_PATH } from '../lib/auto-route.js';
 import { fakeHost } from '../fixtures/host.mjs';
 import { backendFixture, finish } from '../fixtures/backend.mjs';
 
@@ -75,7 +76,7 @@ test('独立版本接口沿用宿主会话，仅 GET 触发检查，force 参数
 test('模型与版本路由同时注册且随插件卸载清理，注册不会联网', async () => {
   const host = fakeHost();
   registerPanel(host.ctx, {}, { checkVersion: () => { throw new Error('注册不应检查版本'); } });
-  assert.deepEqual(host.routes.map((route) => route.path), [MODELS_PATH, VERSION_PATH]);
+  assert.deepEqual(host.routes.map((route) => route.path), [MODELS_PATH, VERSION_PATH, ROUTER_BASE_PATH]);
   await host.ctx.dispose();
   assert.deepEqual(host.routes, []);
 });

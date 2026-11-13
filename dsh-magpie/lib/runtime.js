@@ -3,6 +3,7 @@ import { credential, findEntry, catalogModels, requestGateway, syncModels } from
 import { PROVIDER_NAMES, keepOrderIndexes, sortModelIndexes } from './names.js';
 import { MagpieBackend } from './backend.js';
 import { conversationBlock } from './auto-update.js';
+import { createMagpieRouter } from './router.js';
 
 // 本机网关正常时几十毫秒内应答；状态检查会定时重复，超时设短免得卡片长时间显示“检查中”。
 const STATUS_TIMEOUT = 2_000;
@@ -23,6 +24,8 @@ export class ModelManager {
     this.backend = backend ?? new MagpieBackend({ env });
     this.pending = Promise.resolve();
     this.disposed = false;
+    this.routeReady = Promise.resolve();
+    this.router = createMagpieRouter({ current: () => this.current(), credentials: () => this.credentials, env: this.env, fetchImpl: (...args) => this.fetch(...args) });
   }
   get editor() { return hostService(this.ctx, 'configEditor'); }
   get credentials() { return hostService(this.ctx, 'credentials'); }
@@ -54,8 +57,11 @@ export class ModelManager {
   }
   async sync(config = this.current()) {
     try {
-      const result = await syncModels(config, { editor: this.editor, credentials: this.credentials, env: this.env });
-      return (this.lastSync = { ok: true, ...result });
+      if (config.autoRoute) await this.routeReady;
+      const result = await syncModels(config, { editor: this.editor, credentials: this.credentials, env: this.env, routeOrigin: () => this.routeOrigin });
+      return (this.lastSync = result.refs?.state === 'failed'
+        ? { ok: false, ...result, reason: `模型清单已更新，但旧模型引用修复失败：${result.refs.reason}` }
+        : { ok: true, ...result });
     } catch (error) {
       return (this.lastSync = { ok: false, reason: error.message });
     }
@@ -84,7 +90,7 @@ export class ModelManager {
     this.config = config;
     if (patch.autoLightweight === true) this.backend.ensureLightweight?.();
     // 同步开关决定 DSH 是否保留 Magpie 分组，改完立即按已保存清单重写。
-    const sync = keys.includes('syncEnabled') ? await this.sync(config) : undefined;
+    const sync = keys.some((key) => ['syncEnabled', 'autoRoute'].includes(key)) ? await this.sync(config) : undefined;
     // describe 等待期间可能又有其它页面保存；只返回本次锁内写入的配置及版本给草稿续用。
     return { ...await this.describe(), config, revision: revision(config), saved: true, ...(sync ? { sync } : {}) };
   }

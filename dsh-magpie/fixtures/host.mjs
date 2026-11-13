@@ -18,7 +18,7 @@ export function fakeHost(config = {}, llmConfig = { providers: { magpie: { model
       if (entry === own) for (const hook of hooks) hook(next, false, () => { throw new Error('不应重启插件'); });
     },
   };
-  const services = { configEditor: editor, credentials, webServer: { register: (route) => { routes.push(route); return () => routes.splice(routes.indexOf(route), 1); } } };
+  const services = { configEditor: editor, credentials, webServer: { getOrigin: () => 'http://127.0.0.1:9876', register: (route) => { routes.push(route); return () => routes.splice(routes.indexOf(route), 1); } } };
   const ctx = {
     get: (name) => services[name],
     on: (_event, hook) => { hooks.push(hook); return () => hooks.splice(hooks.indexOf(hook), 1); },

@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import { gatewayURL, KEY_REF, PROVIDER_ID, resolveConfig } from '../lib/config.js';
 import { catalogModels, modelEntries, withProvider, syncModels } from '../lib/models.js';
 import { fakeHost } from '../fixtures/host.mjs';
+import { ROUTER_BASE_PATH } from '../lib/auto-route.js';
 
 const manual = (extra = {}) => resolveConfig({ syncEnabled: true, models: [{ id: 'group/custom', name: '手工名称', input: ['text', 'image'], reasoningEfforts: ['low', 'high'] }], ...extra });
 
 test('默认清单为空且不自动接管；地址与协议严格校验', () => {
   assert.deepEqual(resolveConfig().models, []);
   assert.equal(resolveConfig().syncEnabled, false);
+  assert.equal(resolveConfig().autoRoute, false);
+  assert.throws(() => resolveConfig({ autoRoute: 'yes' }), /自动路由开关/);
   assert.equal(gatewayURL('http://127.0.0.1:3425/v1/'), 'http://127.0.0.1:3425');
   assert.equal(gatewayURL('https://relay.example/magpie/v1'), 'https://relay.example/magpie');
   for (const url of ['file:///private', 'https://user:secret@example.com', 'https://example.com?key=secret', 'https://example.com/#secret']) assert.throws(() => gatewayURL(url));
@@ -118,4 +121,31 @@ test('远程网关缺 Key 或凭据不可写时不生成必然失败的 provider
   const result = await syncModels(manual(), { editor: host.editor, env: { [KEY_REF]: 'env-secret' } });
   assert.equal(result.state, 'updated');
   assert.equal(host.keys.size, 0);
+});
+
+test('自动路由写入合并条目与本机地址，开关往返修复默认模型和白名单引用', async () => {
+  const host = fakeHost({ syncEnabled: true, autoRoute: true, models: [
+    { id: 'a/deepseek', name: 'DeepSeek' }, { id: 'b/deepseek', name: 'DeepSeek' }, { id: 'a/glm', name: 'GLM' },
+  ] });
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'a/deepseek' };
+  host.llm.options.config.allowedModels = [{ provider: PROVIDER_ID, model: 'a/deepseek' }, { provider: PROVIDER_ID, model: 'b/deepseek' }];
+  const config = resolveConfig(host.own.options.config);
+  assert.throws(() => withProvider({}, config), /webServer/);
+  const enabled = await syncModels(config, { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' });
+  const provider = host.llm.options.config.providers[PROVIDER_ID];
+  assert.equal(provider.baseURL, `http://127.0.0.1:9876${ROUTER_BASE_PATH}/v1/`);
+  assert.deepEqual(provider.models.map((m) => m.id), ['auto:deepseek', 'auto:glm']);
+  assert.equal(provider.models[0].name, 'DeepSeek Auto');
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:deepseek' });
+  assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'auto:deepseek' }], '同款引用合并后去重');
+  assert.equal(enabled.refs.state, 'updated');
+
+  const disabled = resolveConfig({ ...config, autoRoute: false });
+  await syncModels(disabled, { editor: host.editor, credentials: host.services.credentials, env: {} });
+  assert.deepEqual(host.llm.options.config.providers[PROVIDER_ID].models.map((m) => m.id), ['a/deepseek', 'b/deepseek', 'a/glm']);
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'a/deepseek' });
+  assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'a/deepseek' }]);
+
+  const anthropic = withProvider({}, resolveConfig({ ...config, api: 'anthropic-messages' }), { routeOrigin: 'http://127.0.0.1:9876' });
+  assert.equal(anthropic.config.providers[PROVIDER_ID].baseURL, `http://127.0.0.1:9876${ROUTER_BASE_PATH}`);
 });

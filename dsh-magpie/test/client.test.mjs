@@ -94,6 +94,24 @@ test('开关和选项改完立即保存，只提交该项；未保存的连接�
   assert.deepEqual([calls[5].config.closeOnExit, calls[5].config.autoStart, calls[5].config.autoLightweight, calls[5].config.sidebarEntry, calls[5].config.syncEnabled], [true, false, false, 'always', true]);
 });
 
+test('自动路由开关即时保存，只提交开关并显示同步结果', async () => {
+  const calls = [];
+  let saved = resolveConfig({ syncEnabled: true, models: [{ id: 'a/deepseek' }] });
+  const client = clientHarness(view(saved), async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body);
+    saved = resolveConfig({ ...saved, ...body.patch });
+    return response({ ...view(saved), revision: 'revision-two', sync: { ok: true, count: 1 } });
+  });
+  const toggle = () => control(client.render(), '自动路由（同款模型合并）');
+  assert.equal(toggle().props.checked, false);
+  field(client.render(), '显示名称').props.onChange({ target: { value: '未保存草稿' } });
+  await toggle().props.onChange({ target: { checked: true } });
+  assert.deepEqual(calls[0], { action: 'patch', patch: { autoRoute: true }, revision: 'revision-one' });
+  assert.equal(toggle().props.checked, true);
+  assert.equal(client.states[0].config.models[0].name, '未保存草稿', '模型草稿不被即时保存覆盖');
+  assert.equal(client.states[1], true);
+});
+
 test('自动更新开关在更新页即时保存，等待期间也能关闭，保留未保存草稿', async () => {
   const host = fakeHost({ models: [{ id: 'saved-model' }] });
   const operation = { id: 'auto', phase: 'waiting-idle', running: true, received: 12, total: 12 };

@@ -1,5 +1,9 @@
 import { hostService } from './runtime.js';
 import { createVersionChecker } from './update.js';
+import { createRouterEndpoint } from './router-endpoint.js';
+import { ROUTER_BASE_PATH } from './auto-route.js';
+import { findEntry, LLM_PACKAGE } from './models.js';
+import { PROVIDER_ID } from './config.js';
 
 export const MODELS_PATH = '/plugins/dsh-magpie/models';
 export const VERSION_PATH = '/plugins/dsh-magpie/version';
@@ -69,8 +73,16 @@ export function registerPanel(ctx, manager, { checkVersion = createVersionChecke
   const mount = (scoped) => {
     const server = hostService(scoped ?? ctx, 'webServer', (value) => typeof value?.register === 'function');
     if (!server) return;
+    const savedBaseURL = findEntry(manager.editor, LLM_PACKAGE)?.options?.config?.providers?.[PROVIDER_ID]?.baseURL;
+    const endpoint = createRouterEndpoint({ webServer: server, router: manager.router, savedBaseURL, onError: (error) => (ctx.logger ?? console).warn(`[dsh-magpie] 自动路由兼容监听失败：${error.message}`) });
+    manager.routeOrigin = endpoint.baseURL();
+    manager.routeReady = (async () => { await endpoint.ready; manager.routeOrigin = endpoint.baseURL(); return manager.routeOrigin; })();
     ctx.effect(() => server.register({ kind: 'exact', path: MODELS_PATH, handler: handlerFor(ctx, manager) }), 'dsh-magpie: routes');
     ctx.effect(() => server.register({ kind: 'exact', path: VERSION_PATH, handler: versionHandlerFor(ctx, checkVersion) }), 'dsh-magpie: version route');
+    ctx.effect(() => server.register({ kind: 'prefix', path: ROUTER_BASE_PATH, handler: (req, res) => manager.router.handle(req, res) }), 'dsh-magpie: auto router');
+    ctx.effect(() => endpoint.stop, 'dsh-magpie: router endpoint');
+    // webServer 可能晚于 configEditor 就绪；路由地址可用后补一轮，初次过早同步不会留下旧地址。
+    manager.routeReady.then(() => { if (!manager.disposed && manager.current?.()?.autoRoute) manager.enqueue(() => manager.sync()); });
   };
   if (typeof ctx.inject === 'function') ctx.inject(['webServer'], mount);
   else mount(ctx);
