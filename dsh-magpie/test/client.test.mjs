@@ -42,8 +42,8 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
   assert.ok(button(client.render(), '从 Magpie 同步'));
   assert.ok(button(client.render(), '按模型排序'));
   assert.ok(button(client.render(), '按供应商排序'));
-  assert.ok(button(client.render(), '按模型分类'));
-  assert.ok(button(client.render(), '按供应商分类'));
+  assert.equal(control(client.render(), '按模型分类').type, 'select');
+  assert.equal(control(client.render(), '按供应商分类').type, 'select');
 });
 
 test('开关和选项改完立即保存，只提交该项；未保存的连接设置与模型草稿保留，后续保存使用新版本号', async () => {
@@ -199,6 +199,7 @@ test('从 Magpie 同步立即提交并用已保存的全量结果替换草稿，
   field(client.render(), '显示名称').props.onChange({ target: { value: '未保存名称' } });
   nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: '未保存名称' } });
   nodes(client.render(), (n) => n.props.className === 'model-toggle')[0].props.onClick();
+  control(client.render(), '按供应商分类').props.onChange({ target: { value: 'workbuddy' } });
   await button(client.render(), '从 Magpie 同步').props.onClick();
   assert.equal(posted.action, 'sync-catalog');
   assert.equal(posted.revision, 'revision-one');
@@ -210,6 +211,7 @@ test('从 Magpie 同步立即提交并用已保存的全量结果替换草稿，
   assert.equal(list[1].enabled, true, '已有模型保留勾选');
   assert.equal(client.states[1], false);
   assert.equal(client.states[5], '');
+  assert.equal(control(client.render(), '按供应商分类').props.value, '', '全量同步后恢复全部供应商');
   assert.deepEqual([...client.states[6]], []);
   assert.match(client.states[3].text, /覆盖保存.*1/);
 });
@@ -527,46 +529,49 @@ test('按模型或供应商排序保留草稿、勾选和展开，点击保存�
   assert.equal(client.states[1], false);
 });
 
-test('按模型或供应商分类显示分组标题，不改保存顺序，可退出分类或切回排序', () => {
+test('按模型系列或供应商下拉筛选，只显示当前类别，可组合、清除并继续排序', () => {
   const client = clientHarness(view({ models: [
-    { id: 'workbuddy/flash', name: 'Flash', enabled: false },
-    { id: 'qoder-cn/flash', name: 'Flash', enabled: false },
-    { id: 'workbuddy/alpha', name: 'Alpha', enabled: false },
-    { id: 'opencode-zen-free/beta', name: 'Beta', enabled: false },
+    { id: 'workbuddy/deepseek-pro', name: 'DeepSeek-V4-Pro', enabled: false },
+    { id: 'qoder-cn/deepseek-flash', name: 'DeepSeek-Flash', enabled: false },
+    { id: 'workbuddy/glm', name: 'GLM-5.3', enabled: false },
+    { id: 'opencode-zen-free/glm-flash', name: 'GLM-5.3-Flash', enabled: false },
+    { id: 'opencode-zen-free/deepseek-free', name: 'DeepSeek V4.1 Flash Free', enabled: false },
     { id: 'local-model', name: 'Local', enabled: false },
   ] }));
   const original = client.states[0].config.models;
-  const headers = () => nodes(client.render(), (n) => n.props.className === 'model-group');
-  const headerText = () => headers().map((n) => [n.children[0].children[0], n.children[1].children[0]]);
   const ids = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title);
+  const options = (label) => nodes(control(client.render(), label), (n) => n.type === 'option').map((n) => n.children[0]);
+  const chooseCategory = (label, value) => control(client.render(), label).props.onChange({ target: { value } });
 
-  button(client.render(), '按模型分类').props.onClick();
-  assert.equal(button(client.render(), '按模型分类').props['aria-pressed'], true);
-  assert.deepEqual(headerText(), [['Alpha', 1], ['Beta', 1], ['Flash', 2], ['Local', 1]]);
-  assert.deepEqual(ids(), ['workbuddy/alpha', 'opencode-zen-free/beta', 'qoder-cn/flash', 'workbuddy/flash', 'local-model']);
-  assert.equal(client.states[0].config.models, original, '分类不重写配置数组');
-  assert.equal(client.states[1], false, '分类不是待保存修改');
-  assert.ok(handles(client.render()).every((n) => n.props.disabled), '分类时暂停拖动');
+  assert.deepEqual(options('按模型分类'), ['全部模型', 'DeepSeek', 'GLM', 'Local']);
+  assert.deepEqual(options('按供应商分类'), ['全部供应商', 'OpenCode', 'Qoder', 'WorkBuddy', '未指定供应商']);
+  chooseCategory('按模型分类', 'deepseek');
+  assert.deepEqual(ids(), ['workbuddy/deepseek-pro', 'qoder-cn/deepseek-flash', 'opencode-zen-free/deepseek-free'], 'DeepSeek 跨供应商归为同一系列');
+  assert.equal(client.states[0].config.models, original, '筛选不重写配置数组');
+  assert.equal(client.states[1], false, '筛选不是待保存修改');
+  assert.ok(handles(client.render()).every((n) => !n.props.disabled), '筛选后仍可拖动当前可见模型');
 
-  button(client.render(), '按供应商分类').props.onClick();
-  assert.equal(button(client.render(), '按模型分类').props['aria-pressed'], false);
-  assert.equal(button(client.render(), '按供应商分类').props['aria-pressed'], true);
-  assert.deepEqual(headerText(), [['OpenCode', 1], ['Qoder', 1], ['WorkBuddy', 2], ['未指定供应商', 1]]);
-  assert.deepEqual(ids(), ['opencode-zen-free/beta', 'qoder-cn/flash', 'workbuddy/alpha', 'workbuddy/flash', 'local-model']);
+  chooseCategory('按供应商分类', 'qoder');
+  assert.deepEqual(ids(), ['qoder-cn/deepseek-flash'], '模型系列与供应商筛选取交集');
+  chooseCategory('按模型分类', '');
+  assert.deepEqual(ids(), ['qoder-cn/deepseek-flash']);
+  chooseCategory('按供应商分类', '');
+  assert.equal(ids().length, 6, '恢复全部供应商');
 
-  button(client.render(), '按供应商分类').props.onClick();
-  assert.equal(headers().length, 0, '再次点击当前分类退出');
-  button(client.render(), '按供应商分类').props.onClick();
-  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'Alpha' } });
-  assert.equal(button(client.render(), '按供应商分类').props.disabled, false, '只剩一个匹配项时仍能退出当前分类');
-  button(client.render(), '按供应商分类').props.onClick();
-  assert.equal(headers().length, 0);
-  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: '' } });
-  button(client.render(), '按供应商分类').props.onClick();
+  chooseCategory('按模型分类', 'glm');
+  assert.deepEqual(ids(), ['workbuddy/glm', 'opencode-zen-free/glm-flash'], 'GLM 不同版本归为同一系列');
+  chooseCategory('按供应商分类', 'opencode');
+  assert.deepEqual(ids(), ['opencode-zen-free/glm-flash']);
+  chooseCategory('按模型分类', '');
+  assert.deepEqual(ids(), ['opencode-zen-free/glm-flash', 'opencode-zen-free/deepseek-free']);
+  chooseCategory('按供应商分类', '');
+
+  chooseCategory('按模型分类', 'deepseek');
   button(client.render(), '按模型排序').props.onClick();
-  assert.equal(headers().length, 0, '排序按钮退出分类');
+  assert.equal(control(client.render(), '按模型分类').props.value, 'deepseek', '排序不会退出分类筛选');
+  assert.deepEqual(ids(), ['qoder-cn/deepseek-flash', 'opencode-zen-free/deepseek-free', 'workbuddy/deepseek-pro']);
+  assert.equal(nodes(client.render(), (n) => n.props.className === 'model-group').length, 0, '不再渲染分组标题');
   assert.equal(client.states[1], true, '只有真正的排序才产生待保存修改');
-  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['workbuddy/alpha', 'opencode-zen-free/beta', 'qoder-cn/flash', 'workbuddy/flash', 'local-model']);
 });
 
 test('快速排序只重排搜索结果所在位置，隐藏条目、筛选及展开状态保留', () => {
@@ -581,7 +586,52 @@ test('快速排序只重排搜索结果所在位置，隐藏条目、筛选及�
   assert.deepEqual(client.states[0].config.models, [before[0], before[3], before[2], before[5], before[4], before[1]]);
   assert.equal(client.states[5], 'visible');
   assert.deepEqual([...client.states[6]], [5]);
-  assert.match(button(client.render(), '按模型排序').props.title, /当前搜索结果/);
+  assert.match(button(client.render(), '按模型排序').props.title, /当前搜索或分类结果/);
+});
+
+test('类别消失后真正清除筛选，同名类别再次出现也不会恢复旧筛选', () => {
+  const client = clientHarness(view({ models: [
+    { id: 'workbuddy/deepseek', name: 'DeepSeek-V4-Pro', enabled: false },
+    { id: 'workbuddy/glm', name: 'GLM-5.3', enabled: false },
+    { id: 'qoder-cn/kimi', name: 'Kimi-K3.1-Pro', enabled: false },
+  ] }));
+  const ids = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title);
+  control(client.render(), '按模型分类').props.onChange({ target: { value: 'deepseek' } });
+  assert.deepEqual(ids(), ['workbuddy/deepseek']);
+  button(client.render(), '删除').props.onClick();
+  assert.equal(control(client.render(), '按模型分类').props.value, '');
+  assert.deepEqual(ids(), ['workbuddy/glm', 'qoder-cn/kimi']);
+  field(client.render(), '显示名称').props.onChange({ target: { value: 'DeepSeek-V4-Pro' } });
+  field(client.render(), '完整模型 ID').props.onChange({ target: { value: 'workbuddy/deepseek-new' } });
+  assert.equal(control(client.render(), '按模型分类').props.value, '', 'DeepSeek 再次出现时仍保持全部模型');
+  assert.deepEqual(ids(), ['workbuddy/deepseek-new', 'qoder-cn/kimi']);
+});
+
+test('分类筛选后的全选、取消全选和拖放只影响可见模型', () => {
+  const client = clientHarness(view({ models: [
+    { id: 'workbuddy/deepseek-a', name: 'DeepSeek-V4-A', enabled: false },
+    { id: 'qoder-cn/glm', name: 'GLM-5.3', enabled: false },
+    { id: 'opencode-zen-free/deepseek-b', name: 'DeepSeek-V4-B', enabled: false },
+    { id: 'workbuddy/other', name: 'Other', enabled: false },
+  ] }));
+  control(client.render(), '按模型分类').props.onChange({ target: { value: 'deepseek' } });
+  button(client.render(), '全选').props.onClick();
+  assert.deepEqual(client.states[0].config.models.map((m) => m.enabled), [true, false, true, false]);
+  button(client.render(), '取消全选').props.onClick();
+  assert.ok(client.states[0].config.models.every((m) => !m.enabled));
+  dragModel(client, 1, 0);
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['opencode-zen-free/deepseek-b', 'workbuddy/deepseek-a', 'qoder-cn/glm', 'workbuddy/other'], '隐藏项随源项让位且不丢失、相对顺序不变');
+  assert.equal(control(client.render(), '按模型分类').props.value, 'deepseek');
+  assert.deepEqual(nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title), ['opencode-zen-free/deepseek-b', 'workbuddy/deepseek-a']);
+});
+
+test('模型系列按版本号前的品牌识别，兼容无分隔版本和子系列命名', () => {
+  const { modelFamilyName } = clientHarness().module;
+  for (const [name, family] of [
+    ['DeepSeek V4.1 Flash', 'DeepSeek'], ['DeepSeek-V4-Pro', 'DeepSeek'],
+    ['GLM-5.3', 'GLM'], ['GLM-5v-Turbo', 'GLM'], ['Hy4 CN', 'Hy'],
+    ['Kimi-K3.1-Pro', 'Kimi'], ['Step-5-Preview', 'Step'], ['Claude-Sonnet-4.5', 'Claude'], ['', ''],
+  ]) assert.equal(modelFamilyName(name), family, name || '空白模型');
 });
 
 test('排序识别 ID 后的模型名，忽略大小写，自然数字顺序，同键稳定且空条目在后', () => {
