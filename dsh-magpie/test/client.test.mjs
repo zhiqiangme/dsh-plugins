@@ -112,6 +112,32 @@ test('自动路由开关即时保存，只提交开关并显示同步结果', as
   assert.equal(client.states[1], true);
 });
 
+test('小上下文屏蔽默认开启，只隐藏低于 500K，未知上下文不隐藏，开关即时保存', async () => {
+  const calls = [];
+  let saved = resolveConfig({ models: [
+    { id: 'a/big', name: 'Big', contextWindow: 1000000 },
+    { id: 'a/small', name: 'Small', contextWindow: 200000, enabled: false },
+    { id: 'a/unknown', name: 'Unknown' },
+    { id: 'a/edge', name: 'Edge', contextWindow: 500000 },
+  ] });
+  const client = clientHarness(view(saved), async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body);
+    saved = resolveConfig({ ...saved, ...body.patch });
+    return response({ ...view(saved), revision: 'revision-two' });
+  });
+  const ids = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title);
+  assert.deepEqual(ids(), ['a/big', 'a/unknown', 'a/edge'], '低于 500K 隐藏，等于 500K 与未知保留');
+  const toggle = () => control(client.render(), '屏蔽上下文低于 500K 的模型');
+  assert.equal(toggle().props.checked, true);
+  await toggle().props.onChange({ target: { checked: false } });
+  assert.deepEqual(calls[0], { action: 'patch', patch: { hideSmallContext: false }, revision: 'revision-one' });
+  assert.deepEqual(ids(), ['a/big', 'a/unknown', 'a/edge', 'a/small'], '关闭后显示全部，未勾选的仍按置顶规则排后');
+  await toggle().props.onChange({ target: { checked: true } });
+  assert.deepEqual(ids(), ['a/big', 'a/unknown', 'a/edge']);
+  button(client.render(), '全选').props.onClick();
+  assert.deepEqual(client.states[0].config.models.map((m) => m.enabled), [true, false, true, true], '批量勾选只影响可见模型');
+});
+
 test('自动更新开关在更新页即时保存，等待期间也能关闭，保留未保存草稿', async () => {
   const host = fakeHost({ models: [{ id: 'saved-model' }] });
   const operation = { id: 'auto', phase: 'waiting-idle', running: true, received: 12, total: 12 };

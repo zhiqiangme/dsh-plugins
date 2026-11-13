@@ -16,6 +16,7 @@ window.__ModuleLoader__.load({
       mirrored: '已按 Magpie 当前目录覆盖保存，DSH 分组现有 {count} 个模型。',
       sync: '同步到 DSH', syncHint: '勾选的模型按顺序写入 DSH 的“Magpie”分组；关闭即移除该分组。',
       autoRoute: '自动路由（同款模型合并）', autoRouteHint: '同款裸 ID 的多个供应商合并为 Auto 条目，按清单顺序选路并固定对话出口；图片请求跳过不支持视觉的出口，可重试错误在当前对话冷却 5 分钟。开启或关闭都会立即保存并同步，旧模型引用会映射到同款条目。',
+      hideSmallContext: '屏蔽上下文低于 500K 的模型', hideSmallContextHint: '只影响本卡片列表显示，不改勾选、同步与自动路由；上下文未知的模型不屏蔽。开关即时保存。',
       native: '当前还有 Magpie 原生分组。这里保存到独立的“Magpie”分组（ID 为 dsh-magpie），原分组仍可使用。',
       count: '{selected} / {total} 个模型已勾选', search: '搜索名称或 ID', add: '手动添加模型',
       sortDefault: '默认排序', sortDefaultHint: '按 Magpie 目录的顺序排列（需要 Magpie 正在运行）；对完整清单排序后，从 Magpie 同步也沿用该顺序',
@@ -95,6 +96,7 @@ window.__ModuleLoader__.load({
       mirrored: 'Replaced and saved the list from Magpie. The DSH group now has {count} models.',
       sync: 'Sync to DSH', syncHint: 'Ticked models go into the DSH “Magpie” group in this order; turning this off removes the group.',
       autoRoute: 'Auto route (merge identical models)', autoRouteHint: 'Merges selected routes with the same bare model ID into Auto entries, tries them in list order and keeps a conversation on its route. Image requests skip non-vision routes; retryable failures cool down for 5 minutes per conversation. Changes save and sync immediately, and old model references are mapped to the matching entries.',
+      hideSmallContext: 'Hide models under 500K context', hideSmallContextHint: 'Only affects this card’s list; selections, sync and auto routing are unchanged. Models with unknown context stay visible. Saves immediately.',
       native: 'Magpie native groups are also configured. This list uses its own “Magpie” group (ID dsh-magpie); existing groups remain available.',
       count: '{selected} / {total} models selected', search: 'Search names or IDs', add: 'Add a model',
       sortDefault: 'Default order', sortDefaultHint: 'Order as Magpie lists them (Magpie must be running); after sorting the full list, syncing from Magpie keeps that order',
@@ -201,6 +203,8 @@ window.__ModuleLoader__.load({
     };
     // 排序后各行滑到新位置的时长；拖动中让位的过渡写在样式里，两者保持一致。
     const REORDER_MS = 200;
+    // 列表屏蔽阈值：上下文低于 500K（按千计）的模型默认不显示；未知上下文不屏蔽。
+    const SMALL_CONTEXT_LIMIT = 500_000;
     const TABS = [['models', 'tabModels'], ['connection', 'tabConnection'], ['preferences', 'tabPreferences'], ['updates', 'tabUpdates']];
     // 卡片在插件设置和侧栏页面各自挂载；读取或保存后经此通知侧栏按已保存的配置重新判断入口。
     const savedConfig = { value: undefined, listeners: new Set() };
@@ -1091,6 +1095,7 @@ window.__ModuleLoader__.load({
       // “其他”类（非主流系列与空白行）默认沉到列表底部；已勾选的仍按置顶规则优先，只影响展示不改保存顺序。
       const isOther = (row) => modelCategory(row, 'model', view.providerNames, categoryLabels).other;
       const visible = rows.map((row, index) => ({ row, index }))
+        .filter(({ row }) => !config.hideSmallContext || !row.contextWindow || row.contextWindow >= SMALL_CONTEXT_LIMIT)
         .filter(({ row }) => `${row.id} ${labelFor(row)}`.toLowerCase().includes(search.toLowerCase()))
         .filter(({ row }) => !providerFilter || modelCategory(row, 'provider', view.providerNames, categoryLabels).key === providerFilter)
         .filter(({ row }) => !modelFilter || modelCategory(row, 'model', view.providerNames, categoryLabels).key === modelFilter)
@@ -1268,6 +1273,7 @@ window.__ModuleLoader__.load({
         models: () => [
           toggle(t('sync'), t('syncHint'), config.syncEnabled, (syncEnabled) => applyNow({ syncEnabled }), busy || !view.editable),
           toggle(t('autoRoute'), t('autoRouteHint'), config.autoRoute, (autoRoute) => applyNow({ autoRoute }), busy || !view.editable),
+          toggle(t('hideSmallContext'), t('hideSmallContextHint'), config.hideSmallContext, (hideSmallContext) => applyNow({ hideSmallContext }), busy || !view.editable),
           view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
           h('div', { className: 'toolbar' },
             h('input', { className: 'search', type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: search, onChange: (e) => setSearch(e.target.value) }),

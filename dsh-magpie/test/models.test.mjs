@@ -12,6 +12,8 @@ test('默认清单为空且不自动接管；地址与协议严格校验', () =>
   assert.equal(resolveConfig().syncEnabled, false);
   assert.equal(resolveConfig().autoRoute, false);
   assert.throws(() => resolveConfig({ autoRoute: 'yes' }), /自动路由开关/);
+  assert.equal(resolveConfig().hideSmallContext, true, '小上下文屏蔽默认开启');
+  assert.throws(() => resolveConfig({ hideSmallContext: 'yes' }), /屏蔽小上下文/);
   assert.equal(gatewayURL('http://127.0.0.1:3425/v1/'), 'http://127.0.0.1:3425');
   assert.equal(gatewayURL('https://relay.example/magpie/v1'), 'https://relay.example/magpie');
   for (const url of ['file:///private', 'https://user:secret@example.com', 'https://example.com?key=secret', 'https://example.com/#secret']) assert.throws(() => gatewayURL(url));
