@@ -484,8 +484,9 @@ test('管理行预览供应商简称，可按简称搜索；修改名称或 ID �
   field(client.render(), '显示名称').props.onChange({ target: { value: '我的模型' } });
   assert.deepEqual(labels(), ['我的模型 WorkBuddy GL']);
   nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: '' } });
-  nodes(client.render(), (n) => n.props.placeholder === 'provider/model-id')[1].props.onChange({ target: { value: 'opencode-zen-free/new-model' } });
-  assert.equal(labels()[1], '我的模型 OpenCode');
+  // 改名为非系列名后归入“其他”沉底，详情输入框按原 ID 定位而不是显示下标。
+  nodes(client.render(), (n) => n.props.placeholder === 'provider/model-id').find((n) => n.props.value === 'workbuddy-ai/flash').props.onChange({ target: { value: 'opencode-zen-free/new-model' } });
+  assert.equal(labels().at(-1), '我的模型 OpenCode');
   assert.equal(client.states[0].config.models[1].name, '我的模型');
 });
 
@@ -617,6 +618,20 @@ test('未填写的空白草稿行归入其他，下拉不再单独出现新模�
   assert.deepEqual(options, ['全部模型', 'GLM', '其他']);
   control(client.render(), '按模型分类').props.onChange({ target: { value: '__other__' } });
   assert.deepEqual(nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title), [''], '空白行在其他分类中可见');
+});
+
+test('其他类模型默认沉到列表底部，已勾选的仍按置顶规则优先', () => {
+  const client = clientHarness(view({ models: [
+    { id: 'trae-cn/unknown-a', name: '-', enabled: false },
+    { id: 'workbuddy/glm', name: 'GLM-5.3', enabled: false },
+    { id: 'trae-cn/seed-x', name: 'Seed-X', enabled: false },
+    { id: 'workbuddy/deepseek', name: 'DeepSeek-V4-Pro', enabled: false },
+  ] }));
+  const ids = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title);
+  assert.deepEqual(ids(), ['workbuddy/glm', 'trae-cn/seed-x', 'workbuddy/deepseek', 'trae-cn/unknown-a'], '其他沉底，其余保持配置顺序');
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['trae-cn/unknown-a', 'workbuddy/glm', 'trae-cn/seed-x', 'workbuddy/deepseek'], '展示沉底不重写配置');
+  nodes(client.render(), (n) => n.props.className === 'model-select').find((n) => n.props.title === 'trae-cn/unknown-a').children[0].props.onChange({ target: { checked: true } });
+  assert.deepEqual(ids(), ['trae-cn/unknown-a', 'workbuddy/glm', 'trae-cn/seed-x', 'workbuddy/deepseek'], '勾选后的其他模型仍置顶');
 });
 
 test('快速排序只重排搜索结果所在位置，隐藏条目、筛选及展开状态保留', () => {

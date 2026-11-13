@@ -1087,11 +1087,13 @@ window.__ModuleLoader__.load({
       // 编辑或删除导致当前类别消失时自动回到“全部”，避免下拉框显示与过滤条件不一致。
       const providerFilter = providerOptions.some((option) => option.key === categoryFilters.provider) ? categoryFilters.provider : '';
       const modelFilter = modelOptions.some((option) => option.key === categoryFilters.model) ? categoryFilters.model : '';
+      // “其他”类（非主流系列与空白行）默认沉到列表底部；已勾选的仍按置顶规则优先，只影响展示不改保存顺序。
+      const isOther = (row) => modelCategory(row, 'model', view.providerNames, categoryLabels).other;
       const visible = rows.map((row, index) => ({ row, index }))
         .filter(({ row }) => `${row.id} ${labelFor(row)}`.toLowerCase().includes(search.toLowerCase()))
         .filter(({ row }) => !providerFilter || modelCategory(row, 'provider', view.providerNames, categoryLabels).key === providerFilter)
         .filter(({ row }) => !modelFilter || modelCategory(row, 'model', view.providerNames, categoryLabels).key === modelFilter)
-        .sort((a, b) => Number(pinned(b.row)) - Number(pinned(a.row)));
+        .sort((a, b) => Number(pinned(b.row)) - Number(pinned(a.row)) || Number(isOther(a.row)) - Number(isOther(b.row)));
       const visibleIndexes = new Set(visible.map(({ index }) => index));
       const selectVisible = (enabled) => update({ models: rows.map((m, i) => visibleIndexes.has(i) ? keepKey(m, { ...m, enabled }) : m) });
       const changeCategory = (mode, value) => {
