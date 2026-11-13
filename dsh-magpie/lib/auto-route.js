@@ -1,4 +1,4 @@
-import { displayModelName } from './names.js';
+import { displayModelName, dshModelName } from './names.js';
 
 export const AUTO_PREFIX = 'auto:';
 export const ROUTER_BASE_PATH = '/plugins/dsh-magpie/router';
@@ -43,7 +43,7 @@ function smallest(members, field) {
 function mergedEntry(key, members) {
   const first = members[0];
   // 单个候选保留供应商简称；多个候选只显示型号和 Auto，避免误以为固定到某家供应商。
-  const name = members.length === 1 ? displayModelName(first) : `${baseName(first)} Auto`;
+  const name = members.length === 1 ? dshModelName(first) : `${baseName(first).replace(/\s+/g, '-')} Auto`;
   const reasoningEfforts = (first.reasoningEfforts ?? []).filter((level) => members.every((row) => row.reasoningEfforts?.includes(level)));
   return {
     id: `${AUTO_PREFIX}${key}`, name,

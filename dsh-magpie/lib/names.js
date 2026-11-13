@@ -21,13 +21,28 @@ function normalizeDisplayName(name) {
     .replace(/\s*[（(]?\s*预览版\s*[)）]?/g, ' Preview').trim();
 }
 
-/** 只派生展示名称，手工名称和完整路由 ID 仍原样保存；未知供应商及路由组不乱加标签。 */
-export function displayModelName(row, providers = PROVIDER_NAMES) {
+/** 拆出模型本名与供应商后缀；名称里已带后缀时不重复追加。 */
+function modelNameParts(row, providers = PROVIDER_NAMES) {
   const name = normalizeDisplayName(row.name || row.id || '');
   const provider = row.id?.includes('/') ? row.id.split('/')[0] : '';
   const supplier = Object.hasOwn(providers, provider) ? providers[provider] : undefined;
-  return !supplier || name.toLowerCase() === supplier.toLowerCase() || name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)
-    ? name : `${name} ${supplier}`;
+  if (!supplier) return { base: name, suffix: '' };
+  const lower = name.toLowerCase(), tag = supplier.toLowerCase();
+  if (lower === tag) return { base: '', suffix: supplier };
+  if (lower.endsWith(` ${tag}`)) return { base: name.slice(0, name.length - supplier.length - 1), suffix: supplier };
+  return { base: name, suffix: supplier };
+}
+
+/** 只派生展示名称，手工名称和完整路由 ID 仍原样保存；未知供应商及路由组不乱加标签。 */
+export function displayModelName(row, providers = PROVIDER_NAMES) {
+  const { base, suffix } = modelNameParts(row, providers);
+  return base ? (suffix ? `${base} ${suffix}` : base) : suffix;
+}
+
+/** DSH 模型列表用的名字：模型本名内空格换 -，与 Auto / 供应商后缀之间保留空格。 */
+export function dshModelName(row, providers = PROVIDER_NAMES) {
+  const { base, suffix } = modelNameParts(row, providers);
+  return [base.replace(/\s+/g, '-'), suffix].filter(Boolean).join(' ');
 }
 
 /**

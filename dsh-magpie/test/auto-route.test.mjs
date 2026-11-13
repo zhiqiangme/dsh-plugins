@@ -25,7 +25,7 @@ test('别名 ID 看不出同款时按带版本号的显示名合并，Preview �
     { id: 'qwenwork/frontier-1', name: 'Qwen4-Max 预览版', contextWindow: 1000000, input: ['text', 'image'] },
     { id: 'qoder-cn/qmodel_latest', name: 'Qwen4-Max-Preview', contextWindow: 1000000, input: ['text', 'image'], reasoningEfforts: ['low', 'high', 'xhigh'] },
   ]));
-  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [['auto:frontier-1', 'Qwen4-Max Preview Auto']]);
+  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [['auto:frontier-1', 'Qwen4-Max-Preview Auto']]);
   assert.deepEqual(planned.routes.get('auto:frontier-1').map((row) => row.id), ['qwenwork/frontier-1', 'qoder-cn/qmodel_latest']);
   assert.deepEqual(planned.entries[0].reasoningEfforts, [], '思考档位仍取交集');
 });
@@ -40,10 +40,10 @@ test('(Max) 档位变体与不带后缀的同款合并，合并名去掉档位�
     { id: 'trae-cn/glm-5.3-flash-max', name: 'GLM-5.3-Flash (Max)' },
   ]));
   assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [
-    ['auto:deepseek-v4.1-flash', 'DeepSeek V4.1 Flash Auto'],
+    ['auto:deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash Auto'],
     ['auto:qwen3.8-max', 'Qwen3.8-Max Auto'],
     ['auto:glm-5.3', 'GLM-5.3 Trae'],
-    ['auto:glm-5.3-flash-max', 'GLM-5.3-Flash (Max) Trae'],
+    ['auto:glm-5.3-flash-max', 'GLM-5.3-Flash-(Max) Trae'],
   ], '型号自带 Max 与档位 (Max) 不混淆，Flash 变体不与基础款合并');
   assert.deepEqual(planned.routes.get('auto:deepseek-v4.1-flash').map((row) => row.id), ['qoder-cn/deepseek-v4.1-flash', 'trae-cn/deepseek-v4.1-flash-max']);
 });
@@ -63,7 +63,7 @@ test('同款多供应商合并为一个 Auto，能力取安全集合且候选保
     { id: 'qoder-cn/other', name: 'Other', enabled: false },
   ]));
   assert.deepEqual(planned.entries, [{
-    id: 'auto:deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash Auto', contextWindow: 800000, maxTokens: 64000,
+    id: 'auto:deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash Auto', contextWindow: 800000, maxTokens: 64000,
     input: ['text', 'image'], reasoningEfforts: ['low', 'high'],
   }]);
   assert.deepEqual(planned.routes.get('auto:deepseek-v4.1-flash').map((row) => row.id), ['workbuddy/deepseek-v4.1-flash', 'workbuddy-ai/deepseek-v4.1-flash-1017']);
@@ -85,7 +85,7 @@ test('单个候选也使用稳定 auto ID 并保留显示名，不同裸 ID 和�
   ]));
   assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [
     ['auto:deepseek-v4-pro', 'DeepSeek-V4-Pro WorkBuddy'],
-    ['auto:deepseek-v4.1-flash', 'DeepSeek V4.1 Flash WorkBuddy GL'],
+    ['auto:deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash WorkBuddy GL'],
     ['auto:glm-5.3', 'GLM-5.3 Qoder'],
   ]);
   assert.equal(planned.routes.size, 3);

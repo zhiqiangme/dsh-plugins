@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PROVIDER_NAMES, displayModelName } from '../lib/names.js';
+import { PROVIDER_NAMES, displayModelName, dshModelName } from '../lib/names.js';
 import { modelEntries } from '../lib/models.js';
 import { resolveConfig } from '../lib/config.js';
 import { clientHarness } from '../fixtures/client.mjs';
@@ -31,7 +31,7 @@ test('重复同步不叠加简称，手工名称、完整 ID、排序及勾选�
   const entries = modelEntries(config);
   assert.deepEqual(config, before);
   assert.deepEqual(entries.map((row) => row.id), ['workbuddy/model', 'workbuddy-ai/model', 'opencode-zen-free/model']);
-  assert.deepEqual(entries.map((row) => row.name), ['DeepSeek V4.1 Flash WorkBuddy', 'DeepSeek V4.1 Flash WorkBuddy GL', 'DeepSeek V4.1 Flash opencode']);
+  assert.deepEqual(entries.map((row) => row.name), ['DeepSeek-V4.1-Flash WorkBuddy', 'DeepSeek-V4.1-Flash WorkBuddy GL', 'DeepSeek-V4.1-Flash OpenCode'], 'DSH 名字本名空格换 -，后缀保留空格');
   assert.deepEqual(modelEntries(config), entries);
 });
 
@@ -60,6 +60,14 @@ test('前端和 DSH 统一 Flash 别名并保留尾缀，不误改其他版本�
     assert.equal(client.module.displayModelName(row, PROVIDER_NAMES), label);
     assert.equal(row.name, name);
   }
+});
+
+test('DSH 名字本名内空格换 -，与供应商后缀保留空格，已带后缀不重复', () => {
+  assert.equal(dshModelName({ id: 'qoder-cn/x', name: 'DeepSeek V4.1 Flash' }), 'DeepSeek-V4.1-Flash Qoder');
+  assert.equal(dshModelName({ id: 'trae-cn/x', name: 'LongCat 2.5 Free' }), 'LongCat-2.5-Free Trae');
+  assert.equal(dshModelName({ id: 'workbuddy/x', name: 'DeepSeek V4.1 Flash WorkBuddy' }), 'DeepSeek-V4.1-Flash WorkBuddy');
+  assert.equal(dshModelName({ id: 'qwenwork/x', name: 'Qwen4-Max 预览版' }), 'Qwen4-Max-Preview');
+  assert.equal(displayModelName({ id: 'qoder-cn/x', name: 'DeepSeek V4.1 Flash' }), 'DeepSeek V4.1 Flash Qoder', '卡片管理显示仍保留空格');
 });
 
 test('未知供应商、路由组和空白新条目不猜供应商，已含简称不会重复追加', () => {

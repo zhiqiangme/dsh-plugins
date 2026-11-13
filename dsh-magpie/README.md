@@ -106,7 +106,7 @@ Magpie 也有完全无界面的 `magpie serve`（只运行网关，没有托盘�
 3. 模型列表左侧勾选，显示名称右侧箭头展开详细配置；详情在列表原位展开，后续模型自动下移。按需编辑 ID、名称、上下文、输出限额、图片输入和思考档位，例如 `low, high, max`。思考档位只能使用 DSH 支持的 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，且不能只有 `off`；不支持思考的模型留空。未知能力留空，不按模型名称猜测。
 4. 勾选模型，拖动勾选框左侧的六点手柄调整顺序，打开「同步到 DSH」，点击「保存并同步」。选中的模型按清单顺序出现在 **Magpie** 分组（provider ID 仍为 `dsh-magpie`）。
 
-管理列表与 DSH 模型选择器会在模型名后追加供应商简称，例如 `DeepSeek V4.1 Flash WorkBuddy`、`Step-5-Preview WorkBuddy GL`、`DeepSeek V4.1 Flash Free OpenCode`。`workbuddy-ai` 为国际版，显示为 `WorkBuddy GL`；`workbuddy` 为国内版，显示为 `WorkBuddy`。Qoder / Trae 国际版同样使用 `GL`。名称已带对应简称时不重复追加；手工名称、模型 ID 与排序保持不变，未知供应商或路由组不追加简称。
+管理列表与 DSH 模型选择器会在模型名后追加供应商简称，例如 `DeepSeek V4.1 Flash WorkBuddy`、`Step-5-Preview WorkBuddy GL`、`DeepSeek V4.1 Flash Free OpenCode`。写入 DSH 模型列表的名字另做连字符化：模型本名内的空格换成 `-`，与 `Auto` / 供应商简称之间保留空格（如 `DeepSeek-V4.1-Flash Auto`、`LongCat-2.5-Free OpenCode`）；插件卡片内的管理显示仍保留空格。`workbuddy-ai` 为国际版，显示为 `WorkBuddy GL`；`workbuddy` 为国内版，显示为 `WorkBuddy`。Qoder / Trae 国际版同样使用 `GL`。名称已带对应简称时不重复追加；手工名称、模型 ID 与排序保持不变，未知供应商或路由组不追加简称。
 
 `DeepSeek-Flash`、`Deepseek-V4.1-Flash` 等写法统一显示为 `DeepSeek V4.1 Flash`，保留 `Free`、`(Max)` 等尾缀和供应商简称；中文「预览版」（含括号写法）统一显示为 `Preview`，展示名默认不出现中文；搜索、快捷排序、分类与 DSH 模型名称同步使用这一显示规则。此规则仅派生显示名称，不改写保存的名称或模型 ID，其他 DeepSeek 版本不受影响。
 

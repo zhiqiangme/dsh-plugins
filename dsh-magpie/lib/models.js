@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { gatewayURL, isLocal, KEY_REF, LOCAL_KEY, object, PROVIDER_ID, REASONING_LEVELS, normalizeModel } from './config.js';
-import { displayModelName } from './names.js';
+import { dshModelName } from './names.js';
 import { AUTO_PREFIX, planAutoRoute, routeKey, ROUTER_BASE_PATH } from './auto-route.js';
 
 export const LLM_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
@@ -56,7 +56,7 @@ export function catalogModels(payload) {
 export function modelEntries(config) {
   const models = config.autoRoute ? planAutoRoute(config).entries : config.models.filter((m) => m.enabled);
   return models.map(({ enabled: _enabled, reasoningEfforts, ...m }) => ({
-    ...m, name: config.autoRoute ? m.name : displayModelName(m), ...(reasoningEfforts.length ? { reasoningEfforts: Object.fromEntries(reasoningEfforts.map((e) => [e, e])) } : {}),
+    ...m, name: config.autoRoute ? m.name : dshModelName(m), ...(reasoningEfforts.length ? { reasoningEfforts: Object.fromEntries(reasoningEfforts.map((e) => [e, e])) } : {}),
   }));
 }
 
