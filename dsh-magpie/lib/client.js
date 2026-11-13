@@ -443,11 +443,14 @@ window.__ModuleLoader__.load({
     }
     // 只给主流系列单独设项；内部代号、档位名和实验名归“其他”，避免筛选下拉被别名刷屏。
     const COMMON_MODEL_FAMILIES = new Set(['deepseek', 'glm', 'kimi', 'minimax', 'mimo', 'longcat', 'doubao', 'qwen', 'claude', 'gpt', 'gemini', 'step', 'hy', 'hunyuan', 'mistral', 'llama', 'codex', 'grok', 'commandcode', 'openai']);
+    // Seed 是豆包模型的内部系列名，与 doubao-* 同归一类；标签统一首字母大写的 Doubao。
+    const FAMILY_LABELS = new Map([['seed', 'Doubao'], ['doubao', 'Doubao']]);
     function modelCategory(row, mode, providers, emptyLabels) {
       const keys = modelKeys(row, providers);
       const family = modelFamilyName(keys.name);
-      const other = mode === 'model' && Boolean(family) && !COMMON_MODEL_FAMILIES.has(family.toLowerCase());
-      const value = mode === 'provider' ? keys.supplier : other ? emptyLabels.other : family;
+      const canonical = FAMILY_LABELS.get(family.toLowerCase()) ?? family;
+      const other = mode === 'model' && Boolean(canonical) && !COMMON_MODEL_FAMILIES.has(canonical.toLowerCase());
+      const value = mode === 'provider' ? keys.supplier : other ? emptyLabels.other : canonical;
       const label = value || emptyLabels[mode];
       return { key: other ? '__other__' : label.toLowerCase(), label, empty: !value, other };
     }
