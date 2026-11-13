@@ -42,7 +42,8 @@ export function catalogModels(payload) {
     const levels = m.reasoning === true && Array.isArray(efforts)
       ? efforts.map((e) => typeof e === 'string' ? e.toLowerCase() : e?.effort?.toLowerCase?.()).filter((e) => REASONING_LEVELS.includes(e)) : [];
     return normalizeModel({
-      id: m.id, name: m.display_name || m.name || m.id, enabled: true,
+      // 自动导入只补充候选清单，不替用户选择模型；已有勾选由全量同步流程按 ID 保留。
+      id: m.id, name: m.display_name || m.name || m.id, enabled: false,
       // 上游把输出上限标成等于上下文时只省略这一项，不让单个模型拖垮整次全量同步。
       contextWindow, maxTokens: contextWindow && output >= contextWindow ? undefined : output,
       input: m.modalities?.input?.includes('image') ? ['text', 'image'] : ['text'],

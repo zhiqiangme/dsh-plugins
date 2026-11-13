@@ -42,6 +42,8 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
   assert.ok(button(client.render(), '从 Magpie 同步'));
   assert.ok(button(client.render(), '按模型排序'));
   assert.ok(button(client.render(), '按供应商排序'));
+  assert.ok(button(client.render(), '按模型分类'));
+  assert.ok(button(client.render(), '按供应商分类'));
 });
 
 test('开关和选项改完立即保存，只提交该项；未保存的连接设置与模型草稿保留，后续保存使用新版本号', async () => {
@@ -182,16 +184,17 @@ test('添加、编辑、调整顺序、取消勾选、删除通过卡片实际�
   assert.equal(client.states[0].config.models[0].id, 'manual/second');
   button(client.render(), '取消全选').props.onClick();
   assert.ok(client.states[0].config.models.every((m) => m.enabled === false));
+  // first 是已保存勾选，取消全选后仍在置顶区；第一个删除按钮属于 first。
   button(client.render(), '删除').props.onClick();
   assert.equal(client.states[0].config.models.length, 1);
-  assert.equal(client.states[0].config.models[0].id, 'first');
+  assert.equal(client.states[0].config.models[0].id, 'manual/second');
 });
 
 test('从 Magpie 同步立即提交并用已保存的全量结果替换草稿，重置筛选和展开', async () => {
   let posted;
   const client = clientHarness(view({ models: [{ id: 'workbuddy/old', name: '旧模型' }, { id: 'manual/a' }] }), async (_url, options) => {
     posted = JSON.parse(options.body);
-    return response({ ...view({ syncEnabled: true, models: [{ id: 'new/b', name: '新增' }, { id: 'manual/a', name: '上游新名称' }] }), saved: true, sync: { ok: true, count: 2 } });
+    return response({ ...view({ syncEnabled: true, models: [{ id: 'new/b', name: '新增', enabled: false }, { id: 'manual/a', name: '上游新名称', enabled: true }] }), saved: true, sync: { ok: true, count: 1 } });
   });
   field(client.render(), '显示名称').props.onChange({ target: { value: '未保存名称' } });
   nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: '未保存名称' } });
@@ -203,11 +206,52 @@ test('从 Magpie 同步立即提交并用已保存的全量结果替换草稿，
   const list = client.states[0].config.models;
   assert.deepEqual(list.map((m) => m.id), ['new/b', 'manual/a']);
   assert.equal(list[1].name, '上游新名称');
-  assert.ok(list.every((m) => m.enabled));
+  assert.equal(list[0].enabled, false, '同步新出现的模型不默认勾选');
+  assert.equal(list[1].enabled, true, '已有模型保留勾选');
   assert.equal(client.states[1], false);
   assert.equal(client.states[5], '');
   assert.deepEqual([...client.states[6]], []);
-  assert.match(client.states[3].text, /覆盖保存.*2/);
+  assert.match(client.states[3].text, /覆盖保存.*1/);
+});
+
+test('已勾选模型稳定置顶，取消已保存项后保存才下移，新勾选撤销后回到原分组', async () => {
+  let posted;
+  const initial = view({ models: [{ id: 'a', enabled: false }, { id: 'b' }, { id: 'c' }, { id: 'd', enabled: false }] });
+  const client = clientHarness(initial, async (_url, options) => {
+    posted = JSON.parse(options.body);
+    return response({ ...initial, config: resolveConfig(posted.config), revision: 'revision-two', sync: { ok: true, count: 1 } });
+  });
+  const labels = () => nodes(client.render(), (n) => n.props.className === 'model-select');
+  const order = () => labels().map((n) => n.props.title).join('');
+  const toggle = (id, checked) => labels().find((n) => n.props.title === id).children[0].props.onChange({ target: { checked } });
+
+  assert.equal(order(), 'bcad', '已保存勾选在首次渲染时置顶');
+  toggle('b', false);
+  assert.equal(order(), 'bcad', '取消已保存项后、保存前不移动');
+  toggle('d', true);
+  assert.equal(order(), 'bcda', '新勾选立即置顶');
+  toggle('d', false);
+  assert.equal(order(), 'bcad', '未保存的新勾选撤销后回到未置顶区');
+  await button(client.render(), '保存并同步').props.onClick();
+  assert.deepEqual(posted.config.models.map((m) => [m.id, m.enabled]), [['a', false], ['b', false], ['c', true], ['d', false]]);
+  assert.equal(order(), 'cabd', '保存后才取消 b 的置顶');
+});
+
+test('即时设置返回新快照后，待保存取消项仍保持置顶', async () => {
+  let saved = resolveConfig({ models: [{ id: 'a', enabled: false }, { id: 'b' }, { id: 'c' }, { id: 'd', enabled: false }] });
+  const client = clientHarness(view(saved), async (_url, options) => {
+    const body = JSON.parse(options.body);
+    saved = resolveConfig({ ...saved, ...body.patch });
+    return response({ ...view(saved), revision: 'revision-two', sync: { ok: true, count: 2 } });
+  });
+  const labels = () => nodes(client.render(), (n) => n.props.className === 'model-select');
+  const order = () => labels().map((n) => n.props.title).join('');
+  labels().find((n) => n.props.title === 'b').children[0].props.onChange({ target: { checked: false } });
+  assert.equal(order(), 'bcad');
+  await control(client.render(), '同步到 DSH').props.onChange({ target: { checked: true } });
+  assert.equal(order(), 'bcad', '已保存行对象重建也不能让取消项提前下移');
+  assert.equal(labels().find((n) => n.props.title === 'b').children[0].props.checked, false);
+  assert.equal(client.states[1], true, '模型勾选草稿仍未保存');
 });
 
 test('全量同步读取失败时保留未保存草稿、筛选和展开，DSH 更新失败明确显示', async () => {
@@ -318,11 +362,13 @@ test('筛选后的批量勾选只影响可见模型', () => {
 
 test('跨多行向下或向上插入，模型编辑、勾选及各自展开状态一起移动，保存提交新顺序', async () => {
   let posted;
-  const initial = view({ models: [{ id: 'a', enabled: false }, { id: 'b' }, { id: 'c' }, { id: 'd' }] });
+  const initial = view({ models: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }] });
   const client = clientHarness(initial, async (_url, options) => {
     posted = JSON.parse(options.body);
     return response({ ...initial, config: resolveConfig(posted.config), sync: { ok: true, count: 3 } });
   });
+  // 已保存项取消后仍留在原位置，便于继续拖动；保存时才按新的勾选状态重排。
+  nodes(client.render(), (n) => n.props.className === 'model-select')[0].children[0].props.onChange({ target: { checked: false } });
   field(client.render(), '显示名称').props.onChange({ target: { value: '未保存名称' } });
   field(client.render(), '思考档位（逗号分隔）').props.onChange({ target: { value: 'low,' } });
   nodes(client.render(), (n) => n.props.className === 'model-toggle')[0].props.onClick();
@@ -340,6 +386,18 @@ test('跨多行向下或向上插入，模型编辑、勾选及各自展开状�
   assert.deepEqual(posted.config.models.map((m) => m.id), ['b', 'a', 'c', 'd']);
   assert.equal(posted.config.models[1].name, '未保存名称');
   assert.equal(client.states[1], false);
+});
+
+test('置顶改变可见顺序后，拖放仍按落点调整同一置顶区内的顺序', () => {
+  const client = clientHarness(view({ models: [{ id: 'a', enabled: false }, { id: 'b' }, { id: 'c', enabled: false }, { id: 'd' }] }));
+  const order = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title).join('');
+  assert.equal(order(), 'bdac');
+  dragModel(client, 0, 1, true);
+  assert.equal(order(), 'dbac', 'b 拖到同为已勾选的 d 后面');
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['a', 'c', 'd', 'b']);
+  dragModel(client, 2, 3, true);
+  assert.equal(order(), 'dbca', '未置顶区也按可见落点移动');
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['c', 'a', 'd', 'b']);
 });
 
 test('搜索时拖动使用完整清单的位置，隐藏条目保持相对顺序且不会丢失', () => {
@@ -437,7 +495,7 @@ test('Flash 别名统一展示、搜索和排序，保存仍使用原始名称�
 test('按模型或供应商排序保留草稿、勾选和展开，点击保存后提交新顺序', async () => {
   let posted;
   const initial = view({ models: [
-    { id: 'zcode/ten', name: 'Model 10', enabled: false, input: ['text', 'image'], contextWindow: 1000000 },
+    { id: 'zcode/ten', name: 'Model 10', input: ['text', 'image'], contextWindow: 1000000 },
     { id: 'workbuddy-ai/two', name: 'Model 2 WorkBuddy GL' },
     { id: 'opencode-zen-free/two', name: 'Model 2' },
     { id: 'workbuddy/one', name: 'Model 1' },
@@ -447,6 +505,8 @@ test('按模型或供应商排序保留草稿、勾选和展开，点击保存�
     posted = JSON.parse(options.body);
     return response({ ...initial, config: resolveConfig(posted.config), sync: { ok: true, count: 4 } });
   });
+  // 取消的是已保存勾选，保存前仍保持原位置，不影响这组排序与展开状态断言。
+  nodes(client.render(), (n) => n.props.className === 'model-select')[0].children[0].props.onChange({ target: { checked: false } });
   field(client.render(), '思考档位（逗号分隔）').props.onChange({ target: { value: 'low,' } });
   nodes(client.render(), (n) => n.props.className === 'model-toggle')[0].props.onClick();
   nodes(client.render(), (n) => n.props.className === 'model-toggle')[3].props.onClick();
@@ -465,6 +525,48 @@ test('按模型或供应商排序保留草稿、勾选和展开，点击保存�
   await button(client.render(), '保存并同步').props.onClick();
   assert.deepEqual(posted.config.models.map((m) => m.id), ['opencode-zen-free/two', 'qoder-cn/ten', 'workbuddy/one', 'workbuddy-ai/two', 'zcode/ten']);
   assert.equal(client.states[1], false);
+});
+
+test('按模型或供应商分类显示分组标题，不改保存顺序，可退出分类或切回排序', () => {
+  const client = clientHarness(view({ models: [
+    { id: 'workbuddy/flash', name: 'Flash', enabled: false },
+    { id: 'qoder-cn/flash', name: 'Flash', enabled: false },
+    { id: 'workbuddy/alpha', name: 'Alpha', enabled: false },
+    { id: 'opencode-zen-free/beta', name: 'Beta', enabled: false },
+    { id: 'local-model', name: 'Local', enabled: false },
+  ] }));
+  const original = client.states[0].config.models;
+  const headers = () => nodes(client.render(), (n) => n.props.className === 'model-group');
+  const headerText = () => headers().map((n) => [n.children[0].children[0], n.children[1].children[0]]);
+  const ids = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title);
+
+  button(client.render(), '按模型分类').props.onClick();
+  assert.equal(button(client.render(), '按模型分类').props['aria-pressed'], true);
+  assert.deepEqual(headerText(), [['Alpha', 1], ['Beta', 1], ['Flash', 2], ['Local', 1]]);
+  assert.deepEqual(ids(), ['workbuddy/alpha', 'opencode-zen-free/beta', 'qoder-cn/flash', 'workbuddy/flash', 'local-model']);
+  assert.equal(client.states[0].config.models, original, '分类不重写配置数组');
+  assert.equal(client.states[1], false, '分类不是待保存修改');
+  assert.ok(handles(client.render()).every((n) => n.props.disabled), '分类时暂停拖动');
+
+  button(client.render(), '按供应商分类').props.onClick();
+  assert.equal(button(client.render(), '按模型分类').props['aria-pressed'], false);
+  assert.equal(button(client.render(), '按供应商分类').props['aria-pressed'], true);
+  assert.deepEqual(headerText(), [['OpenCode', 1], ['Qoder', 1], ['WorkBuddy', 2], ['未指定供应商', 1]]);
+  assert.deepEqual(ids(), ['opencode-zen-free/beta', 'qoder-cn/flash', 'workbuddy/alpha', 'workbuddy/flash', 'local-model']);
+
+  button(client.render(), '按供应商分类').props.onClick();
+  assert.equal(headers().length, 0, '再次点击当前分类退出');
+  button(client.render(), '按供应商分类').props.onClick();
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'Alpha' } });
+  assert.equal(button(client.render(), '按供应商分类').props.disabled, false, '只剩一个匹配项时仍能退出当前分类');
+  button(client.render(), '按供应商分类').props.onClick();
+  assert.equal(headers().length, 0);
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: '' } });
+  button(client.render(), '按供应商分类').props.onClick();
+  button(client.render(), '按模型排序').props.onClick();
+  assert.equal(headers().length, 0, '排序按钮退出分类');
+  assert.equal(client.states[1], true, '只有真正的排序才产生待保存修改');
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['workbuddy/alpha', 'opencode-zen-free/beta', 'qoder-cn/flash', 'workbuddy/flash', 'local-model']);
 });
 
 test('快速排序只重排搜索结果所在位置，隐藏条目、筛选及展开状态保留', () => {
@@ -712,6 +814,18 @@ test('默认排序按 Magpie 目录顺序排列，目录外的模型保持相对
   // 按模型排序后为 a、b、c、x、y；只重排可见的 p/ 三项，local 两项位置不动。
   assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['p/c', 'p/a', 'p/b', 'local/x', 'local/y']);
   assert.deepEqual([client.states[0].config.catalogOrder, client.states[0].config.manualOrder], [false, true]);
+});
+
+test('默认排序的目录外模型按原始配置顺序兜底，不受置顶显示影响', async () => {
+  const client = clientHarness(view({ models: [{ id: 'local/a', enabled: false }, { id: 'local/b' }] }), async () => response({ ok: true, ids: [] }));
+  const original = client.states[0].config.models;
+  const order = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title);
+  assert.deepEqual(order(), ['local/b', 'local/a'], '已勾选的 b 在展示中置顶');
+  await button(client.render(), '默认排序').props.onClick();
+  assert.equal(client.states[0].config.models, original, '目录外模型仍保持原配置数组和顺序');
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['local/a', 'local/b']);
+  assert.deepEqual(order(), ['local/b', 'local/a'], '仅目录顺序标记变化，不改变置顶展示');
+  assert.equal(client.states[0].config.catalogOrder, true);
 });
 
 test('默认排序读取失败时显示原因，不改草稿', async () => {

@@ -143,23 +143,25 @@ test('Key 写凭据库，GET 不回显；空输入沿用，环境变量不被表
   await assert.rejects(envManager.handle({ action: 'save', revision: view.revision, config, apiKey: 'replace-env' }), /不可写/);
 });
 
-test('全量同步以 Magpie 目录覆盖保存并更新 DSH，移除旧项和手工项，全部勾选', async () => {
+test('全量同步覆盖目录并保留已有勾选，新出现的模型默认不勾选', async () => {
   const calls = [];
   const host = setup({ fetchImpl: async (url) => { calls.push(url); return { ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie', version: 'test' } : { data: [{ id: 'workbuddy-ai/b', display_name: 'B', context_window: 1000000, max_output_tokens: 128000 }, { id: 'new/a', display_name: 'A' }] } }; } });
   host.own.options.config = { models: [{ id: 'workbuddy/disabled' }, { id: 'workbuddy-ai/b', name: '旧名字', enabled: false }, { id: 'manual' }] };
   const initial = await host.manager.describe();
-  const result = await host.manager.handle({ action: 'sync-catalog', revision: initial.revision, config: { ...initial.config, models: [{ id: '' }] } });
+  // 未完成的空手工条目会被目录修复；草稿里重新勾选的 b 必须保留，即使旧快照里它未勾选。
+  const result = await host.manager.handle({ action: 'sync-catalog', revision: initial.revision, config: { ...initial.config, models: [{ id: '' }, { id: 'workbuddy-ai/b', enabled: true }] } });
   assert.equal(result.saved, true);
   assert.equal(result.sync.ok, true);
   // 同步后按模型名称排序保存：A 在 B 前，与上游返回顺序无关。
   assert.deepEqual(result.config.models.map((m) => m.id), ['new/a', 'workbuddy-ai/b']);
   assert.equal(result.config.models[1].name, 'B');
   assert.equal(result.config.models[1].maxTokens, 128000);
-  assert.ok(result.config.models.every((m) => m.enabled));
+  assert.equal(result.config.models[0].enabled, false, '新模型只加入候选清单');
+  assert.equal(result.config.models[1].enabled, true, '按 ID 保留当前草稿的勾选');
   assert.equal(result.config.syncEnabled, true);
   assert.deepEqual(host.own.options.config.models, result.config.models);
-  assert.deepEqual(host.llm.options.config.providers[PROVIDER_ID].models.map((m) => m.id), ['new/a', 'workbuddy-ai/b']);
-  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[1].name, 'B WorkBuddy GL');
+  assert.deepEqual(host.llm.options.config.providers[PROVIDER_ID].models.map((m) => m.id), ['workbuddy-ai/b']);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].name, 'B WorkBuddy GL');
   assert.deepEqual(host.llm.options.config.providers.magpie.models, [{ id: 'native' }]);
   assert.deepEqual(host.llm.options.config.providers.unrelated.models, [{ id: 'keep' }]);
   assert.deepEqual(calls.map((url) => new URL(url).pathname), ['/api/hello', '/v1/models']);
@@ -266,12 +268,14 @@ test('手动排过序时，全量同步保留卡片上的顺序，新模型按�
   const host = setup({ fetchImpl: async (url) => ({ ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie' } : catalog }) });
   const initial = await host.manager.describe();
   // 卡片草稿里 Zeta 被拖到 Alpha 前；已删除的 gone 不会被带回。
-  const draft = { ...initial.config, manualOrder: true, models: [{ id: 'p/zeta' }, { id: 'p/gone' }, { id: 'p/alpha' }] };
+  const draft = { ...initial.config, manualOrder: true, models: [{ id: 'p/zeta', enabled: true }, { id: 'p/gone' }, { id: 'p/alpha', enabled: false }] };
   const result = await host.manager.handle({ action: 'sync-catalog', revision: initial.revision, config: draft });
   assert.deepEqual(result.config.models.map((m) => m.id), ['p/zeta', 'p/alpha', 'p/new-a', 'p/new-b']);
+  assert.deepEqual(result.config.models.map((m) => m.enabled), [true, false, false, false], '已有勾选与未勾选都保留，新模型不勾选');
   assert.equal(result.config.manualOrder, true);
   const automatic = await host.manager.handle({ action: 'sync-catalog', revision: result.revision, config: { ...result.config, manualOrder: false } });
   assert.deepEqual(automatic.config.models.map((m) => m.id), ['p/alpha', 'p/new-a', 'p/new-b', 'p/zeta']);
+  assert.deepEqual(automatic.config.models.map((m) => m.enabled), [false, false, false, true], '自动模型顺序也按 ID 保留选择');
 });
 
 test('开关即时修改只接受白名单字段和当前版本，不带入草稿；同步开关改完立即重写分组', async () => {
@@ -318,8 +322,9 @@ test('默认排序读取 Magpie 目录顺序且不改清单；选了目录顺序
   assert.deepEqual((await host.manager.handle({ action: 'catalog-order' })).ids, ['p/zeta', 'p/new-b', 'p/alpha']);
   assert.equal(host.own.options.config.models[0].id, 'manual/unlisted', '只读，不改清单');
   const current = await host.manager.describe();
-  const result = await host.manager.handle({ action: 'sync-catalog', revision: current.revision, config: { ...current.config, catalogOrder: true } });
+  const result = await host.manager.handle({ action: 'sync-catalog', revision: current.revision, config: { ...current.config, catalogOrder: true, models: [{ id: 'p/zeta', enabled: true }, { id: 'p/new-b', enabled: false }] } });
   assert.deepEqual(result.config.models.map((m) => m.id), ['p/zeta', 'p/new-b', 'p/alpha']);
+  assert.deepEqual(result.config.models.map((m) => m.enabled), [true, false, false], '目录顺序同样保留已有选择，新模型不勾选');
   assert.equal(result.config.catalogOrder, true);
   // 手动顺序优先于目录顺序。
   const { resolveConfig } = await import('../lib/config.js');

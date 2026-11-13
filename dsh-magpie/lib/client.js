@@ -21,6 +21,10 @@ window.__ModuleLoader__.load({
       catalogOrder: '当前为 Magpie 目录顺序：从 Magpie 同步会沿用 Magpie 的顺序。',
       sortModel: '按模型排序', sortProvider: '按供应商排序',
       sortModelHint: '对当前搜索结果按模型名称升序排列；对完整清单排序会恢复同步后自动排序', sortProviderHint: '对当前搜索结果按供应商简称、模型名称升序排列',
+      groupModel: '按模型分类', groupProvider: '按供应商分类', unknownProvider: '未指定供应商',
+      groupModelHint: '按模型名称分组显示，同名模型的不同供应商归为一组；再次点击退出分类',
+      groupProviderHint: '按供应商简称分组显示，同组内按模型名称排列；再次点击退出分类',
+      groupedHint: '分类只改变当前展示，不保存顺序；分类时暂停拖动。再次点击当前分类按钮或点击排序按钮返回普通列表。',
       manualOrder: '当前为手动顺序：从 Magpie 同步会保留现有顺序，新模型排在末尾。不搜索时点击「默认排序」或「按模型排序」可恢复自动排序。',
       all: '全选', none: '取消全选', empty: '清单为空。添加模型，或从正在运行的 Magpie 同步。',
       noMatch: '没有匹配的模型。', id: '完整模型 ID', modelName: '显示名称', nameHint: '留空使用模型 ID',
@@ -95,6 +99,10 @@ window.__ModuleLoader__.load({
       catalogOrder: 'Magpie order: syncing from Magpie keeps the order Magpie lists them in.',
       sortModel: 'Sort by model', sortProvider: 'Sort by provider',
       sortModelHint: 'Sort matching models by name, ascending; sorting the full list restores automatic ordering after sync', sortProviderHint: 'Sort matching models by short provider name, then model name, ascending',
+      groupModel: 'Group by model', groupProvider: 'Group by provider', unknownProvider: 'No provider',
+      groupModelHint: 'Group rows by model name, putting the same model from different providers together; click again to leave the grouped view',
+      groupProviderHint: 'Group rows by short provider name and sort models within each group; click again to leave the grouped view',
+      groupedHint: 'Grouping only changes this view and does not save a new order. Dragging is paused while grouped. Click the active grouping button or a sort button to return to the normal list.',
       manualOrder: 'Manual order: syncing from Magpie keeps the current order and adds new models at the end. Clear the search and click “Default order” or “Sort by model” to restore automatic ordering.',
       all: 'Select all', none: 'Deselect all', empty: 'The list is empty. Add models or sync from a running Magpie.',
       noMatch: 'No matching models.', id: 'Full model ID', modelName: 'Display name', nameHint: 'Defaults to model ID',
@@ -181,6 +189,14 @@ window.__ModuleLoader__.load({
     let nextRowKey = 0;
     const keyOf = (row) => { if (!rowKeys.has(row)) rowKeys.set(row, `m${++nextRowKey}`); return rowKeys.get(row); };
     const keepKey = (previous, next) => { rowKeys.set(next, keyOf(previous)); return next; };
+    // 草稿随编辑变化，另存一份已保存清单用于稳定置顶。即时开关会重建已保存行，
+    // 这时按 ID 接回旧 key，草稿里已取消但尚未保存的模型才不会因对象换了一批而提前下移。
+    const withSavedModels = (value, previous) => {
+      const oldModels = previous?.savedModels ?? previous?.config?.models ?? [];
+      const oldById = new Map(oldModels.map((row) => [row.id, row]));
+      for (const row of value.config.models) if (oldById.has(row.id)) keepKey(oldById.get(row.id), row);
+      return { ...value, savedModels: value.config.models };
+    };
     // 排序后各行滑到新位置的时长；拖动中让位的过渡写在样式里，两者保持一致。
     const REORDER_MS = 200;
     const TABS = [['models', 'tabModels'], ['connection', 'tabConnection'], ['preferences', 'tabPreferences'], ['updates', 'tabUpdates']];
@@ -232,7 +248,7 @@ window.__ModuleLoader__.load({
       /* 沿用 DSH 自家主按钮的配色令牌（深色主题为浅底深字）。宿主的 brand-primary-invert 与 brand-primary 同值，不能当文字色。 */
       .dsm-mp button.primary{background:var(--dsw-alias-button-primary-fill,#0f1115);border-color:transparent;color:var(--dsw-alias-label-primary-foreground,#fff);font-weight:500}
       .dsm-mp button.primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#43454a)}.dsm-mp button.primary:disabled{background:var(--mp-fill);color:var(--mp-dimmed)}
-      .dsm-mp button.ghost{border-color:transparent;padding:3px 8px;color:var(--mp-muted)}.dsm-mp button.ghost:hover:not(:disabled){color:var(--mp-fg)}.dsm-mp button.danger{color:var(--mp-error)}
+      .dsm-mp button.ghost{border-color:transparent;padding:3px 8px;color:var(--mp-muted)}.dsm-mp button.ghost:hover:not(:disabled){color:var(--mp-fg)}.dsm-mp button.ghost.active{background:var(--mp-fill);color:var(--mp-fg)}.dsm-mp button.danger{color:var(--mp-error)}
       .dsm-mp input:not([type=checkbox]),.dsm-mp select{width:100%;min-width:0;padding:6px 10px;border:1px solid var(--mp-border);border-radius:8px;background:transparent;color:inherit;font:inherit;line-height:20px}
       .dsm-mp select option{background:var(--mp-bg);color:var(--mp-fg)}.dsm-mp input::placeholder{color:var(--mp-faint)}
       .dsm-mp input[type=checkbox]{accent-color:var(--mp-accent)}
@@ -276,6 +292,8 @@ window.__ModuleLoader__.load({
       .dsm-mp .divider{width:1px;height:14px;margin:0 6px;background:var(--mp-border)}
       .dsm-mp .empty{margin-top:12px;padding:28px 16px;border:1px dashed var(--mp-border);border-radius:10px;text-align:center;color:var(--mp-muted)}
       .dsm-mp .model-list{margin-top:6px;display:flex;flex-direction:column;gap:2px}.dsm-mp .model{border:1px solid transparent;border-radius:8px;min-width:0}
+      .dsm-mp .model-group{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:12px 4px 3px;padding-bottom:4px;border-bottom:1px solid var(--mp-border-soft);color:var(--mp-muted);font-size:12px;font-weight:600}
+      .dsm-mp .model-group:first-child{margin-top:4px}.dsm-mp .model-group .count{font-weight:400;color:var(--mp-faint)}
       .dsm-mp .model:hover,.dsm-mp .model.expanded{background:var(--mp-fill)}.dsm-mp .model.expanded{border-color:var(--mp-border)}
       .dsm-mp .model-header{display:flex;align-items:center;gap:6px;padding:5px 8px;min-width:0;min-height:40px}.dsm-mp .model-select{display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer}
       .dsm-mp .model-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dsm-mp .model input[type=checkbox]{margin:0;flex:none}
@@ -397,22 +415,41 @@ window.__ModuleLoader__.load({
       return !supplier || name.toLowerCase() === supplier.toLowerCase() || name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)
         ? name : `${name} ${supplier}`;
     }
+    const modelCollator = new Intl.Collator(['zh-CN', 'en'], { numeric: true, sensitivity: 'base' });
+    const compareModelText = (a, b) => a && b ? modelCollator.compare(a, b) : a ? -1 : b ? 1 : 0;
+    function modelKeys(row, providers = {}) {
+      const slash = row.id.indexOf('/');
+      const provider = slash > 0 ? row.id.slice(0, slash) : '';
+      const supplier = Object.hasOwn(providers, provider) ? providers[provider] : provider;
+      let name = (row.name || row.id).trim();
+      if (name === row.id && slash > 0) name = row.id.slice(slash + 1);
+      // 展示名称可能已经带供应商后缀；分类和排序都只取模型本名。
+      if (supplier && name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)) name = name.slice(0, -supplier.length - 1).trimEnd();
+      return { name: normalizeDisplayName(name), supplier };
+    }
     function sortModelIndexes(rows, mode, providers = {}) {
-      const collator = new Intl.Collator(['zh-CN', 'en'], { numeric: true, sensitivity: 'base' });
-      const compare = (a, b) => a && b ? collator.compare(a, b) : a ? -1 : b ? 1 : 0;
-      const keys = rows.map((row, index) => {
-        const slash = row.id.indexOf('/');
-        const provider = slash > 0 ? row.id.slice(0, slash) : '';
-        const supplier = Object.hasOwn(providers, provider) ? providers[provider] : provider;
-        let name = (row.name || row.id).trim();
-        if (name === row.id && slash > 0) name = row.id.slice(slash + 1);
-        // 展示名称可能已经带供应商后缀；按模型排序时把后缀作为次级键。
-        if (supplier && name.toLowerCase().endsWith(` ${supplier.toLowerCase()}`)) name = name.slice(0, -supplier.length - 1).trimEnd();
-        return { index, name: normalizeDisplayName(name), supplier };
-      });
+      const keys = rows.map((row, index) => ({ index, ...modelKeys(row, providers) }));
       return keys.sort((a, b) => mode === 'provider'
-        ? compare(a.supplier, b.supplier) || compare(a.name, b.name) || a.index - b.index
-        : compare(a.name, b.name) || compare(a.supplier, b.supplier) || a.index - b.index).map(({ index }) => index);
+        ? compareModelText(a.supplier, b.supplier) || compareModelText(a.name, b.name) || a.index - b.index
+        : compareModelText(a.name, b.name) || compareModelText(a.supplier, b.supplier) || a.index - b.index).map(({ index }) => index);
+    }
+    /** 分类只是展示层：组间按键值排序，组内已勾选优先，再按另一个维度排列，不改写模型清单。 */
+    function groupModels(visible, mode, providers, pinned, emptyLabels) {
+      const groups = new Map();
+      visible.forEach((entry, order) => {
+        const keys = modelKeys(entry.row, providers);
+        const value = mode === 'provider' ? keys.supplier : keys.name;
+        const label = value || emptyLabels[mode];
+        const key = label.toLowerCase();
+        if (!groups.has(key)) groups.set(key, { key: `${mode}:${key}`, label, empty: !value, items: [] });
+        groups.get(key).items.push({ entry, order, ...keys });
+      });
+      return [...groups.values()].sort((a, b) => compareModelText(a.empty ? '' : a.label, b.empty ? '' : b.label) || a.key.localeCompare(b.key)).map((group) => ({
+        ...group,
+        items: group.items.sort((a, b) => Number(pinned(b.entry.row)) - Number(pinned(a.entry.row))
+          || (mode === 'provider' ? compareModelText(a.name, b.name) || compareModelText(a.supplier, b.supplier) : compareModelText(a.supplier, b.supplier) || compareModelText(a.name, b.name))
+          || a.order - b.order),
+      }));
     }
 
     function errorText(error) {
@@ -854,6 +891,7 @@ window.__ModuleLoader__.load({
       const updater = useUpdater(pluginUpdater);
       const [tab, setTab] = useState('models');
       const [gateway, setGateway] = useState(null);
+      const [groupMode, setGroupMode] = useState(null);
       const listRef = useRef(null);
       const positions = useRef(new Map());
       const cardRef = useRef(null);
@@ -914,7 +952,7 @@ window.__ModuleLoader__.load({
       const failure = (error) => ({ error: true, text: error?.code === 'INVALID_JSON' ? `${t('invalidJson')}（${error.message}）` : error.message });
       useEffect(() => {
         let active = true;
-        request().then((value) => { publishConfig(value.config); if (active) setView(value); }).catch((error) => { if (active) setNotice(failure(error)); });
+        request().then((value) => { const next = withSavedModels(value); publishConfig(next.config); if (active) setView(next); }).catch((error) => { if (active) setNotice(failure(error)); });
         return () => { active = false; };
       }, []);
       const operation = view?.backend?.operation;
@@ -958,12 +996,12 @@ window.__ModuleLoader__.load({
         try { await run(); } catch (error) { setNotice(failure(error)); }
         finally { setBusy(false); }
       };
-      const reload = () => perform(async () => { const value = await request(); publishConfig(value.config); setView(value); setDirty(false); setKey(''); setExpanded(new Set()); }, 'reload');
+      const reload = () => perform(async () => { const value = withSavedModels(await request()); publishConfig(value.config); setView(value); setDirty(false); setKey(''); setExpanded(new Set()); }, 'reload');
       const button = (text, click, extra = {}) => h('button', { type: 'button', disabled: busy, onClick: click, ...extra }, text);
       if (!view) return h('section', { className: 'dsm-mp', ref: showPanelFromTop }, h('header', { className: 'head' }, h('div', { className: 'title' }, h(MagpieGlyph, { size: 20 }), h('h3', null, t('title')))),
         h('div', { className: 'panel' }, notice ? h('p', { className: 'notice error', role: 'alert' }, notice.text) : h('p', { className: 'muted loading' }, t('loading')), h('div', { className: 'bar', style: { marginTop: 12 } }, button(t('reload'), reload, { 'aria-busy': modelBusy === 'reload' }))));
       const config = view.config;
-      const update = (patch) => { setView((v) => ({ ...v, config: { ...v.config, ...patch } })); setDirty(true); };
+      const update = (patch) => { setView((v) => ({ ...v, savedModels: v.savedModels ?? v.config.models, config: { ...v.config, ...patch } })); setDirty(true); };
       const rows = config.models;
       const labelFor = (row) => displayModelName(row, view.providerNames) || t('newModel');
       const updateRow = (index, patch) => update({ models: rows.map((row, i) => i === index ? keepKey(row, { ...row, ...patch }) : row) });
@@ -984,7 +1022,7 @@ window.__ModuleLoader__.load({
       const applyNow = (patch) => perform(async () => {
         const result = await request({ action: 'patch', patch, revision: view.revision });
         publishConfig(result.config);
-        setView((old) => ({ ...result, config: { ...old.config, ...patch } }));
+        setView((old) => ({ ...withSavedModels(result, old), config: { ...old.config, ...patch } }));
         if (result.sync && !result.sync.ok) setNotice({ error: true, text: t('saveFailed', { reason: result.sync.reason }) });
       });
       const setKeepAwake = (keepAwake) => perform(async () => {
@@ -999,18 +1037,32 @@ window.__ModuleLoader__.load({
       const magpieSettings = view.magpieSettings;
       const syncCatalog = () => perform(async () => {
         const result = await request({ action: 'sync-catalog', config, revision: view.revision, apiKey: key || undefined });
-        publishConfig(result.config); setView(result); setDirty(false); setKey(''); setSearch(''); setExpanded(new Set());
+        publishConfig(result.config); setView(withSavedModels(result)); setDirty(false); setKey(''); setSearch(''); setExpanded(new Set());
         dragSource.current = null; setDrag(null);
         setNotice({ error: !result.sync.ok, text: result.sync.ok ? t('mirrored', { count: result.sync.count }) : t('saveFailed', { reason: result.sync.reason }) });
       }, 'sync-catalog');
       const save = () => perform(async () => {
         const result = await request({ action: 'save', config, revision: view.revision, apiKey: key || undefined });
-        publishConfig(result.config); setView(result); setDirty(false); setKey('');
+        publishConfig(result.config); setView(withSavedModels(result)); setDirty(false); setKey('');
         setNotice({ error: !result.sync.ok, text: result.sync.ok ? t('saved', { count: result.sync.count }) : t('saveFailed', { reason: result.sync.reason }) });
       }, 'save');
-      const visible = rows.map((row, index) => ({ row, index })).filter(({ row }) => `${row.id} ${labelFor(row)}`.toLowerCase().includes(search.toLowerCase()));
+      // 与 WorkBuddy 一致：当前勾选和已保存勾选都在置顶区；取消已保存项后不立即抽走，保存成功才下移。
+      const savedSelected = new Set((view.savedModels ?? rows).filter((row) => row.enabled).map(keyOf));
+      const pinned = (row) => row.enabled || savedSelected.has(keyOf(row));
+      const visible = rows.map((row, index) => ({ row, index }))
+        .filter(({ row }) => `${row.id} ${labelFor(row)}`.toLowerCase().includes(search.toLowerCase()))
+        .sort((a, b) => Number(pinned(b.row)) - Number(pinned(a.row)));
+      const groups = groupMode ? groupModels(visible, groupMode, view.providerNames, pinned, { model: t('newModel'), provider: t('unknownProvider') }) : null;
+      const displayItems = groups ? groups.flatMap((group) => [
+        { group }, ...group.items.map(({ entry, order }) => ({ item: entry, position: order })),
+      ]) : visible.map((item, position) => ({ item, position }));
       const visibleIndexes = new Set(visible.map(({ index }) => index));
       const selectVisible = (enabled) => update({ models: rows.map((m, i) => visibleIndexes.has(i) ? keepKey(m, { ...m, enabled }) : m) });
+      const toggleGroup = (mode) => {
+        if (busy || (groupMode !== mode && visible.length < 2)) return;
+        dragSource.current = null; setDrag(null);
+        setGroupMode((current) => current === mode ? null : mode);
+      };
       // 排序模式决定「从 Magpie 同步」的顺序：model 按模型名称（默认）、catalog 沿用 Magpie 目录、manual 保留现有顺序。
       // 拖动、按供应商排序、只排部分搜索结果都算手动；对完整清单按模型或默认排序则恢复对应的自动顺序。
       const orderMode = config.manualOrder ? 'manual' : config.catalogOrder ? 'catalog' : 'model';
@@ -1025,12 +1077,15 @@ window.__ModuleLoader__.load({
       // 只替换匹配条目所在的位置，隐藏模型原位置不动；sorted 是可见条目的新排列。
       const applySorted = (sorted, mode) => {
         const order = rows.map((_row, i) => i);
-        visible.forEach(({ index }, i) => { order[index] = visible[sorted[i]].index; });
+        // 置顶和分类会改变 visible 的展示顺序；配置位置必须按原始下标排列，不能把显示位置当成保存位置。
+        const positions = visible.map(({ index }) => index).sort((a, b) => a - b);
+        positions.forEach((index, i) => { order[index] = visible[sorted[i]].index; });
         reorder(order, visible.length === rows.length ? mode : 'manual');
         dragSource.current = null; setDrag(null);
       };
       const sort = (mode) => {
         if (busy || visible.length < 2) return;
+        setGroupMode(null);
         applySorted(sortModelIndexes(visible.map(({ row }) => row), mode, view.providerNames), mode === 'model' ? 'model' : 'manual');
       };
       // 默认排序：按 Magpie 当前目录的顺序；目录里没有的（手动添加等）保持原相对顺序排在后面。
@@ -1038,7 +1093,9 @@ window.__ModuleLoader__.load({
         const { ids } = await request({ action: 'catalog-order', baseURL: config.baseURL, apiKey: key || undefined });
         const rank = new Map(ids.map((id, i) => [id, i]));
         const position = (i) => rank.get(visible[i].row.id) ?? ids.length;
-        applySorted(visible.map((_v, i) => i).sort((a, b) => position(a) - position(b) || a - b), 'catalog');
+        setGroupMode(null);
+        // 目录外模型同秩时必须按原始配置下标保持相对顺序，不能用置顶后的 visible 位置兜底。
+        applySorted(visible.map((_v, i) => i).sort((a, b) => position(a) - position(b) || visible[a].index - visible[b].index), 'catalog');
       }, 'sort-default');
       // 拖动：其它行实时让出空位（样式过渡），松手后各行已在目标位置，直接换成新顺序。
       // 落点按列表里各行未位移的布局位置计算，让位的位移不会反过来改变落点。
@@ -1056,15 +1113,19 @@ window.__ModuleLoader__.load({
         setTimeout(() => setDrag((old) => old?.ending ? null : old), REORDER_MS);
       };
       // 只接受本卡片手柄发起的拖动；外部文本、另一张卡片及已过期的草稿不能触发排序。
-      const canDrop = () => !busy && dragSource.current?.rows === rows;
+      const canDrop = () => !busy && !groupMode && dragSource.current?.rows === rows;
       const dropAt = (slot) => {
         const source = dragSource.current.index;
         dragSource.current = null; setDrag(null);
         // 落在自己原来的位置（上下两侧的空隙）不算移动，搜索时也不会挪动夹在中间的隐藏模型。
         const at = visible.findIndex(({ index }) => index === source);
         if (slot === at || slot === at + 1) return;
-        const target = visible[Math.min(slot, visible.length - 1)].index + Number(slot >= visible.length);
-        move(source, target > source ? target - 1 : target);
+        // visible 可能经过置顶而不同于配置顺序。向下落在前一可见项之后、向上落在后一可见项之前，
+        // 再按源项是否先从配置中移除换算最终下标；搜索时其它隐藏项仍只随源项让位。
+        const target = slot < at
+          ? visible[slot].index - Number(source < visible[slot].index)
+          : visible[slot - 1].index + Number(source > visible[slot - 1].index);
+        move(source, target);
       };
       const sourceAt = drag ? visible.findIndex(({ index }) => index === drag.source) : -1;
       // 拖动中每行的位移：被拖的行移到落点，途经的行向反方向让出它的高度。
@@ -1126,16 +1187,23 @@ window.__ModuleLoader__.load({
         },
         onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDrag((old) => old ? { ...old, slot: undefined } : null); },
         onDrop: (event) => { if (!canDrop()) return; event.preventDefault(); dropAt(slotAt(event)); },
-      }, ...visible.map(({ row: model, index }, position) => { const shift = shiftOf(position); return h('div', {
-        className: `model${expanded.has(index) ? ' expanded' : ''}${drag?.source === index ? ' dragging' : ''}`, key: keyOf(model),
-        'data-key': keyOf(model), 'data-shift': shift || undefined, style: shift ? { transform: `translateY(${shift}px)` } : undefined,
-      },
+      }, ...displayItems.map((display) => {
+        if (display.group) {
+          const { group } = display;
+          return h('h4', { className: 'model-group', key: group.key, 'data-key': `group-${group.key}` }, h('span', null, group.label), h('span', { className: 'count' }, group.items.length));
+        }
+        const { row: model, index } = display.item, position = display.position;
+        const shift = shiftOf(position);
+        return h('div', {
+          className: `model${expanded.has(index) ? ' expanded' : ''}${drag?.source === index ? ' dragging' : ''}`, key: keyOf(model),
+          'data-key': keyOf(model), 'data-shift': shift || undefined, style: shift ? { transform: `translateY(${shift}px)` } : undefined,
+        },
         h('div', { className: 'model-header' },
           button(h('svg', { viewBox: '0 0 16 20', fill: 'currentColor', 'aria-hidden': true }, ...[5, 10, 15].flatMap((cy) => [5, 11].map((cx) => h('circle', { key: `${cx}-${cy}`, cx, cy, r: 1.4 })))), undefined, {
-            className: 'model-drag', draggable: !busy && rows.length > 1, disabled: busy || rows.length < 2,
+            className: 'model-drag', draggable: !busy && !groupMode && rows.length > 1, disabled: busy || Boolean(groupMode) || rows.length < 2,
             title: t('drag', { name: labelFor(model) }), 'aria-label': t('drag', { name: labelFor(model) }),
             onDragStart: (event) => {
-              if (busy || rows.length < 2) { event.preventDefault(); return; }
+              if (busy || groupMode || rows.length < 2) { event.preventDefault(); return; }
               // 各可见行连同行距的高度，供让位计算；拖动期间布局不变，开始时量一次即可。
               const items = [...(event.currentTarget.closest?.('.model-list')?.children ?? [])];
               const sizes = items.map((node, i) => items[i + 1] ? items[i + 1].offsetTop - node.offsetTop : node.offsetHeight);
@@ -1146,7 +1214,7 @@ window.__ModuleLoader__.load({
               setTimeout(() => { if (dragSource.current === current) setDrag((old) => old ?? { source: index, sizes }); }, 0);
             }, onDragEnd: endDrag,
             onKeyDown: (event) => {
-              if (busy || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+              if (busy || groupMode || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
               const neighbor = visible[visible.findIndex((item) => item.index === index) + (event.key === 'ArrowUp' ? -1 : 1)];
               if (!neighbor) return;
               event.preventDefault();
@@ -1180,8 +1248,11 @@ window.__ModuleLoader__.load({
               h('span', { className: 'divider', 'aria-hidden': true }),
               button(t('sortDefault'), sortDefault, { className: 'ghost', title: t('sortDefaultHint'), disabled: busy || visible.length < 2, 'aria-busy': modelBusy === 'sort-default' }),
               button(t('sortModel'), () => sort('model'), { className: 'ghost', title: t('sortModelHint'), disabled: busy || visible.length < 2 }),
-              button(t('sortProvider'), () => sort('provider'), { className: 'ghost', title: t('sortProviderHint'), disabled: busy || visible.length < 2 }))),
-          rows.length && orderMode !== 'model' ? h('p', { className: 'hint' }, t(orderMode === 'manual' ? 'manualOrder' : 'catalogOrder')) : null,
+              button(t('sortProvider'), () => sort('provider'), { className: 'ghost', title: t('sortProviderHint'), disabled: busy || visible.length < 2 }),
+              h('span', { className: 'divider', 'aria-hidden': true }),
+              button(t('groupModel'), () => toggleGroup('model'), { className: `ghost${groupMode === 'model' ? ' active' : ''}`, title: t('groupModelHint'), 'aria-pressed': groupMode === 'model', disabled: busy || (groupMode !== 'model' && visible.length < 2) }),
+              button(t('groupProvider'), () => toggleGroup('provider'), { className: `ghost${groupMode === 'provider' ? ' active' : ''}`, title: t('groupProviderHint'), 'aria-pressed': groupMode === 'provider', disabled: busy || (groupMode !== 'provider' && visible.length < 2) }))),
+          rows.length && groupMode ? h('p', { className: 'hint' }, t('groupedHint')) : rows.length && orderMode !== 'model' ? h('p', { className: 'hint' }, t(orderMode === 'manual' ? 'manualOrder' : 'catalogOrder')) : null,
           !rows.length ? h('p', { className: 'empty' }, t('empty')) : !visible.length ? h('p', { className: 'empty' }, t('noMatch')) : null,
           modelList,
         ],
@@ -1331,6 +1402,6 @@ window.__ModuleLoader__.load({
       registerSidebar(ctx, t, pluginUpdater);
     }
     // remote 只为官方插件管理器与它的事件；pluginManager 由 connectPluginManager 动态接上，旧宿主没有它也能加载。
-    return { name: 'dsh-magpie-client', inject: ['slots', 'locale', 'remote'], apply, ModelsCard, MagpiePage, MagpieGlyph, sidebarVisible, moveModel, displayModelName, sortModelIndexes, renderUpdateSection, createPluginUpdater, connectPluginManager, zh, en };
+    return { name: 'dsh-magpie-client', inject: ['slots', 'locale', 'remote'], apply, ModelsCard, MagpiePage, MagpieGlyph, sidebarVisible, moveModel, displayModelName, sortModelIndexes, groupModels, renderUpdateSection, createPluginUpdater, connectPluginManager, zh, en };
   },
 });
