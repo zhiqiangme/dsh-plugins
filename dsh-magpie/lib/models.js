@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { gatewayURL, isLocal, KEY_REF, LOCAL_KEY, object, PROVIDER_ID, REASONING_LEVELS, normalizeModel } from './config.js';
 import { displayModelName } from './names.js';
-import { planAutoRoute, routeKey, ROUTER_BASE_PATH } from './auto-route.js';
+import { AUTO_PREFIX, planAutoRoute, routeKey, ROUTER_BASE_PATH } from './auto-route.js';
 
 export const LLM_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
 export function findEntry(editor, name, id) {
@@ -86,11 +86,22 @@ function replaceModelRefs(value, provider, swap) {
 }
 
 /** auto 开关改变条目 ID 后修复其它插件引用；同步主清单失败时不阻断，单独报告。 */
-export async function retargetModelRefs({ editor, entries }) {
+export async function retargetModelRefs({ editor, entries, routes }) {
   const current = new Set(entries.map((entry) => entry.id));
   const byKey = new Map();
   for (const entry of entries) if (!byKey.has(routeKey(entry.id))) byKey.set(routeKey(entry.id), entry.id);
-  const swap = (id) => current.has(id) ? id : byKey.get(routeKey(id)) ?? id;
+  // 按名合并后旧引用可能指向被并掉的别名 ID（含 auto: 前缀或裸 ID），用候选成员反查合并条目。
+  const byId = new Map();
+  for (const [autoId, members] of routes ?? []) for (const member of members) {
+    if (!byId.has(member.id)) byId.set(member.id, autoId);
+    const bare = member.id.includes('/') ? member.id.slice(member.id.indexOf('/') + 1) : member.id;
+    if (!byId.has(bare)) byId.set(bare, autoId);
+  }
+  const swap = (id) => {
+    if (current.has(id)) return id;
+    const bare = id.startsWith(AUTO_PREFIX) ? id.slice(AUTO_PREFIX.length) : id;
+    return byId.get(id) ?? byId.get(bare) ?? byKey.get(routeKey(id)) ?? id;
+  };
   let count = 0;
   try {
     for (const target of editor.entries?.() ?? []) {
@@ -145,6 +156,10 @@ export async function syncModels(config, { editor, credentials, env = process.en
     }
   }
   if (planned.changed) await editor.edit(target, (current) => withProvider(current, config, { routeOrigin }).config);
-  const refs = await retargetModelRefs({ editor, entries: config.enabled && config.syncEnabled ? modelEntries(config) : [] });
+  const refs = await retargetModelRefs({
+    editor,
+    entries: config.enabled && config.syncEnabled ? modelEntries(config) : [],
+    routes: config.enabled && config.syncEnabled && config.autoRoute ? planAutoRoute(config).routes : undefined,
+  });
   return { state: planned.changed ? 'updated' : 'unchanged', count: config.enabled && config.syncEnabled ? planned.count : 0, refs };
 }

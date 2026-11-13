@@ -6,6 +6,8 @@ export const ROUTER_BASE_PATH = '/plugins/dsh-magpie/router';
 /** 上游快照的月日版本号与计费档位；没有这些明确标记时不猜测。 */
 const MODEL_VERSION_SUFFIX = /-(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/;
 const MODEL_TIER_SUFFIX = /(?<=[a-z0-9])[-_]?(free|std)$/i;
+/** Preview 与中文“预览版”是同一变体标记，合并时不算型号差异。 */
+const MODEL_PREVIEW_SUFFIX = /[-_\s]?(preview|预览版)$/i;
 
 /**
  * 同款模型的合并键：供应商只看路由前缀，型号看裸 ID，不按 DeepSeek / GLM 大系列合并。
@@ -16,7 +18,16 @@ export function routeKey(id) {
   if (text.startsWith(AUTO_PREFIX)) text = text.slice(AUTO_PREFIX.length);
   const slash = text.indexOf('/');
   if (slash >= 0) text = text.slice(slash + 1);
-  return text.toLowerCase().replace(MODEL_VERSION_SUFFIX, '').replace(MODEL_TIER_SUFFIX, '');
+  return text.toLowerCase().replace(MODEL_VERSION_SUFFIX, '').replace(MODEL_TIER_SUFFIX, '').replace(MODEL_PREVIEW_SUFFIX, '');
+}
+
+/**
+ * 别名 ID（如 frontier-1 / qmodel_latest）看不出同款，只能靠显示名识别。
+ * 仅带版本号的名称才参与按名合并：search_agent_qwen_fast 这类通用别名同名也不并，避免误合不同模型。
+ */
+function nameKey(row) {
+  const text = displayModelName(row, {}).toLowerCase().replace(/[\s_-]+/g, '-').replace(MODEL_PREVIEW_SUFFIX, '');
+  return /\d/.test(text) ? text : '';
 }
 
 function smallest(members, field) {
@@ -43,11 +54,16 @@ function mergedEntry(key, members) {
  */
 export function planAutoRoute(config) {
   const groups = new Map();
+  const byName = new Map();
   for (const row of config.models) {
     if (!row.enabled) continue;
-    const key = routeKey(row.id);
+    const idKey = routeKey(row.id);
+    const named = nameKey(row);
+    // ID 键优先；ID 看不出同款时按带版本号的显示名归组（Preview / 预览版已等价）。
+    const key = groups.has(idKey) ? idKey : (named && byName.get(named)) || idKey;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(row);
+    if (named && !byName.has(named)) byName.set(named, key);
   }
   const entries = [], routes = new Map();
   for (const [key, members] of groups) {

@@ -149,3 +149,16 @@ test('自动路由写入合并条目与本机地址，开关往返修复默认�
   const anthropic = withProvider({}, resolveConfig({ ...config, api: 'anthropic-messages' }), { routeOrigin: 'http://127.0.0.1:9876' });
   assert.equal(anthropic.config.providers[PROVIDER_ID].baseURL, `http://127.0.0.1:9876${ROUTER_BASE_PATH}`);
 });
+
+test('按名合并后旧别名引用（auto: 前缀与裸 ID）反查到合并条目', async () => {
+  const host = fakeHost({ syncEnabled: true, autoRoute: true, models: [
+    { id: 'qwenwork/frontier-1', name: 'Qwen4-Max 预览版' },
+    { id: 'qoder-cn/qmodel_latest', name: 'Qwen4-Max-Preview' },
+  ] });
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'auto:qmodel_latest' };
+  host.llm.options.config.allowedModels = [{ provider: PROVIDER_ID, model: 'qoder-cn/qmodel_latest' }];
+  const result = await syncModels(resolveConfig(host.own.options.config), { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' });
+  assert.equal(result.refs.state, 'updated');
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:frontier-1' });
+  assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'auto:frontier-1' }]);
+});
