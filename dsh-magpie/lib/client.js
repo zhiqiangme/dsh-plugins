@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
       catalogOrder: '当前为 Magpie 目录顺序：从 Magpie 同步会沿用 Magpie 的顺序。',
       sortModel: '按模型排序', sortProvider: '按供应商排序',
       sortModelHint: '对当前搜索或分类结果按模型名称升序排列；对完整清单排序会恢复同步后自动排序', sortProviderHint: '对当前搜索或分类结果按供应商简称、模型名称升序排列',
-      groupModel: '按模型分类', groupProvider: '按供应商分类', allModels: '全部模型', allProviders: '全部供应商', unknownProvider: '未指定供应商',
+      groupModel: '按模型分类', groupProvider: '按供应商分类', allModels: '全部模型', allProviders: '全部供应商', otherModel: '其他', unknownProvider: '未指定供应商',
       groupModelHint: '选择 DeepSeek、GLM 等模型系列，只显示该系列模型；选择「全部模型」取消筛选',
       groupProviderHint: '选择供应商后只显示该供应商的模型；选择「全部供应商」取消筛选',
       groupedHint: '分类只筛选当前展示，可与搜索、排序和拖放组合使用，不修改勾选或保存顺序。',
@@ -99,7 +99,7 @@ window.__ModuleLoader__.load({
       catalogOrder: 'Magpie order: syncing from Magpie keeps the order Magpie lists them in.',
       sortModel: 'Sort by model', sortProvider: 'Sort by provider',
       sortModelHint: 'Sort matching models by name, ascending; sorting the full list restores automatic ordering after sync', sortProviderHint: 'Sort matching models by short provider name, then model name, ascending',
-      groupModel: 'Filter by model', groupProvider: 'Filter by provider', allModels: 'All models', allProviders: 'All providers', unknownProvider: 'No provider',
+      groupModel: 'Filter by model', groupProvider: 'Filter by provider', allModels: 'All models', allProviders: 'All providers', otherModel: 'Other', unknownProvider: 'No provider',
       groupModelHint: 'Show only a model family such as DeepSeek or GLM; choose “All models” to clear this filter',
       groupProviderHint: 'Show only models from the selected provider; choose “All providers” to clear this filter',
       groupedHint: 'Filters only change the current view. They work with search, sorting and dragging, and do not change selections or the saved order.',
@@ -439,11 +439,15 @@ window.__ModuleLoader__.load({
       // Kimi-K3、Claude-Sonnet 等子系列在前面的名称没有数字时，取首个名称段作为系列。
       return version?.[1] || name.split(/[\s_-]/, 1)[0].trim();
     }
+    // 只给主流系列单独设项；内部代号、档位名和实验名归“其他”，避免筛选下拉被别名刷屏。
+    const COMMON_MODEL_FAMILIES = new Set(['deepseek', 'glm', 'kimi', 'minimax', 'mimo', 'longcat', 'doubao', 'qwen', 'claude', 'gpt', 'gemini', 'step', 'hy', 'hunyuan', 'mistral', 'llama', 'codex', 'grok', 'commandcode', 'openai']);
     function modelCategory(row, mode, providers, emptyLabels) {
       const keys = modelKeys(row, providers);
-      const value = mode === 'provider' ? keys.supplier : modelFamilyName(keys.name);
+      const family = modelFamilyName(keys.name);
+      const other = mode === 'model' && Boolean(family) && !COMMON_MODEL_FAMILIES.has(family.toLowerCase());
+      const value = mode === 'provider' ? keys.supplier : other ? emptyLabels.other : family;
       const label = value || emptyLabels[mode];
-      return { key: label.toLowerCase(), label, empty: !value };
+      return { key: other ? '__other__' : label.toLowerCase(), label, empty: !value, other };
     }
     /** 从完整清单生成下拉选项；同名牌跨供应商合并，空供应商或空白新模型排最后。 */
     function categoryOptions(rows, mode, providers, emptyLabels) {
@@ -452,7 +456,7 @@ window.__ModuleLoader__.load({
         const option = modelCategory(row, mode, providers, emptyLabels);
         if (!options.has(option.key)) options.set(option.key, option);
       }
-      return [...options.values()].sort((a, b) => compareModelText(a.empty ? '' : a.label, b.empty ? '' : b.label) || a.key.localeCompare(b.key));
+      return [...options.values()].sort((a, b) => compareModelText(a.empty || a.other ? '' : a.label, b.empty || b.other ? '' : b.label) || a.key.localeCompare(b.key));
     }
     function sanitizeCategoryFilters(filters, rows, providers, emptyLabels) {
       let next = filters;
@@ -1009,7 +1013,7 @@ window.__ModuleLoader__.load({
         try { await run(); } catch (error) { setNotice(failure(error)); }
         finally { setBusy(false); }
       };
-      const sanitizeCategories = (models, providers = view?.providerNames ?? {}) => setCategoryFilters((current) => sanitizeCategoryFilters(current, models, providers, { model: t('newModel'), provider: t('unknownProvider') }));
+      const sanitizeCategories = (models, providers = view?.providerNames ?? {}) => setCategoryFilters((current) => sanitizeCategoryFilters(current, models, providers, { model: t('newModel'), provider: t('unknownProvider'), other: t('otherModel') }));
       const reload = () => perform(async () => {
         const value = withSavedModels(await request());
         sanitizeCategories(value.config.models, value.providerNames);
@@ -1071,7 +1075,7 @@ window.__ModuleLoader__.load({
       // 与 WorkBuddy 一致：当前勾选和已保存勾选都在置顶区；取消已保存项后不立即抽走，保存成功才下移。
       const savedSelected = new Set((view.savedModels ?? rows).filter((row) => row.enabled).map(keyOf));
       const pinned = (row) => row.enabled || savedSelected.has(keyOf(row));
-      const categoryLabels = { model: t('newModel'), provider: t('unknownProvider') };
+      const categoryLabels = { model: t('newModel'), provider: t('unknownProvider'), other: t('otherModel') };
       const providerOptions = categoryOptions(rows, 'provider', view.providerNames, categoryLabels);
       const modelOptions = categoryOptions(rows, 'model', view.providerNames, categoryLabels);
       // 编辑或删除导致当前类别消失时自动回到“全部”，避免下拉框显示与过滤条件不一致。

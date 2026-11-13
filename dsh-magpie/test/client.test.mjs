@@ -543,8 +543,11 @@ test('按模型系列或供应商下拉筛选，只显示当前类别，可组�
   const options = (label) => nodes(control(client.render(), label), (n) => n.type === 'option').map((n) => n.children[0]);
   const chooseCategory = (label, value) => control(client.render(), label).props.onChange({ target: { value } });
 
-  assert.deepEqual(options('按模型分类'), ['全部模型', 'DeepSeek', 'GLM', 'Local']);
+  assert.deepEqual(options('按模型分类'), ['全部模型', 'DeepSeek', 'GLM', '其他']);
   assert.deepEqual(options('按供应商分类'), ['全部供应商', 'OpenCode', 'Qoder', 'WorkBuddy', '未指定供应商']);
+  chooseCategory('按模型分类', '__other__');
+  assert.deepEqual(ids(), ['local-model'], '非通用系列归入其他');
+  chooseCategory('按模型分类', '');
   chooseCategory('按模型分类', 'deepseek');
   assert.deepEqual(ids(), ['workbuddy/deepseek-pro', 'qoder-cn/deepseek-flash', 'opencode-zen-free/deepseek-free'], 'DeepSeek 跨供应商归为同一系列');
   assert.equal(client.states[0].config.models, original, '筛选不重写配置数组');
@@ -625,13 +628,16 @@ test('分类筛选后的全选、取消全选和拖放只影响可见模型', ()
   assert.deepEqual(nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title), ['opencode-zen-free/deepseek-b', 'workbuddy/deepseek-a']);
 });
 
-test('模型系列按版本号前的品牌识别，兼容无分隔版本和子系列命名', () => {
-  const { modelFamilyName } = clientHarness().module;
+test('模型系列按版本号前的品牌识别，非通用代号统一归入其他', () => {
+  const { modelFamilyName, categoryOptions } = clientHarness().module;
   for (const [name, family] of [
     ['DeepSeek V4.1 Flash', 'DeepSeek'], ['DeepSeek-V4-Pro', 'DeepSeek'],
     ['GLM-5.3', 'GLM'], ['GLM-5v-Turbo', 'GLM'], ['Hy4 CN', 'Hy'],
     ['Kimi-K3.1-Pro', 'Kimi'], ['Step-5-Preview', 'Step'], ['Claude-Sonnet-4.5', 'Claude'], ['', ''],
   ]) assert.equal(modelFamilyName(name), family, name || '空白模型');
+  const uncommon = ['标准', '高级', '智速模式', 'Beam', 'Big', 'browser', 'computer', 'explore', 'Fast', 'Flint', 'Iceman', 'Inkling'];
+  const options = categoryOptions([...uncommon, 'DeepSeek-V4-Pro', 'GLM-5.3'].map((name, index) => ({ id: `p/${index}`, name })), 'model', {}, { model: '新模型', provider: '未指定供应商', other: '其他' });
+  assert.deepEqual(options.map((option) => option.label), ['DeepSeek', 'GLM', '其他'], '所有非通用代号只占一个其他分类');
 });
 
 test('排序识别 ID 后的模型名，忽略大小写，自然数字顺序，同键稳定且空条目在后', () => {
