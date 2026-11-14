@@ -23,7 +23,8 @@ test('安装中文预设不会移除旧极简提示词', () => {
   assert.deepEqual(resolvePlugins('presets-zh')[0].legacy, []);
 });
 
-test('桌面版 exe 从 dsh.cmd 的安装目录推导', () => {
+// desktopExeFrom 只处理 Windows 的 dsh.cmd 路径；POSIX 的 resolve 会把盘符当成相对路径。
+test('桌面版 exe 从 dsh.cmd 的安装目录推导', { skip: process.platform !== 'win32' }, () => {
   const cli = join('C:', 'Programs', 'DeepSeek Harness', 'resources', 'runtime', 'cli', 'bin', 'dsh.cmd');
   assert.equal(desktopExeFrom(cli), join('C:', 'Programs', 'DeepSeek Harness', 'DeepSeek Harness.exe'));
 });
