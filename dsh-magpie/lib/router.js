@@ -62,6 +62,19 @@ export function conversationKey(body) {
   return createHash('sha256').update(String(body.model)).update('\0').update(JSON.stringify(first.content ?? '')).digest('hex');
 }
 
+/** 请求声明的思考档位：Chat Completions 用 reasoning_effort，Responses 用 reasoning.effort。 */
+export function requestedEffort(body) {
+  const value = body?.reasoning_effort ?? body?.reasoning?.effort;
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/** 0 = 声明支持该档位，1 = 未声明（按可用处理），2 = 声明不支持。 */
+function effortRank(row, effort) {
+  const declared = row.reasoningEfforts ?? [];
+  if (!declared.length) return 1;
+  return declared.includes(effort) ? 0 : 2;
+}
+
 function createPins(now) {
   const pins = new Map();
   return {
@@ -148,9 +161,13 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
         const image = requestHasImage(body);
         const capable = listed.filter((row) => !image || row.input?.includes('image'));
         if (!capable.length) return reply(res, 404, '这个模型的已选出口均不支持图片输入');
+        // 合并条目对外声明的是各出口档位的并集，单个出口未必支持；按请求档位重排，失败仍会继续换下一个。
+        // off 是关闭思考，各出口都接受，不需要改变优先级。
+        const effort = requestedEffort(body);
+        const ordered = effort && effort !== 'off' ? [...capable].sort((a, b) => effortRank(a, effort) - effortRank(b, effort)) : capable;
         const pin = conversationKey(body);
         const held = pins.get(pin);
-        const ranked = held ? [...capable].sort((a, b) => Number(b.id === held) - Number(a.id === held)) : capable;
+        const ranked = held ? [...ordered].sort((a, b) => Number(b.id === held) - Number(a.id === held)) : ordered;
         const attempts = ranked.filter((row) => !failures.remaining(pin, row.id));
         if (!attempts.length) {
           const retryAfter = Math.max(1, Math.ceil(Math.min(...ranked.map((row) => failures.remaining(pin, row.id))) / 1000));

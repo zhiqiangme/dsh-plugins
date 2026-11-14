@@ -1,7 +1,13 @@
+import { REASONING_LEVELS } from './config.js';
 import { displayModelName, dshModelName } from './names.js';
 
 export const AUTO_PREFIX = 'auto:';
 export const ROUTER_BASE_PATH = '/plugins/dsh-magpie/router';
+/**
+ * 目录没有声明思考档位时的兜底：与 WorkBuddy 及 DSH 的三档选择器一致（低 / 高 / 最大）。
+ * 不兜底时目录里没写档位的模型（LongCat、MiMo、Qwen 预览版等）在 DSH 里没有思考深度可选。
+ */
+export const DEFAULT_EFFORTS = Object.freeze(['low', 'high', 'max']);
 
 /** 上游快照的月日版本号与计费档位；没有这些明确标记时不猜测。 */
 const MODEL_VERSION_SUFFIX = /-(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/;
@@ -40,11 +46,20 @@ function smallest(members, field) {
   return values.length ? { [field]: Math.min(...values) } : {};
 }
 
+/**
+ * 合并条目的思考档位取并集：任一候选声明能用就算可用，DSH 的档位选择器才有选项。
+ * 取交集会让部分候选没声明档位时整个条目失去思考深度；都没声明时退回默认三档。
+ */
+function mergedEfforts(members) {
+  const declared = new Set(members.flatMap((row) => row.reasoningEfforts ?? []));
+  return declared.size ? REASONING_LEVELS.filter((level) => declared.has(level)) : [...DEFAULT_EFFORTS];
+}
+
 function mergedEntry(key, members) {
   const first = members[0];
   // 单个候选保留供应商简称；多个候选只显示型号和 Auto，避免误以为固定到某家供应商。
   const name = members.length === 1 ? dshModelName(first) : `${baseName(first).replace(/\s+/g, '-')} Auto`;
-  const reasoningEfforts = (first.reasoningEfforts ?? []).filter((level) => members.every((row) => row.reasoningEfforts?.includes(level)));
+  const reasoningEfforts = mergedEfforts(members);
   return {
     id: `${AUTO_PREFIX}${key}`, name,
     ...smallest(members, 'contextWindow'), ...smallest(members, 'maxTokens'),

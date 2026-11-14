@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { createMagpieRouter, requestHasImage } from '../lib/router.js';
+import { createMagpieRouter, requestHasImage, requestedEffort } from '../lib/router.js';
 import { ROUTER_PATH } from '../lib/router.js';
 import { resolveConfig } from '../lib/config.js';
 
@@ -68,6 +68,25 @@ test('图片请求跳过不支持视觉的出口，Responses 与 Anthropic 图�
   assert.equal(requestHasImage({ input: [{ role: 'user', content: [{ type: 'input_image' }] }] }), true);
   assert.equal(requestHasImage({ messages: [{ role: 'user', content: [{ type: 'image' }] }] }), true);
   assert.equal(requestHasImage(ask()), false);
+});
+
+test('按请求的思考档位优先选声明支持的出口，都不支持时仍按清单顺序尝试', async (t) => {
+  const models = [
+    { id: 'a/glm-5.3', name: 'GLM-5.3', reasoningEfforts: ['low', 'high'] },
+    { id: 'b/glm-5.3', name: 'GLM-5.3', reasoningEfforts: ['low', 'high', 'max'] },
+  ];
+  const { calls, send } = await setup(t, { models });
+  const ask3 = (text) => ({ model: 'auto:glm-5.3', messages: [{ role: 'user', content: text }] });
+  assert.equal((await send({ ...ask3('one'), reasoning_effort: 'Max' })).status, 200);
+  assert.equal(calls.at(-1).body.model, 'b/glm-5.3', '只有 b 声明 max');
+  assert.equal((await send({ ...ask3('two'), reasoning: { effort: 'high' } })).status, 200);
+  assert.equal(calls.at(-1).body.model, 'a/glm-5.3', '都声明 high 时保持清单顺序');
+  // off 是关闭思考，各出口都接受，不改变优先级。
+  assert.equal((await send({ ...ask3('three'), reasoning_effort: 'off' })).status, 200);
+  assert.equal(calls.at(-1).body.model, 'a/glm-5.3');
+  assert.equal(requestedEffort({ reasoning_effort: ' Max ' }), 'max');
+  assert.equal(requestedEffort({ reasoning: { effort: 'low' } }), 'low');
+  assert.equal(requestedEffort({}), '');
 });
 
 for (const api of Object.keys(ENDPOINTS)) test(`协议 ${api} 转发到真实端点并还原模型 ID`, async (t) => {
