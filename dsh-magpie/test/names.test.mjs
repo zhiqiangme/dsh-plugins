@@ -21,7 +21,7 @@ test('前端预览和 DSH 同步使用相同供应商简称，区分 WorkBuddy �
 });
 
 test('重复同步不叠加简称，手工名称、完整 ID、排序及勾选原样保存', () => {
-  const config = resolveConfig({ models: [
+  const config = resolveConfig({ autoRoute: false, models: [
     { id: 'workbuddy/model', name: 'DeepSeek-Flash' },
     { id: 'workbuddy-ai/model', name: 'Deepseek-V4.1-Flash WorkBuddy GL' },
     { id: 'opencode-zen-free/model', name: 'DeepSeek V4.1 Flash opencode' },

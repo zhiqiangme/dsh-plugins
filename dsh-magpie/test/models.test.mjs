@@ -5,12 +5,12 @@ import { catalogModels, modelEntries, withProvider, syncModels } from '../lib/mo
 import { fakeHost } from '../fixtures/host.mjs';
 import { ROUTER_BASE_PATH } from '../lib/auto-route.js';
 
-const manual = (extra = {}) => resolveConfig({ syncEnabled: true, models: [{ id: 'group/custom', name: '手工名称', input: ['text', 'image'], reasoningEfforts: ['low', 'high'] }], ...extra });
+const manual = (extra = {}) => resolveConfig({ syncEnabled: true, autoRoute: false, models: [{ id: 'group/custom', name: '手工名称', input: ['text', 'image'], reasoningEfforts: ['low', 'high'] }], ...extra });
 
-test('默认清单为空且不自动接管；地址与协议严格校验', () => {
+test('默认清单为空、同步与路由默认开启；地址与协议严格校验', () => {
   assert.deepEqual(resolveConfig().models, []);
-  assert.equal(resolveConfig().syncEnabled, false);
-  assert.equal(resolveConfig().autoRoute, false);
+  assert.equal(resolveConfig().syncEnabled, true, '同步默认开启');
+  assert.equal(resolveConfig().autoRoute, true, '自动路由默认开启');
   assert.throws(() => resolveConfig({ autoRoute: 'yes' }), /自动路由开关/);
   assert.equal(resolveConfig().hideSmallContext, true, '小上下文屏蔽默认开启');
   assert.throws(() => resolveConfig({ hideSmallContext: 'yes' }), /屏蔽小上下文/);

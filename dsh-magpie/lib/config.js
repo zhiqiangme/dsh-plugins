@@ -91,7 +91,8 @@ export function resolveConfig(raw = {}) {
   if (new Set(models.map((x) => x.id)).size !== models.length) throw new Error('模型 ID 不能重复');
   const magpiePath = value.magpiePath === undefined || value.magpiePath === '' ? '' : text(value.magpiePath, 'Magpie 程序路径', 1024);
   if (magpiePath && (!isAbsolute(magpiePath) || !/\.exe$/i.test(magpiePath))) throw new Error('Magpie 程序路径必须是 exe 文件的绝对路径');
-  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled === true, autoRoute: value.autoRoute === true, hideSmallContext: value.hideSmallContext !== false, closeOnExit: value.closeOnExit === true, autoStart: value.autoStart !== false, autoUpdate: value.autoUpdate !== false, autoLightweight: value.autoLightweight !== false, manualOrder: value.manualOrder === true, catalogOrder: value.catalogOrder === true && value.manualOrder !== true, sidebarEntry: value.sidebarEntry ?? 'auto', models, ...(magpiePath ? { magpiePath } : {}) };
+  // 同步与自动路由默认开启：空清单不会生成 provider，首次同步目录后即可直接用；旧配置里显式保存的 false 不受影响。
+  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled !== false, autoRoute: value.autoRoute !== false, hideSmallContext: value.hideSmallContext !== false, closeOnExit: value.closeOnExit === true, autoStart: value.autoStart !== false, autoUpdate: value.autoUpdate !== false, autoLightweight: value.autoLightweight !== false, manualOrder: value.manualOrder === true, catalogOrder: value.catalogOrder === true && value.manualOrder !== true, sidebarEntry: value.sidebarEntry ?? 'auto', models, ...(magpiePath ? { magpiePath } : {}) };
 }
 
 export function revision(config) {

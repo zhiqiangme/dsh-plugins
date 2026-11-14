@@ -46,6 +46,18 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
   assert.equal(control(client.render(), '按供应商分类').type, 'select');
 });
 
+test('三个总开关集中在开关页且默认开启，模型页只留清单与筛选', () => {
+  const client = clientHarness(view({ models: [{ id: 'a/one' }] }));
+  for (const label of ['同步到 DSH', '自动路由（同款模型合并）', '屏蔽上下文低于 500K 的模型']) {
+    assert.equal(control(client.render(), label), undefined, `${label} 不在模型页`);
+  }
+  client.tab('开关');
+  for (const label of ['同步到 DSH', '自动路由（同款模型合并）', '屏蔽上下文低于 500K 的模型']) {
+    assert.equal(control(client.render(), label).props.checked, true, `${label} 默认开启`);
+  }
+  assert.equal(button(client.render(), '从 Magpie 同步'), undefined, '同步目录按钮仍留在模型页');
+});
+
 test('开关和选项改完立即保存，只提交该项；未保存的连接设置与模型草稿保留，后续保存使用新版本号', async () => {
   const calls = [];
   let saved = resolveConfig({ models: [{ id: 'a/one' }] });
@@ -81,7 +93,7 @@ test('开关和选项改完立即保存，只提交该项；未保存的连接�
   await choose(client.render(), '侧边栏入口', '显示').props.onClick();
   assert.deepEqual(calls[3].patch, { sidebarEntry: 'always' });
   assert.equal(choose(client.render(), '侧边栏入口', '显示').props['aria-checked'], true);
-  client.tab('模型');
+  client.tab('开关');
   await toggle('同步到 DSH').props.onChange({ target: { checked: true } });
   assert.deepEqual(calls[4].patch, { syncEnabled: true });
   // 保存并同步带上最新版本号和全部即时项，连接草稿一起提交。
@@ -103,11 +115,14 @@ test('自动路由开关即时保存，只提交开关并显示同步结果', as
     return response({ ...view(saved), revision: 'revision-two', sync: { ok: true, count: 1 } });
   });
   const toggle = () => control(client.render(), '自动路由（同款模型合并）');
-  assert.equal(toggle().props.checked, false);
+  client.tab('开关');
+  assert.equal(toggle().props.checked, true, '自动路由默认开启');
+  client.tab('模型');
   field(client.render(), '显示名称').props.onChange({ target: { value: '未保存草稿' } });
-  await toggle().props.onChange({ target: { checked: true } });
-  assert.deepEqual(calls[0], { action: 'patch', patch: { autoRoute: true }, revision: 'revision-one' });
-  assert.equal(toggle().props.checked, true);
+  client.tab('开关');
+  await toggle().props.onChange({ target: { checked: false } });
+  assert.deepEqual(calls[0], { action: 'patch', patch: { autoRoute: false }, revision: 'revision-one' });
+  assert.equal(toggle().props.checked, false);
   assert.equal(client.states[0].config.models[0].name, '未保存草稿', '模型草稿不被即时保存覆盖');
   assert.equal(client.states[1], true);
 });
@@ -128,11 +143,15 @@ test('小上下文屏蔽默认开启，只隐藏低于 500K，未知上下文不
   const ids = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title);
   assert.deepEqual(ids(), ['a/big', 'a/unknown', 'a/edge'], '低于 500K 隐藏，等于 500K 与未知保留');
   const toggle = () => control(client.render(), '屏蔽上下文低于 500K 的模型');
+  client.tab('开关');
   assert.equal(toggle().props.checked, true);
   await toggle().props.onChange({ target: { checked: false } });
   assert.deepEqual(calls[0], { action: 'patch', patch: { hideSmallContext: false }, revision: 'revision-one' });
+  client.tab('模型');
   assert.deepEqual(ids(), ['a/big', 'a/unknown', 'a/edge', 'a/small'], '关闭后显示全部，未勾选的仍按置顶规则排后');
+  client.tab('开关');
   await toggle().props.onChange({ target: { checked: true } });
+  client.tab('模型');
   assert.deepEqual(ids(), ['a/big', 'a/unknown', 'a/edge']);
   button(client.render(), '全选').props.onClick();
   assert.deepEqual(client.states[0].config.models.map((m) => m.enabled), [true, false, true, true], '批量勾选只影响可见模型');
@@ -166,7 +185,7 @@ test('自动更新开关在更新页即时保存，等待期间也能关闭，�
 
 test('旧页面切换即时开关后仍拒绝保存，保留草稿和其它页面的新清单', async (t) => {
   for (const dirty of [false, true]) await t.test(dirty ? '有未保存草稿' : '未编辑旧清单', async () => {
-    const host = fakeHost({ models: [{ id: 'old-model' }] });
+    const host = fakeHost({ syncEnabled: false, autoRoute: false, models: [{ id: 'old-model' }] });
     const backend = { describe: async () => ({}), settings: () => ({ available: false }) };
     const manager = new ModelManager(host.ctx, host.own.options.config, { env: {}, backend });
     const initial = await manager.describe();
@@ -294,7 +313,9 @@ test('即时设置返回新快照后，待保存取消项仍保持置顶', async
   const order = () => labels().map((n) => n.props.title).join('');
   labels().find((n) => n.props.title === 'b').children[0].props.onChange({ target: { checked: false } });
   assert.equal(order(), 'bcad');
+  client.tab('开关');
   await control(client.render(), '同步到 DSH').props.onChange({ target: { checked: true } });
+  client.tab('模型');
   assert.equal(order(), 'bcad', '已保存行对象重建也不能让取消项提前下移');
   assert.equal(labels().find((n) => n.props.title === 'b').children[0].props.checked, false);
   assert.equal(client.states[1], true, '模型勾选草稿仍未保存');
@@ -921,11 +942,11 @@ test('标题显示网关与程序状态，程序状态可跳到更新页；标�
   assert.match(label(chips()[0]), /网关未连接/);
   assert.match(label(chips()[1]), /Magpie 0\.1\.1.*可升级到 0\.1\.2/);
   const tabs = () => nodes(client.render(), (n) => n.props.role === 'tab');
-  assert.deepEqual(tabs().map((n) => n.props['aria-selected']), [true, false, false, false]);
+  assert.deepEqual(tabs().map((n) => n.props['aria-selected']), [true, false, false, false, false]);
   assert.equal(tabs()[0].children[1].children[0], 2);
-  assert.ok(tabs()[3].children[2], '有可升级版本时更新页带标记');
+  assert.ok(tabs()[4].children[2], '有可升级版本时更新页带标记');
   chips()[1].props.onClick();
-  assert.deepEqual(tabs().map((n) => n.props['aria-selected']), [false, false, false, true]);
+  assert.deepEqual(tabs().map((n) => n.props['aria-selected']), [false, false, false, false, true]);
   assert.ok(button(client.render(), '升级 Magpie'));
   assert.equal(button(client.render(), '从 Magpie 同步'), undefined);
 });

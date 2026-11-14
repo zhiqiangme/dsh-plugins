@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const config = { syncEnabled: true, models: [{ id: 'manual/unlisted', name: '自己的目录' }] };
+const config = { syncEnabled: true, autoRoute: false, models: [{ id: 'manual/unlisted', name: '自己的目录' }] };
 function setup(options) {
   const host = fakeHost();
   const manager = new ModelManager(host.ctx, {}, { env: {}, ...options });
@@ -146,7 +146,7 @@ test('Key 写凭据库，GET 不回显；空输入沿用，环境变量不被表
 test('全量同步覆盖目录并保留已有勾选，新出现的模型默认不勾选', async () => {
   const calls = [];
   const host = setup({ fetchImpl: async (url) => { calls.push(url); return { ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie', version: 'test' } : { data: [{ id: 'workbuddy-ai/b', display_name: 'B', context_window: 1000000, max_output_tokens: 128000 }, { id: 'new/a', display_name: 'A' }] } }; } });
-  host.own.options.config = { models: [{ id: 'workbuddy/disabled' }, { id: 'workbuddy-ai/b', name: '旧名字', enabled: false }, { id: 'manual' }] };
+  host.own.options.config = { autoRoute: false, models: [{ id: 'workbuddy/disabled' }, { id: 'workbuddy-ai/b', name: '旧名字', enabled: false }, { id: 'manual' }] };
   const initial = await host.manager.describe();
   // 未完成的空手工条目会被目录修复；草稿里重新勾选的 b 必须保留，即使旧快照里它未勾选。
   const result = await host.manager.handle({ action: 'sync-catalog', revision: initial.revision, config: { ...initial.config, models: [{ id: '' }, { id: 'workbuddy-ai/b', enabled: true }] } });
@@ -301,6 +301,14 @@ test('开关即时修改只接受白名单字段和当前版本，不带入草�
   assert.equal(host.llm.options.config.providers[PROVIDER_ID], undefined);
   // 新版本号可直接用于后续保存。
   assert.equal((await host.manager.handle({ action: 'save', revision: off.revision, config: off.config })).saved, true);
+});
+
+test('webServer 已就绪时自动路由地址懒加载，无需面板先登记或手工注入', async () => {
+  const host = setup();
+  const before = await host.manager.describe();
+  const result = await host.manager.handle({ action: 'save', revision: before.revision, config: { syncEnabled: true, autoRoute: true, models: [{ id: 'a/deepseek' }] } });
+  assert.equal(result.sync.ok, true);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].baseURL, 'http://127.0.0.1:9876/plugins/dsh-magpie/router/v1/');
 });
 
 test('自动路由开关即时保存并重写 provider，引用与后续版本号连续', async () => {

@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
       closeOnExitHint: '结束本机 Magpie 及其托盘；停用或更新插件不会触发。',
       sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动', sidebarAlways: '显示', sidebarNever: '隐藏',
       sidebarEntryHint: '左上角「插件」一栏的 Magpie 入口。自动：清单为空时显示，保存模型后隐藏。',
-      tabModels: '模型', tabConnection: '连接', tabPreferences: '偏好', tabUpdates: '更新',
+      tabModels: '模型', tabSwitches: '开关', tabConnection: '连接', tabPreferences: '偏好', tabUpdates: '更新',
       gatewayOnline: '网关在线 {version}', gatewayOffline: '网关未连接', gatewayChecking: '正在检查网关…',
       programVersion: 'Magpie {version}', programMissing: '未下载 Magpie', programUpgrade: '可升级到 {version}',
       groupProgram: 'Magpie 程序', groupMagpieSettings: 'Magpie 设置', groupMagpieSettingsHint: '直接写入 Magpie 自己的设置，与其「设置 › 常规」中的同名选项相同。', groupDsh: 'DSH',
@@ -141,7 +141,7 @@ window.__ModuleLoader__.load({
       closeOnExitHint: 'Ends local Magpie and its tray process; disabling or updating the plugin does not.',
       sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto', sidebarAlways: 'Show', sidebarNever: 'Hide',
       sidebarEntryHint: 'The Magpie entry next to Plugins in the sidebar. Auto: shown while the list is empty, hidden once models are saved.',
-      tabModels: 'Models', tabConnection: 'Connection', tabPreferences: 'Preferences', tabUpdates: 'Updates',
+      tabModels: 'Models', tabSwitches: 'Switches', tabConnection: 'Connection', tabPreferences: 'Preferences', tabUpdates: 'Updates',
       gatewayOnline: 'Gateway online {version}', gatewayOffline: 'Gateway offline', gatewayChecking: 'Checking gateway…',
       programVersion: 'Magpie {version}', programMissing: 'Magpie not downloaded', programUpgrade: 'Update to {version}',
       groupProgram: 'Magpie program', groupMagpieSettings: 'Magpie settings', groupMagpieSettingsHint: 'Written straight into Magpie’s own settings; the same options as its Settings › General.', groupDsh: 'DSH',
@@ -205,7 +205,7 @@ window.__ModuleLoader__.load({
     const REORDER_MS = 200;
     // 列表屏蔽阈值：上下文低于 500K（按千计）的模型默认不显示；未知上下文不屏蔽。
     const SMALL_CONTEXT_LIMIT = 500_000;
-    const TABS = [['models', 'tabModels'], ['connection', 'tabConnection'], ['preferences', 'tabPreferences'], ['updates', 'tabUpdates']];
+    const TABS = [['models', 'tabModels'], ['switches', 'tabSwitches'], ['connection', 'tabConnection'], ['preferences', 'tabPreferences'], ['updates', 'tabUpdates']];
     // 卡片在插件设置和侧栏页面各自挂载；读取或保存后经此通知侧栏按已保存的配置重新判断入口。
     const savedConfig = { value: undefined, listeners: new Set() };
     function publishConfig(config) {
@@ -1270,11 +1270,14 @@ window.__ModuleLoader__.load({
             h('label', null, h('input', { type: 'checkbox', disabled: busy, checked: model.input.includes('image'), onChange: (e) => updateRow(index, { input: e.target.checked ? ['text', 'image'] : ['text'] }) }), t('vision'))))); }));
 
       const panels = {
-        models: () => [
+        // 三个总开关单独一页：模型页只留清单与筛选，避免开关挤占列表空间。
+        switches: () => [
           toggle(t('sync'), t('syncHint'), config.syncEnabled, (syncEnabled) => applyNow({ syncEnabled }), busy || !view.editable),
           toggle(t('autoRoute'), t('autoRouteHint'), config.autoRoute, (autoRoute) => applyNow({ autoRoute }), busy || !view.editable),
           toggle(t('hideSmallContext'), t('hideSmallContextHint'), config.hideSmallContext, (hideSmallContext) => applyNow({ hideSmallContext }), busy || !view.editable),
           view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
+        ],
+        models: () => [
           h('div', { className: 'toolbar' },
             h('input', { className: 'search', type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: search, onChange: (e) => setSearch(e.target.value) }),
             button(t('catalog'), syncCatalog, { disabled: busy || !view.editable, 'aria-busy': modelBusy === 'sync-catalog' }),

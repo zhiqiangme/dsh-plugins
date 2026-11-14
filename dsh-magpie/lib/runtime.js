@@ -58,7 +58,9 @@ export class ModelManager {
   async sync(config = this.current()) {
     try {
       if (config.autoRoute) await this.routeReady;
-      const result = await syncModels(config, { editor: this.editor, credentials: this.credentials, env: this.env, routeOrigin: () => this.routeOrigin });
+      // 路由地址优先用 registerPanel 登记的（含旧端口兼容监听）；webServer 已就绪但面板尚未登记时现取。
+      const routeOrigin = () => this.routeOrigin ?? hostService(this.ctx, 'webServer', (value) => typeof value?.getOrigin === 'function')?.getOrigin();
+      const result = await syncModels(config, { editor: this.editor, credentials: this.credentials, env: this.env, routeOrigin });
       return (this.lastSync = result.refs?.state === 'failed'
         ? { ok: false, ...result, reason: `模型清单已更新，但旧模型引用修复失败：${result.refs.reason}` }
         : { ok: true, ...result });
