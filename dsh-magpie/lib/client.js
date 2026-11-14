@@ -402,11 +402,15 @@ window.__ModuleLoader__.load({
       if (index >= 0 && index < next.length && target >= 0 && target < next.length) next.splice(target, 0, ...next.splice(index, 1));
       return next;
     }
+    // 徽标上的上下文只显示取整后的档位（981.5K → 1M、524.3K → 500K），保存与写入 DSH 的仍是精确值。
+    // 已经是整千或常见二进制档位（128K、200K、32K、64K）时保持原值，避免把常用数字抹成 100K。
     function formatTokens(value) {
       if (!value) return '';
-      if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`;
-      if (value >= 1000) return `${Math.round(value / 100) / 10}K`;
-      return String(value);
+      if (value < 1000) return String(value);
+      if (value % 1000 === 0) return value >= 1_000_000 ? `${Math.round(value / 1_000_000)}M` : `${value / 1000}K`;
+      if (value % 1024 === 0 && value < 1_000_000) return `${value / 1024}K`;
+      const rounded = value >= 100_000 ? Math.round(value / 100_000) * 100_000 : Math.round(value / 1000) * 1000;
+      return rounded >= 1_000_000 ? `${Math.round(rounded / 1_000_000)}M` : `${rounded / 1000}K`;
     }
     function normalizeDisplayName(name) {
       // 与服务端保持相同别名规则；仅影响展示及排序，不改写上游名称或完整路由 ID。
@@ -1259,7 +1263,7 @@ window.__ModuleLoader__.load({
           }),
           h('label', { className: 'model-select', title: model.id }, h('input', { type: 'checkbox', checked: model.enabled, disabled: busy, onChange: (e) => updateRow(index, { enabled: e.target.checked }) }), h('span', { className: 'model-name' }, labelFor(model))),
           button(h('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true }, h('path', { d: 'm6 3 5 5-5 5', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })), () => setExpanded((old) => { const next = new Set(old); if (next.has(index)) next.delete(index); else next.add(index); return next; }), { className: 'model-toggle', 'aria-expanded': expanded.has(index), 'aria-controls': `dsm-mp-details-${index}`, 'aria-label': t(expanded.has(index) ? 'collapse' : 'expand', { name: labelFor(model) }) }),
-          h('div', { className: 'model-badges' }, model.input.includes('image') ? h('span', { className: 'badge' }, t('vision')) : null, model.contextWindow ? h('span', { className: 'badge' }, formatTokens(model.contextWindow)) : null),
+          h('div', { className: 'model-badges' }, model.input.includes('image') ? h('span', { className: 'badge' }, t('vision')) : null, model.contextWindow ? h('span', { className: 'badge', title: String(model.contextWindow) }, formatTokens(model.contextWindow)) : null),
           h('div', { className: 'model-actions' }, button(t('remove'), () => remove(index), { className: 'danger' }))),
         h('div', { className: 'model-details', id: `dsm-mp-details-${index}`, hidden: !expanded.has(index) },
           h('div', { className: 'fields' }, field(t('id'), model.id, (id) => updateRow(index, { id }), { placeholder: 'provider/model-id', spellCheck: false }), field(t('modelName'), model.name, (name) => updateRow(index, { name }), { placeholder: t('nameHint') })),

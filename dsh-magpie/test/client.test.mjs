@@ -157,6 +157,21 @@ test('小上下文屏蔽默认开启，只隐藏低于 500K，未知上下文不
   assert.deepEqual(client.states[0].config.models.map((m) => m.enabled), [true, false, true, true], '批量勾选只影响可见模型');
 });
 
+test('上下文徽标只显示取整档位，实际上下文值不变', () => {
+  const client = clientHarness(view({ hideSmallContext: false, models: [
+    { id: 'a/mimo', name: 'MiMo-V2.6-Pro', contextWindow: 981504 },
+    { id: 'a/pangu', name: 'OpenPangu-2.0-Flash', contextWindow: 524300 },
+    { id: 'a/million', name: 'Million', contextWindow: 1048576 },
+    { id: 'a/k128', name: 'K128', contextWindow: 128000 },
+    { id: 'a/k32', name: 'K32', contextWindow: 32768 },
+    { id: 'a/small', name: 'Small', contextWindow: 12345 },
+  ] }));
+  const badges = nodes(client.render(), (n) => n.props.className === 'badge' && /^[\d.]+[KM]$/.test(n.children[0]));
+  assert.deepEqual(badges.map((n) => n.children[0]), ['1M', '500K', '1M', '128K', '32K', '12K']);
+  assert.deepEqual(badges.map((n) => n.props.title), ['981504', '524300', '1048576', '128000', '32768', '12345'], '精确值放在悬停提示里');
+  assert.deepEqual(client.states[0].config.models.map((m) => m.contextWindow), [981504, 524300, 1048576, 128000, 32768, 12345], '只改展示，不改保存的上下文');
+});
+
 test('自动更新开关在更新页即时保存，等待期间也能关闭，保留未保存草稿', async () => {
   const host = fakeHost({ models: [{ id: 'saved-model' }] });
   const operation = { id: 'auto', phase: 'waiting-idle', running: true, received: 12, total: 12 };
