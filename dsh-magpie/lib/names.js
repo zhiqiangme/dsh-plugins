@@ -14,7 +14,7 @@ export const PROVIDER_NAMES = Object.freeze({
   codex: 'Codex',
 });
 
-function normalizeDisplayName(name) {
+export function normalizeDisplayName(name) {
   // 上游的 DeepSeek-Flash 与 V4.1 Flash 别名统一展示，保留 Free、Max 等尾缀及原始配置。
   // 展示默认不出现中文：中文“预览版”统一显示为 Preview（含括号写法），保存的名称不变。
   return name.replace(/^deepseek[\s_-]+(?:v4\.1[\s_-]+)?flash(?=$|[\s(_-])/i, 'DeepSeek V4.1 Flash')
@@ -22,7 +22,7 @@ function normalizeDisplayName(name) {
 }
 
 /** 拆出模型本名与供应商后缀；名称里已带后缀时不重复追加。 */
-function modelNameParts(row, providers = PROVIDER_NAMES) {
+export function modelNameParts(row, providers = PROVIDER_NAMES) {
   const name = normalizeDisplayName(row.name || row.id || '');
   const provider = row.id?.includes('/') ? row.id.split('/')[0] : '';
   const supplier = Object.hasOwn(providers, provider) ? providers[provider] : undefined;

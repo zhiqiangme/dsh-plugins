@@ -20,17 +20,17 @@ test('合并键按裸模型 ID，忽略供应商、大小写、月日快照与�
   assert.equal(routeKey('qwenwork/qwen4-max-预览版'), 'qwen4-max', '中文预览版与 Preview 等价');
 });
 
-test('别名 ID 看不出同款时按带版本号的显示名合并，Preview 与预览版同组', () => {
+test('别名 ID 看不出同款时按带版本号的显示名合并，ID 与展示名取实际模型名', () => {
   const planned = planAutoRoute(config([
     { id: 'qwenwork/frontier-1', name: 'Qwen4-Max 预览版', contextWindow: 1000000, input: ['text', 'image'] },
     { id: 'qoder-cn/qmodel_latest', name: 'Qwen4-Max-Preview', contextWindow: 1000000, input: ['text', 'image'], reasoningEfforts: ['low', 'high', 'xhigh'] },
   ]));
-  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [['auto:frontier-1', 'Qwen4-Max-Preview Auto']]);
-  assert.deepEqual(planned.routes.get('auto:frontier-1').map((row) => row.id), ['qwenwork/frontier-1', 'qoder-cn/qmodel_latest']);
+  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [['auto:qwen4-max-preview', 'Qwen4-Max-Preview']]);
+  assert.deepEqual(planned.routes.get('auto:qwen4-max-preview').map((row) => row.id), ['qwenwork/frontier-1', 'qoder-cn/qmodel_latest']);
   assert.deepEqual(planned.entries[0].reasoningEfforts, ['low', 'high', 'xhigh'], '思考档位取并集');
 });
 
-test('(Max) 档位变体与不带后缀的同款合并，合并名去掉档位标记', () => {
+test('(Max) 档位变体与不带后缀的同款合并，ID 与展示名都不带档位标记', () => {
   const planned = planAutoRoute(config([
     { id: 'qoder-cn/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' },
     { id: 'trae-cn/deepseek-v4.1-flash-max', name: 'DeepSeek-V4.1-Flash (Max)' },
@@ -40,30 +40,49 @@ test('(Max) 档位变体与不带后缀的同款合并，合并名去掉档位�
     { id: 'trae-cn/glm-5.3-flash-max', name: 'GLM-5.3-Flash (Max)' },
   ]));
   assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [
-    ['auto:deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash Auto'],
-    ['auto:qwen3.8-max', 'Qwen3.8-Max Auto'],
-    ['auto:glm-5.3', 'GLM-5.3 Trae'],
-    ['auto:glm-5.3-flash-max', 'GLM-5.3-Flash-(Max) Trae'],
+    ['auto:deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash'],
+    ['auto:qwen3.8-max', 'Qwen3.8-Max'],
+    ['auto:glm-5.3', 'GLM-5.3'],
+    ['auto:glm-5.3-flash', 'GLM-5.3-Flash'],
   ], '型号自带 Max 与档位 (Max) 不混淆，Flash 变体不与基础款合并');
   assert.deepEqual(planned.routes.get('auto:deepseek-v4.1-flash').map((row) => row.id), ['qoder-cn/deepseek-v4.1-flash', 'trae-cn/deepseek-v4.1-flash-max']);
 });
 
-test('不带版本号的通用别名同名也不按名称合并，避免误并不同模型', () => {
+test('别名 ID 与正式 ID 指向同款时并成一组，ID 取组内出现最多的模型名', () => {
+  const planned = planAutoRoute(config([
+    { id: 'qoder-cn/dfmodel', name: 'DeepSeek-Flash' },
+    { id: 'trae-cn/deepseek-v4.1-flash-max', name: 'DeepSeek-V4.1-Flash (Max)' },
+    { id: 'codearts/deepseek-v4.1-flash-1017', name: 'DeepSeek-V4.1-Flash-1017' },
+  ]));
+  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [['auto:deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash']]);
+  assert.equal(planned.routes.size, 1, '别名不会被拆成两个同款条目');
+  assert.deepEqual(planned.routes.get('auto:deepseek-v4.1-flash').map((row) => row.id), ['qoder-cn/dfmodel', 'trae-cn/deepseek-v4.1-flash-max', 'codearts/deepseek-v4.1-flash-1017']);
+});
+
+test('不带版本号的通用别名同名也不按名称合并，靠数字后缀区分 ID 与展示名', () => {
   const planned = planAutoRoute(config([
     { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' },
     { id: 'trae-cn/search_agent_qwen_fast', name: 'search_agent_qwen_fast' },
   ]));
-  assert.deepEqual(planned.entries.map((entry) => entry.id), ['auto:file_search_agent', 'auto:search_agent_qwen_fast']);
+  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [
+    ['auto:search-agent-qwen-fast', 'search_agent_qwen_fast'],
+    ['auto:search-agent-qwen-fast-2', 'search_agent_qwen_fast 2'],
+  ]);
 });
 
-test('同款多供应商合并为一个 Auto，限额取安全集合，视觉与思考档位取并集', () => {
+test('名称为占位符时退回裸 ID，不出现 auto:- 这类 ID', () => {
+  const planned = planAutoRoute(config([{ id: 'trae-cn/sagitta', name: '-' }]));
+  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [['auto:sagitta', 'sagitta']]);
+});
+
+test('同款多供应商合并为一个条目，限额取安全集合，视觉与思考档位取并集', () => {
   const planned = planAutoRoute(config([
     { id: 'workbuddy/deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash', contextWindow: 1000000, maxTokens: 128000, input: ['text', 'image'], reasoningEfforts: ['low', 'high', 'max'] },
     { id: 'workbuddy-ai/deepseek-v4.1-flash-1017', name: 'Deepseek-V4.1-Flash', contextWindow: 800000, maxTokens: 64000, reasoningEfforts: ['low', 'high'] },
     { id: 'qoder-cn/other', name: 'Other', enabled: false },
   ]));
   assert.deepEqual(planned.entries, [{
-    id: 'auto:deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash Auto', contextWindow: 800000, maxTokens: 64000,
+    id: 'auto:deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash', contextWindow: 800000, maxTokens: 64000,
     input: ['text', 'image'], reasoningEfforts: ['low', 'high', 'max'],
   }]);
   assert.deepEqual(planned.routes.get('auto:deepseek-v4.1-flash').map((row) => row.id), ['workbuddy/deepseek-v4.1-flash', 'workbuddy-ai/deepseek-v4.1-flash-1017']);
@@ -72,8 +91,12 @@ test('同款多供应商合并为一个 Auto，限额取安全集合，视觉与
 test('没有候选声明思考档位时按低 / 高 / 最大兜底，DSH 仍显示思考深度', () => {
   const planned = planAutoRoute(config([
     { id: 'opencode-zen-free/longcat-2.5-free', name: 'LongCat 2.5 Free' },
-    { id: 'trae-cn/mimo-v2.6-pro-max', name: 'MiMo-V2.6-Pro (Max)' },
+    { id: 'trae-cn/MiMo-V2.6-Pro-max', name: 'MiMo-V2.6-Pro (Max)' },
   ]));
+  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [
+    ['auto:longcat-2.5-free', 'LongCat-2.5-Free'],
+    ['auto:mimo-v2.6-pro', 'MiMo-V2.6-Pro'],
+  ]);
   assert.deepEqual(planned.entries.map((entry) => entry.reasoningEfforts), [DEFAULT_EFFORTS, ['low', 'high', 'max']]);
   assert.deepEqual(DEFAULT_EFFORTS, ['low', 'high', 'max']);
 });
@@ -83,19 +106,19 @@ test('视觉取并集，思考档位取并集；未知上下文不拉低已知�
     { id: 'a/glm-5.3', name: 'GLM-5.3', contextWindow: 1000000, reasoningEfforts: ['low', 'high'] },
     { id: 'b/glm-5.3', name: 'GLM-5.3', input: ['text', 'image'], maxTokens: 32000, reasoningEfforts: ['high'] },
   ]));
-  assert.deepEqual(planned.entries[0], { id: 'auto:glm-5.3', name: 'GLM-5.3 Auto', contextWindow: 1000000, maxTokens: 32000, input: ['text', 'image'], reasoningEfforts: ['low', 'high'] });
+  assert.deepEqual(planned.entries[0], { id: 'auto:glm-5.3', name: 'GLM-5.3', contextWindow: 1000000, maxTokens: 32000, input: ['text', 'image'], reasoningEfforts: ['low', 'high'] });
 });
 
-test('单个候选也使用稳定 auto ID 并保留显示名，不同裸 ID 和大系列不合并', () => {
+test('单个候选也用模型名做 ID，展示名不带 Auto 或供应商后缀，不同裸 ID 和大系列不合并', () => {
   const planned = planAutoRoute(config([
     { id: 'workbuddy/deepseek-v4-pro', name: 'DeepSeek-V4-Pro' },
     { id: 'workbuddy-ai/deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash' },
     { id: 'qoder-cn/glm-5.3', name: 'GLM-5.3' },
   ]));
   assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [
-    ['auto:deepseek-v4-pro', 'DeepSeek-V4-Pro WorkBuddy'],
-    ['auto:deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash WorkBuddy GL'],
-    ['auto:glm-5.3', 'GLM-5.3 Qoder'],
+    ['auto:deepseek-v4-pro', 'DeepSeek-V4-Pro'],
+    ['auto:deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash'],
+    ['auto:glm-5.3', 'GLM-5.3'],
   ]);
   assert.equal(planned.routes.size, 3);
 });

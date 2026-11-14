@@ -1,5 +1,5 @@
 import { REASONING_LEVELS } from './config.js';
-import { displayModelName, dshModelName } from './names.js';
+import { modelNameParts } from './names.js';
 
 export const AUTO_PREFIX = 'auto:';
 export const ROUTER_BASE_PATH = '/plugins/dsh-magpie/router';
@@ -30,14 +30,32 @@ export function routeKey(id) {
 }
 
 /**
+ * 条目展示用的模型本名：去掉供应商后缀和 (Max) 档位标记。
+ * 例：`Kimi-K3.1-Pro (Max)` → `Kimi-K3.1-Pro`；`DeepSeek-Flash` → `DeepSeek V4.1 Flash`。
+ */
+function baseName(row) {
+  const name = modelNameParts(row, {}).base.replace(MODEL_TIER_MARKER, '').trim();
+  // 没填名称时 modelNameParts 会退回完整路由 ID，带供应商前缀；ID 里不要出现前缀。
+  const text = name.includes('/') ? bareId(row) : name;
+  // 目录里个别条目名是占位符（如 “-”）：同样退回裸 ID，避免出现 auto:- 这种没法读的 ID。
+  return /[a-z0-9]/i.test(text) ? text : bareId(row);
+}
+
+function bareId(row) {
+  return String(row.id ?? '').replace(/^.*\//, '');
+}
+
+/** 可读 ID 用的小写连字符形式；月日快照不算型号差异，一并去掉。 */
+function entrySlug(row) {
+  return baseName(row).toLowerCase().replace(/[\s_]+/g, '-').replace(MODEL_VERSION_SUFFIX, '').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+}
+
+/**
  * 别名 ID（如 frontier-1 / qmodel_latest）看不出同款，只能靠显示名识别。
  * 仅带版本号的名称才参与按名合并：search_agent_qwen_fast 这类通用别名同名也不并，避免误合不同模型。
  */
-function baseName(row) {
-  return displayModelName(row, {}).replace(MODEL_TIER_MARKER, '').trim();
-}
 function nameKey(row) {
-  const text = baseName(row).toLowerCase().replace(/[\s_-]+/g, '-').replace(MODEL_PREVIEW_SUFFIX, '');
+  const text = entrySlug(row).replace(MODEL_TIER_SUFFIX, '').replace(MODEL_PREVIEW_SUFFIX, '');
   return /\d/.test(text) ? text : '';
 }
 
@@ -55,39 +73,56 @@ function mergedEfforts(members) {
   return declared.size ? REASONING_LEVELS.filter((level) => declared.has(level)) : [...DEFAULT_EFFORTS];
 }
 
-function mergedEntry(key, members) {
-  const first = members[0];
-  // 单个候选保留供应商简称；多个候选只显示型号和 Auto，避免误以为固定到某家供应商。
-  const name = members.length === 1 ? dshModelName(first) : `${baseName(first).replace(/\s+/g, '-')} Auto`;
-  const reasoningEfforts = mergedEfforts(members);
-  return {
-    id: `${AUTO_PREFIX}${key}`, name,
-    ...smallest(members, 'contextWindow'), ...smallest(members, 'maxTokens'),
-    input: members.some((row) => row.input?.includes('image')) ? ['text', 'image'] : ['text'],
-    reasoningEfforts,
-  };
+/** 组内出现最多的名称作为条目 ID 与展示名，并列时取最先出现的，保证清单顺序变化不影响 ID。 */
+function groupSlug(members) {
+  const counts = new Map();
+  for (const row of members) {
+    const slug = entrySlug(row);
+    counts.set(slug, (counts.get(slug) ?? 0) + 1);
+  }
+  let best = '', seen = 0;
+  for (const [slug, count] of counts) if (count > seen) { best = slug; seen = count; }
+  return best;
+}
+
+/** 展示名用同组里最干净的写法：优先没用月日快照的成员，再按清单顺序。 */
+function groupName(members, slug) {
+  const same = members.filter((row) => entrySlug(row) === slug);
+  const clean = same.find((row) => !MODEL_VERSION_SUFFIX.test(baseName(row))) ?? same[0];
+  return baseName(clean).replace(/\s+/g, '-');
 }
 
 /**
  * 把当前勾选转换成 DSH 的 auto 条目和转发候选。两处共用同一份规划，避免界面列出的能力与实际选路不一致。
  * 组间按第一次出现的位置、组内按清单顺序排列；后者就是无固定记录时的选路优先级。
+ *
+ * ID 取实际模型名（`auto:kimi-k3.1-pro`），不再用内部别名，方便在 DSH 里对照；
+ * 不同模型恰好同名时按出现顺序追加 `-2`、`-3` 保证 ID 唯一。
  */
 export function planAutoRoute(config) {
-  const groups = new Map();
-  const byName = new Map();
+  const groups = [];
+  // 裸 ID 键和名称键指向同一组：别名 ID 靠名称归组，组内后续成员两个键都要登记。
+  const byKey = new Map();
   for (const row of config.models) {
     if (!row.enabled) continue;
-    const idKey = routeKey(row.id);
-    const named = nameKey(row);
-    // ID 键优先；ID 看不出同款时按带版本号的显示名归组（Preview / 预览版已等价）。
-    const key = groups.has(idKey) ? idKey : (named && byName.get(named)) || idKey;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(row);
-    if (named && !byName.has(named)) byName.set(named, key);
+    const keys = [routeKey(row.id), nameKey(row)].filter(Boolean);
+    let group = keys.map((key) => byKey.get(key)).find(Boolean);
+    if (!group) { group = { members: [] }; groups.push(group); }
+    group.members.push(row);
+    for (const key of keys) if (!byKey.has(key)) byKey.set(key, group);
   }
   const entries = [], routes = new Map();
-  for (const [key, members] of groups) {
-    const entry = mergedEntry(key, members);
+  for (const { members } of groups) {
+    const slug = groupSlug(members) || routeKey(members[0].id);
+    // 不同模型恰好同名（如两个 Search-Agent）时无法靠名称区分，按出现顺序加数字后缀，ID 与展示名同步。
+    let id = `${AUTO_PREFIX}${slug}`, tag = '';
+    for (let n = 2; routes.has(id); n++) { id = `${AUTO_PREFIX}${slug}-${n}`; tag = ` ${n}`; }
+    const entry = {
+      id, name: `${groupName(members, slug)}${tag}`,
+      ...smallest(members, 'contextWindow'), ...smallest(members, 'maxTokens'),
+      input: members.some((row) => row.input?.includes('image')) ? ['text', 'image'] : ['text'],
+      reasoningEfforts: mergedEfforts(members),
+    };
     entries.push(entry);
     routes.set(entry.id, members);
   }

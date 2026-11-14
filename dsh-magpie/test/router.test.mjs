@@ -10,7 +10,7 @@ const TWO_ROUTES = [
   { id: 'a/deepseek-flash', name: 'DeepSeek-Flash', input: ['text', 'image'], reasoningEfforts: ['low', 'high'] },
   { id: 'b/deepseek-flash', name: 'DeepSeek-Flash', reasoningEfforts: ['low'] },
 ];
-const ask = (text = 'hello') => ({ model: 'auto:deepseek-flash', messages: [{ role: 'user', content: text }] });
+const ask = (text = 'hello') => ({ model: 'auto:deepseek-v4.1-flash', messages: [{ role: 'user', content: text }] });
 
 async function setup(t, options = {}) {
   const calls = [];
@@ -134,7 +134,7 @@ test('本机鉴权、请求来源、未知模型、非法路径与请求体上�
   assert.equal((await send(ask(), { headers: { authorization: 'Bearer wrong', 'content-type': 'application/json' } })).status, 401);
   assert.equal((await send(ask(), { headers: { authorization: 'Bearer secret', 'content-type': 'application/json', origin: 'http://evil.test' } })).status, 403);
   assert.equal((await send({ ...ask(), model: 'auto:missing' })).status, 404);
-  assert.equal((await send({ model: 'auto:deepseek-flash', messages: ['x'.repeat(200)] })).status, 413);
+  assert.equal((await send({ model: 'auto:deepseek-v4.1-flash', messages: ['x'.repeat(200)] })).status, 413);
   assert.equal((await fetch(`${url}/other`, { headers: { authorization: 'Bearer secret' } })).status, 404);
   assert.equal(calls.length, 0);
 });

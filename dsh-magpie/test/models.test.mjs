@@ -137,7 +137,7 @@ test('自动路由写入合并条目与本机地址，开关往返修复默认�
   const provider = host.llm.options.config.providers[PROVIDER_ID];
   assert.equal(provider.baseURL, `http://127.0.0.1:9876${ROUTER_BASE_PATH}/v1/`);
   assert.deepEqual(provider.models.map((m) => m.id), ['auto:deepseek', 'auto:glm']);
-  assert.equal(provider.models[0].name, 'DeepSeek Auto');
+  assert.equal(provider.models[0].name, 'DeepSeek', '展示名不再拼 Auto');
   assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:deepseek' });
   assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'auto:deepseek' }], '同款引用合并后去重');
   assert.equal(enabled.refs.state, 'updated');
@@ -158,9 +158,22 @@ test('按名合并后旧别名引用（auto: 前缀与裸 ID）反查到合并�
     { id: 'qoder-cn/qmodel_latest', name: 'Qwen4-Max-Preview' },
   ] });
   host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'auto:qmodel_latest' };
-  host.llm.options.config.allowedModels = [{ provider: PROVIDER_ID, model: 'qoder-cn/qmodel_latest' }];
+  host.llm.options.config.allowedModels = [{ provider: PROVIDER_ID, model: 'qoder-cn/qmodel_latest' }, { provider: PROVIDER_ID, model: 'auto:frontier-1' }];
   const result = await syncModels(resolveConfig(host.own.options.config), { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' });
   assert.equal(result.refs.state, 'updated');
-  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:frontier-1' });
-  assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'auto:frontier-1' }]);
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:qwen4-max-preview' });
+  assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'auto:qwen4-max-preview' }], '两个旧 ID 指向同一条目后去重');
+});
+
+test('旧 auto ID 由裸 ID 拼成时（大小写不同）也能迁移到新模型名 ID', async () => {
+  const host = fakeHost({ syncEnabled: true, autoRoute: true, models: [
+    { id: 'trae-cn/Doubao-Seed-Evolving-auto-max', name: 'Seed-Evolving (Max)' },
+    { id: 'opencode-zen-free/longcat-2.5-free', name: 'LongCat 2.5 Free' },
+  ] });
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'auto:doubao-seed-evolving-auto-max' };
+  host.llm.options.config.allowedModels = [{ provider: PROVIDER_ID, model: 'auto:longcat-2.5' }];
+  const result = await syncModels(resolveConfig(host.own.options.config), { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' });
+  assert.equal(result.refs.state, 'updated');
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:seed-evolving' });
+  assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'auto:longcat-2.5-free' }]);
 });

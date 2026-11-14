@@ -97,10 +97,13 @@ export async function retargetModelRefs({ editor, entries, routes }) {
     const bare = member.id.includes('/') ? member.id.slice(member.id.indexOf('/') + 1) : member.id;
     if (!byId.has(bare)) byId.set(bare, autoId);
   }
+  // 旧 ID 是按裸 ID 拼的（如 auto:doubao-seed-evolving-auto-max），大小写与现在不同，再按小写兜一层。
+  const byLowerId = new Map();
+  for (const [key, value] of byId) if (!byLowerId.has(key.toLowerCase())) byLowerId.set(key.toLowerCase(), value);
   const swap = (id) => {
     if (current.has(id)) return id;
     const bare = id.startsWith(AUTO_PREFIX) ? id.slice(AUTO_PREFIX.length) : id;
-    return byId.get(id) ?? byId.get(bare) ?? byKey.get(routeKey(id)) ?? id;
+    return byId.get(id) ?? byId.get(bare) ?? byLowerId.get(bare.toLowerCase()) ?? byKey.get(routeKey(id)) ?? id;
   };
   let count = 0;
   try {

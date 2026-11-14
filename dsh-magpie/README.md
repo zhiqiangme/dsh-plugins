@@ -107,7 +107,7 @@ Magpie 也有完全无界面的 `magpie serve`（只运行网关，没有托盘�
 3. 模型列表左侧勾选，显示名称右侧箭头展开详细配置；详情在列表原位展开，后续模型自动下移。按需编辑 ID、名称、上下文、输出限额、图片输入和思考档位，例如 `low, high, max`。思考档位只能使用 DSH 支持的 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，且不能只有 `off`；不支持思考的模型留空。未知能力留空，不按模型名称猜测。
 4. 勾选模型，拖动勾选框左侧的六点手柄调整顺序，打开「同步到 DSH」，点击「保存并同步」。选中的模型按清单顺序出现在 **Magpie** 分组（provider ID 仍为 `dsh-magpie`）。
 
-管理列表与 DSH 模型选择器会在模型名后追加供应商简称，例如 `DeepSeek V4.1 Flash WorkBuddy`、`Step-5-Preview WorkBuddy GL`、`DeepSeek V4.1 Flash Free OpenCode`。写入 DSH 模型列表的名字另做连字符化：模型本名内的空格换成 `-`，与 `Auto` / 供应商简称之间保留空格（如 `DeepSeek-V4.1-Flash Auto`、`LongCat-2.5-Free OpenCode`）；插件卡片内的管理显示仍保留空格。`workbuddy-ai` 为国际版，显示为 `WorkBuddy GL`；`workbuddy` 为国内版，显示为 `WorkBuddy`。Qoder / Trae 国际版同样使用 `GL`。名称已带对应简称时不重复追加；手工名称、模型 ID 与排序保持不变，未知供应商或路由组不追加简称。
+管理列表与 DSH 模型选择器会在模型名后追加供应商简称，例如 `DeepSeek V4.1 Flash WorkBuddy`、`Step-5-Preview WorkBuddy GL`、`DeepSeek V4.1 Flash Free OpenCode`。写入 DSH 模型列表的名字另做连字符化：模型本名内的空格换成 `-`，与供应商简称之间保留空格（如 `LongCat-2.5-Free OpenCode`）；开启自动路由时，条目直接使用模型本名（如 `DeepSeek-V4.1-Flash`），不再拼接 `Auto` 或供应商简称，实际出口由路由决定。插件卡片内的管理显示仍保留空格。`workbuddy-ai` 为国际版，显示为 `WorkBuddy GL`；`workbuddy` 为国内版，显示为 `WorkBuddy`。Qoder / Trae 国际版同样使用 `GL`。名称已带对应简称时不重复追加；手工名称、模型 ID 与排序保持不变，未知供应商或路由组不追加简称。
 
 `DeepSeek-Flash`、`Deepseek-V4.1-Flash` 等写法统一显示为 `DeepSeek V4.1 Flash`，保留 `Free`、`(Max)` 等尾缀和供应商简称；中文「预览版」（含括号写法）统一显示为 `Preview`，展示名默认不出现中文；搜索、快捷排序、分类与 DSH 模型名称同步使用这一显示规则。此规则仅派生显示名称，不改写保存的名称或模型 ID，其他 DeepSeek 版本不受影响。
 
@@ -117,7 +117,9 @@ Magpie 也有完全无界面的 `magpie serve`（只运行网关，没有托盘�
 
 ### 自动路由
 
-「自动路由（同款模型合并）」默认开启，开关立即保存并同步。开启后，只有裸模型 ID 相同的已选出口才合并为 `auto:型号`，不会把 DeepSeek、GLM 大系列里的不同型号混在一起。月日快照后缀（如 `-1017`）和明确的 `free` / `std` 档位不算型号差异；Preview 与中文「预览版」、推理档位标记 `(Max)` 同样视为同一变体标记（带 `(Max)` 与不带后缀的同款合并，合并后的名称不带档位标记）。ID 是别名（如 `frontier-1`、`qmodel_latest`）看不出同款时，按带版本号的显示名归组（Preview / 预览版归一后比较）；不带版本号的通用别名（如 `search_agent_qwen_fast`）同名也不按名称合并，避免误并不同模型。其它不同 ID 不猜测合并。单个候选也使用稳定的 `auto:` ID，多个候选的名称带 `Auto`。
+「自动路由（同款模型合并）」默认开启，开关立即保存并同步。开启后，裸模型 ID 相同的已选出口合并为一条 `auto:` 条目，不会把 DeepSeek、GLM 大系列里的不同型号混在一起。月日快照后缀（如 `-1017`）和明确的 `free` / `std` 档位不算型号差异；Preview 与中文「预览版」、推理档位标记 `(Max)` 同样视为同一变体标记（带 `(Max)` 与不带后缀的同款合并）。ID 是别名（如 `frontier-1`、`qmodel_latest`、`dfmodel`）看不出同款时，按带版本号的显示名归组（Preview / 预览版归一后比较）；不带版本号的通用别名（如 `search_agent_qwen_fast`）同名也不按名称合并，避免误并不同模型。其它不同 ID 不猜测合并。
+
+条目 ID 直接取实际模型名（小写连字符形式），不再出现内部别名：`auto:qwen4-max-preview`、`auto:kimi-k3.1-pro`、`auto:longcat-2.5-free`、`auto:seed-evolving`；DSH 模型列表里的名称同样是模型本名（`Qwen4-Max-Preview`、`Kimi-K3.1-Pro`），不再拼接 `Auto` 或供应商简称。同一组内取出现最多的写法作为 ID，避免清单顺序变化导致 ID 变动；单个候选也使用同一规则。不同模型恰好同名时（例如两个 `search_agent_qwen_fast`）按出现顺序追加 `-2`、`-3` 并同步到展示名；名称是占位符（如 `-`）时退回裸模型 ID。切换开关会把 DSH 中已有的旧 `auto:` ID（含别名 ID 和大小写不同的写法）迁移到新 ID。
 
 候选按清单顺序尝试，同一对话优先固定到成功出口。连接失败、响应头超时以及 402、404、408、429、500、502、503、504 会切换下一个候选，并在当前对话中冷却 5 分钟（超时 30 秒）；400、401、403 不跨出口重放。合并条目的上下文和最大输出取已知最小值，视觉能力取并集；思考档位取各候选的并集，候选都没声明时按低 / 高 / 最大兜底，请求带了档位（`reasoning_effort` 或 `reasoning.effort`）时优先选声明支持该档位的出口。带图请求会跳过不支持图片的出口。Magpie 目录没有 WorkBuddy 的积分、价格和到期数据，因此不按免费额度或临期积分排序。
 
