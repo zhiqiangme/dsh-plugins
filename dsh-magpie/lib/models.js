@@ -85,9 +85,31 @@ function replaceModelRefs(value, provider, swap) {
   return next;
 }
 
-/** auto 开关改变条目 ID 后修复其它插件引用；同步主清单失败时不阻断，单独报告。 */
-export async function retargetModelRefs({ editor, entries, routes }) {
+/** auto 条目改名、合并或开关变化后修复其它插件引用；同步主清单失败时不阻断，单独报告。 */
+export async function retargetModelRefs({ editor, entries, routes, previousRoutes = [], autoRoute = true }) {
   const current = new Set(entries.map((entry) => entry.id));
+  const currentRoutes = [...(routes ?? [])];
+  const migrations = new Map(), previousOwners = new Map();
+  // 上一轮名称派生的 auto ID 不在原始清单里，必须通过两组共有的原始候选找回对应关系。
+  // 同时接受旧数字后缀规划，升级后第一次同步也能迁移到稳定后缀。
+  for (const previous of previousRoutes) for (const [oldId, oldMembers] of previous ?? []) {
+    if (!previousOwners.has(oldId)) previousOwners.set(oldId, oldMembers);
+    let target;
+    if (autoRoute) {
+      const oldIds = new Set(oldMembers.map((row) => row.id));
+      let best = 0;
+      for (const [id, members] of currentRoutes) {
+        const score = members.reduce((count, row) => count + Number(oldIds.has(row.id)), 0);
+        if (score > best) { best = score; target = id; }
+      }
+    } else {
+      target = oldMembers.find((row) => current.has(row.id))?.id;
+    }
+    if (target && !migrations.has(oldId)) migrations.set(oldId, target);
+  }
+  const migrationsByLower = new Map(), previousOwnersByLower = new Map();
+  for (const [key, value] of migrations) if (!migrationsByLower.has(key.toLowerCase())) migrationsByLower.set(key.toLowerCase(), value);
+  for (const [key, value] of previousOwners) if (!previousOwnersByLower.has(key.toLowerCase())) previousOwnersByLower.set(key.toLowerCase(), value);
   const byKey = new Map();
   for (const entry of entries) if (!byKey.has(routeKey(entry.id))) byKey.set(routeKey(entry.id), entry.id);
   // 按名合并后旧引用可能指向被并掉的别名 ID（含 auto: 前缀或裸 ID），用候选成员反查合并条目。
@@ -101,6 +123,12 @@ export async function retargetModelRefs({ editor, entries, routes }) {
   const byLowerId = new Map();
   for (const [key, value] of byId) if (!byLowerId.has(key.toLowerCase())) byLowerId.set(key.toLowerCase(), value);
   const swap = (id) => {
+    // 必须先查历史映射：同名 ID 即使仍存在，也可能在旧配置里代表另一个候选组。
+    const migrated = migrations.get(id) ?? migrationsByLower.get(id.toLowerCase());
+    if (migrated) return migrated;
+    const previousOwner = previousOwners.get(id) ?? previousOwnersByLower.get(id.toLowerCase());
+    // 原候选已消失时保留对它的原始引用，绝不能因另一个同名组复用该 ID 而静默改路由。
+    if (previousOwner) return previousOwner[0]?.id ?? id;
     if (current.has(id)) return id;
     const bare = id.startsWith(AUTO_PREFIX) ? id.slice(AUTO_PREFIX.length) : id;
     return byId.get(id) ?? byId.get(bare) ?? byLowerId.get(bare.toLowerCase()) ?? byKey.get(routeKey(id)) ?? id;
@@ -140,9 +168,10 @@ export function withProvider(current, config, { routeOrigin } = {}) {
   return { changed: !isDeepStrictEqual(base, next), config: next, count: entries.length };
 }
 
-export async function syncModels(config, { editor, credentials, env = process.env, routeOrigin }) {
+export async function syncModels(config, { editor, credentials, env = process.env, routeOrigin, previousConfig, previousProviderIds: savedProviderIds }) {
   const target = findEntry(editor, LLM_PACKAGE);
   if (!target || typeof editor?.edit !== 'function') throw new Error('宿主 llm-pi-ai / configEditor 尚未就绪');
+  const previousProviderIds = savedProviderIds ?? (target.options?.config?.providers?.[PROVIDER_ID]?.models ?? []).map((row) => row?.id).filter((id) => typeof id === 'string');
   // 先检查归属；禁用或清空时不要求网关在线或凭据服务可写。
   const planned = withProvider(target.options.config, config, { routeOrigin });
   if (config.enabled && config.syncEnabled && planned.count > 0) {
@@ -159,10 +188,21 @@ export async function syncModels(config, { editor, credentials, env = process.en
     }
   }
   if (planned.changed) await editor.edit(target, (current) => withProvider(current, config, { routeOrigin }).config);
+  const before = previousConfig ?? config;
+  const currentPlan = planAutoRoute(config);
+  const stablePrevious = planAutoRoute(before), legacyPrevious = planAutoRoute(before, { legacyIds: true });
+  // 真实模型名可能以 2 或哈希文本结尾，与另一种规划的 ID 撞名。实际 provider 中命中更多的方案才优先认领旧引用。
+  const score = (plan) => previousProviderIds.reduce((total, id) => total + Number(plan.routes.has(id)), 0);
+  const stableScore = score(stablePrevious), legacyScore = score(legacyPrevious);
+  const previousRoutes = legacyScore > stableScore
+    ? [legacyPrevious.routes, stablePrevious.routes]
+    : [stablePrevious.routes, legacyPrevious.routes];
   const refs = await retargetModelRefs({
     editor,
     entries: config.enabled && config.syncEnabled ? modelEntries(config) : [],
-    routes: config.enabled && config.syncEnabled && config.autoRoute ? planAutoRoute(config).routes : undefined,
+    routes: config.enabled && config.syncEnabled && config.autoRoute ? currentPlan.routes : undefined,
+    previousRoutes,
+    autoRoute: config.enabled && config.syncEnabled && config.autoRoute,
   });
   return { state: planned.changed ? 'updated' : 'unchanged', count: config.enabled && config.syncEnabled ? planned.count : 0, refs };
 }

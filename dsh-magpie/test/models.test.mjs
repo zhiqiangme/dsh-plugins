@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { gatewayURL, KEY_REF, PROVIDER_ID, resolveConfig } from '../lib/config.js';
 import { catalogModels, modelEntries, withProvider, syncModels } from '../lib/models.js';
 import { fakeHost } from '../fixtures/host.mjs';
-import { ROUTER_BASE_PATH } from '../lib/auto-route.js';
+import { planAutoRoute, ROUTER_BASE_PATH } from '../lib/auto-route.js';
 
 const manual = (extra = {}) => resolveConfig({ syncEnabled: true, autoRoute: false, models: [{ id: 'group/custom', name: '手工名称', input: ['text', 'image'], reasoningEfforts: ['low', 'high'] }], ...extra });
 
@@ -176,4 +176,90 @@ test('旧 auto ID 由裸 ID 拼成时（大小写不同）也能迁移到新模�
   assert.equal(result.refs.state, 'updated');
   assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:seed-evolving' });
   assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'auto:longcat-2.5-free' }]);
+});
+
+test('普通显示名改名通过上一轮候选映射旧 auto 引用', async () => {
+  const host = fakeHost({ syncEnabled: true, autoRoute: true, models: [{ id: 'qwenwork/frontier-1', name: 'Qwen4-Max 预览版' }] });
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'qwenwork/frontier-1' };
+  host.llm.options.config.allowedModels = [{ provider: PROVIDER_ID, model: 'qwenwork/frontier-1' }];
+  const options = { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' };
+  const config = resolveConfig(host.own.options.config);
+  await syncModels(config, options);
+  assert.equal(host.llm.options.config.defaultModel.model, 'auto:qwen4-max-preview');
+  const renamed = resolveConfig({ ...config, models: [{ ...config.models[0], name: 'My Renamed Model' }] });
+  const result = await syncModels(renamed, { ...options, previousConfig: config });
+  assert.deepEqual(host.llm.options.config.providers[PROVIDER_ID].models.map((row) => row.id), ['auto:my-renamed-model']);
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:my-renamed-model' });
+  assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'auto:my-renamed-model' }]);
+  assert.equal(result.refs.state, 'updated');
+});
+
+test('关闭自动路由时名称派生 ID 映射回原始候选并去重', async () => {
+  const host = fakeHost({ syncEnabled: true, autoRoute: true, models: [
+    { id: 'qwenwork/frontier-1', name: 'Qwen4-Max 预览版' },
+    { id: 'qoder-cn/qmodel_latest', name: 'Qwen4-Max-Preview' },
+  ] });
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'qoder-cn/qmodel_latest' };
+  host.llm.options.config.allowedModels = [{ provider: PROVIDER_ID, model: 'qwenwork/frontier-1' }];
+  const options = { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' };
+  const config = resolveConfig(host.own.options.config);
+  await syncModels(config, options);
+  assert.equal(host.llm.options.config.defaultModel.model, 'auto:qwen4-max-preview');
+  const disabled = resolveConfig({ ...config, autoRoute: false });
+  const result = await syncModels(disabled, { ...options, previousConfig: config });
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'qwenwork/frontier-1' });
+  assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'qwenwork/frontier-1' }]);
+  assert.equal(result.refs.state, 'updated');
+});
+
+test('旧数字后缀迁移到稳定 ID，删除候选不会把旧引用转给同名模型', async () => {
+  const rows = [
+    { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' },
+    { id: 'trae-cn/search_agent_qwen_fast', name: 'search_agent_qwen_fast' },
+  ];
+  const host = fakeHost({ syncEnabled: true, autoRoute: true, models: rows });
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'auto:search-agent-qwen-fast' };
+  host.llm.options.config.allowedModels = [{ provider: PROVIDER_ID, model: 'auto:search-agent-qwen-fast-2' }];
+  const options = { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' };
+  const config = resolveConfig(host.own.options.config);
+  await syncModels(config, options);
+  const initialEntries = host.llm.options.config.providers[PROVIDER_ID].models;
+  assert.deepEqual(initialEntries.map((row) => row.id), [
+    'auto:search-agent-qwen-fast-51e50d5e3ce7', 'auto:search-agent-qwen-fast-f36fe7f823b5',
+  ]);
+  assert.equal(host.llm.options.config.defaultModel.model, initialEntries[0].id);
+  assert.equal(host.llm.options.config.allowedModels[0].model, initialEntries[1].id);
+  const removed = resolveConfig({ ...config, models: [config.models[1]] });
+  await syncModels(removed, { ...options, previousConfig: config });
+  const remaining = host.llm.options.config.providers[PROVIDER_ID].models[0].id;
+  assert.equal(remaining, 'auto:search-agent-qwen-fast');
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: rows[0].id }, '已删除候选保留原始失效引用，不能静默指向剩余模型');
+  assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: remaining }], '剩余候选的旧引用跟随新 ID');
+});
+
+test('旧数字后缀与真实模型名碰撞时按 provider 实际方案迁移', async () => {
+  const rows = [
+    { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' },
+    { id: 'trae-cn/search_agent_qwen_fast', name: 'search_agent_qwen_fast' },
+    { id: 'trae-cn/actual-second-agent', name: 'search_agent_qwen_fast 2' },
+  ];
+  const host = fakeHost({ syncEnabled: true, autoRoute: true, models: rows });
+  const config = resolveConfig(host.own.options.config);
+  const legacy = planAutoRoute(config, { legacyIds: true });
+  assert.deepEqual(legacy.entries.map((row) => row.id), [
+    'auto:search-agent-qwen-fast', 'auto:search-agent-qwen-fast-2', 'auto:search-agent-qwen-fast-2-2',
+  ]);
+  host.llm.options.config.providers[PROVIDER_ID] = { apiKeyEnv: KEY_REF, models: legacy.entries };
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'auto:search-agent-qwen-fast-2' };
+  host.llm.options.config.allowedModels = [{ provider: PROVIDER_ID, model: 'auto:search-agent-qwen-fast-2-2' }];
+  await syncModels(config, { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' });
+  assert.deepEqual(host.llm.options.config.defaultModel, {
+    provider: PROVIDER_ID, model: 'auto:search-agent-qwen-fast-f36fe7f823b5',
+  }, '旧同名组必须迁移到自己的稳定 ID，不能留给真实名称以 2 结尾的模型');
+  assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'auto:search-agent-qwen-fast-2' }]);
+  const defaultModel = structuredClone(host.llm.options.config.defaultModel);
+  const allowedModels = structuredClone(host.llm.options.config.allowedModels);
+  await syncModels(config, { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' });
+  assert.deepEqual(host.llm.options.config.defaultModel, defaultModel, '稳定方案再次同步也不能被 legacy 碰撞反向抢占');
+  assert.deepEqual(host.llm.options.config.allowedModels, allowedModels);
 });

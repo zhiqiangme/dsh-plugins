@@ -59,15 +59,33 @@ test('别名 ID 与正式 ID 指向同款时并成一组，ID 取组内出现最
   assert.deepEqual(planned.routes.get('auto:deepseek-v4.1-flash').map((row) => row.id), ['qoder-cn/dfmodel', 'trae-cn/deepseek-v4.1-flash-max', 'codearts/deepseek-v4.1-flash-1017']);
 });
 
-test('不带版本号的通用别名同名也不按名称合并，靠数字后缀区分 ID 与展示名', () => {
-  const planned = planAutoRoute(config([
+test('不带版本号的通用别名同名也不按名称合并，ID 用稳定后缀、展示名用数字后缀区分', () => {
+  const rows = [
     { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' },
     { id: 'trae-cn/search_agent_qwen_fast', name: 'search_agent_qwen_fast' },
-  ]));
+  ];
+  const planned = planAutoRoute(config(rows));
   assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [
-    ['auto:search-agent-qwen-fast', 'search_agent_qwen_fast'],
-    ['auto:search-agent-qwen-fast-2', 'search_agent_qwen_fast 2'],
+    ['auto:search-agent-qwen-fast-51e50d5e3ce7', 'search_agent_qwen_fast'],
+    ['auto:search-agent-qwen-fast-f36fe7f823b5', 'search_agent_qwen_fast 2'],
   ]);
+  assert.deepEqual(planAutoRoute(config(rows), { legacyIds: true }).entries.map((row) => row.id), [
+    'auto:search-agent-qwen-fast', 'auto:search-agent-qwen-fast-2',
+  ], '升级时仍能识别旧数字后缀');
+});
+
+test('同名 ID 与原始候选绑定，重排或移除另一候选不会复用旧 ID', () => {
+  const a = { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' };
+  const b = { id: 'trae-cn/search_agent_qwen_fast', name: 'search_agent_qwen_fast' };
+  const initial = planAutoRoute(config([a, b]));
+  const idOf = (planned, id) => [...planned.routes].find(([_autoId, members]) => members.some((row) => row.id === id))?.[0];
+  const initialA = idOf(initial, a.id), initialB = idOf(initial, b.id);
+  const reordered = planAutoRoute(config([b, a]));
+  assert.equal(idOf(reordered, a.id), initialA);
+  assert.equal(idOf(reordered, b.id), initialB);
+  const remaining = idOf(planAutoRoute(config([b])), b.id);
+  assert.notEqual(remaining, initialA, '剩余候选不能复用已移除候选的旧引用');
+  assert.notEqual(remaining, initialB, '不再同名时恢复可读 ID，旧引用由迁移逻辑接续');
 });
 
 test('名称为占位符时退回裸 ID，不出现 auto:- 这类 ID', () => {

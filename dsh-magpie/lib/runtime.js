@@ -1,5 +1,5 @@
-import { INSTANT_FIELDS, KEY_REF, LOCAL_KEY, PACKAGE_NAME, PLUGIN_ID, object, resolveConfig, revision } from './config.js';
-import { credential, findEntry, catalogModels, requestGateway, syncModels } from './models.js';
+import { INSTANT_FIELDS, KEY_REF, LOCAL_KEY, PACKAGE_NAME, PLUGIN_ID, PROVIDER_ID, object, resolveConfig, revision } from './config.js';
+import { credential, findEntry, catalogModels, requestGateway, syncModels, LLM_PACKAGE } from './models.js';
 import { PROVIDER_NAMES, keepOrderIndexes, sortModelIndexes } from './names.js';
 import { MagpieBackend } from './backend.js';
 import { conversationBlock } from './auto-update.js';
@@ -19,6 +19,8 @@ export class ModelManager {
   constructor(ctx, raw, { env = process.env, fetchImpl = fetch, backend } = {}) {
     this.ctx = ctx;
     this.config = resolveConfig(raw);
+    // 同步失败后的重试仍需知道上一轮名称派生 ID；只有完整成功才推进这份快照。
+    this.lastSyncedConfig = this.config;
     this.env = env;
     this.fetch = fetchImpl;
     this.backend = backend ?? new MagpieBackend({ env });
@@ -33,6 +35,10 @@ export class ModelManager {
   current() {
     const entry = findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID);
     return entry ? resolveConfig(entry.options.config) : this.config;
+  }
+  providerIds() {
+    const models = findEntry(this.editor, LLM_PACKAGE)?.options?.config?.providers?.[PROVIDER_ID]?.models ?? [];
+    return models.map((row) => row?.id).filter((id) => typeof id === 'string');
   }
   enqueue(run) {
     const work = this.pending.then(() => {
@@ -55,15 +61,24 @@ export class ModelManager {
       nativeProviders: Object.keys(object(llm?.options.config?.providers)).filter((id) => ['magpie', 'magpie-responses', 'magpie-anthropic'].includes(id)),
     };
   }
-  async sync(config = this.current()) {
+  async sync(config = this.current(), previousConfig = this.lastSyncedConfig) {
     try {
       if (config.autoRoute) await this.routeReady;
       // 路由地址优先用 registerPanel 登记的（含旧端口兼容监听）；webServer 已就绪但面板尚未登记时现取。
       const routeOrigin = () => this.routeOrigin ?? hostService(this.ctx, 'webServer', (value) => typeof value?.getOrigin === 'function')?.getOrigin();
-      const result = await syncModels(config, { editor: this.editor, credentials: this.credentials, env: this.env, routeOrigin });
-      return (this.lastSync = result.refs?.state === 'failed'
+      // provider 可能已在引用修复失败时更新，不能用失败后的 ID 反推旧方案。
+      const previousProviderIds = this.lastSyncedProviderIds ?? this.providerIds();
+      // 首次尝试也要先固定快照；否则 refs 失败后的重试会读到刚更新的 provider。
+      if (this.lastSyncedProviderIds === undefined && findEntry(this.editor, LLM_PACKAGE)) this.lastSyncedProviderIds = previousProviderIds;
+      const result = await syncModels(config, { editor: this.editor, credentials: this.credentials, env: this.env, routeOrigin, previousConfig, previousProviderIds });
+      const lastSync = result.refs?.state === 'failed'
         ? { ok: false, ...result, reason: `模型清单已更新，但旧模型引用修复失败：${result.refs.reason}` }
-        : { ok: true, ...result });
+        : { ok: true, ...result };
+      if (lastSync.ok) {
+        this.lastSyncedConfig = config;
+        this.lastSyncedProviderIds = this.providerIds();
+      }
+      return (this.lastSync = lastSync);
     } catch (error) {
       return (this.lastSync = { ok: false, reason: error.message });
     }

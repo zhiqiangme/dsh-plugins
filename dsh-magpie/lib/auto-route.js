@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { REASONING_LEVELS } from './config.js';
 import { modelNameParts } from './names.js';
 
@@ -96,10 +97,11 @@ function groupName(members, slug) {
  * 把当前勾选转换成 DSH 的 auto 条目和转发候选。两处共用同一份规划，避免界面列出的能力与实际选路不一致。
  * 组间按第一次出现的位置、组内按清单顺序排列；后者就是无固定记录时的选路优先级。
  *
- * ID 取实际模型名（`auto:kimi-k3.1-pro`），不再用内部别名，方便在 DSH 里对照；
- * 不同模型恰好同名时按出现顺序追加 `-2`、`-3` 保证 ID 唯一。
+ * ID 取实际模型名（`auto:kimi-k3.1-pro`），不再用内部别名，方便在 DSH 里对照。
+ * 同名但不同款的条目使用候选原始 ID 的哈希后缀：取消、删除或重排另一组都不能让本组复用旧引用。
+ * legacyIds 只用于读取本次改动前的 `-2` / `-3` 引用，新写入一律使用稳定后缀。
  */
-export function planAutoRoute(config) {
+export function planAutoRoute(config, { legacyIds = false } = {}) {
   const groups = [];
   // 裸 ID 键和名称键指向同一组：别名 ID 靠名称归组，组内后续成员两个键都要登记。
   const byKey = new Map();
@@ -111,12 +113,29 @@ export function planAutoRoute(config) {
     group.members.push(row);
     for (const key of keys) if (!byKey.has(key)) byKey.set(key, group);
   }
+  const described = groups.map(({ members }) => ({ members, slug: groupSlug(members) || routeKey(members[0].id) }));
+  const slugCounts = new Map();
+  for (const { slug } of described) slugCounts.set(slug, (slugCounts.get(slug) ?? 0) + 1);
+  const slugOrdinals = new Map();
   const entries = [], routes = new Map();
-  for (const { members } of groups) {
-    const slug = groupSlug(members) || routeKey(members[0].id);
-    // 不同模型恰好同名（如两个 Search-Agent）时无法靠名称区分，按出现顺序加数字后缀，ID 与展示名同步。
+  for (const { members, slug } of described) {
+    const ordinal = (slugOrdinals.get(slug) ?? 0) + 1;
+    slugOrdinals.set(slug, ordinal);
     let id = `${AUTO_PREFIX}${slug}`, tag = '';
-    for (let n = 2; routes.has(id); n++) { id = `${AUTO_PREFIX}${slug}-${n}`; tag = ` ${n}`; }
+    if (legacyIds) {
+      // 与旧实现逐字保持一致，供升级时找回已经保存的数字后缀引用。
+      for (let n = 2; routes.has(id); n++) { id = `${AUTO_PREFIX}${slug}-${n}`; tag = ` ${n}`; }
+    } else {
+      if (slugCounts.get(slug) > 1) {
+        const ids = members.map((row) => row.id).sort();
+        const fingerprint = createHash('sha256').update(JSON.stringify(ids)).digest('hex').slice(0, 12);
+        id = `${AUTO_PREFIX}${slug}-${fingerprint}`;
+        if (ordinal > 1) tag = ` ${ordinal}`;
+      }
+      // 哈希碰撞或模型名自带相同后缀时仍须保证 ID 唯一；正常模型不会进入这个兜底。
+      const base = id;
+      for (let n = 2; routes.has(id); n++) id = `${base}-${n}`;
+    }
     const entry = {
       id, name: `${groupName(members, slug)}${tag}`,
       ...smallest(members, 'contextWindow'), ...smallest(members, 'maxTokens'),

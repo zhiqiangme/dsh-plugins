@@ -352,3 +352,77 @@ test('全量同步默认按模型名称排序，手动顺序时保留现有顺�
   const manual = await host.manager.handle({ action: 'sync-catalog', revision: result.revision, config: { ...result.config, manualOrder: true, models: [{ id: 'p/zeta' }, { id: 'p/alpha' }] } });
   assert.deepEqual(manual.config.models.map((m) => m.id), ['p/zeta', 'p/alpha', 'p/new-b'], '手动顺序保留现有顺序，新模型按名称接在末尾');
 });
+
+test('主流程保存改名和即时关闭自动路由都会迁移名称派生引用', async () => {
+  const host = setup();
+  const initial = await host.manager.describe();
+  const saved = await host.manager.handle({ action: 'save', revision: initial.revision, config: {
+    syncEnabled: true, autoRoute: true, models: [{ id: 'qwenwork/frontier-1', name: 'Qwen4-Max 预览版' }],
+  } });
+  assert.equal(saved.sync.ok, true);
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'auto:qwen4-max-preview' };
+  const renamed = await host.manager.handle({ action: 'save', revision: saved.revision, config: {
+    ...saved.config, models: [{ ...saved.config.models[0], name: 'My Renamed Model' }],
+  } });
+  assert.equal(renamed.sync.ok, true);
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:my-renamed-model' });
+  const disabled = await host.manager.handle({ action: 'patch', revision: renamed.revision, patch: { autoRoute: false } });
+  assert.equal(disabled.sync.ok, true);
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'qwenwork/frontier-1' });
+});
+
+test('同步失败后的重试仍从最后成功配置迁移名称派生引用', async () => {
+  const host = setup();
+  const initial = await host.manager.describe();
+  const saved = await host.manager.handle({ action: 'save', revision: initial.revision, config: {
+    syncEnabled: true, autoRoute: true, models: [{ id: 'qwenwork/frontier-1', name: 'Qwen4-Max 预览版' }],
+  } });
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'auto:qwen4-max-preview' };
+  const setCredential = host.services.credentials.set;
+  host.services.credentials.set = async () => { throw new Error('凭据只读'); };
+  const failed = await host.manager.handle({ action: 'save', revision: saved.revision, apiKey: 'new-key', config: {
+    ...saved.config, models: [{ ...saved.config.models[0], name: 'My Renamed Model' }],
+  } });
+  assert.equal(failed.saved, true);
+  assert.equal(failed.sync.ok, false);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].id, 'auto:qwen4-max-preview');
+  host.services.credentials.set = setCredential;
+  const retried = await host.manager.handle({ action: 'sync', revision: failed.revision });
+  assert.equal(retried.sync.ok, true);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].id, 'auto:my-renamed-model');
+  assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:my-renamed-model' });
+});
+
+test('provider 已更新但引用修复失败时重试仍按旧方案迁移', async () => {
+  const rows = [
+    { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' },
+    { id: 'trae-cn/search_agent_qwen_fast', name: 'search_agent_qwen_fast' },
+    { id: 'trae-cn/actual-second-agent', name: 'search_agent_qwen_fast 2' },
+  ];
+  const host = fakeHost({ syncEnabled: true, autoRoute: true, models: rows });
+  host.llm.options.config.providers[PROVIDER_ID] = { apiKeyEnv: KEY_REF, models: [
+    { id: 'auto:search-agent-qwen-fast' }, { id: 'auto:search-agent-qwen-fast-2' }, { id: 'auto:search-agent-qwen-fast-2-2' },
+  ] };
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'auto:search-agent-qwen-fast-2' };
+  const manager = new ModelManager(host.ctx, host.own.options.config, { env: {} });
+  const edit = host.editor.edit.bind(host.editor);
+  let failReferences = true, providerEdits = 0;
+  host.editor.edit = async (entry, change) => {
+    if (failReferences && entry === host.llm) {
+      providerEdits++;
+      if (providerEdits === 2) throw new Error('引用写入失败');
+    }
+    return edit(entry, change);
+  };
+  const failed = await manager.sync();
+  assert.equal(failed.ok, false);
+  assert.match(failed.reason, /引用修复失败/);
+  assert.equal(host.llm.options.config.defaultModel.model, 'auto:search-agent-qwen-fast-2');
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[1].id, 'auto:search-agent-qwen-fast-f36fe7f823b5');
+  failReferences = false;
+  const retried = await manager.sync();
+  assert.equal(retried.ok, true);
+  assert.deepEqual(host.llm.options.config.defaultModel, {
+    provider: PROVIDER_ID, model: 'auto:search-agent-qwen-fast-f36fe7f823b5',
+  });
+});
