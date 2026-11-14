@@ -105,14 +105,6 @@ export class ModelManager {
       if (body.action === 'backend-open') await this.backend.open(path, { lightweight });
       return { ok: true, backend: await this.backend.describe(path), magpieSettings: this.backend.settings?.() };
     }
-    if (body.action === 'catalog-order') {
-      // 「默认排序」只读 Magpie 目录的顺序，不保存也不改清单；排好的草稿仍由保存并同步提交。
-      const config = resolveConfig({ ...this.current(), baseURL: body.baseURL ?? this.current().baseURL });
-      const key = await credential(this.credentials, this.env, config.baseURL, body.apiKey);
-      const hello = await requestGateway(config.baseURL, '/api/hello', key, this.fetch);
-      if (hello?.name !== 'magpie') throw new Error('该地址没有返回 Magpie 身份信息');
-      return { ok: true, ids: catalogModels(await requestGateway(config.baseURL, '/v1/models', key, this.fetch)).map((model) => model.id) };
-    }
     if (body.action === 'status') {
       // 卡片标题处的网关状态：短超时，读不到就算未连接，不报错。
       const config = this.current();
@@ -158,11 +150,10 @@ export class ModelManager {
         // 全量同步只替换目录内容，不清空用户已做的选择；新出现的模型保持目录导入时的未勾选状态。
         // 草稿里的 enabled 可能尚未保存，因此以本次卡片提交为准；缺省值沿用手工模型默认勾选的兼容规则。
         const selections = new Map(draft.filter((m) => typeof m?.id === 'string').map((m) => [m.id.trim(), m.enabled !== false]));
-        // 默认按模型名称排好再保存，与卡片「按模型排序」一致；选了「默认排序」时沿用 Magpie 目录顺序。
-        // 用户手动排过序时保留卡片上的现有顺序，新模型接在末尾。
+        // 默认按模型名称排好再保存，与卡片「按模型排序」一致；用户手动排过序时保留卡片上的现有顺序，新模型接在末尾。
         const order = config.manualOrder
           ? keepOrderIndexes(catalog, draft.map((m) => m?.id))
-          : config.catalogOrder ? catalog.map((_model, index) => index) : sortModelIndexes(catalog, 'model');
+          : sortModelIndexes(catalog, 'model');
         config = resolveConfig({ ...config, models: order.map((index) => ({ ...catalog[index], enabled: selections.get(catalog[index].id) ?? false })) });
       }
       // 在宿主锁内核对版本，旧页面不能覆盖其它页面刚保存的模型清单。

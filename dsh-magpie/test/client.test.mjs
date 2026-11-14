@@ -966,50 +966,30 @@ test('标题显示网关与程序状态，程序状态可跳到更新页；标�
   assert.equal(button(client.render(), '从 Magpie 同步'), undefined);
 });
 
-test('默认排序按 Magpie 目录顺序排列，目录外的模型保持相对顺序排在后面；完整清单记为目录顺序，搜索时只算手动', async () => {
+test('去掉「默认排序」按钮，排序只保留按模型和按供应商，且不再请求目录顺序', () => {
   const requests = [];
-  const ids = ['p/c', 'p/a', 'p/b'];
-  const client = clientHarness(view({ models: ['p/a', 'local/x', 'p/b', 'p/c', 'local/y'].map((id) => ({ id })) }), async (_url, options) => {
+  const client = clientHarness(view({ models: [{ id: 'p/c' }, { id: 'p/a' }, { id: 'p/b' }] }), async (_url, options) => {
     requests.push(JSON.parse(options.body));
-    return response({ ok: true, ids });
+    return response({ ok: true });
   });
-  const hint = () => nodes(client.render(), (n) => n.type === 'p' && n.children.includes(client.module.zh.catalogOrder)).length;
-  assert.equal(hint(), 0);
-  await button(client.render(), '默认排序').props.onClick();
-  assert.deepEqual(requests[0], { action: 'catalog-order', baseURL: 'http://127.0.0.1:3425' });
-  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['p/c', 'p/a', 'p/b', 'local/x', 'local/y']);
-  assert.deepEqual([client.states[0].config.catalogOrder, client.states[0].config.manualOrder], [true, false]);
-  assert.equal(client.states[1], true);
+  assert.equal(button(client.render(), '默认排序'), undefined, '默认排序按钮已移除');
+  const hint = () => nodes(client.render(), (n) => n.type === 'p' && n.children.includes(client.module.zh.manualOrder)).length;
+  button(client.render(), '按供应商排序').props.onClick();
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['p/a', 'p/b', 'p/c']);
+  assert.equal(client.states[0].config.manualOrder, true, '按供应商排序算手动顺序');
   assert.equal(hint(), 1);
-  // 再按模型排序回到自动（名称）顺序。
   button(client.render(), '按模型排序').props.onClick();
-  assert.deepEqual([client.states[0].config.catalogOrder, client.states[0].config.manualOrder], [false, false]);
+  assert.equal(client.states[0].config.manualOrder, false, '完整清单按模型排序恢复自动排序');
+  assert.equal(hint(), 0);
+  assert.deepEqual(requests, [], '排序在本地完成，不再读取目录顺序');
+});
+
+test('搜索或分类筛选后按模型排序只算手动顺序，不清除自动排序标记之外的东西', () => {
+  const client = clientHarness(view({ models: [{ id: 'p/c' }, { id: 'p/a' }, { id: 'local/x' }] }));
   nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'p/' } });
-  await button(client.render(), '默认排序').props.onClick();
-  // 按模型排序后为 a、b、c、x、y；只重排可见的 p/ 三项，local 两项位置不动。
-  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['p/c', 'p/a', 'p/b', 'local/x', 'local/y']);
-  assert.deepEqual([client.states[0].config.catalogOrder, client.states[0].config.manualOrder], [false, true]);
-});
-
-test('默认排序的目录外模型按原始配置顺序兜底，不受置顶显示影响', async () => {
-  const client = clientHarness(view({ models: [{ id: 'local/a', enabled: false }, { id: 'local/b' }] }), async () => response({ ok: true, ids: [] }));
-  const original = client.states[0].config.models;
-  const order = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title);
-  assert.deepEqual(order(), ['local/b', 'local/a'], '已勾选的 b 在展示中置顶');
-  await button(client.render(), '默认排序').props.onClick();
-  assert.equal(client.states[0].config.models, original, '目录外模型仍保持原配置数组和顺序');
-  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['local/a', 'local/b']);
-  assert.deepEqual(order(), ['local/b', 'local/a'], '仅目录顺序标记变化，不改变置顶展示');
-  assert.equal(client.states[0].config.catalogOrder, true);
-});
-
-test('默认排序读取失败时显示原因，不改草稿', async () => {
-  const client = clientHarness(view({ models: [{ id: 'p/b' }, { id: 'p/a' }] }), async () => response({ ok: false, reason: 'connect ECONNREFUSED' }, 502));
-  const before = client.states[0].config.models;
-  await button(client.render(), '默认排序').props.onClick();
-  assert.equal(client.states[0].config.models, before);
-  assert.match(client.states[3].text, /ECONNREFUSED/);
-  assert.equal(client.states[1], false);
+  button(client.render(), '按模型排序').props.onClick();
+  assert.deepEqual(client.states[0].config.models.map((m) => m.id), ['p/a', 'p/c', 'local/x'], '只重排可见模型');
+  assert.equal(client.states[0].config.manualOrder, true, '筛选状态下排序记为手动');
 });
 
 test('拖动手柄可用上下方向键移动，搜索时跳过隐藏模型，首尾不再移动', () => {

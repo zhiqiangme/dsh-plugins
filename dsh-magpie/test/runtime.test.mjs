@@ -338,20 +338,17 @@ test('网关状态检查不报错：应答为 Magpie 时在线，失败或身份
   assert.deepEqual((await host.manager.handle({ action: 'status' })).gateway, { online: false });
 });
 
-test('默认排序读取 Magpie 目录顺序且不改清单；选了目录顺序后全量同步沿用该顺序', async () => {
+test('全量同步默认按模型名称排序，手动顺序时保留现有顺序；目录顺序标记与接口均已移除', async () => {
   const catalog = { data: [{ id: 'p/zeta' }, { id: 'p/new-b' }, { id: 'p/alpha' }] };
   const host = setup({ fetchImpl: async (url) => ({ ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie' } : catalog }) });
   const initial = await host.manager.describe();
   await host.manager.handle({ action: 'save', revision: initial.revision, config });
-  assert.deepEqual((await host.manager.handle({ action: 'catalog-order' })).ids, ['p/zeta', 'p/new-b', 'p/alpha']);
-  assert.equal(host.own.options.config.models[0].id, 'manual/unlisted', '只读，不改清单');
+  await assert.rejects(host.manager.handle({ action: 'catalog-order' }), /不支持的操作/, '「默认排序」的目录顺序接口已移除');
   const current = await host.manager.describe();
   const result = await host.manager.handle({ action: 'sync-catalog', revision: current.revision, config: { ...current.config, catalogOrder: true, models: [{ id: 'p/zeta', enabled: true }, { id: 'p/new-b', enabled: false }] } });
-  assert.deepEqual(result.config.models.map((m) => m.id), ['p/zeta', 'p/new-b', 'p/alpha']);
-  assert.deepEqual(result.config.models.map((m) => m.enabled), [true, false, false], '目录顺序同样保留已有选择，新模型不勾选');
-  assert.equal(result.config.catalogOrder, true);
-  // 手动顺序优先于目录顺序。
-  const { resolveConfig } = await import('../lib/config.js');
-  assert.equal(resolveConfig({ manualOrder: true, catalogOrder: true }).catalogOrder, false);
-  assert.throws(() => resolveConfig({ catalogOrder: 'yes' }), /目录顺序/);
+  assert.deepEqual(result.config.models.map((m) => m.id), ['p/alpha', 'p/new-b', 'p/zeta'], '按模型名称排序，旧的目录顺序标记不再生效');
+  assert.deepEqual(result.config.models.map((m) => m.enabled), [false, false, true], '保留已有选择，新模型不勾选');
+  assert.equal(result.config.catalogOrder, undefined, '目录顺序标记已从配置中移除');
+  const manual = await host.manager.handle({ action: 'sync-catalog', revision: result.revision, config: { ...result.config, manualOrder: true, models: [{ id: 'p/zeta' }, { id: 'p/alpha' }] } });
+  assert.deepEqual(manual.config.models.map((m) => m.id), ['p/zeta', 'p/alpha', 'p/new-b'], '手动顺序保留现有顺序，新模型按名称接在末尾');
 });

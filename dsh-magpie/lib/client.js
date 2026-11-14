@@ -19,15 +19,13 @@ window.__ModuleLoader__.load({
       hideSmallContext: '屏蔽上下文低于 500K 的模型', hideSmallContextHint: '只影响本卡片列表显示，不改勾选、同步与自动路由；上下文未知的模型不屏蔽。开关即时保存。',
       native: '当前还有 Magpie 原生分组。这里保存到独立的“Magpie”分组（ID 为 dsh-magpie），原分组仍可使用。',
       count: '{selected} / {total} 个模型已勾选', search: '搜索名称或 ID', add: '手动添加模型',
-      sortDefault: '默认排序', sortDefaultHint: '按 Magpie 目录的顺序排列（需要 Magpie 正在运行）；对完整清单排序后，从 Magpie 同步也沿用该顺序',
-      catalogOrder: '当前为 Magpie 目录顺序：从 Magpie 同步会沿用 Magpie 的顺序。',
       sortModel: '按模型排序', sortProvider: '按供应商排序',
       sortModelHint: '对当前搜索或分类结果按模型名称升序排列；对完整清单排序会恢复同步后自动排序', sortProviderHint: '对当前搜索或分类结果按供应商简称、模型名称升序排列',
       groupModel: '按模型分类', groupProvider: '按供应商分类', allModels: '全部模型', allProviders: '全部供应商', otherModel: '其他', unknownProvider: '未指定供应商',
       groupModelHint: '选择 DeepSeek、GLM 等模型系列，只显示该系列模型；选择「全部模型」取消筛选',
       groupProviderHint: '选择供应商后只显示该供应商的模型；选择「全部供应商」取消筛选',
       groupedHint: '分类只筛选当前展示，可与搜索、排序和拖放组合使用，不修改勾选或保存顺序。',
-      manualOrder: '当前为手动顺序：从 Magpie 同步会保留现有顺序，新模型排在末尾。未搜索且未分类筛选时点击「默认排序」或「按模型排序」可恢复自动排序。',
+      manualOrder: '当前为手动顺序：从 Magpie 同步会保留现有顺序，新模型按名称排在末尾。未搜索且未分类筛选时点击「按模型排序」可恢复自动排序。',
       all: '全选', none: '取消全选', empty: '清单为空。添加模型，或从正在运行的 Magpie 同步。',
       noMatch: '没有匹配的模型。', id: '完整模型 ID', modelName: '显示名称', nameHint: '留空使用模型 ID',
       selected: '同步此模型', drag: '拖动或按 ↑↓ 键调整 {name} 的顺序', remove: '删除', details: '能力与参数',
@@ -99,15 +97,13 @@ window.__ModuleLoader__.load({
       hideSmallContext: 'Hide models under 500K context', hideSmallContextHint: 'Only affects this card’s list; selections, sync and auto routing are unchanged. Models with unknown context stay visible. Saves immediately.',
       native: 'Magpie native groups are also configured. This list uses its own “Magpie” group (ID dsh-magpie); existing groups remain available.',
       count: '{selected} / {total} models selected', search: 'Search names or IDs', add: 'Add a model',
-      sortDefault: 'Default order', sortDefaultHint: 'Order as Magpie lists them (Magpie must be running); after sorting the full list, syncing from Magpie keeps that order',
-      catalogOrder: 'Magpie order: syncing from Magpie keeps the order Magpie lists them in.',
       sortModel: 'Sort by model', sortProvider: 'Sort by provider',
       sortModelHint: 'Sort matching models by name, ascending; sorting the full list restores automatic ordering after sync', sortProviderHint: 'Sort matching models by short provider name, then model name, ascending',
       groupModel: 'Filter by model', groupProvider: 'Filter by provider', allModels: 'All models', allProviders: 'All providers', otherModel: 'Other', unknownProvider: 'No provider',
       groupModelHint: 'Show only a model family such as DeepSeek or GLM; choose “All models” to clear this filter',
       groupProviderHint: 'Show only models from the selected provider; choose “All providers” to clear this filter',
       groupedHint: 'Filters only change the current view. They work with search, sorting and dragging, and do not change selections or the saved order.',
-      manualOrder: 'Manual order: syncing from Magpie keeps the current order and adds new models at the end. Clear search and category filters, then click “Default order” or “Sort by model” to restore automatic ordering.',
+      manualOrder: 'Manual order: syncing from Magpie keeps the current order and adds new models by name at the end. Clear search and category filters, then click “Sort by model” to restore automatic ordering.',
       all: 'Select all', none: 'Deselect all', empty: 'The list is empty. Add models or sync from a running Magpie.',
       noMatch: 'No matching models.', id: 'Full model ID', modelName: 'Display name', nameHint: 'Defaults to model ID',
       selected: 'Sync this model', drag: 'Drag, or press ↑ ↓, to reorder {name}', remove: 'Delete', details: 'Capabilities and limits',
@@ -1110,14 +1106,14 @@ window.__ModuleLoader__.load({
         dragSource.current = null; setDrag(null);
         setCategoryFilters((current) => ({ ...current, [mode]: value }));
       };
-      // 排序模式决定「从 Magpie 同步」的顺序：model 按模型名称（默认）、catalog 沿用 Magpie 目录、manual 保留现有顺序。
-      // 拖动、按供应商排序、只排部分搜索或分类结果都算手动；对完整清单按模型或默认排序则恢复对应的自动顺序。
-      const orderMode = config.manualOrder ? 'manual' : config.catalogOrder ? 'catalog' : 'model';
+      // 排序模式决定「从 Magpie 同步」的顺序：model 按模型名称（默认）、manual 保留现有顺序。
+      // 拖动、按供应商排序、只排部分搜索或分类结果都算手动；对完整清单按模型排序则恢复自动排序。
+      const orderMode = config.manualOrder ? 'manual' : 'model';
       const reorder = (order, mode) => {
         const same = order.every((index, i) => index === i);
         // 原位放下不算排序；顺序没变但模式变化时也需要保存。
         if (same && (mode === 'manual' || orderMode === mode)) return;
-        update({ ...(same ? {} : { models: order.map((index) => rows[index]) }), manualOrder: mode === 'manual', catalogOrder: mode === 'catalog' });
+        update({ ...(same ? {} : { models: order.map((index) => rows[index]) }), manualOrder: mode === 'manual' });
         if (!same) setExpanded((old) => new Set([...old].map((i) => order.indexOf(i))));
       };
       const move = (index, target) => reorder(moveModel(rows.map((_row, i) => i), index, target), 'manual');
@@ -1134,14 +1130,6 @@ window.__ModuleLoader__.load({
         if (busy || visible.length < 2) return;
         applySorted(sortModelIndexes(visible.map(({ row }) => row), mode, view.providerNames), mode === 'model' ? 'model' : 'manual');
       };
-      // 默认排序：按 Magpie 当前目录的顺序；目录里没有的（手动添加等）保持原相对顺序排在后面。
-      const sortDefault = () => perform(async () => {
-        const { ids } = await request({ action: 'catalog-order', baseURL: config.baseURL, apiKey: key || undefined });
-        const rank = new Map(ids.map((id, i) => [id, i]));
-        const position = (i) => rank.get(visible[i].row.id) ?? ids.length;
-        // 目录外模型同秩时必须按原始配置下标保持相对顺序，不能用置顶后的 visible 位置兜底。
-        applySorted(visible.map((_v, i) => i).sort((a, b) => position(a) - position(b) || visible[a].index - visible[b].index), 'catalog');
-      }, 'sort-default');
       // 拖动：其它行实时让出空位（样式过渡），松手后各行已在目标位置，直接换成新顺序。
       // 落点按列表里各行未位移的布局位置计算，让位的位移不会反过来改变落点。
       const slotAt = (event) => {
@@ -1291,7 +1279,6 @@ window.__ModuleLoader__.load({
             h('div', { className: 'list-actions' },
               button(t('all'), () => selectVisible(true), { className: 'ghost' }), button(t('none'), () => selectVisible(false), { className: 'ghost' }),
               h('span', { className: 'divider', 'aria-hidden': true }),
-              button(t('sortDefault'), sortDefault, { className: 'ghost', title: t('sortDefaultHint'), disabled: busy || visible.length < 2, 'aria-busy': modelBusy === 'sort-default' }),
               button(t('sortModel'), () => sort('model'), { className: 'ghost', title: t('sortModelHint'), disabled: busy || visible.length < 2 }),
               button(t('sortProvider'), () => sort('provider'), { className: 'ghost', title: t('sortProviderHint'), disabled: busy || visible.length < 2 }),
               h('span', { className: 'divider', 'aria-hidden': true }),
@@ -1299,7 +1286,7 @@ window.__ModuleLoader__.load({
                 h('option', { key: '', value: '' }, t('allModels')), ...modelOptions.map((option) => h('option', { key: option.key, value: option.key }, option.label))),
               h('select', { className: 'category-filter', value: providerFilter, disabled: busy, 'aria-label': t('groupProvider'), title: t('groupProviderHint'), onChange: (event) => changeCategory('provider', event.target.value) },
                 h('option', { key: '', value: '' }, t('allProviders')), ...providerOptions.map((option) => h('option', { key: option.key, value: option.key }, option.label))))),
-          rows.length && (providerFilter || modelFilter) ? h('p', { className: 'hint' }, t('groupedHint')) : rows.length && orderMode !== 'model' ? h('p', { className: 'hint' }, t(orderMode === 'manual' ? 'manualOrder' : 'catalogOrder')) : null,
+          rows.length && (providerFilter || modelFilter) ? h('p', { className: 'hint' }, t('groupedHint')) : rows.length && orderMode === 'manual' ? h('p', { className: 'hint' }, t('manualOrder')) : null,
           !rows.length ? h('p', { className: 'empty' }, t('empty')) : !visible.length ? h('p', { className: 'empty' }, t('noMatch')) : null,
           modelList,
         ],
