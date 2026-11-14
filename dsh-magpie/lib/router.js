@@ -166,7 +166,7 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
         const effort = requestedEffort(body);
         const ordered = effort && effort !== 'off' ? [...capable].sort((a, b) => effortRank(a, effort) - effortRank(b, effort)) : capable;
         const pin = conversationKey(body);
-        const held = pins.get(pin);
+        const held = pins.get(pin)?.id;
         const ranked = held ? [...ordered].sort((a, b) => Number(b.id === held) - Number(a.id === held)) : ordered;
         const attempts = ranked.filter((row) => !failures.remaining(pin, row.id));
         if (!attempts.length) {

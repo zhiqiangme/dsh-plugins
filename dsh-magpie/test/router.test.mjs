@@ -89,6 +89,19 @@ test('按请求的思考档位优先选声明支持的出口，都不支持时�
   assert.equal(requestedEffort({}), '');
 });
 
+test('无失败冷却时，同一首条用户消息跨思考档位仍固定成功出口', async (t) => {
+  const models = [
+    { id: 'a/glm-5.3', name: 'GLM-5.3', reasoningEfforts: ['low', 'high'] },
+    { id: 'b/glm-5.3', name: 'GLM-5.3', reasoningEfforts: ['low', 'high', 'max'] },
+  ];
+  const { calls, send } = await setup(t, { models });
+  const ask3 = (effort) => ({ model: 'auto:glm-5.3', messages: [{ role: 'user', content: 'same' }], reasoning_effort: effort });
+  assert.equal((await send(ask3('Max'))).status, 200);
+  assert.equal(calls.at(-1).body.model, 'b/glm-5.3', 'Max 首次选择唯一声明支持的 b');
+  assert.equal((await send(ask3('Low'))).status, 200);
+  assert.deepEqual(calls.map((call) => call.body.model), ['b/glm-5.3', 'b/glm-5.3'], 'Low 重排候选时仍优先固定到 b');
+});
+
 for (const api of Object.keys(ENDPOINTS)) test(`协议 ${api} 转发到真实端点并还原模型 ID`, async (t) => {
   const { calls, send } = await setup(t, { api, models: [TWO_ROUTES[0]] });
   const headers = api === 'anthropic-messages' ? { 'x-api-key': 'secret', 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'anthropic-beta': 'tools-2024-05-16' } : undefined;
