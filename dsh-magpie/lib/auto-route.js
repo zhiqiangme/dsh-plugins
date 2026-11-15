@@ -17,6 +17,8 @@ const MODEL_TIER_SUFFIX = /(?<=[a-z0-9])[-_]?(free|std)$/i;
 const MODEL_PREVIEW_SUFFIX = /[-_\s]?(preview|预览版)$/i;
 /** (Max) 是同一模型的推理档位变体标记（Trae 命名），合并时不算型号差异。 */
 const MODEL_TIER_MARKER = /\s*[(（]\s*max\s*[)）]$/i;
+// 已确认的无版本号模型名：仅显式列出的具体型号可按名合并，不能放开搜索代理等通用别名。
+const VERSIONLESS_MODEL_NAMES = new Set(['seed-evolving']);
 
 /**
  * 同款模型的合并键：供应商只看路由前缀，型号看裸 ID，不按 DeepSeek / GLM 大系列合并。
@@ -53,11 +55,11 @@ function entrySlug(row) {
 
 /**
  * 别名 ID（如 frontier-1 / qmodel_latest）看不出同款，只能靠显示名识别。
- * 仅带版本号的名称才参与按名合并：search_agent_qwen_fast 这类通用别名同名也不并，避免误合不同模型。
+ * 带版本号或已确认的具体型号才参与按名合并；search_agent_qwen_fast 这类通用别名同名也不并。
  */
-function nameKey(row) {
+function nameKey(row, legacyGrouping = false) {
   const text = entrySlug(row).replace(MODEL_TIER_SUFFIX, '').replace(MODEL_PREVIEW_SUFFIX, '');
-  return /\d/.test(text) ? text : '';
+  return /\d/.test(text) || (!legacyGrouping && VERSIONLESS_MODEL_NAMES.has(text)) ? text : '';
 }
 
 function smallest(members, field) {
@@ -100,14 +102,15 @@ function groupName(members, slug) {
  * ID 取实际模型名（`auto:kimi-k3.1-pro`），不再用内部别名，方便在 DSH 里对照。
  * 同名但不同款的条目使用候选原始 ID 的哈希后缀：取消、删除或重排另一组都不能让本组复用旧引用。
  * legacyIds 只用于读取本次改动前的 `-2` / `-3` 引用，新写入一律使用稳定后缀。
+ * legacyGrouping 只为迁移旧版误拆分的模型引用保留旧分组规则，不用于新写入或请求选路。
  */
-export function planAutoRoute(config, { legacyIds = false } = {}) {
+export function planAutoRoute(config, { legacyIds = false, legacyGrouping = false } = {}) {
   const groups = [];
   // 裸 ID 键和名称键指向同一组：别名 ID 靠名称归组，组内后续成员两个键都要登记。
   const byKey = new Map();
   for (const row of config.models) {
     if (!row.enabled) continue;
-    const keys = [routeKey(row.id), nameKey(row)].filter(Boolean);
+    const keys = [routeKey(row.id), nameKey(row, legacyGrouping)].filter(Boolean);
     let group = keys.map((key) => byKey.get(key)).find(Boolean);
     if (!group) { group = { members: [] }; groups.push(group); }
     group.members.push(row);

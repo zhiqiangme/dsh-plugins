@@ -246,6 +246,30 @@ test('旧数字后缀迁移到稳定 ID，删除候选不会把旧引用转给�
   assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: remaining }], '剩余候选的旧引用跟随新 ID');
 });
 
+test('Seed-Evolving 合并后迁移旧哈希和数字分组引用，白名单去重且重复同步稳定', async (t) => {
+  for (const legacyIds of [false, true]) await t.test(legacyIds ? '旧数字 ID' : '旧哈希 ID', async () => {
+    const config = resolveConfig({ autoRoute: true, models: [
+      { id: 'trae-cn/Doubao-Seed-Evolving-auto-max', name: 'Seed-Evolving (Max)', input: ['text', 'image'], contextWindow: 1000000 },
+      { id: 'trae-cn/Doubao-Seed-Evolving-max', name: 'Seed-Evolving (Max)', input: ['text', 'image'], contextWindow: 1000000 },
+    ] });
+    const host = fakeHost(config);
+    const previous = planAutoRoute(config, { legacyIds, legacyGrouping: true });
+    assert.equal(previous.entries.length, 2);
+    host.llm.options.config.providers[PROVIDER_ID] = { apiKeyEnv: KEY_REF, models: previous.entries };
+    host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: previous.entries[1].id };
+    host.llm.options.config.allowedModels = previous.entries.map(({ id }) => ({ provider: PROVIDER_ID, model: id }));
+    const options = { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' };
+    for (let i = 0; i < 2; i++) {
+      const result = await syncModels(config, options);
+      assert.notEqual(result.refs.state, 'failed');
+      assert.deepEqual(host.llm.options.config.providers[PROVIDER_ID].models.map((row) => row.id), ['auto:seed-evolving']);
+      assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:seed-evolving' });
+      assert.deepEqual(host.llm.options.config.allowedModels, [{ provider: PROVIDER_ID, model: 'auto:seed-evolving' }]);
+      assert.deepEqual(host.own.options.config, config, '不改模型名称、原始 ID、勾选或配置');
+    }
+  });
+});
+
 test('旧数字后缀与真实模型名碰撞时按 provider 实际方案迁移', async () => {
   const rows = [
     { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' },

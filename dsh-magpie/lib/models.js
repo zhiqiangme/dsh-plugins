@@ -190,13 +190,14 @@ export async function syncModels(config, { editor, credentials, env = process.en
   if (planned.changed) await editor.edit(target, (current) => withProvider(current, config, { routeOrigin }).config);
   const before = previousConfig ?? config;
   const currentPlan = planAutoRoute(config);
-  const stablePrevious = planAutoRoute(before), legacyPrevious = planAutoRoute(before, { legacyIds: true });
+  const previousPlans = [
+    planAutoRoute(before), planAutoRoute(before, { legacyIds: true }),
+    planAutoRoute(before, { legacyGrouping: true }), planAutoRoute(before, { legacyGrouping: true, legacyIds: true }),
+  ];
   // 真实模型名可能以 2 或哈希文本结尾，与另一种规划的 ID 撞名。实际 provider 中命中更多的方案才优先认领旧引用。
   const score = (plan) => previousProviderIds.reduce((total, id) => total + Number(plan.routes.has(id)), 0);
-  const stableScore = score(stablePrevious), legacyScore = score(legacyPrevious);
-  const previousRoutes = legacyScore > stableScore
-    ? [legacyPrevious.routes, stablePrevious.routes]
-    : [stablePrevious.routes, legacyPrevious.routes];
+  // 新规则已把 Seed-Evolving 合并，必须同时重建旧分组，才能找回它原来的哈希或数字后缀 ID。
+  const previousRoutes = previousPlans.sort((a, b) => score(b) - score(a)).map((plan) => plan.routes);
   const refs = await retargetModelRefs({
     editor,
     entries: config.enabled && config.syncEnabled ? modelEntries(config) : [],

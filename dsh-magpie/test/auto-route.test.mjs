@@ -59,6 +59,39 @@ test('别名 ID 与正式 ID 指向同款时并成一组，ID 取组内出现最
   assert.deepEqual(planned.routes.get('auto:deepseek-v4.1-flash').map((row) => row.id), ['qoder-cn/dfmodel', 'trae-cn/deepseek-v4.1-flash-max', 'codearts/deepseek-v4.1-flash-1017']);
 });
 
+test('Seed-Evolving 的普通、Auto 和 Max 出口合并，保留候选顺序、能力与未勾选状态', () => {
+  const rows = [
+    { id: 'trae-cn/Doubao-Seed-Evolving', name: 'Seed-Evolving', contextWindow: 256000, input: ['text', 'image'] },
+    { id: 'trae-cn/Doubao-Seed-Evolving-auto', name: 'Seed-Evolving', contextWindow: 256000, input: ['text', 'image'] },
+    { id: 'trae-cn/Doubao-Seed-Evolving-auto-max', name: 'Seed-Evolving (Max)', contextWindow: 1000000, input: ['text', 'image'] },
+    { id: 'trae-cn/Doubao-Seed-Evolving-max', name: 'Seed-Evolving (Max)', contextWindow: 1000000, input: ['text', 'image'] },
+  ];
+  const original = structuredClone(rows);
+  const planned = planAutoRoute(config(rows));
+  assert.deepEqual(planned.entries.map(({ id, name, contextWindow }) => ({ id, name, contextWindow })), [
+    { id: 'auto:seed-evolving', name: 'Seed-Evolving', contextWindow: 256000 },
+  ]);
+  assert.deepEqual(planned.routes.get('auto:seed-evolving').map((row) => row.id), rows.map((row) => row.id));
+  assert.deepEqual(planned.entries[0].input, ['text', 'image']);
+  assert.deepEqual(rows, original);
+  const selected = config(rows.map((row, i) => ({ ...row, enabled: i >= 2 })));
+  assert.deepEqual(planAutoRoute(selected).entries.map(({ id, name }) => [id, name]), [['auto:seed-evolving', 'Seed-Evolving']]);
+  assert.equal(planAutoRoute(selected).routes.get('auto:seed-evolving').length, 2, '合并不替用户勾选另外两个出口');
+  assert.deepEqual(planAutoRoute(selected, { legacyGrouping: true }).entries.map((row) => row.id), [
+    'auto:seed-evolving-e1f6e232267d', 'auto:seed-evolving-4bb04c94ca88',
+  ]);
+});
+
+test('无版本号名称只对已确认型号合并，Seed-Code 与内部代理别名保留独立组', () => {
+  const planned = planAutoRoute(config([
+    { id: 'trae-cn/Doubao_1_6', name: 'Seed-Code' },
+    { id: 'trae-cn/Doubao-Seed-Code', name: 'Seed-Code' },
+    { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' },
+    { id: 'trae-cn/search_agent_qwen_fast', name: 'search_agent_qwen_fast' },
+  ]));
+  assert.equal(planned.routes.size, 4, '未经确认的同名目录和代理不能跟随 Seed-Evolving 一起放开');
+});
+
 test('不带版本号的通用别名同名也不按名称合并，ID 用稳定后缀、展示名用数字后缀区分', () => {
   const rows = [
     { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' },
