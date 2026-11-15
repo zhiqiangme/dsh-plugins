@@ -448,8 +448,8 @@ window.__ModuleLoader__.load({
     }
     // 只给主流系列单独设项；内部代号、档位名和实验名归“其他”，避免筛选下拉被别名刷屏。
     const COMMON_MODEL_FAMILIES = new Set(['deepseek', 'glm', 'kimi', 'minimax', 'mimo', 'longcat', 'doubao', 'qwen', 'claude', 'gpt', 'gemini', 'step', 'hy', 'hunyuan', 'mistral', 'llama', 'codex', 'grok', 'commandcode', 'openai']);
-    // Seed 是豆包模型的内部系列名，与 doubao-* 同归一类；标签统一首字母大写的 Doubao。
-    const FAMILY_LABELS = new Map([['seed', 'Doubao'], ['doubao', 'Doubao']]);
+    // Seed 与中文“豆包”都是 Doubao 系列；只归一分类标签，不改写上游显示名。
+    const FAMILY_LABELS = new Map([['seed', 'Doubao'], ['doubao', 'Doubao'], ['豆包', 'Doubao']]);
     function modelCategory(row, mode, providers, emptyLabels) {
       const keys = modelKeys(row, providers);
       const family = modelFamilyName(keys.name);

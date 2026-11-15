@@ -702,18 +702,22 @@ test('按模型系列或供应商下拉筛选，只显示当前类别，可组�
   assert.equal(client.states[1], true, '只有真正的排序才产生待保存修改');
 });
 
-test('Seed 系列归入 Doubao 分类，标签首字母大写且与 doubao-* 同类', () => {
+test('Seed、中文豆包与 doubao-* 归入同一 Doubao 分类，保留名称及勾选', () => {
   const client = clientHarness(view({ models: [
     { id: 'trae-cn/seed-2.0-code', name: 'Seed-2.0-Code', enabled: false },
     { id: 'trae-cn/seed-evolving', name: 'Seed-Evolving', enabled: false },
     { id: 'trae-cn/doubao-for-auto', name: 'doubao-for-auto', enabled: false },
+    { id: 'doubao-work/lite', name: '豆包 2.1 Lite', enabled: false },
+    { id: 'doubao-work/pro', name: '豆包 2.1 Pro', enabled: false },
     { id: 'workbuddy/glm', name: 'GLM-5.3', enabled: false },
   ] }));
+  const original = structuredClone(client.states[0].config.models);
   const options = nodes(control(client.render(), '按模型分类'), (n) => n.type === 'option').map((n) => n.children[0]);
   assert.deepEqual(options, ['全部模型', 'Doubao', 'GLM'], 'Seed 不再单独成项或落入其他');
   control(client.render(), '按模型分类').props.onChange({ target: { value: 'doubao' } });
   assert.deepEqual(nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title),
-    ['trae-cn/seed-2.0-code', 'trae-cn/seed-evolving', 'trae-cn/doubao-for-auto']);
+    ['trae-cn/seed-2.0-code', 'trae-cn/seed-evolving', 'trae-cn/doubao-for-auto', 'doubao-work/lite', 'doubao-work/pro']);
+  assert.deepEqual(client.states[0].config.models, original, '分类不改写名称、ID 或勾选');
 });
 
 test('未填写的空白草稿行归入其他，下拉不再单独出现新模型分类', () => {
