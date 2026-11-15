@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { targetPath } from '../lib/backend.js';
 import { resolveConfig } from '../lib/config.js';
@@ -93,7 +93,10 @@ test('相同或更新版本不降级；升级运行中的程序时下载校验�
   backend.install();
   assert.equal((await finish(backend)).phase, 'up-to-date');
   assert.equal(downloads, 0);
+  const previousMtime = statSync(backend.paths.exe).mtimeMs;
   seed(backend, '0.1.1');
+  // 同样大小的假 exe 可能在同一文件时间精度内重写；显式改变时间戳，让版本缓存识别这次外部替换。
+  utimesSync(backend.paths.exe, new Date(), new Date(previousMtime + 1000));
   let running = true;
   const phases = [];
   backend.isRunning = async () => running;
