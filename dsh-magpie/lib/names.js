@@ -42,10 +42,15 @@ export function displayModelName(row, providers = PROVIDER_NAMES) {
   return base ? (suffix ? `${base} ${suffix}` : base) : suffix;
 }
 
-/** DSH 模型列表用的名字：模型本名内空格换 -，与 Auto / 供应商后缀之间保留空格。 */
+/** Free 是单个出口的标签，不能代表合并组的实际费用；只去掉明确标签，不改路由 ID 或上游名称。 */
+export function withoutFreeLabel(name) {
+  return name.replace(/(?:[\s_-]+|\s*[（(])free[)）]?(?=$|\s*[（(]max[)）]$)/gi, '').trim();
+}
+
+/** DSH 模型列表用的名字：去掉 Free 标签，本名内空格换 -，与供应商后缀之间保留空格。 */
 export function dshModelName(row, providers = PROVIDER_NAMES) {
   const { base, suffix } = modelNameParts(row, providers);
-  return [base.replace(/\s+/g, '-'), suffix].filter(Boolean).join(' ');
+  return [withoutFreeLabel(base).replace(/\s+/g, '-'), suffix].filter(Boolean).join(' ');
 }
 
 /**

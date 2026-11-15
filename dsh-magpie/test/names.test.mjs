@@ -65,10 +65,38 @@ test('前端和 DSH 统一 Flash 别名并保留尾缀，不误改其他版本�
 
 test('DSH 名字本名内空格换 -，与供应商后缀保留空格，已带后缀不重复', () => {
   assert.equal(dshModelName({ id: 'qoder-cn/x', name: 'DeepSeek V4.1 Flash' }), 'DeepSeek-V4.1-Flash Qoder');
-  assert.equal(dshModelName({ id: 'trae-cn/x', name: 'LongCat 2.5 Free' }), 'LongCat-2.5-Free Trae');
+  assert.equal(dshModelName({ id: 'trae-cn/x', name: 'LongCat 2.5 Free' }), 'LongCat-2.5 Trae');
   assert.equal(dshModelName({ id: 'workbuddy/x', name: 'DeepSeek V4.1 Flash WorkBuddy' }), 'DeepSeek-V4.1-Flash WorkBuddy');
   assert.equal(dshModelName({ id: 'qwenwork/x', name: 'Qwen4-Max 预览版' }), 'Qwen4-Max-Preview QwenWork');
   assert.equal(displayModelName({ id: 'qoder-cn/x', name: 'DeepSeek V4.1 Flash' }), 'DeepSeek V4.1 Flash Qoder', '卡片管理显示仍保留空格');
+});
+
+test('DSH 显示去掉独立 Free 标签，自动组和原始路由 ID 保持不变，不误改 Freestyle 名称', () => {
+  for (const autoRoute of [true, false]) {
+    const config = resolveConfig({ autoRoute, models: [
+      { id: 'opencode-zen-free/longcat-2.5-free', name: 'LongCat 2.5 Free' },
+      { id: 'opencode-zen-free/minimax-m3.1-flash-free', name: 'MiniMax M3.1 Flash Free' },
+      { id: 'trae-cn/minimax-m3.1-flash-max', name: 'MiniMax-M3.1-Flash (Max)' },
+      { id: 'custom/freestyle-2', name: 'Freestyle-2' },
+    ] });
+    const original = structuredClone(config);
+    const entries = modelEntries(config);
+    assert.deepEqual(entries.map(({ id, name }) => [id, name]), autoRoute ? [
+      ['auto:longcat-2.5-free', 'LongCat-2.5'],
+      ['auto:minimax-m3.1-flash-free', 'MiniMax-M3.1-Flash'],
+      ['auto:freestyle-2', 'Freestyle-2'],
+    ] : [
+      ['opencode-zen-free/longcat-2.5-free', 'LongCat-2.5 OpenCode'],
+      ['opencode-zen-free/minimax-m3.1-flash-free', 'MiniMax-M3.1-Flash OpenCode'],
+      ['trae-cn/minimax-m3.1-flash-max', 'MiniMax-M3.1-Flash-(Max) Trae'],
+      ['custom/freestyle-2', 'Freestyle-2'],
+    ]);
+    assert.deepEqual(config, original, '仅改变同步显示名，不改保存的名称、ID 或候选');
+  }
+  for (const name of ['Model-Free', 'Model_Free', 'Model (Free)', 'Model（Free）']) {
+    assert.equal(dshModelName({ id: 'custom/model', name }), 'Model');
+  }
+  assert.equal(dshModelName({ id: 'custom/model', name: 'Model Free (Max)' }), 'Model-(Max)');
 });
 
 test('未知供应商、路由组和空白新条目不猜供应商，已含简称不会重复追加', () => {

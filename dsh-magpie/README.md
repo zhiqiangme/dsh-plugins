@@ -113,7 +113,7 @@ Magpie 也有完全无界面的 `magpie serve`（只运行网关，没有托盘�
 
 「开关」页的「屏蔽不支持图片的模型」默认关闭，开启后只显示输入能力包含图片的模型，可与上下文屏蔽、搜索及分类筛选取交集。开关即时保存，只影响卡片列表，不更改模型勾选、完整清单、DSH 同步或自动路由；批量勾选与排序仍只作用于当前可见模型。
 
-管理列表与 DSH 模型选择器会在模型名后追加供应商简称，例如 `DeepSeek V4.1 Flash WorkBuddy`、`Step-5-Preview WorkBuddy GL`、`DeepSeek V4.1 Flash Free OpenCode`。写入 DSH 模型列表的名字另做连字符化：模型本名内的空格换成 `-`，与供应商简称之间保留空格（如 `LongCat-2.5-Free OpenCode`）；开启自动路由时，条目直接使用模型本名（如 `DeepSeek-V4.1-Flash`），不再拼接 `Auto` 或供应商简称，实际出口由路由决定。插件卡片内的管理显示仍保留空格。`workbuddy-ai` 为国际版，显示为 `WorkBuddy GL`；`workbuddy` 为国内版，显示为 `WorkBuddy`。Qoder / Trae 国际版同样使用 `GL`。名称已带对应简称时不重复追加；手工名称、模型 ID 与排序保持不变，未知供应商或路由组不追加简称。
+管理列表会在模型名后追加供应商简称，例如 `DeepSeek V4.1 Flash WorkBuddy`、`Step-5-Preview WorkBuddy GL`、`DeepSeek V4.1 Flash Free OpenCode`。写入 DSH 模型列表的名字去掉独立的 `Free` 标签，再做连字符化：模型本名内的空格换成 `-`，与供应商简称之间保留空格（如 `LongCat-2.5 OpenCode`）；开启自动路由时，条目直接使用模型本名（如 `DeepSeek-V4.1-Flash`），不再拼接 `Auto` 或供应商简称，实际出口由路由决定。插件卡片内的管理显示仍保留空格。`workbuddy-ai` 为国际版，显示为 `WorkBuddy GL`；`workbuddy` 为国内版，显示为 `WorkBuddy`。Qoder / Trae 国际版同样使用 `GL`。名称已带对应简称时不重复追加；手工名称、模型 ID 与排序保持不变，未知供应商或路由组不追加简称。
 
 `DeepSeek-Flash`、`Deepseek-V4.1-Flash` 等写法统一显示为 `DeepSeek V4.1 Flash`，保留 `Free`、`(Max)` 等尾缀和供应商简称；中文「预览版」（含括号写法）统一显示为 `Preview`，展示名默认不出现中文；搜索、快捷排序、分类与 DSH 模型名称同步使用这一显示规则。此规则仅派生显示名称，不改写保存的名称或模型 ID，其他 DeepSeek 版本不受影响。
 
@@ -122,6 +122,8 @@ Magpie 也有完全无界面的 `magpie serve`（只运行网关，没有托盘�
 当前勾选和已保存勾选组成列表置顶区，各自内部保持原有排序。新勾选会立即置顶；取消一个已保存勾选后，该行暂时留在原位，点击「保存并同步」并保存成功后才取消置顶，避免勾选时行突然移动。新勾选如果尚未保存就撤销，则直接回到未置顶区。置顶只影响卡片展示，不会另改写入 DSH 的清单顺序。
 
 ### 自动路由
+
+同步到 DSH 的显示名称统一去掉独立的 `Free` 标签，例如 `LongCat-2.5-Free` 显示为 `LongCat-2.5`，`MiniMax-M3.1-Flash-Free` 显示为 `MiniMax-M3.1-Flash`。当前不显示倍率或 token 单价；`Free` 不能代表包含多个出口的自动组都免费。此规则只影响 DSH 显示名称，卡片中的上游名称、原始模型 ID、自动条目 ID 与已有模型引用保持不变。
 
 `Seed-Evolving` 是已确认的无版本号具体型号，普通、`-auto`、`-max` 和 `-auto-max` 出口按相同显示名归入一条 `auto:seed-evolving`。只合并已勾选出口，不会自动勾选其余条目；旧版拆分后生成的哈希或数字后缀引用会在同步时迁移并去重。无版本号名称只对已确认型号开放，`search_agent_qwen_fast` 等通用内部别名继续保留独立组。
 
