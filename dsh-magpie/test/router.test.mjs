@@ -30,7 +30,8 @@ async function setup(t, options = {}) {
   });
   const clock = { now: Date.now() };
   const credentials = { resolve: async () => ({ value: 'secret' }) };
-  const router = createMagpieRouter({ current: () => config, credentials: () => credentials, env: {}, now: () => clock.now, maxBodyBytes: options.maxBodyBytes });
+  const router = createMagpieRouter({ current: () => config, credentials: () => credentials, env: {}, now: () => clock.now,
+    maxBodyBytes: options.maxBodyBytes, firstOutputTimeoutMs: options.firstOutputTimeoutMs });
   const proxy = createServer((req, res) => router.handle(req, res));
   await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
   t.after(() => {
@@ -140,6 +141,158 @@ test('SSE 首块即时返回；上游 400 不跨出口重放且保留错误正�
   assert.equal(bad.status, 400);
   assert.deepEqual(await bad.json(), { error: { message: 'bad request' } });
   assert.equal(calls.filter((call) => !call.body.stream).length, 1, '400 不重放到第二出口');
+});
+
+const sse = (res, value) => {
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  res.end(`data: ${JSON.stringify(value)}\n\ndata: [DONE]\n\n`);
+};
+const answer = { choices: [{ delta: { content: 'next supplier' } }] };
+
+test('收到 200、角色帧和持续心跳仍受首个有效输出期限约束，一次超时即换供应商', async (t) => {
+  let canceled = false;
+  const { calls, send, clock } = await setup(t, { firstOutputTimeoutMs: 300, upstream: (_req, res, body) => {
+    if (body.model.startsWith('b/')) return sse(res, answer);
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: {"choices":[{"delta":{"role":"assistant","content":""}}]}\n\n');
+    const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), 15);
+    res.on('close', () => { canceled = true; clearInterval(heartbeat); });
+  } });
+  const response = await send({ ...ask(), stream: true });
+  assert.match(await response.text(), /next supplier/);
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
+  // 超时出口恢复后仍固定在已成功的 b，不能被旧的 a 固定记录拉回。
+  clock.now += 31_000;
+  assert.match(await (await send({ ...ask(), stream: true })).text(), /next supplier/);
+  assert.equal(calls.at(-1).body.model, 'b/deepseek-flash');
+  assert.equal(canceled, true, '切换时取消仍在等待的上游请求');
+});
+
+test('失败后先尝试其它供应商，再考虑同供应商的另一个出口', async (t) => {
+  const models = [TWO_ROUTES[0], { ...TWO_ROUTES[0], id: 'a/deepseek-flash-auto' }, TWO_ROUTES[1]];
+  const { calls, send } = await setup(t, { models, upstream: (_req, res) => { res.writeHead(503); res.end('{}'); } });
+  assert.equal((await send(ask())).status, 503);
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash', 'a/deepseek-flash-auto']);
+});
+
+const STREAM_PROTOCOLS = [
+  { api: 'openai-completions', error: 'data: {"error":{"code":"rate_limit_exceeded","message":"failed route"}}\n\n',
+    output: 'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\n' },
+  { api: 'openai-responses', error: 'event: response.failed\ndata: {"type":"response.failed","response":{"error":{"code":"server_error","message":"failed route"}}}\n\n',
+    output: 'event: response.reasoning_summary_text.delta\ndata: {"type":"response.reasoning_summary_text.delta","delta":"thinking"}\n\n' },
+  { api: 'anthropic-messages', error: 'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"failed route"}}\n\n',
+    output: 'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"thinking"}}\n\n' },
+];
+for (const { api, error, output } of STREAM_PROTOCOLS) {
+  test(`${api} 的 HTTP 200 流内错误在尚无输出时立即换供应商`, async (t) => {
+    const { calls, send } = await setup(t, { api, upstream: (_req, res, body) => {
+      if (body.model.startsWith('b/')) return sse(res, answer);
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      // error 后不主动结束，路由也应立即识别并取消，不能等待下游 300 秒超时。
+      res.write(error);
+    } });
+    const response = await send({ ...ask(), stream: true });
+    const raw = await response.text();
+    assert.match(raw, /next supplier/); assert.doesNotMatch(raw, /failed route/);
+    assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
+  });
+
+  test(`${api} 的推理输出会解除期限，开始生成后允许长时间继续输出`, async (t) => {
+    const { calls, send } = await setup(t, { api, firstOutputTimeoutMs: 200, upstream: (_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(output);
+      const timer = setTimeout(() => res.end('data: [DONE]\n\n'), 350);
+      res.on('close', () => clearTimeout(timer));
+    } });
+    const response = await send({ ...ask(), stream: true });
+    const reader = response.body.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    assert.equal(first, output, '推理帧即时交付');
+    let tail = '';
+    for (;;) { const next = await reader.read(); if (next.done) break; tail += new TextDecoder().decode(next.value); }
+    assert.equal(tail, 'data: [DONE]\n\n');
+    assert.equal(calls.length, 1);
+  });
+}
+
+for (const [type, status] of [['invalid_request_error', 400], ['authentication_error', 401], ['permission_error', 403]]) {
+  test(`HTTP 200 流内 ${status} 错误保留原文，不跨供应商重放`, async (t) => {
+    const raw = `event: error\ndata: ${JSON.stringify({ type: 'error', error: { type, message: 'do not replay' } })}\n\n`;
+    const { calls, send } = await setup(t, { upstream: (_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(raw);
+    } });
+    const response = await send({ ...ask(), stream: true });
+    assert.equal(await response.text(), raw);
+    assert.equal(calls.length, 1);
+  });
+}
+
+test('只有空帧后结束的流不算成功回答，应换下一个出口', async (t) => {
+  const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
+    if (body.model.startsWith('b/')) return sse(res, answer);
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end(': heartbeat\n\ndata: {"choices":[{"delta":{"role":"assistant"}}]}\n\ndata: [DONE]\n\n');
+  } });
+  assert.match(await (await send({ ...ask(), stream: true })).text(), /next supplier/);
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
+});
+
+test('已交付工具调用后遇到流内错误不重放，下一次重试撤销旧固定并换出口', async (t) => {
+  let fail;
+  const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
+    if (body.model.startsWith('b/')) return sse(res, answer);
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"run","arguments":""}}]}}]}\n\n');
+    fail = () => res.write('event: error\ndata: {"error":{"status":503,"message":"late failure"}}\n\n');
+  } });
+  const response = await send({ ...ask(), stream: true });
+  const reader = response.body.getReader();
+  assert.match(new TextDecoder().decode((await reader.read()).value), /tool_calls/);
+  fail();
+  let tail = '';
+  for (;;) { const next = await reader.read(); if (next.done) break; tail += new TextDecoder().decode(next.value); }
+  assert.match(tail, /late failure/);
+  assert.equal(calls.length, 1, '已交付工具不能在本次请求内部重放');
+  assert.match(await (await send({ ...ask(), stream: true })).text(), /next supplier/);
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
+});
+
+test('已开始输出的上游断连会撤销固定，下一次重试换出口', async (t) => {
+  let disconnect;
+  const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
+    if (body.model.startsWith('b/')) return sse(res, answer);
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n');
+    disconnect = () => res.destroy();
+  } });
+  const response = await send({ ...ask(), stream: true });
+  const reader = response.body.getReader();
+  assert.match(new TextDecoder().decode((await reader.read()).value), /partial/);
+  disconnect();
+  await assert.rejects(async () => { while (!(await reader.read()).done) {} });
+  assert.equal(calls.length, 1, '断连发生在输出后，不在原请求内重放');
+  assert.match(await (await send({ ...ask(), stream: true })).text(), /next supplier/);
+  assert.equal(calls.at(-1).body.model, 'b/deepseek-flash');
+});
+
+test('下游主动取消不当作供应商故障，也不对该对话的出口施加冷却', async (t) => {
+  let started, canceled;
+  const ready = new Promise((resolve) => { started = resolve; });
+  const closed = new Promise((resolve) => { canceled = resolve; });
+  let waiting = true;
+  const { calls, send } = await setup(t, { upstream: (_req, res) => {
+    if (!waiting) return sse(res, answer);
+    res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(': heartbeat\n\n');
+    res.on('close', canceled); started();
+  } });
+  const controller = new AbortController();
+  const pending = send({ ...ask(), stream: true }, { signal: controller.signal });
+  await ready; controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  await closed;
+  waiting = false;
+  assert.match(await (await send({ ...ask(), stream: true })).text(), /next supplier/);
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'a/deepseek-flash']);
 });
 
 test('本机鉴权、请求来源、未知模型、非法路径与请求体上限', async (t) => {
