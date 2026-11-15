@@ -46,15 +46,16 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
   assert.equal(control(client.render(), '按供应商分类').type, 'select');
 });
 
-test('三个总开关集中在开关页且默认开启，模型页只留清单与筛选', () => {
+test('总开关与屏蔽选项集中在开关页，默认屏蔽低于 500K，模型页只留清单与筛选', () => {
   const client = clientHarness(view({ models: [{ id: 'a/one' }] }));
-  for (const label of ['同步到 DSH', '自动路由（同款模型合并）', '屏蔽上下文低于 500K 的模型']) {
+  for (const label of ['同步到 DSH', '自动路由（同款模型合并）', '屏蔽小上下文模型']) {
     assert.equal(control(client.render(), label), undefined, `${label} 不在模型页`);
   }
   client.tab('开关');
-  for (const label of ['同步到 DSH', '自动路由（同款模型合并）', '屏蔽上下文低于 500K 的模型']) {
+  for (const label of ['同步到 DSH', '自动路由（同款模型合并）']) {
     assert.equal(control(client.render(), label).props.checked, true, `${label} 默认开启`);
   }
+  assert.equal(choose(client.render(), '屏蔽小上下文模型', '低于 500K').props['aria-checked'], true);
   assert.equal(button(client.render(), '从 Magpie 同步'), undefined, '同步目录按钮仍留在模型页');
 });
 
@@ -127,11 +128,13 @@ test('自动路由开关即时保存，只提交开关并显示同步结果', as
   assert.equal(client.states[1], true);
 });
 
-test('小上下文屏蔽默认开启，只隐藏低于 500K，未知上下文不隐藏，开关即时保存', async () => {
+test('小上下文屏蔽支持不屏蔽、200K 和 500K，边界与未知保留，切换即时保存且保留草稿', async () => {
   const calls = [];
   let saved = resolveConfig({ models: [
     { id: 'a/big', name: 'Big', contextWindow: 1000000 },
-    { id: 'a/small', name: 'Small', contextWindow: 200000, enabled: false },
+    { id: 'a/small', name: 'Small', contextWindow: 199999, enabled: false },
+    { id: 'a/medium', name: 'Medium', contextWindow: 200000, enabled: false },
+    { id: 'a/under500', name: 'Under500', contextWindow: 499999, enabled: false },
     { id: 'a/unknown', name: 'Unknown' },
     { id: 'a/edge', name: 'Edge', contextWindow: 500000 },
   ] });
@@ -142,19 +145,33 @@ test('小上下文屏蔽默认开启，只隐藏低于 500K，未知上下文不
   });
   const ids = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title);
   assert.deepEqual(ids(), ['a/big', 'a/unknown', 'a/edge'], '低于 500K 隐藏，等于 500K 与未知保留');
-  const toggle = () => control(client.render(), '屏蔽上下文低于 500K 的模型');
+  field(client.render(), '显示名称').props.onChange({ target: { value: '未保存名称' } });
+  const pick = (label) => choose(client.render(), '屏蔽小上下文模型', label);
   client.tab('开关');
-  assert.equal(toggle().props.checked, true);
-  await toggle().props.onChange({ target: { checked: false } });
-  assert.deepEqual(calls[0], { action: 'patch', patch: { hideSmallContext: false }, revision: 'revision-one' });
+  assert.equal(pick('低于 500K').props['aria-checked'], true);
+  await pick('低于 200K').props.onClick();
+  assert.deepEqual(calls[0], { action: 'patch', patch: { hideSmallContext: true, smallContextLimit: 200000 }, revision: 'revision-one' });
+  assert.equal(pick('低于 200K').props['aria-checked'], true);
+  assert.equal(client.states[0].config.models[0].name, '未保存名称');
+  assert.equal(saved.models[0].name, 'Big', '切换不保存模型草稿');
+  assert.equal(client.states[1], true);
   client.tab('模型');
-  assert.deepEqual(ids(), ['a/big', 'a/unknown', 'a/edge', 'a/small'], '关闭后显示全部，未勾选的仍按置顶规则排后');
+  assert.deepEqual(ids(), ['a/big', 'a/unknown', 'a/edge', 'a/medium', 'a/under500'], '200K 边界保留，199999 隐藏');
+  button(client.render(), '全选').props.onClick();
+  assert.deepEqual(client.states[0].config.models.map((m) => m.enabled), [true, false, true, true, true, true], '批量勾选只影响可见模型');
   client.tab('开关');
-  await toggle().props.onChange({ target: { checked: true } });
+  await pick('不屏蔽').props.onClick();
+  assert.deepEqual(calls[1], { action: 'patch', patch: { hideSmallContext: false }, revision: 'revision-two' });
+  client.tab('模型');
+  assert.deepEqual(ids(), ['a/big', 'a/medium', 'a/under500', 'a/unknown', 'a/edge', 'a/small'], '关闭后显示全部，未勾选的仍按置顶规则排后');
+  client.tab('开关');
+  await pick('低于 500K').props.onClick();
+  assert.deepEqual(calls[2].patch, { hideSmallContext: true, smallContextLimit: 500000 });
   client.tab('模型');
   assert.deepEqual(ids(), ['a/big', 'a/unknown', 'a/edge']);
-  button(client.render(), '全选').props.onClick();
-  assert.deepEqual(client.states[0].config.models.map((m) => m.enabled), [true, false, true, true], '批量勾选只影响可见模型');
+  const disabled = clientHarness(view({ hideSmallContext: false }));
+  disabled.tab('开关');
+  assert.equal(choose(disabled.render(), '屏蔽小上下文模型', '不屏蔽').props['aria-checked'], true, '旧配置关闭时显示不屏蔽');
 });
 
 test('上下文徽标只显示取整档位，实际上下文值不变', () => {

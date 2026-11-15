@@ -14,6 +14,12 @@ test('默认清单为空、同步与路由默认开启；地址与协议严格�
   assert.throws(() => resolveConfig({ autoRoute: 'yes' }), /自动路由开关/);
   assert.equal(resolveConfig().hideSmallContext, true, '小上下文屏蔽默认开启');
   assert.throws(() => resolveConfig({ hideSmallContext: 'yes' }), /屏蔽小上下文/);
+  assert.equal(resolveConfig().smallContextLimit, 500000, '旧配置继续使用 500K');
+  assert.equal(resolveConfig({ hideSmallContext: false }).hideSmallContext, false, '旧配置显式关闭仍保留');
+  assert.equal(resolveConfig({ smallContextLimit: 200000 }).smallContextLimit, 200000);
+  for (const smallContextLimit of [0, 199999, 200001, '200000', false]) {
+    assert.throws(() => resolveConfig({ smallContextLimit }), /屏蔽阈值/);
+  }
   assert.equal(gatewayURL('http://127.0.0.1:3425/v1/'), 'http://127.0.0.1:3425');
   assert.equal(gatewayURL('https://relay.example/magpie/v1'), 'https://relay.example/magpie');
   for (const url of ['file:///private', 'https://user:secret@example.com', 'https://example.com?key=secret', 'https://example.com/#secret']) assert.throws(() => gatewayURL(url));
