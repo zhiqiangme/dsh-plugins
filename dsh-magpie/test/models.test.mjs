@@ -270,6 +270,28 @@ test('Seed-Evolving 合并后迁移旧哈希和数字分组引用，白名单去
   });
 });
 
+test('Auto 与豆包 Pro 别名合并后迁移旧引用，高速版引用不改到普通版', async () => {
+  const config = resolveConfig({ autoRoute: true, models: [
+    { id: 'trae-cn/glm-4.7', name: 'GLM-4.7' },
+    { id: 'trae-cn/glm-4.7-auto', name: 'glm-4.7-auto' },
+    { id: 'trae-cn/Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro-0915' },
+    { id: 'doubao-work/doubao-2.1-pro', name: '豆包 2.1 Pro' },
+    { id: 'doubao-work/kimi-k3.1-pro', name: 'Kimi K3.1 Pro' },
+    { id: 'doubao-work/kimi-k3.1-pro-fast', name: 'Kimi K3.1 Pro 高速' },
+  ] });
+  const host = fakeHost(config);
+  host.llm.options.config.providers[PROVIDER_ID] = { apiKeyEnv: KEY_REF, models: planAutoRoute(config, { legacyGrouping: true }).entries };
+  host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: 'auto:豆包-2.1-pro' };
+  host.llm.options.config.allowedModels = ['auto:glm-4.7', 'auto:glm-4.7-auto', 'auto:seed-2.1-pro', 'auto:豆包-2.1-pro', 'auto:kimi-k3.1-pro-高速'].map((model) => ({ provider: PROVIDER_ID, model }));
+  const options = { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' };
+  for (let i = 0; i < 2; i++) {
+    await syncModels(config, options);
+    assert.deepEqual(host.llm.options.config.defaultModel, { provider: PROVIDER_ID, model: 'auto:seed-2.1-pro' });
+    assert.deepEqual(host.llm.options.config.allowedModels.map((m) => m.model), ['auto:glm-4.7', 'auto:seed-2.1-pro', 'auto:kimi-k3.1-pro-高速']);
+    assert.equal(host.llm.options.config.providers[PROVIDER_ID].models.length, 4);
+  }
+});
+
 test('旧数字后缀与真实模型名碰撞时按 provider 实际方案迁移', async () => {
   const rows = [
     { id: 'trae-cn/file_search_agent', name: 'search_agent_qwen_fast' },

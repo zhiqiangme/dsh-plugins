@@ -18,6 +18,10 @@ test('合并键按裸模型 ID，忽略供应商、大小写、月日快照与�
   for (const id of ['workbuddy/model-2000', 'workbuddy/model-1301', 'workbuddy/model-0132']) assert.equal(routeKey(id), id.split('/')[1]);
   assert.equal(routeKey('qoder-cn/qwen4-max-preview'), 'qwen4-max', 'Preview 标记不算型号差异');
   assert.equal(routeKey('qwenwork/qwen4-max-预览版'), 'qwen4-max', '中文预览版与 Preview 等价');
+  assert.equal(routeKey('trae-cn/glm-4.7-auto'), 'glm-4.7');
+  assert.equal(routeKey('trae-cn/kimi-k3-auto-max'), 'kimi-k3-max');
+  assert.equal(routeKey('custom/auto'), 'auto', '独立的 auto 是路由名，不是后缀');
+  assert.equal(routeKey('custom/auto-model-2'), 'auto-model-2', '名称中间的 auto 不移除');
 });
 
 test('别名 ID 看不出同款时按带版本号的显示名合并，ID 与展示名取实际模型名', () => {
@@ -80,6 +84,54 @@ test('Seed-Evolving 的普通、Auto 和 Max 出口合并，保留候选顺序�
   assert.deepEqual(planAutoRoute(selected, { legacyGrouping: true }).entries.map((row) => row.id), [
     'auto:seed-evolving-e1f6e232267d', 'auto:seed-evolving-4bb04c94ca88',
   ]);
+});
+
+test('Auto 后缀与原模型合并，名称和 ID 不再随 Auto 排序变化，普通模型名中的 Max 保留', () => {
+  const rows = [
+    { id: 'trae-cn/glm-4.7', name: 'GLM-4.7' },
+    { id: 'trae-cn/glm-4.7-auto', name: 'glm-4.7-auto' },
+    { id: 'trae-cn/qwen3.8-max', name: 'Qwen3.8-Max' },
+    { id: 'trae-cn/qwen3.8-max-auto', name: 'Qwen3.8-Max-auto' },
+  ];
+  for (const models of [rows, [...rows].reverse()]) {
+    const planned = planAutoRoute(config(models));
+    assert.deepEqual(planned.entries.map((m) => m.id).sort(), ['auto:glm-4.7', 'auto:qwen3.8-max']);
+    assert.equal(planned.routes.get('auto:glm-4.7').length, 2);
+    assert.equal(planned.routes.get('auto:qwen3.8-max').length, 2);
+  }
+});
+
+test('Seed-2.1-Pro 与中文豆包 2.1 Pro 合并，Kimi 高速版与普通版保持独立', () => {
+  const rows = [
+    { id: 'trae-cn/seed-code-pro-0430', name: 'Doubao-Seed-2.1-Pro', input: ['text', 'image'] },
+    { id: 'trae-cn/Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro-0915', input: ['text', 'image'] },
+    { id: 'doubao-work/doubao-2.1-pro', name: '豆包 2.1 Pro' },
+    { id: 'doubao-work/kimi-k3.1-pro', name: 'Kimi K3.1 Pro', input: ['text', 'image'] },
+    { id: 'doubao-work/kimi-k3.1-pro-fast', name: 'Kimi K3.1 Pro 高速' },
+  ];
+  const original = structuredClone(rows);
+  const planned = planAutoRoute(config(rows));
+  assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [
+    ['auto:seed-2.1-pro', 'Seed-2.1-Pro'], ['auto:kimi-k3.1-pro', 'Kimi-K3.1-Pro'],
+    ['auto:kimi-k3.1-pro-高速', 'Kimi-K3.1-Pro-高速'],
+  ]);
+  assert.deepEqual(planned.routes.get('auto:seed-2.1-pro').map((m) => m.id), rows.slice(0, 3).map((m) => m.id));
+  assert.deepEqual(rows, original, '原始名称、ID 与能力不改写');
+});
+
+test('Auto 与上游改名形成跨组关联时完整合并，清单反排仍同组且候选按原顺序', () => {
+  const rows = [
+    { id: 'trae-cn/Doubao-Seed-2.0-Code', name: 'Doubao-Seed-2.1-Turbo' },
+    { id: 'trae-cn/Doubao-Seed-2.0-Code-auto', name: 'Seed-2.0-Code' },
+    { id: 'trae-cn/Doubao-Seed-2.1-Turbo', name: 'Seed-2.1-Turbo' },
+    { id: 'trae-cn/Doubao-Seed-2.1-Turbo-auto', name: 'Seed-2.1-Turbo' },
+  ];
+  for (const models of [rows, [...rows].reverse()]) {
+    const planned = planAutoRoute(config(models));
+    assert.deepEqual(planned.entries.map((m) => m.id), ['auto:seed-2.1-turbo']);
+    assert.deepEqual(planned.routes.get('auto:seed-2.1-turbo').map((m) => m.id), models.map((m) => m.id));
+    assert.equal(planAutoRoute(config(models), { legacyGrouping: true }).routes.size, 2, '旧规则仍用于找回被拆分的历史引用');
+  }
 });
 
 test('无版本号名称只对已确认型号合并，Seed-Code 与内部代理别名保留独立组', () => {

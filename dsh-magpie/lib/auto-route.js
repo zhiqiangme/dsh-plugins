@@ -19,29 +19,37 @@ const MODEL_PREVIEW_SUFFIX = /[-_\s]?(preview|预览版)$/i;
 const MODEL_TIER_MARKER = /\s*[(（]\s*max\s*[)）]$/i;
 // 已确认的无版本号模型名：仅显式列出的具体型号可按名合并，不能放开搜索代理等通用别名。
 const VERSIONLESS_MODEL_NAMES = new Set(['seed-evolving']);
+// Auto 是同款的路由变体，只处理末尾或 Max 前的标记，不能把名称中间的 auto 或独立的 auto 删掉。
+const MODEL_AUTO_MARKER = /[-_\s]+auto(?=[-_\s]+max$|$)/i;
+// 用户确认的同款别名；高速版有独立价格，不做模糊的 fast / 高速后缀归一。
+const MODEL_NAME_ALIASES = new Map([['豆包-2.1-pro', 'Seed-2.1-Pro'], ['doubao-seed-2.1-pro', 'Seed-2.1-Pro']]);
 
 /**
  * 同款模型的合并键：供应商只看路由前缀，型号看裸 ID，不按 DeepSeek / GLM 大系列合并。
- * 与 WorkBuddy 一致，月日快照和 free / std 不算不同型号；其它名称差异不能猜测合并。
+ * 月日快照、free / std 与 Auto 路由后缀不算不同型号；高速版等其它差异不能猜测合并。
  */
-export function routeKey(id) {
+export function routeKey(id, { legacyGrouping = false } = {}) {
   let text = String(id ?? '').trim();
   if (text.startsWith(AUTO_PREFIX)) text = text.slice(AUTO_PREFIX.length);
   const slash = text.indexOf('/');
   if (slash >= 0) text = text.slice(slash + 1);
-  return text.toLowerCase().replace(MODEL_VERSION_SUFFIX, '').replace(MODEL_TIER_SUFFIX, '').replace(MODEL_PREVIEW_SUFFIX, '');
+  const key = text.toLowerCase().replace(MODEL_VERSION_SUFFIX, '').replace(MODEL_TIER_SUFFIX, '').replace(MODEL_PREVIEW_SUFFIX, '');
+  return legacyGrouping ? key : key.replace(MODEL_AUTO_MARKER, '');
 }
 
 /**
  * 条目展示用的模型本名：去掉供应商后缀和 (Max) 档位标记。
  * 例：`Kimi-K3.1-Pro (Max)` → `Kimi-K3.1-Pro`；`DeepSeek-Flash` → `DeepSeek V4.1 Flash`。
  */
-function baseName(row) {
+function baseName(row, legacyGrouping = false) {
   const name = modelNameParts(row, {}).base.replace(MODEL_TIER_MARKER, '').trim();
   // 没填名称时 modelNameParts 会退回完整路由 ID，带供应商前缀；ID 里不要出现前缀。
   const text = name.includes('/') ? bareId(row) : name;
   // 目录里个别条目名是占位符（如 “-”）：同样退回裸 ID，避免出现 auto:- 这种没法读的 ID。
-  return /[a-z0-9]/i.test(text) ? text : bareId(row);
+  const base = /[a-z0-9]/i.test(text) ? text : bareId(row);
+  if (legacyGrouping) return base;
+  const clean = base.replace(MODEL_AUTO_MARKER, '');
+  return MODEL_NAME_ALIASES.get(clean.toLowerCase().replace(/[\s_]+/g, '-')) ?? clean;
 }
 
 function bareId(row) {
@@ -49,8 +57,8 @@ function bareId(row) {
 }
 
 /** 可读 ID 用的小写连字符形式；月日快照不算型号差异，一并去掉。 */
-function entrySlug(row) {
-  return baseName(row).toLowerCase().replace(/[\s_]+/g, '-').replace(MODEL_VERSION_SUFFIX, '').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+function entrySlug(row, legacyGrouping = false) {
+  return baseName(row, legacyGrouping).toLowerCase().replace(/[\s_]+/g, '-').replace(MODEL_VERSION_SUFFIX, '').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
 }
 
 /**
@@ -58,7 +66,7 @@ function entrySlug(row) {
  * 带版本号或已确认的具体型号才参与按名合并；search_agent_qwen_fast 这类通用别名同名也不并。
  */
 function nameKey(row, legacyGrouping = false) {
-  const text = entrySlug(row).replace(MODEL_TIER_SUFFIX, '').replace(MODEL_PREVIEW_SUFFIX, '');
+  const text = entrySlug(row, legacyGrouping).replace(MODEL_TIER_SUFFIX, '').replace(MODEL_PREVIEW_SUFFIX, '');
   return /\d/.test(text) || (!legacyGrouping && VERSIONLESS_MODEL_NAMES.has(text)) ? text : '';
 }
 
@@ -77,10 +85,10 @@ function mergedEfforts(members) {
 }
 
 /** 组内出现最多的名称作为条目 ID 与展示名，并列时取最先出现的，保证清单顺序变化不影响 ID。 */
-function groupSlug(members) {
+function groupSlug(members, legacyGrouping = false) {
   const counts = new Map();
   for (const row of members) {
-    const slug = entrySlug(row);
+    const slug = entrySlug(row, legacyGrouping);
     counts.set(slug, (counts.get(slug) ?? 0) + 1);
   }
   let best = '', seen = 0;
@@ -89,10 +97,10 @@ function groupSlug(members) {
 }
 
 /** 展示名用同组里最干净的写法：优先没用月日快照的成员，再按清单顺序。 */
-function groupName(members, slug) {
-  const same = members.filter((row) => entrySlug(row) === slug);
-  const clean = same.find((row) => !MODEL_VERSION_SUFFIX.test(baseName(row))) ?? same[0];
-  return baseName(clean).replace(/\s+/g, '-');
+function groupName(members, slug, legacyGrouping = false) {
+  const same = members.filter((row) => entrySlug(row, legacyGrouping) === slug);
+  const clean = same.find((row) => !MODEL_VERSION_SUFFIX.test(baseName(row, legacyGrouping))) ?? same[0];
+  return baseName(clean, legacyGrouping).replace(/\s+/g, '-');
 }
 
 /**
@@ -106,17 +114,28 @@ function groupName(members, slug) {
  */
 export function planAutoRoute(config, { legacyIds = false, legacyGrouping = false } = {}) {
   const groups = [];
+  const positions = new Map(config.models.map((row, index) => [row, index]));
+  const root = (group) => group?.parent ? root(group.parent) : group;
   // 裸 ID 键和名称键指向同一组：别名 ID 靠名称归组，组内后续成员两个键都要登记。
   const byKey = new Map();
   for (const row of config.models) {
     if (!row.enabled) continue;
-    const keys = [routeKey(row.id), nameKey(row, legacyGrouping)].filter(Boolean);
-    let group = keys.map((key) => byKey.get(key)).find(Boolean);
-    if (!group) { group = { members: [] }; groups.push(group); }
+    const keys = [routeKey(row.id, { legacyGrouping }), nameKey(row, legacyGrouping)].filter(Boolean);
+    const matches = [...new Set(keys.map((key) => root(byKey.get(key))).filter(Boolean))];
+    let group = legacyGrouping ? matches[0] : matches.toSorted((a, b) => a.order - b.order)[0];
+    if (!group) { group = { members: [], order: groups.length }; groups.push(group); }
+    if (!legacyGrouping) for (const other of matches) if (other !== group) {
+      // 某一条目可能同时连到“裸 ID 相同”和“名称相同”的两个已有组；合并根节点，避免依赖导入顺序。
+      group.members.push(...other.members); other.parent = group;
+    }
     group.members.push(row);
     for (const key of keys) if (!byKey.has(key)) byKey.set(key, group);
   }
-  const described = groups.map(({ members }) => ({ members, slug: groupSlug(members) || routeKey(members[0].id) }));
+  const described = groups.filter((group) => !group.parent).map(({ members }) => {
+    // 组被关联后仍按原清单顺序选路，不能让合并动作改变出口优先级。
+    members.sort((a, b) => positions.get(a) - positions.get(b));
+    return { members, slug: groupSlug(members, legacyGrouping) || routeKey(members[0].id, { legacyGrouping }) };
+  });
   const slugCounts = new Map();
   for (const { slug } of described) slugCounts.set(slug, (slugCounts.get(slug) ?? 0) + 1);
   const slugOrdinals = new Map();
@@ -140,7 +159,7 @@ export function planAutoRoute(config, { legacyIds = false, legacyGrouping = fals
       for (let n = 2; routes.has(id); n++) id = `${base}-${n}`;
     }
     const entry = {
-      id, name: `${groupName(members, slug)}${tag}`,
+      id, name: `${groupName(members, slug, legacyGrouping)}${tag}`,
       ...smallest(members, 'contextWindow'), ...smallest(members, 'maxTokens'),
       input: members.some((row) => row.input?.includes('image')) ? ['text', 'image'] : ['text'],
       reasoningEfforts: mergedEfforts(members),
