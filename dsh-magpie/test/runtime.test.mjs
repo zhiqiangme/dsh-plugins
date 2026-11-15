@@ -303,7 +303,7 @@ test('开关即时修改只接受白名单字段和当前版本，不带入草�
   assert.equal((await host.manager.handle({ action: 'save', revision: off.revision, config: off.config })).saved, true);
 });
 
-test('小上下文屏蔽阈值即时持久化，重建后保留且不重写 DSH 分组', async () => {
+test('列表屏蔽开关和阈值即时持久化，重建后保留且不重写 DSH 分组', async () => {
   const host = setup({ backend: { describe: async () => ({}), settings: () => ({ available: false }) } });
   const before = await host.manager.describe();
   let current = await host.manager.handle({ action: 'save', revision: before.revision, config: {
@@ -313,15 +313,17 @@ test('小上下文屏蔽阈值即时持久化，重建后保留且不重写 DSH 
   const models = structuredClone(current.config.models);
   const edits = host.edits.length;
   await assert.rejects(host.manager.handle({ action: 'patch', revision: current.revision, patch: { smallContextLimit: 128000 } }), /屏蔽阈值/);
-  for (const patch of [{ smallContextLimit: 200000 }, { hideSmallContext: false }, { hideSmallContext: true, smallContextLimit: 500000 }]) {
+  const patches = [{ smallContextLimit: 200000 }, { hideSmallContext: false }, { hideSmallContext: true, smallContextLimit: 500000 }, { hideNonVision: true }, { hideNonVision: false }];
+  for (const patch of patches) {
     current = await host.manager.handle({ action: 'patch', revision: current.revision, patch });
     assert.equal(current.sync, undefined);
+    for (const [key, value] of Object.entries(patch)) assert.equal(current.config[key], value);
     assert.deepEqual(current.config.models, models);
     assert.deepEqual(host.llm.options.config.providers[PROVIDER_ID], provider);
     const reopened = new ModelManager(host.ctx, host.own.options.config, { env: {}, backend: host.manager.backend });
     assert.deepEqual((await reopened.describe()).config, current.config);
   }
-  assert.equal(host.edits.length, edits + 3, '只写三次插件配置，不触发分组同步');
+  assert.equal(host.edits.length, edits + patches.length, '只写插件配置，不触发分组同步');
 });
 
 test('webServer 已就绪时自动路由地址懒加载，无需面板先登记或手工注入', async () => {

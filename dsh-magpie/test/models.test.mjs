@@ -14,6 +14,9 @@ test('默认清单为空、同步与路由默认开启；地址与协议严格�
   assert.throws(() => resolveConfig({ autoRoute: 'yes' }), /自动路由开关/);
   assert.equal(resolveConfig().hideSmallContext, true, '小上下文屏蔽默认开启');
   assert.throws(() => resolveConfig({ hideSmallContext: 'yes' }), /屏蔽小上下文/);
+  assert.equal(resolveConfig().hideNonVision, false, '旧配置默认不屏蔽非视觉模型');
+  assert.equal(resolveConfig({ hideNonVision: true }).hideNonVision, true);
+  for (const hideNonVision of ['true', 1, null]) assert.throws(() => resolveConfig({ hideNonVision }), /屏蔽不支持图片/);
   assert.equal(resolveConfig().smallContextLimit, 500000, '旧配置继续使用 500K');
   assert.equal(resolveConfig({ hideSmallContext: false }).hideSmallContext, false, '旧配置显式关闭仍保留');
   assert.equal(resolveConfig({ smallContextLimit: 200000 }).smallContextLimit, 200000);

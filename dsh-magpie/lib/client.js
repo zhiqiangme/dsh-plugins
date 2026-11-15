@@ -18,6 +18,7 @@ window.__ModuleLoader__.load({
       autoRoute: '自动路由（同款模型合并）', autoRouteHint: '同款裸 ID 的多个供应商合并为 Auto 条目，按清单顺序选路并固定对话出口；图片请求跳过不支持视觉的出口，可重试错误在当前对话冷却 5 分钟。开启或关闭都会立即保存并同步，旧模型引用会映射到同款条目。',
       hideSmallContext: '屏蔽小上下文模型', hideSmallContextHint: '只影响本卡片列表显示，不改勾选、同步与自动路由；上下文未知的模型不屏蔽。选项即时保存。',
       contextFilterOff: '不屏蔽', contextFilter200K: '低于 200K', contextFilter500K: '低于 500K',
+      hideNonVision: '屏蔽不支持图片的模型', hideNonVisionHint: '只显示支持图片输入的模型，可与上下文屏蔽叠加；只影响本卡片列表显示，不改勾选、同步与自动路由。开关即时保存。',
       native: '当前还有 Magpie 原生分组。这里保存到独立的“Magpie”分组（ID 为 dsh-magpie），原分组仍可使用。',
       count: '{selected} / {total} 个模型已勾选', search: '搜索名称或 ID', add: '手动添加模型',
       sortModel: '按模型排序', sortProvider: '按供应商排序',
@@ -97,6 +98,7 @@ window.__ModuleLoader__.load({
       autoRoute: 'Auto route (merge identical models)', autoRouteHint: 'Merges selected routes with the same bare model ID into Auto entries, tries them in list order and keeps a conversation on its route. Image requests skip non-vision routes; retryable failures cool down for 5 minutes per conversation. Changes save and sync immediately, and old model references are mapped to the matching entries.',
       hideSmallContext: 'Hide small-context models', hideSmallContextHint: 'Only affects this card’s list; selections, sync and auto routing are unchanged. Models with unknown context stay visible. Saves immediately.',
       contextFilterOff: 'Show all', contextFilter200K: 'Under 200K', contextFilter500K: 'Under 500K',
+      hideNonVision: 'Hide models without image input', hideNonVisionHint: 'Shows only models with image input and combines with the context filter. Only affects this card’s list; selections, sync and auto routing are unchanged. Saves immediately.',
       native: 'Magpie native groups are also configured. This list uses its own “Magpie” group (ID dsh-magpie); existing groups remain available.',
       count: '{selected} / {total} models selected', search: 'Search names or IDs', add: 'Add a model',
       sortModel: 'Sort by model', sortProvider: 'Sort by provider',
@@ -1094,8 +1096,10 @@ window.__ModuleLoader__.load({
       const modelFilter = modelOptions.some((option) => option.key === categoryFilters.model) ? categoryFilters.model : '';
       // “其他”类（非主流系列与空白行）默认沉到列表底部；已勾选的仍按置顶规则优先，只影响展示不改保存顺序。
       const isOther = (row) => modelCategory(row, 'model', view.providerNames, categoryLabels).other;
+      // 屏蔽项只控制可见行，完整清单仍用于保存、同步与自动路由。
       const visible = rows.map((row, index) => ({ row, index }))
         .filter(({ row }) => !config.hideSmallContext || !row.contextWindow || row.contextWindow >= config.smallContextLimit)
+        .filter(({ row }) => !config.hideNonVision || row.input.includes('image'))
         .filter(({ row }) => `${row.id} ${labelFor(row)}`.toLowerCase().includes(search.toLowerCase()))
         .filter(({ row }) => !providerFilter || modelCategory(row, 'provider', view.providerNames, categoryLabels).key === providerFilter)
         .filter(({ row }) => !modelFilter || modelCategory(row, 'model', view.providerNames, categoryLabels).key === modelFilter)
@@ -1272,6 +1276,7 @@ window.__ModuleLoader__.load({
           choice(t('hideSmallContext'), t('hideSmallContextHint'), config.hideSmallContext ? config.smallContextLimit : 0,
             [[0, t('contextFilterOff')], [200_000, t('contextFilter200K')], [500_000, t('contextFilter500K')]],
             (limit) => applyNow({ hideSmallContext: limit !== 0, ...(limit ? { smallContextLimit: limit } : {}) }), busy || !view.editable),
+          toggle(t('hideNonVision'), t('hideNonVisionHint'), config.hideNonVision, (hideNonVision) => applyNow({ hideNonVision }), busy || !view.editable),
           view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
         ],
         models: () => [

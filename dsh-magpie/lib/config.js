@@ -15,7 +15,7 @@ export const REASONING_LEVELS = Object.freeze(['off', 'minimal', 'low', 'medium'
 // 侧边栏入口：auto 只在清单还没有模型时显示，引导首次配置；always / never 固定显示或隐藏。
 export const SIDEBAR_MODES = Object.freeze(['auto', 'always', 'never']);
 // 卡片上的开关和下拉改完即保存；连接设置与模型清单仍走「保存并同步」。
-export const INSTANT_FIELDS = Object.freeze(['autoStart', 'autoUpdate', 'closeOnExit', 'autoLightweight', 'sidebarEntry', 'syncEnabled', 'autoRoute', 'hideSmallContext', 'smallContextLimit']);
+export const INSTANT_FIELDS = Object.freeze(['autoStart', 'autoUpdate', 'closeOnExit', 'autoLightweight', 'sidebarEntry', 'syncEnabled', 'autoRoute', 'hideSmallContext', 'smallContextLimit', 'hideNonVision']);
 export const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 
 export function gatewayURL(value = DEFAULT_URL) {
@@ -79,6 +79,7 @@ export function resolveConfig(raw = {}) {
   if (value.syncEnabled !== undefined && typeof value.syncEnabled !== 'boolean') throw new Error('同步开关必须是布尔值');
   if (value.autoRoute !== undefined && typeof value.autoRoute !== 'boolean') throw new Error('自动路由开关必须是布尔值');
   if (value.hideSmallContext !== undefined && typeof value.hideSmallContext !== 'boolean') throw new Error('屏蔽小上下文开关必须是布尔值');
+  if (value.hideNonVision !== undefined && typeof value.hideNonVision !== 'boolean') throw new Error('屏蔽不支持图片的模型开关必须是布尔值');
   // K 按千计；保留旧开关，未指定阈值的旧配置继续使用 500K。
   const smallContextLimit = value.smallContextLimit ?? 500_000;
   if (![200_000, 500_000].includes(smallContextLimit)) throw new Error('小上下文屏蔽阈值只能是 200000 或 500000');
@@ -95,7 +96,7 @@ export function resolveConfig(raw = {}) {
   if (magpiePath && (!isAbsolute(magpiePath) || !/\.exe$/i.test(magpiePath))) throw new Error('Magpie 程序路径必须是 exe 文件的绝对路径');
   // 同步与自动路由默认开启：空清单不会生成 provider，首次同步目录后即可直接用；旧配置里显式保存的 false 不受影响。
   // 排序只有「按模型」和「手动」两种：没有手动排序标记时，全量同步一律按模型名称排好（旧的目录顺序标记直接忽略）。
-  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled !== false, autoRoute: value.autoRoute !== false, hideSmallContext: value.hideSmallContext !== false, smallContextLimit, closeOnExit: value.closeOnExit === true, autoStart: value.autoStart !== false, autoUpdate: value.autoUpdate !== false, autoLightweight: value.autoLightweight !== false, manualOrder: value.manualOrder === true, sidebarEntry: value.sidebarEntry ?? 'auto', models, ...(magpiePath ? { magpiePath } : {}) };
+  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled !== false, autoRoute: value.autoRoute !== false, hideSmallContext: value.hideSmallContext !== false, smallContextLimit, hideNonVision: value.hideNonVision === true, closeOnExit: value.closeOnExit === true, autoStart: value.autoStart !== false, autoUpdate: value.autoUpdate !== false, autoLightweight: value.autoLightweight !== false, manualOrder: value.manualOrder === true, sidebarEntry: value.sidebarEntry ?? 'auto', models, ...(magpiePath ? { magpiePath } : {}) };
 }
 
 export function revision(config) {

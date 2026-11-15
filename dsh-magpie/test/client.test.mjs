@@ -48,7 +48,7 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
 
 test('总开关与屏蔽选项集中在开关页，默认屏蔽低于 500K，模型页只留清单与筛选', () => {
   const client = clientHarness(view({ models: [{ id: 'a/one' }] }));
-  for (const label of ['同步到 DSH', '自动路由（同款模型合并）', '屏蔽小上下文模型']) {
+  for (const label of ['同步到 DSH', '自动路由（同款模型合并）', '屏蔽小上下文模型', '屏蔽不支持图片的模型']) {
     assert.equal(control(client.render(), label), undefined, `${label} 不在模型页`);
   }
   client.tab('开关');
@@ -56,6 +56,7 @@ test('总开关与屏蔽选项集中在开关页，默认屏蔽低于 500K，模
     assert.equal(control(client.render(), label).props.checked, true, `${label} 默认开启`);
   }
   assert.equal(choose(client.render(), '屏蔽小上下文模型', '低于 500K').props['aria-checked'], true);
+  assert.equal(control(client.render(), '屏蔽不支持图片的模型').props.checked, false, '新增图片屏蔽默认关闭');
   assert.equal(button(client.render(), '从 Magpie 同步'), undefined, '同步目录按钮仍留在模型页');
 });
 
@@ -172,6 +173,51 @@ test('小上下文屏蔽支持不屏蔽、200K 和 500K，边界与未知保留�
   const disabled = clientHarness(view({ hideSmallContext: false }));
   disabled.tab('开关');
   assert.equal(choose(disabled.render(), '屏蔽小上下文模型', '不屏蔽').props['aria-checked'], true, '旧配置关闭时显示不屏蔽');
+});
+
+test('图片屏蔽即时保存并保留草稿，可叠加上下文、搜索及供应商筛选，批量勾选只影响可见模型', async () => {
+  const calls = [];
+  let saved = resolveConfig({ hideSmallContext: false, models: [
+    { id: 'codearts/text', name: 'Qwen4 Text', contextWindow: 1000000 },
+    { id: 'codearts/large', name: 'Qwen4 Large', contextWindow: 1000000, input: ['text', 'image'], enabled: false },
+    { id: 'codearts/small', name: 'Qwen4 Small', contextWindow: 128000, input: ['text', 'image'], enabled: false },
+    { id: 'qwenwork/edge', name: 'Qwen4 Edge', contextWindow: 200000, input: ['text', 'image'], enabled: false },
+    { id: 'codearts/unknown', name: 'Qwen4 Unknown', enabled: false },
+  ] });
+  const client = clientHarness(view(saved), async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body);
+    saved = resolveConfig({ ...saved, ...body.patch });
+    return response({ ...view(saved), revision: `revision-${calls.length + 1}` });
+  });
+  const ids = () => nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title);
+  const original = structuredClone(saved.models);
+  assert.equal(ids().length, 5);
+  field(client.render(), '显示名称').props.onChange({ target: { value: 'Qwen4 未保存草稿' } });
+  client.tab('开关');
+  await control(client.render(), '屏蔽不支持图片的模型').props.onChange({ target: { checked: true } });
+  assert.deepEqual(calls[0], { action: 'patch', patch: { hideNonVision: true }, revision: 'revision-one' });
+  assert.equal(control(client.render(), '屏蔽不支持图片的模型').props.checked, true);
+  assert.deepEqual(saved.models, original, '即时开关不保存模型草稿或改变勾选');
+  assert.equal(client.states[0].config.models[0].name, 'Qwen4 未保存草稿');
+  assert.equal(client.states[1], true);
+  client.tab('模型');
+  assert.deepEqual(ids(), ['codearts/large', 'codearts/small', 'qwenwork/edge']);
+  client.tab('开关');
+  await choose(client.render(), '屏蔽小上下文模型', '低于 200K').props.onClick();
+  client.tab('模型');
+  assert.deepEqual(ids(), ['codearts/large', 'qwenwork/edge'], '图片与上下文屏蔽取交集');
+  control(client.render(), '按供应商分类').props.onChange({ target: { value: 'codearts' } });
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: 'Large' } });
+  assert.deepEqual(ids(), ['codearts/large']);
+  button(client.render(), '全选').props.onClick();
+  assert.deepEqual(client.states[0].config.models.map((m) => m.enabled), [true, true, false, false, false], '隐藏模型的勾选不变');
+  nodes(client.render(), (n) => n.props.type === 'search')[0].props.onChange({ target: { value: '' } });
+  control(client.render(), '按供应商分类').props.onChange({ target: { value: '' } });
+  client.tab('开关');
+  await control(client.render(), '屏蔽不支持图片的模型').props.onChange({ target: { checked: false } });
+  assert.deepEqual(calls[2].patch, { hideNonVision: false });
+  client.tab('模型');
+  assert.deepEqual(ids(), ['codearts/text', 'codearts/large', 'qwenwork/edge', 'codearts/unknown'], '关闭图片屏蔽后仍保留上下文屏蔽');
 });
 
 test('上下文徽标只显示取整档位，实际上下文值不变', () => {
