@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
 import { spawn } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,6 +33,30 @@ test('仅根退出或进程退出执行关闭；普通插件停用/重载解绑�
     assert.equal(closed.length, ['root-exit', 'process-exit'].includes(mode) ? 1 : 0, mode);
     assert.equal(hostProcess.listenerCount('exit'), 0);
   }
+});
+
+test('升级收尾与根退出同时发生时，等待程序任务结束再关闭新启动的 Magpie', async (t) => {
+  const host = fakeHost(), hostProcess = new EventEmitter(), calls = [];
+  host.ctx.root = { fiber: { state: 5 } };
+  let release, reachedStart, probes = 0;
+  const hold = new Promise((resolve) => { release = resolve; });
+  const starting = new Promise((resolve) => { reachedStart = resolve; });
+  const { backend } = backendFixture(t, {
+    isRunning: async () => { if (++probes === 2) { reachedStart(); await hold; } return false; },
+    launch: async () => { calls.push('started'); return 4321; },
+  });
+  mkdirSync(backend.paths.current, { recursive: true });
+  writeFileSync(backend.paths.exe, 'magpie 0.1.1');
+  const manager = { config: resolveConfig({ closeOnExit: true }), env: {}, backend, pending: Promise.resolve() };
+  registerExitClose(host.ctx, manager, { hostProcess, close: () => { calls.push('closed'); return [{ pid: 4321 }]; } });
+  backend.install();
+  await starting;
+  const closing = host.ctx.dispose();
+  try { assert.deepEqual(calls, [], '不能先关闭，再让升级收尾启动程序'); }
+  finally { release(); await closing; }
+  assert.deepEqual(calls, ['started', 'closed']);
+  hostProcess.emit('exit', 0);
+  assert.deepEqual(calls, ['started', 'closed'], '进程退出不应重复关闭');
 });
 
 test('退出读取最新已保存设置和路径，失败只记日志，不阻碍 DSH 退出', async () => {
@@ -73,6 +98,7 @@ test('命令使用静态脚本和环境参数，保留完整路径，不对远�
 
 test('真实 Windows 进程：网关识别只结束该实例，完整路径不会误关同名的另一份程序', { skip: process.platform !== 'win32' }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-magpie-close-test-'));
+  const env = { ...process.env, DSH_MAGPIE_BACKEND_ROOT: join(root, 'managed') };
   const targets = [];
   t.after(async () => {
     for (const child of targets) if (child.exitCode === null && child.signalCode === null) {
@@ -89,14 +115,65 @@ test('真实 Windows 进程：网关识别只结束该实例，完整路径不�
   }
   const first = await start('one'), other = await start('two');
   const firstExit = once(first.child, 'exit');
-  const closed = closeMagpieSync(resolveConfig({ closeOnExit: true, baseURL: `http://127.0.0.1:${first.port}` }));
+  const closed = closeMagpieSync(resolveConfig({ closeOnExit: true, baseURL: `http://127.0.0.1:${first.port}` }), { env });
   assert.deepEqual(closed.map((p) => p.pid), [first.child.pid]);
   await firstExit;
   assert.equal(other.child.exitCode, null);
   assert.equal(other.child.signalCode, null);
   const secondExit = once(other.child, 'exit');
-  assert.deepEqual(closeMagpieSync(resolveConfig({ closeOnExit: true, magpiePath: join(root, 'two', 'magpie.exe') })).map((p) => p.pid), [other.child.pid]);
+  assert.deepEqual(closeMagpieSync(resolveConfig({ closeOnExit: true, magpiePath: join(root, 'two', 'magpie.exe') }), { env }).map((p) => p.pid), [other.child.pid]);
   await secondExit;
+});
+
+test('真实 Windows 进程：关闭升级后启动的主程序和 Bun 子进程，保留另一实例', { skip: process.platform !== 'win32' }, async (t) => {
+  for (const gateway of ['parent', 'child']) await t.test(`网关由 ${gateway} 监听`, async (t) => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-magpie-close-tree-'));
+    // 即使端口识别失败，也只能回退到测试目录，不能触及用户安装的 Magpie。
+    const env = { ...process.env, DSH_MAGPIE_BACKEND_ROOT: join(root, 'managed') };
+    const pids = [];
+    const running = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
+    const assertClosed = async (closed, instance) => {
+      const expected = [instance.pid, instance.runtimePid];
+      assert.ok(closed.length && closed.every((p) => expected.includes(p.pid)), '只允许关闭目标实例的进程');
+      // 主程序可能在 Bun 退出后自行退出，因此应核对最终进程状态，而不是要求脚本逐个执行关闭。
+      for (let attempt = 0; attempt < 100 && expected.some(running); attempt++) await sleep(20);
+      assert.ok(expected.every((pid) => !running(pid)), '主程序和 Bun 均应退出');
+    };
+    t.after(async () => {
+      for (const pid of pids) if (running(pid)) process.kill(pid);
+      for (let attempt = 0; attempt < 100 && pids.some(running); attempt++) await sleep(20);
+      assert.ok(pids.every((pid) => !running(pid)), '测试进程应全部退出');
+      rmSync(root, { recursive: true, force: true });
+    });
+    const runtime = join(root, 'magpie-bun.exe');
+    copyFileSync(process.execPath, runtime);
+    for (const folder of ['one', 'two']) { mkdirSync(join(root, folder)); copyFileSync(process.execPath, join(root, folder, 'magpie.exe')); }
+    // 模拟升级后 Magpie 启动 Bun 的实际父子结构；两个实例共享同一路径的 Bun，不能按名称或路径全关。
+    const launcher = `
+      const { spawn } = require('node:child_process');
+      const listen = "require('node:net').createServer().listen(0, '127.0.0.1', function () { console.log(this.address().port); });";
+      const child = spawn(process.argv[1], ['-e', process.argv[2] === 'child' ? listen : "console.log('ready'); setInterval(() => {}, 1000);"], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      child.stdout.once('data', (output) => {
+        const report = (port) => console.log(JSON.stringify({ runtimePid: child.pid, port }));
+        if (process.argv[2] === 'child') report(Number(output.toString().trim()));
+        else require('node:net').createServer().listen(0, '127.0.0.1', function () { report(this.address().port); });
+      });
+    `;
+    async function start(folder) {
+      const child = spawn(join(root, folder, 'magpie.exe'), ['-e', launcher, runtime, gateway], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      pids.push(child.pid);
+      const [output] = await once(child.stdout, 'data', { signal: AbortSignal.timeout(10000) });
+      const status = JSON.parse(output.toString());
+      pids.push(status.runtimePid);
+      return { pid: child.pid, ...status };
+    }
+    const first = await start('one'), other = await start('two');
+    const closed = closeMagpieSync(resolveConfig({ closeOnExit: true, baseURL: `http://127.0.0.1:${first.port}` }), { env });
+    await assertClosed(closed, first);
+    assert.ok(running(other.pid) && running(other.runtimePid), '另一个实例及其同名 Bun 子进程应继续运行');
+    const explicit = closeMagpieSync(resolveConfig({ closeOnExit: true, magpiePath: join(root, 'two', 'magpie.exe') }), { env });
+    await assertClosed(explicit, other);
+  });
 });
 
 // 开机启动用的 manager 替身：程序与进程检测全部注入，不探测真实主目录、不启动真实进程。

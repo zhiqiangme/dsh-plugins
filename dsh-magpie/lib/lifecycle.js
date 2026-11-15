@@ -60,16 +60,34 @@ if ($env:DSH_MAGPIE_CLOSE_EXPLICIT -ne '1' -and $env:DSH_MAGPIE_CLOSE_PORT) {
     $parts = $_.Trim() -split '\s+'
     if ($parts.Count -eq 5 -and $parts[0] -eq 'TCP' -and $parts[1] -match ":$port$" -and $parts[3] -eq 'LISTENING') { [int]$parts[4] }
   })
-  $magpieCandidates = @($processes | Where-Object {
-    $_.ProcessId -in $owners -and $_.ExecutablePath -and
-    [IO.Path]::GetFileName($_.ExecutablePath) -match '^magpie(?:-windows-(?:amd64|arm64))?\.exe$'
-  })
+  foreach ($owner in @($processes | Where-Object { $_.ProcessId -in $owners -and $_.ExecutablePath })) {
+    if ([IO.Path]::GetFileName($owner.ExecutablePath) -match '^magpie(?:-windows-(?:amd64|arm64))?\.exe$') {
+      $magpieCandidates += $owner
+    } elseif ([IO.Path]::GetFileName($owner.ExecutablePath) -eq 'magpie-bun.exe') {
+      # 新版网关也可能由 Bun 监听；只沿快照中的父子关系找到 Magpie，不按 Bun 的名称批量关闭。
+      $magpieCandidates += @($processes | Where-Object {
+        $_.ProcessId -eq $owner.ParentProcessId -and $_.ExecutablePath -and
+        $_.CreationDate -le $owner.CreationDate -and
+        [IO.Path]::GetFileName($_.ExecutablePath) -match '^magpie(?:-windows-(?:amd64|arm64))?\.exe$'
+      })
+    }
+  }
 }
 if ($magpieCandidates.Count -eq 0) {
   $magpieCandidates = @($processes | Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq $target })
 }
 $closed = @()
-foreach ($candidate in $magpieCandidates) {
+$targets = @()
+foreach ($candidate in @($magpieCandidates | Sort-Object ProcessId -Unique)) {
+  $targets += $candidate
+  # 升级后启动的 Bun 托盘/运行时也必须结束；在关闭主程序前固定子进程快照，避免它变为孤儿后漏掉。
+  $targets += @($processes | Where-Object {
+    $_.ParentProcessId -eq $candidate.ProcessId -and $_.ExecutablePath -and
+    $_.CreationDate -ge $candidate.CreationDate -and
+    [IO.Path]::GetFileName($_.ExecutablePath) -eq 'magpie-bun.exe'
+  })
+}
+foreach ($candidate in @($targets | Sort-Object ProcessId -Unique)) {
   $current = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
   # 再核对 PID 当前的完整路径；没有读到路径时不按名称盲目结束。
   if (!$current -or !$current.Path -or [IO.Path]::GetFullPath($current.Path) -ne [IO.Path]::GetFullPath($candidate.ExecutablePath)) { continue }
@@ -108,10 +126,15 @@ export function registerExitClose(ctx, manager, { hostProcess = process, close =
       } catch (error) { (ctx.logger ?? console).warn(`[dsh-magpie] 退出时关闭 Magpie 失败：${error.message}`); }
     };
     hostProcess.once('exit', onExit);
-    return () => {
+    return async () => {
       hostProcess.removeListener('exit', onExit);
       // 当前 Cordis 在根 fiber.dispose() 时先进入 DISPOSING(5)，再卸载插件；插件自身重载时根仍为 ACTIVE(2)。
-      if (ctx.root?.fiber?.state === 5) onExit();
+      if (ctx.root?.fiber?.state === 5) {
+        // 升级收尾可能还在异步启动 Magpie；先中止并等待程序任务，避免关闭后又启动一个新进程。
+        // 不依赖不同 effect 的释放顺序；普通插件重载仍只解绑，不触发关闭。
+        try { await manager.backend?.dispose(); await manager.pending; }
+        finally { onExit(); }
+      }
     };
   }, 'dsh-magpie: close on host exit');
 }
