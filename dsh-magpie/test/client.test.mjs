@@ -569,6 +569,33 @@ test('管理行预览供应商简称，可按简称搜索；修改名称或 ID �
   assert.equal(client.states[0].config.models[1].name, '我的模型');
 });
 
+test('模型行在能力徽标左侧显示渠道，渠道名称与供应商筛选一致，编辑 ID 后即时更新', () => {
+  const initial = view({ models: [
+    { id: 'codearts/flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1000000, input: ['text', 'image'] },
+    { id: 'doubao-work/seed', name: 'Seed-2.0', contextWindow: 1000000 },
+    { id: 'qwenwork/qwen', name: 'Qwen4-Max', contextWindow: 1000000 },
+    { id: 'custom/flash', name: 'DeepSeek V4.1 Flash' },
+    { id: 'route-group', name: 'DeepSeek V4.1 Flash' },
+  ] });
+  const client = clientHarness(initial);
+  const badgeTexts = () => modelRows(client.render()).map((row) => nodes(row, (n) => n.props.className === 'model-badges')[0].children.filter(Boolean).map((n) => n.children[0]));
+  assert.deepEqual(badgeTexts(), [
+    ['CodeArts', '支持图片输入', '1M'], ['DoubaoWork', '1M'], ['QwenWork', '1M'], ['custom'], ['未指定供应商'],
+  ]);
+  const options = control(client.render(), '按供应商分类').children.flat().map((n) => n.children[0]);
+  for (const name of ['CodeArts', 'DoubaoWork', 'QwenWork']) assert.ok(options.includes(name));
+  const filter = () => control(client.render(), '按供应商分类');
+  for (const [key, id] of [['codearts', 'codearts/flash'], ['doubaowork', 'doubao-work/seed'], ['qwenwork', 'qwenwork/qwen']]) {
+    filter().props.onChange({ target: { value: key } });
+    assert.deepEqual(nodes(client.render(), (n) => n.props.className === 'model-select').map((n) => n.props.title), [id]);
+  }
+  filter().props.onChange({ target: { value: '' } });
+  assert.deepEqual(client.states[0].config.models, initial.config.models, '展示和筛选不改模型名称、ID 或勾选');
+  field(client.render(), '完整模型 ID').props.onChange({ target: { value: 'qwenwork/flash' } });
+  assert.deepEqual(badgeTexts()[0], ['QwenWork', '支持图片输入', '1M']);
+  assert.equal(client.states[0].config.models[0].name, 'DeepSeek V4.1 Flash');
+});
+
 test('Flash 别名统一展示、搜索和排序，保存仍使用原始名称及路由 ID', async () => {
   let posted;
   const initial = view({ models: [

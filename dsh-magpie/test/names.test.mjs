@@ -11,6 +11,7 @@ test('前端预览和 DSH 同步使用相同供应商简称，区分 WorkBuddy �
     workbuddy: 'WorkBuddy', 'workbuddy-ai': 'WorkBuddy GL', 'opencode-zen-free': 'OpenCode',
     'qoder-cn': 'Qoder', qoder: 'Qoder GL', 'trae-cn': 'Trae', 'trae-global': 'Trae GL',
     zcode: 'ZCode', 'mimo-app': 'MiMo', 'commandcode-plan': 'CommandCode', cline: 'Cline', codex: 'Codex',
+    codearts: 'CodeArts', 'doubao-work': 'DoubaoWork', qwenwork: 'QwenWork',
   };
   for (const [id, shortName] of Object.entries(names)) {
     const row = { id: `${id}/deepseek-v4.1-flash`, name: 'DeepSeek V4.1 Flash' };
@@ -66,7 +67,7 @@ test('DSH 名字本名内空格换 -，与供应商后缀保留空格，已带�
   assert.equal(dshModelName({ id: 'qoder-cn/x', name: 'DeepSeek V4.1 Flash' }), 'DeepSeek-V4.1-Flash Qoder');
   assert.equal(dshModelName({ id: 'trae-cn/x', name: 'LongCat 2.5 Free' }), 'LongCat-2.5-Free Trae');
   assert.equal(dshModelName({ id: 'workbuddy/x', name: 'DeepSeek V4.1 Flash WorkBuddy' }), 'DeepSeek-V4.1-Flash WorkBuddy');
-  assert.equal(dshModelName({ id: 'qwenwork/x', name: 'Qwen4-Max 预览版' }), 'Qwen4-Max-Preview');
+  assert.equal(dshModelName({ id: 'qwenwork/x', name: 'Qwen4-Max 预览版' }), 'Qwen4-Max-Preview QwenWork');
   assert.equal(displayModelName({ id: 'qoder-cn/x', name: 'DeepSeek V4.1 Flash' }), 'DeepSeek V4.1 Flash Qoder', '卡片管理显示仍保留空格');
 });
 

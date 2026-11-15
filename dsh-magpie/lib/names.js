@@ -12,6 +12,9 @@ export const PROVIDER_NAMES = Object.freeze({
   'commandcode-plan': 'CommandCode',
   cline: 'Cline',
   codex: 'Codex',
+  codearts: 'CodeArts',
+  'doubao-work': 'DoubaoWork',
+  qwenwork: 'QwenWork',
 });
 
 export function normalizeDisplayName(name) {
