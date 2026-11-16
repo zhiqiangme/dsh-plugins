@@ -4,6 +4,7 @@ import { PROVIDER_NAMES, keepOrderIndexes, sortModelIndexes } from './names.js';
 import { MagpieBackend } from './backend.js';
 import { conversationBlock } from './auto-update.js';
 import { createMagpieRouter } from './router.js';
+import { join } from 'node:path';
 
 // 本机网关正常时几十毫秒内应答；状态检查会定时重复，超时设短免得卡片长时间显示“检查中”。
 const STATUS_TIMEOUT = 2_000;
@@ -27,7 +28,11 @@ export class ModelManager {
     this.pending = Promise.resolve();
     this.disposed = false;
     this.routeReady = Promise.resolve();
-    this.router = createMagpieRouter({ current: () => this.current(), credentials: () => this.credentials, env: this.env, fetchImpl: (...args) => this.fetch(...args) });
+    this.router = createMagpieRouter({ current: () => this.current(), credentials: () => this.credentials, env: this.env, fetchImpl: (...args) => this.fetch(...args),
+      orderStatePath: this.backend.paths?.cache ? join(this.backend.paths.cache, 'channel-order.json') : undefined,
+      loadQuotas: async (config) => requestGateway(config.baseURL, '/v1/magpie/quotas', await credential(this.credentials, this.env, config.baseURL), this.fetch, 3_000),
+      onOrderError: (message) => (this.ctx.logger ?? console).warn(`[dsh-magpie] ${message}`),
+    });
   }
   get editor() { return hostService(this.ctx, 'configEditor'); }
   get credentials() { return hostService(this.ctx, 'credentials'); }

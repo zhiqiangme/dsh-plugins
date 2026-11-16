@@ -1,19 +1,15 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { AUTO_PREFIX, planAutoRoute, ROUTER_BASE_PATH } from './auto-route.js';
 import { credential, modelEntries } from './models.js';
-import { prepareSSE } from './router-stream.js';
+import { prepareJSON, prepareSSE } from './router-stream.js';
+import { ChannelOrder } from './channel-order.js';
 
 export const ROUTER_PATH = `${ROUTER_BASE_PATH}/v1`;
 const MAX_CHAT_BYTES = 32 * 1024 * 1024;
-const PIN_IDLE_MS = 60 * 60_000;
-const MAX_PINS = 500;
-const FAILURE_COOLDOWN_MS = 5 * 60_000;
-const TIMEOUT_COOLDOWN_MS = 30_000;
 // 包含响应头和 SSE 首个有效输出的等待；心跳、空 role 帧不重置计时，开始输出后的长生成不受此限。
 const FIRST_OUTPUT_TIMEOUT_MS = 60_000;
-const TIMEOUT_CODES = new Set(['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT']);
 // 400 / 401 / 403 不跨供应商重放；404 可能是该出口刚下架，429 / 5xx 可换出口尝试。
 const RETRY_STATUSES = new Set([402, 404, 408, 429, 500, 502, 503, 504]);
 const ENDPOINTS = Object.freeze({ 'openai-completions': 'chat/completions', 'openai-responses': 'responses', 'anthropic-messages': 'messages' });
@@ -39,10 +35,6 @@ function sameSecret(actual, expected) {
   return b.length > 0 && a.length === b.length && timingSafeEqual(a, b);
 }
 
-function timedOut(error) {
-  return error?.name === 'TimeoutError' || TIMEOUT_CODES.has(error?.code) || TIMEOUT_CODES.has(error?.cause?.code);
-}
-
 /** 同时识别 Chat Completions、Responses 与 Anthropic 的图片内容。 */
 export function requestHasImage(body) {
   for (const list of [body?.messages, body?.input]) {
@@ -53,14 +45,6 @@ export function requestHasImage(body) {
     }
   }
   return false;
-}
-
-/** DSH 不保证传会话 ID，沿用 WB 的第一条用户消息哈希；相同开头共享出口没有副作用。 */
-export function conversationKey(body) {
-  const messages = Array.isArray(body?.messages) ? body.messages : Array.isArray(body?.input) ? body.input : [];
-  const first = messages.find((message) => message?.role === 'user');
-  if (!first) return undefined;
-  return createHash('sha256').update(String(body.model)).update('\0').update(JSON.stringify(first.content ?? '')).digest('hex');
 }
 
 /** 请求声明的思考档位：Chat Completions 用 reasoning_effort，Responses 用 reasoning.effort。 */
@@ -76,52 +60,9 @@ function effortRank(row, effort) {
   return declared.includes(effort) ? 0 : 2;
 }
 
-function createPins(now) {
-  const pins = new Map();
-  return {
-    get(key) {
-      const pin = pins.get(key);
-      if (!pin) return undefined;
-      pins.delete(key);
-      if (now() - pin.at > PIN_IDLE_MS) return undefined;
-      pins.set(key, { ...pin, at: now() });
-      return pin;
-    },
-    set(key, id) {
-      pins.delete(key); pins.set(key, { id, at: now() });
-      if (pins.size > MAX_PINS) pins.delete(pins.keys().next().value);
-    },
-    delete(key, id) { if (pins.get(key)?.id === id) pins.delete(key); },
-  };
-}
-
-/** 只隔离当前对话的出口，不因一次失败影响其它对话。 */
-function createFailures(now) {
-  const conversations = new Map();
-  return {
-    mark(key, id, cooldownMs) {
-      if (!key) return;
-      const routes = conversations.get(key) ?? new Map();
-      for (const [route, until] of routes) if (until <= now()) routes.delete(route);
-      routes.set(id, now() + cooldownMs);
-      conversations.delete(key); conversations.set(key, routes);
-      if (conversations.size > MAX_PINS) conversations.delete(conversations.keys().next().value);
-    },
-    remaining(key, id) {
-      const routes = conversations.get(key);
-      if (!routes) return 0;
-      const remaining = (routes.get(id) ?? 0) - now();
-      if (remaining > 0) return remaining;
-      routes.delete(id);
-      if (!routes.size) conversations.delete(key);
-      return 0;
-    },
-  };
-}
-
 /** credentials / current / fetchImpl 均现取，保存配置或 Key 后下一次调用立即使用新值。 */
-export function createMagpieRouter({ current, credentials, env = process.env, fetchImpl = fetch, maxBodyBytes = MAX_CHAT_BYTES, now = Date.now, firstOutputTimeoutMs = FIRST_OUTPUT_TIMEOUT_MS }) {
-  const active = new Set(), pins = createPins(now), failures = createFailures(now);
+export function createMagpieRouter({ current, credentials, env = process.env, fetchImpl = fetch, maxBodyBytes = MAX_CHAT_BYTES, now = Date.now, firstOutputTimeoutMs = FIRST_OUTPUT_TIMEOUT_MS, loadQuotas, orderStatePath, onOrderError }) {
+  const active = new Set(), channels = new ChannelOrder({ now, loadQuotas, stateFile: orderStatePath, onError: onOrderError });
   let stopped = false;
   return {
     async handle(req, res) {
@@ -163,29 +104,23 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
         const image = requestHasImage(body);
         const capable = listed.filter((row) => !image || row.input?.includes('image'));
         if (!capable.length) return reply(res, 404, '这个模型的已选出口均不支持图片输入');
-        // 合并条目对外声明的是各出口档位的并集，单个出口未必支持；按请求档位重排，失败仍会继续换下一个。
+        // 合并条目声明各出口档位的并集；过滤明确不支持的出口后，再按全局渠道顺序选择。
         // off 是关闭思考，各出口都接受，不需要改变优先级。
         const effort = requestedEffort(body);
-        const ordered = effort && effort !== 'off' ? [...capable].sort((a, b) => effortRank(a, effort) - effortRank(b, effort)) : capable;
-        const pin = conversationKey(body);
-        const held = pins.get(pin)?.id;
-        const ranked = held ? [...ordered].sort((a, b) => Number(b.id === held) - Number(a.id === held)) : ordered;
-        const attempts = ranked.filter((row) => !failures.remaining(pin, row.id));
-        if (!attempts.length) {
-          const retryAfter = Math.max(1, Math.ceil(Math.min(...ranked.map((row) => failures.remaining(pin, row.id))) / 1000));
-          res.setHeader('retry-after', String(retryAfter));
-          return reply(res, 503, `本对话的可选出口均处于失败冷却中，请在 ${retryAfter} 秒后重试，或改选其它模型`);
-        }
-        const triedProviders = new Set();
+        const compatible = effort && effort !== 'off' ? capable.filter((row) => effortRank(row, effort) < 2) : capable;
+        const ordered = compatible.length ? compatible : capable;
+        const order = await channels.prepare(config);
+        if (controller.signal.aborted) return;
+        let attempts = [...ordered];
         while (attempts.length) {
-          // 失败后优先换供应商；其它供应商都试过后，才考虑同供应商的另一个已选出口。
-          const different = attempts.findIndex((row) => !triedProviders.has(row.id.split('/')[0]));
-          const attempt = attempts.splice(different < 0 ? 0 : different, 1)[0];
-          triedProviders.add(attempt.id.split('/')[0]);
+          // 每次尝试都采用当前全局顺序，让其它并发调用刚记录的失败同样生效。
+          attempts = channels.rank(order, attempts);
+          const attempt = attempts.shift();
           const last = attempts.length === 0;
-          const failed = (status) => {
-            failures.mark(pin, attempt.id, [408, 504].includes(status) ? TIMEOUT_COOLDOWN_MS : FAILURE_COOLDOWN_MS);
-            pins.delete(pin, attempt.id);
+          let penalized = false;
+          const failed = () => {
+            // 同一次失败可能同时被流解析和 pipeline 观察到，只后移一次；下游主动取消不算渠道失败。
+            if (!penalized && !controller.signal.aborted) { penalized = true; channels.failed(order, attempt); }
           };
           let upstream, prepared;
           const waiting = new AbortController();
@@ -200,22 +135,23 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
               body: JSON.stringify({ ...body, model: attempt.id }),
             });
             if (upstream.ok && /text\/event-stream/i.test(upstream.headers.get('content-type') ?? '')) {
-              prepared = await prepareSSE(upstream, { onError: (status) => { if (RETRY_STATUSES.has(status) && !controller.signal.aborted) failed(status); } });
+              prepared = await prepareSSE(upstream, { onError: failed });
+            } else if (upstream.ok && /application\/(?:[\w.+-]*\+)?json/i.test(upstream.headers.get('content-type') ?? '')) {
+              prepared = await prepareJSON(upstream);
             }
           } catch (error) {
             if (controller.signal.aborted) throw error;
-            failed(timedOut(error) || waiting.signal.aborted ? 408 : 502);
+            failed();
             if (last) return reply(res, 502, 'Magpie 候选出口连接失败或等待响应超时，请稍后重试');
             continue;
           } finally { clearTimeout(timer); }
           const cancel = () => prepared ? prepared.cancel() : upstream.body?.cancel().catch(() => undefined);
           if (controller.signal.aborted) { await cancel(); return; }
           const status = prepared?.status ?? upstream.status;
+          if (status >= 400) failed();
           if (RETRY_STATUSES.has(status)) {
-            failed(status);
             if (!last) { await cancel(); continue; }
           }
-          if (pin && upstream.ok && !prepared?.status) pins.set(pin, attempt.id);
           res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': 'no-store' });
           res.flushHeaders();
           try {
@@ -223,8 +159,8 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
             else if (upstream.body) await pipeline(Readable.fromWeb(upstream.body), res, { signal: controller.signal });
             else res.end();
           } catch (error) {
-            // 已交付内容后不能重放（可能已触发工具）；只撤销固定并让下一次重试换出口。
-            if (!controller.signal.aborted) failed(502);
+            // 已交付内容后不能重放（可能已触发工具）；只将失败渠道后移，供后续调用使用。
+            if (!controller.signal.aborted) failed();
             throw error;
           }
           return;

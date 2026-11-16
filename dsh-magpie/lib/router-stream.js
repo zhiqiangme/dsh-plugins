@@ -8,7 +8,7 @@ const ERROR_STATUS = new Map([
   ['api_error', 500], ['timeout_error', 408],
 ]);
 
-function errorStatus(event, value) {
+export function errorStatus(event, value) {
   if (event !== 'error' && value?.type !== 'error' && value?.type !== 'response.failed' && !value?.error) return undefined;
   const error = value?.error ?? value?.response?.error ?? value;
   for (const raw of [error?.status, error?.status_code, error?.code, value?.status, value?.status_code]) {
@@ -17,6 +17,13 @@ function errorStatus(event, value) {
   }
   for (const key of [error?.type, error?.code, value?.code]) if (ERROR_STATUS.has(key)) return ERROR_STATUS.get(key);
   return 502;
+}
+
+/** HTTP 200 的 JSON 也可能装着上游错误；完整读取后仍按原字节转发，不让失败被当作成功。 */
+export async function prepareJSON(upstream) {
+  const bytes = new Uint8Array(await upstream.arrayBuffer());
+  const value = JSON.parse(new TextDecoder().decode(bytes));
+  return { body: [bytes], status: errorStatus('', value), cancel: async () => {} };
 }
 
 const text = (value) => typeof value === 'string' && value.length > 0;

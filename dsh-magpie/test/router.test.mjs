@@ -31,7 +31,7 @@ async function setup(t, options = {}) {
   const clock = { now: Date.now() };
   const credentials = { resolve: async () => ({ value: 'secret' }) };
   const router = createMagpieRouter({ current: () => config, credentials: () => credentials, env: {}, now: () => clock.now,
-    maxBodyBytes: options.maxBodyBytes, firstOutputTimeoutMs: options.firstOutputTimeoutMs });
+    maxBodyBytes: options.maxBodyBytes, firstOutputTimeoutMs: options.firstOutputTimeoutMs, loadQuotas: options.loadQuotas });
   const proxy = createServer((req, res) => router.handle(req, res));
   await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
   t.after(() => {
@@ -45,7 +45,7 @@ async function setup(t, options = {}) {
   return { calls, send, router, url, clock, setConfig: (next) => { config = resolveConfig(next); } };
 }
 
-test('按清单顺序选路，失败切换并固定同一对话，其它对话不受冷却影响', async (t) => {
+test('失败渠道全局后移，同一对话及其它对话均使用新的默认顺序', async (t) => {
   let failFirst = true;
   const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
     if (failFirst && body.model === 'a/deepseek-flash') { failFirst = false; res.writeHead(503); res.end('{}'); return; }
@@ -54,10 +54,64 @@ test('按清单顺序选路，失败切换并固定同一对话，其它对话�
   assert.equal((await send(ask())).status, 200);
   assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
   assert.equal((await send(ask())).status, 200);
-  assert.equal(calls.at(-1).body.model, 'b/deepseek-flash', '同一对话固定到成功出口');
+  assert.equal(calls.at(-1).body.model, 'b/deepseek-flash', '失败的 a 已移到队尾');
   assert.equal((await send(ask('another'))).status, 200);
-  assert.equal(calls.at(-1).body.model, 'a/deepseek-flash', '其它对话仍从清单首选开始');
+  assert.equal(calls.at(-1).body.model, 'b/deepseek-flash', '新对话同样采用全局顺序');
   assert.ok(calls.every((call) => call.path === '/v1/chat/completions'));
+});
+
+test('按积分到期默认排序，499 等失败逐个后移渠道，跨对话与跨模型共用，次日重置', async (t) => {
+  const providers = ['qoder-cn', 'trae-cn', 'workbuddy'];
+  const models = providers.flatMap((provider) => [
+    { id: `${provider}/deepseek-flash`, name: 'DeepSeek-Flash' },
+    { id: `${provider}/glm-5.3`, name: 'GLM-5.3' },
+  ]);
+  let fail = true, reads = 0;
+  const start = Date.now();
+  const f = await setup(t, { models, loadQuotas: async () => {
+    reads++;
+    return { data: providers.map((provider, index) => ({ provider, windows: [{ runsOut: 2, runsOutAt: new Date(start + (index + 3) * 86400_000).toISOString() }] })) };
+  }, upstream: (_req, res, body) => {
+    const status = fail && !body.model.startsWith('workbuddy/') ? 499 : 200;
+    res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify({ model: body.model }));
+  } });
+  assert.equal((await f.send(ask())).status, 499);
+  assert.equal(f.calls.at(-1).body.model, 'qoder-cn/deepseek-flash');
+  assert.equal((await f.send(ask('another conversation'))).status, 499);
+  assert.equal(f.calls.at(-1).body.model, 'trae-cn/deepseek-flash');
+  assert.equal((await f.send({ model: 'auto:glm-5.3', messages: [{ role: 'user', content: 'other model' }] })).status, 200);
+  assert.equal(f.calls.at(-1).body.model, 'workbuddy/glm-5.3');
+  assert.equal(reads, 1);
+  fail = false;
+  f.clock.now += 24 * 3600_000;
+  await f.send(ask());
+  assert.equal(reads, 2);
+  assert.equal(f.calls.at(-1).body.model, 'qoder-cn/deepseek-flash');
+});
+
+for (const status of [400, 401, 403, 499, 529]) test(`上游 HTTP ${status} 失败也会全局后移，不用用户取消来推断状态码`, async (t) => {
+  let fail = true;
+  const f = await setup(t, { upstream: (_req, res, body) => {
+    res.writeHead(fail ? status : 200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ model: body.model }));
+  } });
+  assert.equal((await f.send(ask())).status, status);
+  assert.equal(f.calls.length, 1, '不可自动重放的状态仍保留本次原始错误');
+  fail = false;
+  await f.send(ask('new conversation'));
+  assert.equal(f.calls.at(-1).body.model, 'b/deepseek-flash');
+});
+
+test('HTTP 200 JSON 内的模型错误同样后移，正常 JSON 保持原始字节', async (t) => {
+  const raw = '{ "choices": [{"message":{"content":"ok"}}] }\n';
+  const f = await setup(t, { upstream: (_req, res, body) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(body.model.startsWith('a/') ? '{"error":{"status":400,"message":"bad request"}}' : raw);
+  } });
+  assert.equal((await (await f.send(ask())).json()).error.status, 400);
+  assert.equal(f.calls.length, 1, '400 JSON 错误不在本次请求内重放');
+  assert.equal(await (await f.send(ask('next conversation'))).text(), raw);
+  assert.equal(f.calls.at(-1).body.model, 'b/deepseek-flash');
 });
 
 test('图片请求跳过不支持视觉的出口，Responses 与 Anthropic 图片结构同样识别', async (t) => {
@@ -90,7 +144,7 @@ test('按请求的思考档位优先选声明支持的出口，都不支持时�
   assert.equal(requestedEffort({}), '');
 });
 
-test('无失败冷却时，同一首条用户消息跨思考档位仍固定成功出口', async (t) => {
+test('思考能力只筛选可用出口，不用旧会话固定覆盖全局渠道顺序', async (t) => {
   const models = [
     { id: 'a/glm-5.3', name: 'GLM-5.3', reasoningEfforts: ['low', 'high'] },
     { id: 'b/glm-5.3', name: 'GLM-5.3', reasoningEfforts: ['low', 'high', 'max'] },
@@ -100,7 +154,7 @@ test('无失败冷却时，同一首条用户消息跨思考档位仍固定成�
   assert.equal((await send(ask3('Max'))).status, 200);
   assert.equal(calls.at(-1).body.model, 'b/glm-5.3', 'Max 首次选择唯一声明支持的 b');
   assert.equal((await send(ask3('Low'))).status, 200);
-  assert.deepEqual(calls.map((call) => call.body.model), ['b/glm-5.3', 'b/glm-5.3'], 'Low 重排候选时仍优先固定到 b');
+  assert.deepEqual(calls.map((call) => call.body.model), ['b/glm-5.3', 'a/glm-5.3'], 'Low 均支持时恢复全局首选 a，不沿用 b 的会话固定');
 });
 
 for (const api of Object.keys(ENDPOINTS)) test(`协议 ${api} 转发到真实端点并还原模型 ID`, async (t) => {
@@ -161,7 +215,7 @@ test('收到 200、角色帧和持续心跳仍受首个有效输出期限约束�
   const response = await send({ ...ask(), stream: true });
   assert.match(await response.text(), /next supplier/);
   assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
-  // 超时出口恢复后仍固定在已成功的 b，不能被旧的 a 固定记录拉回。
+  // 分钟级等待不会恢复失败渠道的优先级；它保持在队尾直到每日重新排序。
   clock.now += 31_000;
   assert.match(await (await send({ ...ask(), stream: true })).text(), /next supplier/);
   assert.equal(calls.at(-1).body.model, 'b/deepseek-flash');
@@ -237,7 +291,7 @@ test('只有空帧后结束的流不算成功回答，应换下一个出口', as
   assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
 });
 
-test('已交付工具调用后遇到流内错误不重放，下一次重试撤销旧固定并换出口', async (t) => {
+test('已交付工具调用后遇到流内错误不重放，失败渠道后移供下一次调用使用', async (t) => {
   let fail;
   const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
     if (body.model.startsWith('b/')) return sse(res, answer);
@@ -257,7 +311,7 @@ test('已交付工具调用后遇到流内错误不重放，下一次重试撤�
   assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
 });
 
-test('已开始输出的上游断连会撤销固定，下一次重试换出口', async (t) => {
+test('已开始输出的上游断连会后移渠道，下一次重试换出口', async (t) => {
   let disconnect;
   const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
     if (body.model.startsWith('b/')) return sse(res, answer);
@@ -275,7 +329,7 @@ test('已开始输出的上游断连会撤销固定，下一次重试换出口',
   assert.equal(calls.at(-1).body.model, 'b/deepseek-flash');
 });
 
-test('下游主动取消不当作供应商故障，也不对该对话的出口施加冷却', async (t) => {
+test('下游主动取消不当作供应商故障，也不改变全局渠道顺序', async (t) => {
   let started, canceled;
   const ready = new Promise((resolve) => { started = resolve; });
   const closed = new Promise((resolve) => { canceled = resolve; });
