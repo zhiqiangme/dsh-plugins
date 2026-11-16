@@ -203,6 +203,66 @@ const sse = (res, value) => {
 };
 const answer = { choices: [{ delta: { content: 'next supplier' } }] };
 
+for (const [label, status, type, raw] of [
+  ['400 中文余额提示', 400, 'application/json', '{"error":{"code":400,"message":"账户余额不足，请充值"}}'],
+  ['400 明确错误代码', 400, 'application/json', '{"error":{"code":"insufficient_balance","message":"payment required"}}'],
+  ['403 英文余额提示', 403, 'text/plain', 'Your account balance is too low.'],
+  ['401 嵌套余额错误', 401, 'application/json', '{"error":{"error":{"message":"Insufficient credits"}}}'],
+  ['200 JSON 余额错误', 200, 'application/json', '{"error":{"status":400,"message":"余额不足"}}'],
+  ['200 SSE 余额错误', 200, 'text/event-stream', 'event: error\ndata: {"error":{"status":400,"message":"余额不足"}}\n\n'],
+  ['200 SSE 纯文本余额错误', 200, 'text/event-stream', 'event: error\ndata: insufficient_balance\n\n'],
+]) test(`${label} 在交付前自动换渠道，并将失败渠道后移`, async (t) => {
+  const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
+    if (body.model.startsWith('b/')) return sse(res, answer);
+    res.writeHead(status, { 'content-type': type }); res.end(raw);
+  } });
+  assert.match(await (await send(ask())).text(), /next supplier/);
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
+  assert.match(await (await send(ask('next conversation'))).text(), /next supplier/);
+  assert.equal(calls.at(-1).body.model, 'b/deepseek-flash');
+});
+
+test('所有渠道余额不足时只各尝试一次，保留最后一个渠道的 HTTP 状态和原始正文', async (t) => {
+  const raw = '{ "error": { "code": "insufficient_balance", "message": "余额不足" } }\n';
+  const { calls, send } = await setup(t, { upstream: (_req, res) => {
+    res.writeHead(400, { 'content-type': 'application/json' }); res.end(raw);
+  } });
+  const response = await send(ask());
+  assert.equal(response.status, 400);
+  assert.equal(await response.text(), raw);
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
+});
+
+test('正常 JSON 和流式回答提及余额不足不触发切换', async (t) => {
+  const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
+    const value = { choices: [{ message: { content: 'HTTP 400 不一定代表余额不足或 insufficient balance' } }] };
+    if (body.stream) return sse(res, value);
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(value));
+  } });
+  for (const stream of [false, true]) assert.match(await (await send({ ...ask(), stream })).text(), /余额不足/);
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'a/deepseek-flash']);
+});
+
+test('已交付输出后出现余额不足不重放，下一次调用再换渠道', async (t) => {
+  let fail;
+  const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
+    if (body.model.startsWith('b/')) return sse(res, answer);
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: {"choices":[{"delta":{"content":"started"}}]}\n\n');
+    fail = () => res.end('event: error\ndata: {"error":{"status":400,"message":"余额不足"}}\n\n');
+  } });
+  const response = await send({ ...ask(), stream: true });
+  const reader = response.body.getReader();
+  assert.match(new TextDecoder().decode((await reader.read()).value), /started/);
+  fail();
+  let tail = '';
+  for (;;) { const next = await reader.read(); if (next.done) break; tail += new TextDecoder().decode(next.value); }
+  assert.match(tail, /余额不足/);
+  assert.equal(calls.length, 1);
+  assert.match(await (await send(ask())).text(), /next supplier/);
+  assert.equal(calls.at(-1).body.model, 'b/deepseek-flash');
+});
+
 test('收到 200、角色帧和持续心跳仍受首个有效输出期限约束，一次超时即换供应商', async (t) => {
   let canceled = false;
   const { calls, send, clock } = await setup(t, { firstOutputTimeoutMs: 300, upstream: (_req, res, body) => {

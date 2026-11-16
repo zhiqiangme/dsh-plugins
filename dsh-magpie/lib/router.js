@@ -3,14 +3,14 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { AUTO_PREFIX, planAutoRoute, ROUTER_BASE_PATH } from './auto-route.js';
 import { credential, modelEntries } from './models.js';
-import { prepareJSON, prepareSSE } from './router-stream.js';
+import { prepareErrorResponse, prepareJSON, prepareSSE } from './router-stream.js';
 import { ChannelOrder } from './channel-order.js';
 
 export const ROUTER_PATH = `${ROUTER_BASE_PATH}/v1`;
 const MAX_CHAT_BYTES = 32 * 1024 * 1024;
 // 包含响应头和 SSE 首个有效输出的等待；心跳、空 role 帧不重置计时，开始输出后的长生成不受此限。
 const FIRST_OUTPUT_TIMEOUT_MS = 60_000;
-// 400 / 401 / 403 不跨供应商重放；404 可能是该出口刚下架，429 / 5xx 可换出口尝试。
+// 普通 400 / 401 / 403 不重放；明确余额不足时由解析器按内部 402 分类，再尝试下一渠道。
 const RETRY_STATUSES = new Set([402, 404, 408, 429, 500, 502, 503, 504]);
 const ENDPOINTS = Object.freeze({ 'openai-completions': 'chat/completions', 'openai-responses': 'responses', 'anthropic-messages': 'messages' });
 
@@ -134,7 +134,9 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
                 'user-agent': 'deepseek-harness/dsh-magpie-router' },
               body: JSON.stringify({ ...body, model: attempt.id }),
             });
-            if (upstream.ok && /text\/event-stream/i.test(upstream.headers.get('content-type') ?? '')) {
+            if (!upstream.ok) {
+              prepared = await prepareErrorResponse(upstream);
+            } else if (/text\/event-stream/i.test(upstream.headers.get('content-type') ?? '')) {
               prepared = await prepareSSE(upstream, { onError: failed });
             } else if (upstream.ok && /application\/(?:[\w.+-]*\+)?json/i.test(upstream.headers.get('content-type') ?? '')) {
               prepared = await prepareJSON(upstream);

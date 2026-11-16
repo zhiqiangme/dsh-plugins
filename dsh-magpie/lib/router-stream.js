@@ -8,9 +8,29 @@ const ERROR_STATUS = new Map([
   ['api_error', 500], ['timeout_error', 408],
 ]);
 
+const BALANCE_CODES = new Set(['insufficient_balance', 'insufficient_funds', 'insufficient_credit', 'insufficient_credits',
+  'insufficient_quota', 'balance_insufficient', 'balance_not_enough', 'not_enough_credits', 'credits_exhausted', 'out_of_credits']);
+
+/** 只检查错误字段，不搜索正常回答内容；不同渠道可能用 400、403 或 200 承载余额不足。 */
+export function isInsufficientBalance(value) {
+  if (value && typeof value === 'object') {
+    if ([value.code, value.type, value.error_code, value.errorCode].some((code) => typeof code === 'string' && BALANCE_CODES.has(code.toLowerCase()))) return true;
+    return [value.message, value.msg, value.detail, value.description, value.error_description, value.reason, value.error]
+      .some(isInsufficientBalance);
+  }
+  if (typeof value !== 'string') return false;
+  return BALANCE_CODES.has(value.trim().toLowerCase())
+    || /(?:余额|餘額|积分|積分|额度|額度|点数|點數)\s*(?:不足|不够|不夠|已用完|已耗尽|已耗盡|已用尽|已用盡)/.test(value)
+    || /\b(?:insufficient|not enough|out of|no remaining|no available)\s+(?:account\s+)?(?:balance|funds|credits?)\b/i.test(value)
+    || /\b(?:balance|funds|credits?)\b[^\n.]{0,48}\b(?:insufficient|exhausted|depleted|too low)\b/i.test(value);
+}
+
 export function errorStatus(event, value) {
-  if (event !== 'error' && value?.type !== 'error' && value?.type !== 'response.failed' && !value?.error) return undefined;
+  const explicit = event === 'error' || value?.type === 'error' || value?.type === 'response.failed' || Boolean(value?.error);
   const error = value?.error ?? value?.response?.error ?? value;
+  // 402 仅作为内部选路分类；转发给 DSH 时仍保留上游状态码和错误正文。
+  if ((explicit || (!value?.choices && !value?.output && !value?.content)) && isInsufficientBalance(error)) return 402;
+  if (!explicit) return undefined;
   for (const raw of [error?.status, error?.status_code, error?.code, value?.status, value?.status_code]) {
     const status = Number(raw);
     if (Number.isInteger(status) && status >= 400 && status <= 599) return status;
@@ -24,6 +44,16 @@ export async function prepareJSON(upstream) {
   const bytes = new Uint8Array(await upstream.arrayBuffer());
   const value = JSON.parse(new TextDecoder().decode(bytes));
   return { body: [bytes], status: errorStatus('', value), cancel: async () => {} };
+}
+
+/** HTTP 错误也需要读正文：普通 400 原样返回，只有明确余额不足才允许换出口。 */
+export async function prepareErrorResponse(upstream) {
+  const bytes = new Uint8Array(await upstream.arrayBuffer());
+  const raw = new TextDecoder().decode(bytes);
+  let value;
+  try { value = JSON.parse(raw); }
+  catch { value = raw; }
+  return { body: [bytes], status: isInsufficientBalance(value) ? 402 : upstream.status, cancel: async () => {} };
 }
 
 const text = (value) => typeof value === 'string' && value.length > 0;
@@ -70,7 +100,8 @@ class SSEState {
         if (data === '[DONE]') this.ended = true;
         else if (data || this.event === 'error') {
           let value;
-          try { value = JSON.parse(data); } catch { /* 未知心跳不代表模型输出；error 事件仍按错误处理。 */ }
+          try { value = JSON.parse(data); }
+          catch { if (this.event === 'error') value = data; /* 未知心跳不代表模型输出。 */ }
           this.status ??= errorStatus(this.event, value);
           if (!this.status && useful(value)) this.ready = true;
         }
