@@ -21,6 +21,7 @@ export function normalizeDisplayName(name) {
   // 上游的 DeepSeek-Flash 与 V4.1 Flash 别名统一展示，保留 Free、Max 等尾缀及原始配置。
   // 展示默认不出现中文：中文“预览版”统一显示为 Preview（含括号写法），保存的名称不变。
   return name.replace(/^deepseek[\s_-]+(?:v4\.1[\s_-]+)?flash(?=$|[\s(_-])/i, 'DeepSeek V4.1 Flash')
+    .replace(/^hy4-flash(?=$|[\s(_-])/i, 'Hy4-Flash')
     .replace(/\s*[（(]?\s*预览版\s*[)）]?/g, ' Preview').trim();
 }
 
