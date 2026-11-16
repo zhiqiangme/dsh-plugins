@@ -151,8 +151,8 @@ test('不带版本号的通用别名同名也不按名称合并，ID 用稳定�
   ];
   const planned = planAutoRoute(config(rows));
   assert.deepEqual(planned.entries.map(({ id, name }) => [id, name]), [
-    ['auto:search-agent-qwen-fast-51e50d5e3ce7', 'search_agent_qwen_fast'],
-    ['auto:search-agent-qwen-fast-f36fe7f823b5', 'search_agent_qwen_fast 2'],
+    ['auto:search-agent-qwen-fast-51e50d5e3ce7', 'search_Agent_Qwen_Fast'],
+    ['auto:search-agent-qwen-fast-f36fe7f823b5', 'search_Agent_Qwen_Fast 2'],
   ]);
   assert.deepEqual(planAutoRoute(config(rows), { legacyIds: true }).entries.map((row) => row.id), [
     'auto:search-agent-qwen-fast', 'auto:search-agent-qwen-fast-2',
