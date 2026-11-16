@@ -51,6 +51,13 @@ test('已有配置显式指定 wb2api 时仍使用原程序、数据目录和启
   assert.equal(resolved.backend.keepVersions, 3);
 });
 
+test('自动路由按网关保存独立开关，默认不改既有的分区域模型', () => {
+  assert.equal(resolvePluginConfig({}, ENV).models.autoRoute, false);
+  assert.equal(resolvePluginConfig({ models: { autoRoute: true } }, ENV).models.autoRoute, true);
+  assert.equal(resolvePluginConfig({ gateway: 'hub', models: { autoRoute: true, hubDual: false } }, ENV).models.autoRoute, false);
+  assert.equal(resolvePluginConfig({ gateway: 'wb2api', models: { hubDual: true } }, ENV).models.autoRoute, false);
+});
+
 test('enabled:false 时解析结果直接标记为不启用', () => {
   assert.equal(resolvePluginConfig({ enabled: false }, { PATH: '' }).enabled, false);
   // 非布尔值不算显式关闭，退回默认（true）。

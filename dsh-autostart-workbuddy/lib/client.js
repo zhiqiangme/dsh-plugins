@@ -17,7 +17,7 @@
  * 本插件刻意不引这个依赖，所以走自建路由。
  *
  * 布局：头部（网关名 + 运行状态 + 面板入口 + 诊断）→ 概览数字 → 页签。页签依次是
- * 模型 / 区域与 Key（仅 hub）/ 后端 / 插件更新；各面板都渲染、只切 hidden，切页签不丢草稿。
+ * 模型 / 自动路由（wb2api）或区域与 Key（hub）/ 后端 / 插件更新；切页签不丢草稿。
  *
  * 后端网关（「后端」页签最上面）：wb2api / workbuddy2api-hub 二选一，切换写本插件的 config.gateway。
  *
@@ -423,6 +423,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       hubPanelMissing: '未保存', hubMergeHint: '保存后同步到 DSH 的模型都由插件路由，id 为 auto:xxx。同一模型只勾选一个时显示它本身的名称；勾选了多个出口，或同时勾选免费和付费版时名称带 Auto。优先免费，其次三天内（含 72 小时）有积分到期的出口，再按原规则选择。同一优先级内保持对话出口，没有固定记录时按最早到期、倍率排序；临期出口可抢占非临期出口，免费版优先。到期未知或已过期的不算临期。可重试错误会让该候选在当前对话中冷却五分钟，期间跳过，期满后恢复上述优先级；全部候选冷却时会提示等待。模型 id 末尾的月日版本号（如 -1017）和 free / std 不算区别，同一出口新旧版都勾选时用新版。在模型列表里没勾选的出口不参与。',
       hubPanelPassword: 'HUB 面板密码（刷新目录、读取 HW 积分到期用）', exitExpiry: '{realm} 最早到期 {time}（{amount} 积分）', exitNoExpiry: '{realm} 没有会到期的积分', exitNoPassword: '{realm} 到期未知：需要填面板密码，否则排在有到期时间的出口之后', exitAuthFailed: '{realm} 到期未知：面板密码不正确，请重新填写', exitUnavailable: '{realm} 到期暂时读不到，排在有到期时间的出口之后',
       hubDual: 'CN / GL / HW 同时使用', hubDualHint: 'CN / GL 模型合并显示在一个 WorkBuddy 分组中，按模型区域自动选择出口，不随 HUB 看板切换。HUB 启用 CodeArts 后，它的模型标记为 HW 一并列出，默认不勾选。沿用网关 Key；只有网关 Key 在 HUB 里绑定了区域时，才需要另填区域 Key（只存 DSH 凭据库，留空沿用已保存的值）。',
+      wbAutoRoute: '启用 CN / GL 自动路由', wbAutoRouteHint: '将已勾选的同款模型合并到 WorkBuddy 分组，复用 Hub 的免费优先、三天内积分到期优先、对话固定和故障回退。使用 wb2api 自己的网关 Key；积分到期数据只读后端缓存。关闭后恢复分区域模型。',
+      tabRouting: '自动路由', applyRouting: '应用自动路由', routingSaved: '自动路由设置已保存。',
       hubCnKey: 'CN 区域 Key（可选）', hubGlKey: 'GL 区域 Key（可选）', hubHwKey: 'HW（CodeArts）区域 Key（可选）', hubApply: '应用区域模式', hubDualSaved: '区域模式已保存', hubBoth: 'CN + GL（同一分组，独立出口）', hubAll: 'CN + GL + HW（同一分组，独立出口）',
       codeartsSkipped: 'CodeArts 暂未接入：{reason}', statCodeArts: 'HW（CodeArts）账号', statCodeArtsSub: '积分请到 HUB 看板查看',
       hubFollowKey: '跟随出口 Key（可选，双区关闭后使用）',
@@ -597,6 +599,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       hubPanelMissing: 'Not saved', hubMergeHint: 'Every model synced to DSH is routed by this plugin, with an id like auto:xxx. A model selected once keeps its own name. A model selected on several exits, or in both its free and paid tiers, has Auto in its name. Free models come first, then exits with credits expiring within three days (including exactly 72 hours), then the existing rules. Within the same priority, keep the conversation on its current exit; otherwise rank by earliest expiry and price. An expiring exit can take priority over a non-expiring one, but free models come first. Unknown or past expiry dates do not qualify. Retryable failures put that candidate on a five-minute cooldown for this conversation; it is skipped until the cooldown ends. If all candidates are cooling down, the response tells you how long to wait. A month-day version (such as -1017) or free / std at the end of a model id does not make it a different model; if both versions are selected on one exit, the newer one is used. Exits left unselected in the model list do not take part.',
       hubPanelPassword: 'HUB panel password (to refresh catalogs and read HW credit expiry)', exitExpiry: '{realm}: {amount} credits expire first, at {time}', exitNoExpiry: '{realm}: no credits with an expiry date', exitNoPassword: '{realm}: expiry unknown. Enter the panel password, or it ranks after exits with a known expiry', exitAuthFailed: '{realm}: expiry unknown. The panel password is wrong, please enter it again', exitUnavailable: '{realm}: expiry cannot be read right now, so it ranks after exits with a known expiry',
       hubDual: 'Use CN, GL and HW together', hubDualHint: 'Shows CN / GL models in one WorkBuddy group, routed by the selected model region independently of the HUB dashboard. Once CodeArts is enabled in HUB, its models are listed too, tagged HW and unselected by default. Uses the gateway key; region keys are only needed when it is bound to a region (stored only in DSH credentials; blank keeps saved values).',
+      wbAutoRoute: 'Enable CN / GL automatic routing', wbAutoRouteHint: 'Merges selected models into one WorkBuddy group, using the same free-first, three-day expiry, conversation affinity and failover rules as Hub. Uses the wb2api gateway key and cached credit expiry. Turn it off to restore region-specific models.',
+      tabRouting: 'Automatic routing', applyRouting: 'Apply automatic routing', routingSaved: 'Automatic routing settings saved.',
       hubCnKey: 'CN region key (optional)', hubGlKey: 'GL region key (optional)', hubHwKey: 'HW (CodeArts) region key (optional)', hubApply: 'Apply region mode', hubDualSaved: 'Region mode saved', hubBoth: 'CN + GL (one group, independent exits)', hubAll: 'CN + GL + HW (one group, independent exits)',
       codeartsSkipped: 'CodeArts is not connected: {reason}', statCodeArts: 'HW (CodeArts) accounts', statCodeArtsSub: 'See credits on the HUB dashboard',
       hubFollowKey: 'Follow-exit key (optional, used when dual mode is off)',
@@ -1885,24 +1889,29 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         setBackendBusy('hubMode');
         setHubNotice(undefined);
         try {
-          const payload = await request(BACKEND_PATH, 'POST', { action: 'hubMode', enabled: hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, codeartsKey: hubDraft?.codeartsKey, followKey: hubDraft?.followKey, panelPassword: hubDraft?.panelPassword });
+          const wb = backend?.gateway === 'wb2api';
+          const payload = await request(BACKEND_PATH, 'POST', wb
+            ? { action: 'autoRoute', enabled: hubDraft?.enabled ?? backend?.autoRoute ?? false }
+            : { action: 'hubMode', enabled: hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false, cnKey: hubDraft?.cnKey, globalKey: hubDraft?.globalKey, codeartsKey: hubDraft?.codeartsKey, followKey: hubDraft?.followKey, panelPassword: hubDraft?.panelPassword });
           if (!payload.ok) throw new Error(payload.reason || t('saveFailed'));
           // 宿主确认保存后才清空敏感草稿；同步/回读失败不能再把已落盘的 Key 说成保存失败。
           setHubDraft(undefined);
-          setBackend((last) => ({ ...last, hubSettings: payload.settings }));
-          setMeta((last) => ({ ...last, hubDual: payload.enabled }));
+          setBackend((last) => ({ ...last, ...(wb ? { autoRoute: payload.enabled } : { hubSettings: payload.settings }) }));
+          const mode = wb ? { autoRoute: payload.enabled } : { hubDual: payload.enabled };
+          setMeta((last) => ({ ...last, ...mode }));
           const syncFailed = ['failed', 'skipped', 'not-ready'].includes(payload.sync?.state);
           const hadKeys = ['cnKey', 'globalKey', 'codeartsKey', 'followKey', 'panelPassword'].some((key) => hubDraft?.[key]?.trim());
+          const savedKey = wb ? 'routingSaved' : hadKeys ? 'hubKeysSaved' : 'hubSettingsSaved';
           setHubNotice(syncFailed
             ? { kind: 'error', text: t('hubSyncFailed', { reason: payload.sync.reason || payload.sync.state }) }
-            : { kind: 'ok', text: t(hadKeys ? 'hubKeysSaved' : 'hubSettingsSaved') });
+            : { kind: 'ok', text: t(savedKey) });
           try {
             const inventory = await request(MODELS_PATH, 'GET');
             if (!inventory.ok) throw new Error('inventory unavailable');
-            const next = mergeLiveSnapshot({ ...live.current, meta: { ...live.current.meta, hubDual: payload.enabled } }, inventory);
+            const next = mergeLiveSnapshot({ ...live.current, meta: { ...live.current.meta, ...mode } }, inventory);
             setRows(next.rows); setPicked(next.picked); setSavedPicked(next.savedPicked); setMeta(next.meta); setPhase('ready');
           } catch {
-            if (!syncFailed) setHubNotice({ kind: 'error', text: `${t(hadKeys ? 'hubKeysSaved' : 'hubSettingsSaved')} ${t('hubInventoryFailed')}` });
+            if (!syncFailed) setHubNotice({ kind: 'error', text: `${t(savedKey)} ${t('hubInventoryFailed')}` });
           }
         } catch (error) { setHubNotice({ kind: 'error', text: errorText(error) }); }
         finally { setBackendBusy(undefined); }
@@ -1912,6 +1921,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       // 重读期间列表照常显示（不再整块换成"正在读取"），但勾选与保存都锁住，免得在旧快照上改出冲突。
       const locked = busy || phase === 'loading';
       const hub = backend?.gateway === 'hub';
+      const wbRouting = !hub && typeof backend?.autoRoute === 'boolean';
       const status = backendStatus(backend, phase, reason, rows.length > 0);
       // hub 的勾选按出口分开：另一个出口的勾选不算，这个出口一个没勾就是"全部"。
       const nonePicked = meta.realm ? rows.every((row) => !picked.has(row.id)) : picked.size === 0;
@@ -2025,7 +2035,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       const pluginVersion = updater.model.version;
       const tabs = [
         { id: 'models', label: t('tabModels') },
-        hub ? { id: 'region', label: t('tabRegion') } : null,
+        hub || wbRouting ? { id: 'region', label: t(hub ? 'tabRegion' : 'tabRouting') } : null,
         { id: 'backend', label: t('tabBackend'), dot: backendAttention(backend, check) },
         {
           id: 'plugin',
@@ -2033,7 +2043,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
           dot: pluginVersion.phase === 'ready' && pluginVersion.updateAvailable && updater.model.operation?.state !== 'succeeded' ? 'warn' : undefined,
         },
       ].filter(Boolean);
-      // 「区域与 Key」只在 hub 下存在；切回 wb2api 时停在它上面就退回模型页。
+      // 老宿主未提供 wb2api 路由开关时，区域页签回退到模型页。
       const activeTab = tabs.some((item) => item.id === tab) ? tab : 'models';
       const tabBar = h(
         'div',
@@ -2235,7 +2245,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         );
       }
 
-      // ---- 区域与 Key 页签（仅 hub）----
+      // ---- 自动路由 / 区域与 Key：复用模式草稿、应用和同步状态，凭据表单仅 Hub 显示 ----
       const dualDraft = hubDraft?.enabled ?? backend?.hubSettings?.enabled ?? meta.hubDual ?? false;
       const exitLines = Object.values(overview?.exits ?? {}).map((exit) => {
         const realm = realmName(exit.realm);
@@ -2290,7 +2300,17 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
               ),
             ),
           ]
-        : [];
+        : wbRouting ? [h('div', { key: 'wbRouting', className: 'dsm-wb-group dsm-wb-stack' },
+          h('label', { className: 'dsm-wb-sync' }, h('input', {
+            type: 'checkbox', role: 'switch', checked: hubDraft?.enabled ?? backend.autoRoute, disabled: busy,
+            onChange: (e) => { setHubDraft((last) => ({ ...last, enabled: e.target.checked })); setHubNotice(undefined); },
+          }), t('wbAutoRoute')),
+          h('p', { className: 'dsm-wb-hint' }, t('wbAutoRouteHint')),
+          (hubDraft?.enabled ?? backend.autoRoute) ? h('p', { className: 'dsm-wb-hint' }, t('hubMergeHint')) : null,
+          exitLines.length ? h('ul', { className: 'dsm-wb-hint dsm-wb-exits' }, ...exitLines) : null,
+          wbNotice('routingNotice', hubNotice),
+          wbButton('applyRouting', 'primary', t(backendBusy === 'hubMode' ? 'hubSaving' : 'applyRouting'), applyHubMode, busy),
+        )] : [];
 
       // ---- 后端页签：网关 → 运行状态 → 版本（含自动更新）→ 危险操作 ----
       // 数据来自宿主半侧的 /backend 端点，首屏那次 GET 不联网（快），点"检查更新"才真去查 release。
@@ -2447,7 +2467,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
         stats.length ? h('div', { key: 'stats', className: 'dsm-wb-stats' }, stats) : null,
         tabBar,
         tabPanel('models', modelPanel),
-        hub ? tabPanel('region', regionPanel) : null,
+        hub || wbRouting ? tabPanel('region', regionPanel) : null,
         tabPanel('backend', backendPanel),
         tabPanel('plugin', pluginPanel),
       );

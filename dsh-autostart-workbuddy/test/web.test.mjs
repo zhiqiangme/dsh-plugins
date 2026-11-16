@@ -587,7 +587,8 @@ test('路由：来源、方法与请求体边界', async () => {
   const ctx = fakeCtx({ configEditor: editorFor() });
   try {
     registerPanelRoutes(ctx, { logger: ctx.logger, resolved, env: process.env, checkVersion: async () => ({ ok: true }) });
-    assert.equal(ctx.routes.length, 4);
+    assert.equal(ctx.routes.length, 5);
+    assert.equal(ctx.routes.filter((route) => route.kind === 'prefix').length, 1, 'wb2api 也注册共用的模型转发端点');
     const modelsRoute = ctx.routes.find((route) => route.path === MODELS_PATH);
     const backendRoute = ctx.routes.find((route) => route.path === BACKEND_PATH);
     assert.ok(modelsRoute, '应注册模型路由');

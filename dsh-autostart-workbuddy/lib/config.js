@@ -258,6 +258,7 @@ export function resolvePluginConfig(raw, hostEnv = process.env) {
   const models = resolveModelsConfig(config.models, spec);
   models.gateway = gateway;
   models.hubDual = gateway === 'hub' && rawModels.hubDual === true;
+  models.autoRoute = gateway === 'wb2api' && rawModels.autoRoute === true;
   if (gateway === 'hub') {
     models.apiKeyRef = models.hubApiKeyRef || models.apiKeyRef;
     // hub 没有 wb2api 那份 config.json：密钥直接给定，不再回落去读面板配置。

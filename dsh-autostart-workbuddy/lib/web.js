@@ -34,11 +34,13 @@ import { GATEWAY_IDS, backendLockHolder, gatewayDriver, withBackendLock } from '
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
 import {
   CODEARTS_REALM,
+  autoRoutingEnabled,
+  fetchGatewayRegions,
+  hubRegionPlans,
   fetchModels,
   dualProviderConflict,
   fetchHubRegions,
   hubRegionKeys,
-  hubRegionWanted,
   HUB_KEY_REFS,
   HUB_PANEL_PASSWORD_REF,
   HUB_ROUTER_PATH,
@@ -206,6 +208,7 @@ function positiveIntOrNull(value) {
  * 告诉用户写到了哪个文件。
  */
 export async function describeModels({ spec, models, editor, env = process.env, managedExe, gateway, probe, credentials }) {
+  const routed = autoRoutingEnabled(models);
   const patchPath = editor?.documentPath;
   const only = scopedSelection(models.only ?? [], gateway);
   const enabled = models.enabled;
@@ -226,12 +229,12 @@ export async function describeModels({ spec, models, editor, env = process.env, 
     }
   }
 
-  const fetched = models.hubDual ? await fetchHubRegions({ models, credentials, env }) : await fetchModels({
+  const fetched = routed ? await fetchGatewayRegions({ models, credentials, env }) : await fetchModels({
     baseURL: models.baseURL || `http://${spec.host}:${spec.port}`,
     apiKey: await resolveModelApiKey(models, env, credentials),
     timeoutMs: models.timeoutMs,
   });
-  if (fetched.ok && models.hubDual) {
+  if (fetched.ok && routed) {
     fetched.models = fetched.regions.flatMap((region) => region.models.map((model) => ({ ...model, id: selectionKey(model) })));
     fetched.realm = 'dual';
   }
@@ -249,8 +252,8 @@ export async function describeModels({ spec, models, editor, env = process.env, 
   }
 
   // 与同步同一套挑选规则（含 hub 当前出口没勾过任何模型时按"全部"算），面板显示的勾选就是 DSH 会得到的。
-  const selected = new Set(models.hubDual
-    ? fetched.regions.filter((region) => hubRegionWanted(region.realm, only)).flatMap((region) => selectModels(region.models, only).map(selectionKey))
+  const selected = new Set(routed
+    ? hubRegionPlans(fetched.regions, { ...models, rules: undefined, exclude: [] }).flatMap((region) => region.entries.map((entry) => selectionKey({ id: entry.id, realm: region.realm })))
     : selectModels(fetched.models, only).map((model) => model.id));
   const rows = fetched.models.map((model) => ({
     id: selectionKey(model),
@@ -267,7 +270,7 @@ export async function describeModels({ spec, models, editor, env = process.env, 
   // 双区域写进 DSH 的是 auto: id，勾选键对不上，按同款取名称。
   const sameModel = new Map(previous.map((entry) => [mergeKey(entry.id), entry.name]));
   // 缺席项仍可取消勾选；不伪造倍率、视觉或上下文能力，也不把它算成后端提供的模型。
-  for (const id of missingSelectedModels(fetched.models, only, models.hubDual ? undefined : fetched.realm)) {
+  for (const id of missingSelectedModels(fetched.models, only, routed ? undefined : fetched.realm)) {
     rows.push({ id, label: names.get(id) || sameModel.get(mergeKey(id)) || id, price: null, selected: true, unavailable: true });
   }
 
@@ -277,6 +280,7 @@ export async function describeModels({ spec, models, editor, env = process.env, 
     // hub 的当前出口（intl / cn / codearts）；wb2api 没有。
     realm: fetched.realm,
     hubDual: models.hubDual,
+    autoRoute: models.autoRoute,
     // CodeArts 已启用却取不到目录的原因（典型是网关 Key 绑了区域）：CN / GL 照常可用，面板单独提示。
     ...(fetched.skipped ? { skipped: fetched.skipped } : {}),
     patchPath,
@@ -463,6 +467,7 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
   const snapshot = () => ({
     ...driver.describe(paths),
     gateway: driver.id,
+    ...(resolved.gateway === 'wb2api' ? { autoRoute: resolved.models.autoRoute } : {}),
     gateways: [...GATEWAY_IDS],
     panelUrl,
     autoUpdate: autoUpdateStatus(resolved),
@@ -512,6 +517,11 @@ async function handleBackend(req, res, { logger, resolved, env, service, editor,
     return;
   }
   const action = typeof body.value.action === 'string' ? body.value.action : '';
+  if (action === 'autoRoute') {
+    const result = await setWb2apiMode({ resolved, editor, credentials, env, enabled: body.value.enabled });
+    json(res, result.ok ? 200 : 400, result);
+    return;
+  }
   if (action === 'hubMode') {
     const result = await setHubMode({ resolved, editor, credentials, env, exits, enabled: body.value.enabled, cnKey: body.value.cnKey, globalKey: body.value.globalKey, codeartsKey: body.value.codeartsKey, followKey: body.value.followKey, panelPassword: body.value.panelPassword });
     json(res, result.ok ? 200 : 400, result);
@@ -710,14 +720,22 @@ export async function setHubMode({ resolved, editor, credentials, env = process.
   } catch { return { ok: false, reason: '保存双区域设置失败，请检查凭据库和 profile 的写入权限' }; }
 }
 
-/**
- * 切换后端网关：把选择写进本插件那一行的 `config.gateway`。
- *
- * 写完由宿主按"配置变更"重启本插件（index.js 的 internal/update 钩子只放过 models.* 的就地更新，
- * gateway 变了照默认流程重启）：dispose 停掉本插件拉起的旧网关，重新 apply 后按新网关拉起
- * （没装就只挂面板，等用户点安装）。两种网关监听同一端口，所以不能先起新的再停旧的。
- * 更新 / 安装进行中拒绝切换：重启会在换文件的半路把进程停掉。
- */
+/** 只保存 wb2api 的路由开关，复用同步器处理模型合并、调用凭据和旧模型引用。 */
+export async function setWb2apiMode({ resolved, editor, credentials, env = process.env, enabled }) {
+  if (resolved.gateway !== 'wb2api' || typeof enabled !== 'boolean') return { ok: false, reason: '请在 wb2api 网关下设置自动路由' };
+  const entry = findConfigEntry(editor, { id: PLUGIN_ID });
+  if (!entry || typeof editor?.edit !== 'function') return { ok: false, reason: '宿主没有可编辑的插件配置' };
+  try {
+    await editor.edit(entry, (current) => ({ ...plainObject(current), models: { ...plainObject(current?.models), autoRoute: enabled } }));
+    resolved.models = { ...resolved.models, autoRoute: enabled };
+  } catch { return { ok: false, reason: '自动路由设置保存失败，请检查 profile 的写入权限' }; }
+  let sync;
+  try { sync = await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env }); }
+  catch { sync = { state: 'failed', reason: '模型同步失败，请稍后重试' }; }
+  return { ok: true, enabled, sync: { state: sync.state, reason: sync.reason, count: sync.entries?.length } };
+}
+
+/** 切换网关会重启插件，先停旧后端再拉起新后端；安装或更新持锁期间不能切换。 */
 export async function selectGateway({ resolved, editor, gateway, busy = false }) {
   if (!GATEWAY_IDS.includes(gateway)) {
     return { ok: false, reason: `gateway 只能是 ${GATEWAY_IDS.join(' / ')}` };
@@ -831,7 +849,7 @@ export function registerPanelRoutes(ctx, { logger, resolved, env = process.env, 
       let disposeRouter;
       let router;
       let endpoint;
-      if (resolved.gateway === 'hub') {
+      if (resolved.gateway === 'hub' || resolved.gateway === 'wb2api') {
         router = createHubRouter({ resolved, env, credentials: () => credentialsOf(ctx), editor: () => configEditorOf(ctx), exits });
         const provider = findConfigEntry(configEditorOf(ctx), { name: LLM_PI_AI_PACKAGE })?.options?.config?.providers?.[resolved.models.provider];
         endpoint = createHubEndpoint({

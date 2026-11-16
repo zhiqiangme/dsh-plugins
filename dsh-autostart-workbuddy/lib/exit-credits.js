@@ -15,7 +15,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { HUB_DEFAULT_PANEL_PASSWORD, hubPanelPasswordIsDefault } from './hub.js';
-import { CODEARTS_REALM, HUB_PANEL_PASSWORD_REF, modelsEndpoint } from './models.js';
+import { CODEARTS_REALM, HUB_PANEL_PASSWORD_REF, modelsEndpoint, resolveModelApiKey } from './models.js';
 
 /** 账号文件只在 hub 刷新积分时变（默认 12 小时一次），一分钟读一次足够。 */
 const LOCAL_TTL_MS = 60_000;
@@ -44,6 +44,11 @@ function plainObject(value) {
  */
 export function parseStamp(value) {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value > 1e11 ? value : value * 1000;
+  // Go 的快照使用带时区的 RFC3339；不能按 Hub 的无时区本地时间解析而丢掉 UTC 偏移。
+  if (/T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(String(value))) {
+    const stamp = Date.parse(value);
+    return Number.isFinite(stamp) ? stamp : null;
+  }
   const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(String(value ?? '').trim());
   if (!match) return null;
   const [, year, month, day, hour, minute, second] = match;
@@ -118,6 +123,32 @@ export function readCodeArtsExpiry(overview, now = Date.now()) {
   return exit;
 }
 
+/** wb2api 概览只读池内快照；优先按批次取到期日，旧版本退回最早到期字段。 */
+export function readWb2apiExpiry(overview, now = Date.now()) {
+  const exits = Object.fromEntries(['cn', 'intl'].map((realm) => [realm, { realm, state: 'none', expireAt: null, remain: 0, expiring: 0, accounts: 0 }]));
+  for (const account of Array.isArray(overview?.accounts) ? overview.accounts : []) {
+    if (account.disabled || account.paused) continue;
+    const exit = exits[account.realm === 'global' ? 'intl' : account.realm || 'cn'];
+    if (!exit) continue;
+    exit.accounts += 1;
+    const remain = Number(account.credits);
+    if (!(remain > 0)) continue;
+    exit.remain += remain;
+    const buckets = Array.isArray(account.credits_expiry_buckets) && account.credits_expiry_buckets.length
+      ? account.credits_expiry_buckets : [{ expires_at: account.credits_earliest_expiry, remain: account.credits_earliest_remaining }];
+    for (const bucket of buckets) {
+      const expireAt = parseStamp(bucket.expires_at);
+      const amount = Number(bucket.remain);
+      if (!(amount > 0) || expireAt === null || expireAt <= now || expireAt - now > EXPIRY_SENTINEL_MS) continue;
+      if (exit.expireAt === null || expireAt < exit.expireAt) {
+        exit.expireAt = expireAt; exit.expiring = amount;
+      } else if (expireAt === exit.expireAt) exit.expiring += amount;
+      exit.state = 'ready';
+    }
+  }
+  return exits;
+}
+
 function hubOrigin(baseURL) {
   return modelsEndpoint(baseURL)?.replace(/\/v1\/models$/, '');
 }
@@ -152,6 +183,30 @@ export async function panelLogin({ baseURL, password, timeoutMs = PANEL_TIMEOUT_
  * @param {() => number} [options.now]
  */
 export function createExitCredits({ resolved, credentials, env = process.env, now = Date.now }) {
+  let wbCached, wbAt = -Infinity, wbKey, wbReading;
+
+  async function wbOverview() {
+    const models = resolved.models;
+    const key = await resolveModelApiKey(models, env, credentials?.());
+    const signature = `${models.baseURL}\0${key}`;
+    if (wbKey === signature && now() - wbAt < LOCAL_TTL_MS) return wbCached;
+    if (wbReading) { await wbReading; return wbOverview(); }
+    wbReading = (async () => {
+      try {
+        const response = await fetch(`${hubOrigin(models.baseURL)}/panel/api/overview`, {
+          headers: key ? { authorization: `Bearer ${key}` } : {}, signal: AbortSignal.timeout(3000),
+        });
+        if (!response.ok) throw new Error('overview unavailable');
+        const overview = await response.json();
+        if (!Array.isArray(overview.accounts)) throw new Error('invalid overview');
+        const credits = readWb2apiExpiry(overview, now());
+        return { credits, readiness: { ready: new Set(Object.values(credits).filter((exit) => exit.accounts > 0).map((exit) => exit.realm)), codearts: false } };
+      } catch {
+        return { credits: Object.fromEntries(['cn', 'intl'].map((realm) => [realm, { realm, state: 'unavailable', expireAt: null }])) };
+      }
+    })().then((value) => { wbCached = value; wbKey = signature; wbAt = now(); return value; }).finally(() => { wbReading = undefined; });
+    return wbReading;
+  }
   let local;
   let localAt = -Infinity;
   let health;
@@ -267,6 +322,7 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
   return {
     /** @returns {Promise<{ cn: object, intl: object, codearts?: object }>} 没启用 CodeArts 时没有 codearts */
     async snapshot() {
+      if (resolved.gateway === 'wb2api') return (await wbOverview()).credits;
       if (now() - localAt >= LOCAL_TTL_MS) {
         local = readWorkBuddyExpiry(accountsDir(), now());
         localAt = now();
@@ -281,6 +337,7 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
      * @returns {Promise<{ ready: Set<string>, realm?: string, codearts: boolean } | undefined>}
      */
     async readiness() {
+      if (resolved.gateway === 'wb2api') return (await wbOverview()).readiness;
       if (now() - healthAt < HEALTH_TTL_MS) return health;
       checking ??= readHealth().finally(() => { checking = undefined; });
       return checking;
@@ -295,6 +352,7 @@ export function createExitCredits({ resolved, credentials, env = process.env, no
      *   { state: 'done', exits: { realm: string, state: 'updated' | 'cooldown' | 'failed', count?: number, retryAfter?: number }[] }>}
      */
     async refreshCatalogs() {
+      if (resolved.gateway === 'wb2api') return { state: 'unavailable' };
       const health = await this.readiness();
       const realms = (resolved.models.hubDual ? EXIT_ORDER : [health?.realm]).filter((realm) => health?.ready.has(realm));
       if (!realms.length) return { state: 'unavailable' };

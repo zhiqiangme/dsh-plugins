@@ -43,6 +43,30 @@ export const MERGED_PREFIX = 'auto:';
 /** hub 面板密码的凭据引用：读 HW 积分和手动重拉目录要用，改过的密码 hub 只存哈希，插件不存就读不到。 */
 export const HUB_PANEL_PASSWORD_REF = 'WORKBUDDY_HUB_PANEL_PASSWORD';
 
+/** Hub 沿用已有开关；wb2api 单独保存模式，两种后端共享同一套合并和转发。 */
+export function autoRoutingEnabled(models) {
+  return models.gateway === 'wb2api' ? models.autoRoute === true : models.hubDual === true;
+}
+
+/** 只适配网关的目录协议：Hub 分区域取裸 id，wb2api 一次返回带 cn:/global: 的完整目录。 */
+export async function fetchGatewayRegions(options) {
+  const { models, credentials, env = process.env } = options;
+  if (models.gateway !== 'wb2api') return fetchHubRegions(options);
+  const fetched = await fetchModels({ baseURL: models.baseURL, apiKey: await resolveModelApiKey(models, env, credentials), timeoutMs: models.timeoutMs });
+  if (!fetched.ok) return fetched;
+  return { ...fetched, regions: ['cn', 'intl'].map((realm) => {
+    const prefix = realm === 'cn' ? 'cn:' : 'global:';
+    return { realm, models: fetched.models.filter((model) => model.id.startsWith(prefix)).map((model) => ({ ...model, id: model.id.slice(prefix.length), realm })) };
+  }) };
+}
+
+/** wb2api 两个出口共用自身的 Key，不能借用 Hub 的区域 Key。 */
+export async function gatewayRegionRoutes(options) {
+  if (options.models.gateway !== 'wb2api') return hubRegionRoutes(options);
+  const apiKey = await resolveModelApiKey(options.models, options.env, options.credentials);
+  return Object.fromEntries(['cn', 'intl'].map((realm) => [realm, { realm, apiKey, bound: false }]));
+}
+
 export async function resolveModelApiKey(models, env = process.env, credentials) {
   if (models.apiKeyRef) {
     const result = await credentials?.resolve?.(models.apiKeyRef);
@@ -194,12 +218,13 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
   if (!target) return { state: 'skipped', reason: `DSH 里没有可编辑的 ${LLM_PI_AI_PACKAGE} 条目` };
   const baseURL = typeof models.hubProxyBaseURL === 'function' ? models.hubProxyBaseURL() : models.hubProxyBaseURL;
   if (!baseURL) return { state: 'skipped', reason: '宿主模型路由尚未就绪，请稍后重试' };
-  const fetched = await fetchHubRegions({ models, credentials, env });
+  const fetched = await fetchGatewayRegions({ models, credentials, env });
   if (!fetched.ok) return { state: 'failed', reason: fetched.reason };
   const blocked = modelSyncBlocked(syncBlocker);
   if (blocked) return blocked;
   const documentPath = editor.documentPath;
   const groups = hubRegionPlans(fetched.regions, models).map((region) => ({ ...region, name: dualProviderName(models.provider, region.realm) }));
+  if (!groups.length) return { state: 'skipped', reason: '没有可同步的区域模型，保留现有列表', documentPath };
   const hasCodeArts = fetched.regions.some((region) => region.realm === CODEARTS_REALM);
   if (groups.some((group) => group.models.length === 0)) return { state: 'skipped', reason: '某个区域返回空目录，保留现有列表', documentPath };
   // 写进 DSH 的条目不记录参与的出口，现有清单只能按合并键比较；旧版写的 cn: 等 id 和早期的区域分组也算。
@@ -266,7 +291,14 @@ async function syncHubDual({ spec, models, editor, credentials, env, dryRun, reg
 
 /** 各出口要写进 DSH 的条目；转发端点用它还原同一份清单，两边的勾选和规则才一致。 */
 export function hubRegionPlans(regions, models) {
-  return regions.filter((region) => hubRegionWanted(region.realm, models.only)).map((region) => ({ ...region, entries: planModelEntries(region.models, models) }));
+  if (models.gateway !== 'wb2api') return regions.filter((region) => hubRegionWanted(region.realm, models.only)).map((region) => ({ ...region, entries: planModelEntries(region.models, models) }));
+  const only = models.only ?? [];
+  // wb2api 同时列两个区域，未勾选的出口不能套用 Hub 单区域的“没勾过即全选”。
+  return regions.filter((region) => only.length
+    ? only.some((key) => !regionPrefixOf(key) || regionPrefixOf(key) === REALM_KEY_PREFIXES[region.realm])
+    : region.models.length > 0).map((region) => ({ ...region,
+    entries: planModelEntries(only.length ? region.models.filter((model) => only.includes(selectionKey(model)) || only.includes(model.id)) : region.models, { ...models, only: [] }),
+  }));
 }
 
 /** 上游给模型快照加的月日版本号（`-1017`）。限定成合法月日，`-2000` 这类数字不算版本号。 */
@@ -644,7 +676,7 @@ function catalogDeferred(error, realm, documentPath) {
 /** 这些词不是首字母大写的写法；其余词只大写首字母，与 CN / GL 上游的展示名一致（GLM-5.3、Kimi-K3.1-Pro）。 */
 const CODEARTS_NAME_WORDS = new Map(Object.entries({ deepseek: 'DeepSeek', glm: 'GLM', openpangu: 'OpenPangu', sft: 'SFT', vl: 'VL' }));
 
-/** CodeArts 的目录没有展示名，name 就是小写 id；id 本身不动，发给上游的还是它。 */
+/** 缺少可读名称时格式化 id；id 本身不动，发给上游的还是它。 */
 function codeArtsName(name) {
   return name.split('-').map((word) => CODEARTS_NAME_WORDS.get(word.toLowerCase()) ?? word.charAt(0).toUpperCase() + word.slice(1)).join('-');
 }
@@ -655,7 +687,8 @@ function modelBaseName(model) {
   // 部分目录没有展示名，直接把带区域前缀的 id 填进 name；格式化只影响名称，不改调用 id。
   const bare = raw.replace(/^(?:cn|global|codearts):/, '');
   const bareId = model.id.replace(/^(?:cn|global|codearts):/, '');
-  const base = model.realm === CODEARTS_REALM || bare === bareId ? codeArtsName(bare) : bare;
+  const fallback = !(typeof model.name === 'string' && model.name.trim()) || (raw !== bare && bare === bareId);
+  const base = model.realm === CODEARTS_REALM || fallback ? codeArtsName(bare) : bare;
   const suffix = modelCreditsLabel(model);
   return suffix && base.toLowerCase().endsWith(` ${suffix.toLowerCase()}`)
     ? base.slice(0, -suffix.length).trimEnd()
@@ -1076,7 +1109,7 @@ export async function syncModels(options) {
   }
   const blocked = modelSyncBlocked(options.syncBlocker);
   if (blocked) return blocked;
-  if (!models.hubDual) return syncFollowProvider(options);
+  if (!autoRoutingEnabled(models)) return syncFollowProvider(options);
   return syncHubDual({ ...options, regionGuard: options.regionGuard ?? options.removalGuard });
 }
 

@@ -1,5 +1,6 @@
 /**
- * 把 CN / GL / HW（CodeArts）放进一个 OpenAI provider，转发时还原 HUB 的裸 id。
+ * 两种网关共用的自动路由：把 CN / GL / HW（CodeArts）放进一个 OpenAI provider。
+ * Hub 发送裸 id + X-Realm，wb2api 发送 cn:/global: id；历史文件名和端点保留以兼容已保存的地址。
  * llm-pi-ai 只能在 provider 层设置 Key / headers，不能给同组模型分别指定出口，故在已有
  * webServer 上做一层转发；不另开端口、不接管上游程序，SSE 原样流式传输。
  *
@@ -10,7 +11,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createExitCredits, rankExits } from './exit-credits.js';
-import { fetchHubRegions, hubRegionPlans, hubRegionRoutes, HUB_ROUTER_PATH, mergeKey, modelTier, MERGED_PREFIX, planHubEntries, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE, providerBaseURL, resolveModelApiKey } from './models.js';
+import { autoRoutingEnabled, fetchGatewayRegions, hubRegionPlans, gatewayRegionRoutes, HUB_ROUTER_PATH, mergeKey, modelTier, MERGED_PREFIX, planHubEntries, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE, providerBaseURL, resolveModelApiKey } from './models.js';
 
 // 视觉请求含 base64 图像，不能沿用面板 64KiB 的限制；仍给整个 JSON 请求设 32MiB 上限。
 const MAX_CHAT_BYTES = 32 * 1024 * 1024;
@@ -90,6 +91,7 @@ function selectedRoutes(key, models) {
     if (mergeKey(id) !== key) continue;
     const route = parseHubModel(id);
     if (!route) continue;
+    if (models.gateway === 'wb2api' && route.realm === 'codearts') continue;
     if (!regions.has(route.realm)) regions.set(route.realm, { realm: route.realm, models: [] });
     regions.get(route.realm).models.push({ id: route.model, realm: route.realm, ...(modelTier(route.model) === 'free' ? { credits: 0 } : {}) });
   }
@@ -190,7 +192,7 @@ function createRouteTable({ resolved, env, now }) {
     // 旧配置的在途查询不能充当新配置的刷新；等它结束后再查，仍只保留一条请求链。
     if (loading) return loading.models === models ? loading.promise : loading.promise.then(() => load(credentials));
     const task = { models };
-    task.promise = fetchHubRegions({ models, credentials, env }).then((fetched) => {
+    task.promise = fetchGatewayRegions({ models, credentials, env }).then((fetched) => {
       if (!fetched.ok || resolved.models !== models) return;
       routes = planHubEntries(hubRegionPlans(fetched.regions, models)).routes;
       loadedFor = models;
@@ -252,7 +254,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
   return {
     async handle(req, res) {
       if (!localRequest(req)) return reply(res, 403, 'origin-not-trusted');
-      if (stopped || resolved.gateway !== 'hub' || !resolved.models.hubDual) return reply(res, 503, '双区域路由未启用');
+      if (stopped || !autoRoutingEnabled(resolved.models)) return reply(res, 503, '自动路由未启用');
       const controller = new AbortController();
       const abort = () => { if (!res.writableFinished) controller.abort(); };
       req.on('aborted', abort); res.on('close', abort); active.add(controller);
@@ -267,7 +269,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
         if (!sameSecret(supplied, expected)) return reply(res, 401, 'unauthorized');
         const path = new URL(req.url, 'http://localhost').pathname;
         if (req.method === 'GET' && path === `${HUB_ROUTER_PATH}/models`) {
-          const fetched = await fetchHubRegions({ models, credentials: store, env });
+          const fetched = await fetchGatewayRegions({ models, credentials: store, env });
           if (!fetched.ok) return reply(res, 502, fetched.reason);
           const { entries } = planHubEntries(hubRegionPlans(fetched.regions, models));
           res.writeHead(200, { 'content-type': 'application/json' });
@@ -289,6 +291,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
         const merged = typeof body?.model === 'string' && body.model.startsWith(MERGED_PREFIX);
         const route = merged ? undefined : parseHubModel(body?.model);
         if (!merged && !route) return reply(res, 400, '请选择带 CN / GL / HW 区域的 WorkBuddy 模型');
+        if (models.gateway === 'wb2api' && route?.realm === 'codearts') return reply(res, 400, 'wb2api 不支持 HW 出口');
         const { pin, attempts: candidates } = merged ? await mergedAttempts(body, store) : { attempts: [route] };
         if (!candidates.length) return reply(res, 404, '这个合并模型暂时没有可用出口，请刷新模型列表');
         // 在免费、临期和对话固定排序之后过滤，故障候选不能靠高优先级再次抢占。
@@ -298,19 +301,19 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
           res.setHeader('retry-after', String(retryAfter));
           return reply(res, 503, `本对话的可选渠道均处于失败冷却中，请在 ${retryAfter} 秒后重试，或改选其它模型`);
         }
-        const keys = await hubRegionRoutes({ models, credentials: store, env });
+        const keys = await gatewayRegionRoutes({ models, credentials: store, env });
 
         /** 对话用独立的响应头等待上限；收到响应头即清理计时器，后续长流由宿主控制。 */
         const send = async ({ realm, model }) => {
           const waiting = new AbortController();
-          const timer = setTimeout(() => waiting.abort(new DOMException('HUB response headers timed out', 'TimeoutError')), models.chatTimeoutMs);
+          const timer = setTimeout(() => waiting.abort(new DOMException('Gateway response headers timed out', 'TimeoutError')), models.chatTimeoutMs);
           timer.unref?.();
           try {
             const apiKey = keys[realm].apiKey;
             return await fetch(`${providerBaseURL(models.baseURL)}chat/completions`, {
               method: 'POST', signal: AbortSignal.any([controller.signal, waiting.signal]), redirect: 'error',
-              headers: { 'content-type': 'application/json', 'X-Realm': realm, ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
-              body: JSON.stringify({ ...body, model }),
+              headers: { 'content-type': 'application/json', ...(models.gateway === 'wb2api' ? {} : { 'X-Realm': realm }), ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+              body: JSON.stringify({ ...body, model: models.gateway === 'wb2api' ? `${realm === 'cn' ? 'cn' : 'global'}:${model}` : model }),
             });
           } finally { clearTimeout(timer); }
         };
@@ -323,7 +326,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
             // 客户端取消（含宿主流空闲超时）与插件关闭不是渠道故障。
             if (controller.signal.aborted) throw error;
             failures.mark(pin, attempt, requestTimedOut(error) ? TIMEOUT_COOLDOWN_MS : FAILURE_COOLDOWN_MS);
-            if (last) return reply(res, 502, `HUB 候选渠道连接失败或等待响应超时${pin ? '，已记录失败并暂时跳过' : ''}，请稍后重试`);
+            if (last) return reply(res, 502, `网关候选渠道连接失败或等待响应超时${pin ? '，已记录失败并暂时跳过' : ''}，请稍后重试`);
             continue;
           }
           if (controller.signal.aborted) return;
@@ -349,7 +352,7 @@ export function createHubRouter({ resolved, credentials, editor, env = process.e
           return;
         }
       } catch {
-        if (!controller.signal.aborted && !res.headersSent) reply(res, 502, 'HUB 请求失败，请检查网关和区域 Key');
+        if (!controller.signal.aborted && !res.headersSent) reply(res, 502, '模型请求失败，请检查网关及其凭据');
         else if (!res.writableFinished) res.destroy();
       } finally {
         active.delete(controller);

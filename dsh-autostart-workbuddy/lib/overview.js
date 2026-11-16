@@ -1,6 +1,6 @@
-/** 面板只读本地健康状态和 HUB 积分缓存，不触发上游刷新或对话。 */
+/** 面板只读本地健康状态和各网关的积分快照，不触发上游刷新或对话。 */
 import { gatewayDriver } from './gateway.js';
-import { HUB_REALM_HEADER, hubRegionRoutes, resolveModelApiKey, modelsEndpoint } from './models.js';
+import { HUB_REALM_HEADER, hubRegionRoutes, resolveModelApiKey, modelsEndpoint, autoRoutingEnabled } from './models.js';
 import { healthTarget } from './resync.js';
 
 const count = (value) => Number.isInteger(value) && value >= 0 ? value : null;
@@ -33,7 +33,7 @@ export function createAccountOverview({ resolved, credentials, env = process.env
         // hub 的积分汇总只数 WorkBuddy 账号，CodeArts 恒为空，积分只在要面板会话的 /codearts/overview 里：不显示永远未知的积分块。
       } else if (health.realm !== 'codearts') balances = [await balance('current', await resolveModelApiKey(resolved.models, env, service))];
     }
-    const merged = resolved.gateway === 'hub' && resolved.models.hubDual ? await exits?.snapshot().catch(() => undefined) : undefined;
+    const merged = autoRoutingEnabled(resolved.models) ? await exits?.snapshot().catch(() => undefined) : undefined;
     return { at: new Date(now()).toISOString(), ok: health.ok, ready: count(health.healthy), total: count(health.total), realm: health.realm, balances, ...(health.codearts ? { codearts: health.codearts } : {}), ...(merged ? { exits: merged } : {}) };
   }
   return function overview() {

@@ -1,7 +1,7 @@
 /** 诊断只做探测，不改配置、不发送对话；报告在离开宿主前统一脱敏。 */
 import { homedir } from 'node:os';
 import { gatewayDriver } from './gateway.js';
-import { fetchModels, fetchHubRegions, hubRegionKeys, resolveModelApiKey, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE } from './models.js';
+import { fetchModels, fetchGatewayRegions, autoRoutingEnabled, hubRegionKeys, resolveModelApiKey, providerKeyRef, findConfigEntry, LLM_PI_AI_PACKAGE } from './models.js';
 import { isFile, probeTcp } from './services.js';
 import { healthTarget } from './resync.js';
 
@@ -30,12 +30,12 @@ export async function diagnose({ resolved, service, recovery, editor, credential
   const [listening, health, catalog] = await Promise.all([
     tcp(target.port, target.host),
     driver.probe({ ...target, timeoutMs: 5000 }),
-    models.hubDual ? fetchHubRegions({ models: { ...models, timeoutMs: 5000 }, credentials, env }) : fetchModels({ baseURL: models.baseURL, apiKey, timeoutMs: 5000 }),
+    autoRoutingEnabled(models) ? fetchGatewayRegions({ models: { ...models, timeoutMs: 5000 }, credentials, env }) : fetchModels({ baseURL: models.baseURL, apiKey, timeoutMs: 5000 }),
   ]);
   checks.push({ id: 'port', ok: listening, detail: `${target.host}:${target.port}` });
   checks.push({ id: 'gateway', ok: health.ok, detail: health.ok ? driver.title : health.reason });
   checks.push({ id: 'accounts', ok: health.servable === true, detail: { ready: health.healthy ?? null, total: health.total ?? null, ...(health.codearts ? { codearts: health.codearts } : {}) } });
-  checks.push({ id: 'models', ok: catalog.ok, detail: catalog.ok ? { count: catalog.models?.length ?? catalog.regions.reduce((n, region) => n + region.models.length, 0), realm: models.hubDual ? 'dual' : catalog.realm, ...(catalog.skipped ? { skipped: catalog.skipped } : {}) } : catalog.reason });
+  checks.push({ id: 'models', ok: catalog.ok, detail: catalog.ok ? { count: catalog.models?.length ?? catalog.regions.reduce((n, region) => n + region.models.length, 0), realm: autoRoutingEnabled(models) ? 'dual' : catalog.realm, ...(catalog.skipped ? { skipped: catalog.skipped } : {}) } : catalog.reason });
   const entry = findConfigEntry(editor, { name: LLM_PI_AI_PACKAGE });
   const ref = providerKeyRef(entry?.options?.config, models.provider);
   if (ref && typeof credentials?.resolve === 'function') {

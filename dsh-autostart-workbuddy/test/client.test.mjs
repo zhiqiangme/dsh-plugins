@@ -314,6 +314,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'backendUninstalledHub', 'gatewayHub', 'gatewayHubHint', 'gatewayNotInstalled', 'gatewaySwitched', 'gatewaySwitching',
     'gatewayTimeout', 'gatewayTitle', 'gatewayWaiting', 'gatewayWb2api', 'panelPasswordChanged', 'panelPasswordCopied',
     'gatewaySynced', 'gatewaySyncFailed', 'gatewayCredentialFailed', 'gatewayNoAccounts', 'gatewaySyncing', 'gatewayRefreshing',
+    'wbAutoRoute', 'wbAutoRouteHint', 'tabRouting', 'applyRouting', 'routingSaved',
     'panelPasswordCopy', 'uninstallHubConfirm', 'uninstallHubDesc', 'uninstallHubKept', 'uninstallHubTitle',
     // 插件自身更新区（与后端版本区无关）
     'updateAvailable', 'updateCancelled', 'updateCheck', 'updateCheckFailed', 'updateChecking', 'updateCurrent',
@@ -1160,6 +1161,28 @@ function gatewayStates(backend, gatewaySwitch, { confirming } = {}) {
 function hubKeyForm(app) {
   return collectByType(app.renderCard(), 'div').find((node) => node.props.key === 'hubMode');
 }
+
+test('wb2api 自动路由页只保存开关，不显示 Hub 的区域 Key 或面板密码', async () => {
+  const posts = [];
+  const app = boot(gatewayStates({ ...GATEWAY_BACKEND, gateway: 'wb2api', autoRoute: false }), {
+    fetchImpl: async (_path, options) => {
+      if (options.method === 'POST') posts.push(JSON.parse(options.body));
+      return { ok: true, json: async () => options.method === 'POST'
+        ? { ok: true, enabled: true, sync: { state: 'updated' } }
+        : { ok: true, models: ROWS, enabled: true } };
+    },
+  });
+  const panel = () => tabPanel(app.renderCard(), '自动路由');
+  assert.ok(panel());
+  assert.equal(collectByType(panel(), 'input').filter((input) => input.props.type === 'password').length, 0);
+  const toggle = collectByType(panel(), 'input').find((input) => input.props.role === 'switch');
+  toggle.props.onChange({ target: { checked: true } });
+  assert.equal(posts.length, 0, '草稿在点应用后才保存');
+  await button(collectByType(panel(), 'button'), '应用自动路由').props.onClick();
+  assert.deepEqual(posts, [{ action: 'autoRoute', enabled: true }]);
+  assert.match(collectText(panel()).join('|'), /自动路由设置已保存/);
+  assert.equal(collectByType(panel(), 'input').find((input) => input.props.role === 'switch').props.checked, true);
+});
 
 test('区域 Key：重新打开仍显示各项保存状态，不回填密钥', () => {
   const app = boot(gatewayStates({ gateway: 'hub', hubSettings: { enabled: true, keys: { cn: 'saved', global: 'missing', follow: 'environment' } } }));
