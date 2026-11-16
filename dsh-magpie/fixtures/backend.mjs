@@ -25,16 +25,17 @@ export function backendFixture(t, options = {}) {
     assert.ok(basename(root).startsWith('dsh-magpie-backend-'));
     rmSync(root, { recursive: true, force: true });
   });
-  const release = releaseFixture(), launches = [], launchArgs = [], stops = [];
+  const release = releaseFixture(), launches = [], launchArgs = [], launchOptions = [], stops = [], keys = new Map();
   const backend = new MagpieBackend({ env: { DSH_MAGPIE_BACKEND_ROOT: root, XDG_CONFIG_HOME: join(root, 'config') }, platform: 'win32', arch: 'x64', fetchImpl: release.fetchImpl,
+    credentials: { resolve: async (ref) => keys.has(ref) ? { value: keys.get(ref) } : undefined, set: async (ref, value) => { keys.set(ref, value); } },
     probe: async (path) => {
       const match = /^magpie (\d+\.\d+\.\d+)$/.exec(readFileSync(path, 'utf8'));
       if (!match) throw new Error('not magpie');
       return match[1];
     // 测试不能真的启动进程；记录启动请求供断言。
-    }, isRunning: async () => false, launch: async (path, args = []) => { launches.push(path); launchArgs.push(args); return 4321; }, stop: async (path) => { stops.push(path); return [4321]; }, ...options });
+    }, isRunning: async () => false, launch: async (path, args = [], options) => { launches.push(path); launchArgs.push(args); launchOptions.push(options); return 4321; }, stop: async (path) => { stops.push(path); return [4321]; }, ...options });
   t.after(() => backend.dispose());
-  return { backend, root, launches, launchArgs, stops, ...release };
+  return { backend, root, launches, launchArgs, launchOptions, keys, stops, ...release };
 }
 export async function finish(backend) {
   const pending = backend.pending;

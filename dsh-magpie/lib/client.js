@@ -42,23 +42,25 @@ window.__ModuleLoader__.load({
       backendDefault: '留空使用插件独立目录', backendCheck: '检查更新', backendDownload: '下载 Magpie', backendUpgrade: '升级 Magpie',
       backendLatest: '最新版本：{version}', backendCurrent: '当前版本：{version}', backendUpToDate: '已是最新版本或更新',
       backendChecking: '正在检查版本…', backendDownloading: '正在下载…', backendVerifying: '正在校验程序…', backendInstalling: '正在替换程序…',
-      backendInstalled: 'Magpie {version} 已下载并打开。', backendUpdated: '已升级到 Magpie {version}，并在后台启动。', backendStarting: '正在启动 Magpie…', backendStopping: '正在退出运行中的 Magpie…',
+      backendInstalled: 'Magpie {version} 已下载并启动。', backendUpdated: '已升级到 Magpie {version}，并在后台启动。', backendStarting: '正在启动 Magpie…', backendStopping: '正在退出运行中的 Magpie…',
       backendAlreadyRunning: 'Magpie {version} 已就绪，程序已在运行，未重复启动。', backendLaunchFailed: 'Magpie {version} 已就绪，但启动失败：{reason}。请从程序路径手动启动。',
       backendProgress: '已下载 {received} / {total} MiB', backendFailed: '操作失败：{reason}',
       autoUpdate: '自动更新 Magpie 程序',
-      autoUpdateHint: '每 5 分钟检查，正式版发布满 30 分钟后下载校验；所有 DSH 对话空闲后升级并在托盘重启。仅更新已安装的本机程序。',
+      autoUpdateHint: '每 5 分钟检查，正式版发布满 30 分钟后下载校验；所有 DSH 对话空闲后升级，并按所选方式重启。仅更新已安装的本机程序。',
       backendWaitingIdle: '下载校验完成，等待所有对话空闲后升级…', backendWaitingStatus: '下载校验完成，暂时无法确认对话状态，等待后重试…',
       backendCooling: '新版本发布未满 30 分钟，将在 {time} 后自动下载。', backendInvalidDate: '无法确认版本发布时间，已跳过自动升级。', backendCancelled: '自动升级已取消，现有程序保持不变。',
       autoStart: '启动 DSH 时打开 Magpie',
-      autoStartHint: '仅本机地址。没有 Magpie 在运行时在托盘启动，不弹出窗口。',
+      autoStartHint: '仅本机地址。没有 Magpie 在运行时按所选方式在后台启动。',
+      startMode: 'Magpie 启动方式', startModeWeb: '网页', startModeTray: '托盘',
+      startModeHint: '网页：后台运行，通过默认浏览器管理；托盘：显示托盘图标，通过程序窗口管理。立即保存，下次启动或升级重启时生效；已有实例需退出后重启。',
       autoLightweight: '自动开启轻量模式',
       autoLightweightHint: '插件启动 Magpie 前设为开启：窗口关闭约一分钟后释放界面内存，网关照常运行。',
       keepAwake: '防止休眠', keepAwakeOff: '关闭', keepAwakeOn: '开启', keepAwakeDisplay: '屏幕也常亮',
       keepAwakeHint: 'Magpie 运行任务时让电脑保持唤醒。',
       magpieSettingsMissing: '打开一次 Magpie 后可用。',
-      open: '打开 Magpie 界面', opened: '已打开 Magpie 窗口。',
+      openWeb: '打开 Magpie 网页', openWindow: '打开 Magpie 窗口', openedWeb: '已在默认浏览器打开 Magpie 网页。', openedWindow: '已打开 Magpie 窗口。',
       closeOnExit: '退出 DSH 时关闭 Magpie',
-      closeOnExitHint: '结束本机 Magpie 及其托盘；停用或更新插件不会触发。',
+      closeOnExitHint: '结束本机 Magpie；停用或更新插件不会触发。',
       sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动', sidebarAlways: '显示', sidebarNever: '隐藏',
       sidebarEntryHint: '左上角「插件」一栏的 Magpie 入口。自动：清单为空时显示，保存模型后隐藏。',
       tabModels: '模型', tabSwitches: '开关', tabConnection: '连接', tabPreferences: '偏好', tabUpdates: '更新',
@@ -122,23 +124,25 @@ window.__ModuleLoader__.load({
       backendDefault: 'Leave blank for the plugin directory', backendCheck: 'Check for updates', backendDownload: 'Download Magpie', backendUpgrade: 'Update Magpie',
       backendLatest: 'Latest: {version}', backendCurrent: 'Current: {version}', backendUpToDate: 'Up to date or newer',
       backendChecking: 'Checking version…', backendDownloading: 'Downloading…', backendVerifying: 'Verifying executable…', backendInstalling: 'Replacing executable…',
-      backendInstalled: 'Magpie {version} downloaded and opened.', backendUpdated: 'Updated to Magpie {version} and started it in the background.', backendStarting: 'Starting Magpie…', backendStopping: 'Quitting the running Magpie…',
+      backendInstalled: 'Magpie {version} downloaded and started.', backendUpdated: 'Updated to Magpie {version} and started it in the background.', backendStarting: 'Starting Magpie…', backendStopping: 'Quitting the running Magpie…',
       backendAlreadyRunning: 'Magpie {version} is ready and already running; not started again.', backendLaunchFailed: 'Magpie {version} is ready but could not start: {reason}. Launch it from the executable path.',
       backendProgress: 'Downloaded {received} / {total} MiB', backendFailed: 'Operation failed: {reason}',
       autoUpdate: 'Automatically update Magpie',
-      autoUpdateHint: 'Checks every 5 minutes. Downloads and verifies stable releases after 30 minutes, then updates and restarts in the tray when all DSH conversations are idle. Existing local installations only.',
+      autoUpdateHint: 'Checks every 5 minutes. Downloads and verifies stable releases after 30 minutes, then updates and restarts in the selected mode when all DSH conversations are idle. Existing local installations only.',
       backendWaitingIdle: 'Download verified. Waiting for all conversations to become idle…', backendWaitingStatus: 'Download verified. Conversation status is unavailable; waiting to retry…',
       backendCooling: 'Release is less than 30 minutes old. Automatic download is eligible after {time}.', backendInvalidDate: 'Release publication time is unavailable; automatic update skipped.', backendCancelled: 'Automatic update cancelled. Existing executable unchanged.',
       autoStart: 'Open Magpie when DSH starts',
-      autoStartHint: 'Local addresses only. Starts it in the tray, without a window, when no Magpie is running.',
+      autoStartHint: 'Local addresses only. Starts it in the background using the selected mode when no Magpie is running.',
+      startMode: 'Magpie startup mode', startModeWeb: 'Web', startModeTray: 'Tray',
+      startModeHint: 'Web: runs in the background and opens in your default browser. Tray: shows a tray icon and opens the app window. Saves immediately; applies on the next launch or update restart. Quit an existing instance before restarting it.',
       autoLightweight: 'Turn on lightweight mode',
       autoLightweightHint: 'Set before the plugin starts Magpie: about a minute after its window closes the page memory is released; the gateway keeps running.',
       keepAwake: 'Keep awake', keepAwakeOff: 'Off', keepAwakeOn: 'On', keepAwakeDisplay: 'Screen on too',
       keepAwakeHint: 'Keeps the computer awake while Magpie runs tasks.',
       magpieSettingsMissing: 'Available once Magpie has been opened.',
-      open: 'Open Magpie', opened: 'Opened the Magpie window.',
+      openWeb: 'Open Magpie web', openWindow: 'Open Magpie window', openedWeb: 'Opened Magpie in your default browser.', openedWindow: 'Opened the Magpie window.',
       closeOnExit: 'Close Magpie when DSH exits',
-      closeOnExitHint: 'Ends local Magpie and its tray process; disabling or updating the plugin does not.',
+      closeOnExitHint: 'Ends local Magpie; disabling or updating the plugin does not.',
       sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto', sidebarAlways: 'Show', sidebarNever: 'Hide',
       sidebarEntryHint: 'The Magpie entry next to Plugins in the sidebar. Auto: shown while the list is empty, hidden once models are saved.',
       tabModels: 'Models', tabSwitches: 'Switches', tabConnection: 'Connection', tabPreferences: 'Preferences', tabUpdates: 'Updates',
@@ -1071,7 +1075,7 @@ window.__ModuleLoader__.load({
       const openMagpie = () => perform(async () => {
         const result = await request({ action: 'backend-open', magpiePath: config.magpiePath || '' });
         setView((old) => ({ ...old, backend: result.backend, magpieSettings: result.magpieSettings }));
-        setNotice({ text: t('opened') });
+        setNotice({ text: t((result.opened ?? config.startMode ?? 'web') === 'web' ? 'openedWeb' : 'openedWindow') });
       }, 'open');
       const magpieSettings = view.magpieSettings;
       const syncCatalog = () => perform(async () => {
@@ -1207,7 +1211,7 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'chip', onClick: () => setTab('updates') },
               backend?.version ? t('programVersion', { version: backend.version }) : t(backend?.installed ? 'backendUnknown' : 'programMissing'),
               backend?.updateAvailable ? h('span', { className: 'new' }, ` · ${t('programUpgrade', { version: backend.latest.version })}`) : null))),
-        button(t('open'), openMagpie, { disabled: busy || operation?.running || unsupported || !backend?.installed || !backend?.version, 'aria-busy': modelBusy === 'open' }));
+        button(t(config.startMode === 'tray' ? 'openWindow' : 'openWeb'), openMagpie, { disabled: busy || operation?.running || unsupported || !backend?.installed || !backend?.version, 'aria-busy': modelBusy === 'open' }));
 
       const tabs = h('div', { className: 'tabs', role: 'tablist' }, ...TABS.map(([id, label]) => h('button', {
         key: id, type: 'button', role: 'tab', className: 'tab', id: `dsm-mp-tab-${id}`, 'aria-selected': tab === id, 'aria-controls': 'dsm-mp-panel', onClick: () => setTab(id),
@@ -1313,6 +1317,8 @@ window.__ModuleLoader__.load({
         ],
         preferences: () => [
           h('h4', { className: 'group' }, t('groupProgram')),
+          choice(t('startMode'), t('startModeHint'), config.startMode ?? 'web', [['web', t('startModeWeb')], ['tray', t('startModeTray')]],
+            (startMode) => applyNow({ startMode }), busy || !view.editable || unsupported),
           toggle(t('autoStart'), t('autoStartHint'), config.autoStart !== false, (autoStart) => applyNow({ autoStart }), busy || !view.editable || unsupported),
           toggle(t('closeOnExit'), t('closeOnExitHint'), config.closeOnExit === true, (closeOnExit) => applyNow({ closeOnExit }), busy || !view.editable || unsupported),
           h('h4', { className: 'group' }, t('groupMagpieSettings'), h('span', null, t('groupMagpieSettingsHint'))),

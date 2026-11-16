@@ -1,0 +1,96 @@
+import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { promisify } from 'node:util';
+
+export const WEB_KEY_REF = 'DSH_MAGPIE_WEB_KEY';
+export const WEB_ORIGIN = 'http://127.0.0.1:3430';
+const exec = promisify(execFile);
+
+function checkedKey(key) {
+  if (typeof key !== 'string' || !/^[A-Za-z0-9._~-]{16,}$/.test(key)) throw new Error('Magpie 网页密钥无效，请检查 MAGPIE_WEB_KEY 或插件凭据');
+  return key;
+}
+
+/** URL 经环境变量传给固定脚本，不把密钥拼入命令，也不在失败信息中回显链接。 */
+export async function openDefaultBrowser(url) {
+  try {
+    await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference='Stop'; Start-Process -FilePath $env:DSH_MAGPIE_OPEN_URL"], {
+      windowsHide: true, timeout: 10_000, env: { ...process.env, DSH_MAGPIE_OPEN_URL: url },
+    });
+  } catch { throw new Error('未能打开默认浏览器，请检查 Windows 默认浏览器设置'); }
+}
+
+/** 网页密钥独立于网关 Key；只存凭据库和子进程环境，不进入插件配置、状态接口或日志。 */
+export class MagpieWeb {
+  constructor({ env = process.env, settings, credentials, fetchImpl = fetch, openBrowser = openDefaultBrowser, timeoutMs = 15_000, pollMs = 250 } = {}) {
+    Object.assign(this, { env, settings, credentials, fetchImpl, openBrowser, timeoutMs, pollMs });
+  }
+  key() {
+    // 同时自动启动、手动打开时共用一次读写，避免两份密钥互相覆盖。
+    return this.pendingKey ??= this.loadKey().catch((error) => { this.pendingKey = undefined; throw error; });
+  }
+  async loadKey() {
+    if (this.env.MAGPIE_WEB_KEY) return checkedKey(this.env.MAGPIE_WEB_KEY);
+    const credentials = typeof this.credentials === 'function' ? this.credentials() : this.credentials;
+    if (!credentials?.resolve) throw new Error('宿主凭据服务尚未就绪，无法启动 Magpie 网页');
+    const saved = await credentials.resolve(WEB_KEY_REF);
+    if (saved?.value) return checkedKey(saved.value);
+    if (!credentials.set || (await credentials.describe?.(WEB_KEY_REF))?.writable === false) throw new Error('宿主凭据库不可写，无法保存 Magpie 网页密钥');
+    const key = randomBytes(32).toString('hex');
+    await credentials.set(WEB_KEY_REF, key);
+    return key;
+  }
+  appPage() {
+    try {
+      const value = JSON.parse(readFileSync(join(dirname(this.settings), 'web-page.json'), 'utf8'));
+      if (!['local', 'lan'].includes(value.mode)) return;
+      const port = value.port || 3430;
+      if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) return;
+      return { origin: `http://127.0.0.1:${port}`, key: checkedKey(value.key) };
+    } catch { /* 既有桌面实例未开网页或配置不可读时，使用插件管理的网页。 */ }
+  }
+  async probe(page) {
+    try {
+      const response = await this.fetchImpl(`${page.origin}/?k=${encodeURIComponent(page.key)}`, {
+        redirect: 'manual', signal: AbortSignal.timeout(1_000),
+      });
+      const port = new URL(page.origin).port;
+      // 只有 Magpie 接受密钥并换发登录 Cookie 才算就绪，不能把端口上的其它服务当作管理页。
+      const authenticated = response.status === 303 && response.headers.get('set-cookie')?.startsWith(`magpie_web_${port}=`);
+      await response.body?.cancel();
+      return authenticated ? 'ready' : 'occupied';
+    } catch (error) {
+      const codes = [error?.code, error?.cause?.code, ...(error?.cause?.errors ?? []).map((e) => e.code)];
+      return codes.includes('ECONNREFUSED') ? 'offline' : 'unknown';
+    }
+  }
+  open(options) {
+    return this.pendingOpen ??= this.openPage(options).finally(() => { this.pendingOpen = undefined; });
+  }
+  async openPage({ launch, isRunning, disposed = () => false }) {
+    const existing = this.appPage();
+    if (existing && await this.probe(existing) === 'ready') return this.show(existing, disposed);
+    const page = { origin: WEB_ORIGIN, key: await this.key() };
+    const state = await this.probe(page);
+    if (state === 'ready') return this.show(page, disposed);
+    if (state === 'occupied') throw new Error('3430 端口已有服务，但不接受插件的网页密钥；请退出该实例后重新启动 Magpie');
+    if (state === 'unknown') throw new Error('无法确认 Magpie 网页状态，请稍后重试');
+    // 切换设置不强制结束现有实例；已有进程可能尚在启动，也可能仍按旧方式运行。
+    const running = await isRunning();
+    if (!running) await launch();
+    const deadline = Date.now() + this.timeoutMs;
+    while (!disposed() && Date.now() < deadline) {
+      if (await this.probe(page) === 'ready') return this.show(page, disposed);
+      await sleep(this.pollMs);
+    }
+    throw new Error(running ? 'Magpie 已在运行，但网页管理尚未就绪；若刚切换启动方式，请退出 Magpie 后重新启动' : 'Magpie 网页启动超时，请稍后重试');
+  }
+  async show(page, disposed) {
+    if (disposed?.()) throw new Error('插件已关闭');
+    await this.openBrowser(`${page.origin}/?k=${encodeURIComponent(page.key)}`);
+    return { opened: 'web' };
+  }
+}

@@ -14,8 +14,9 @@ export const DEFAULT_URL = 'http://127.0.0.1:3425';
 export const REASONING_LEVELS = Object.freeze(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 // 侧边栏入口：auto 只在清单还没有模型时显示，引导首次配置；always / never 固定显示或隐藏。
 export const SIDEBAR_MODES = Object.freeze(['auto', 'always', 'never']);
+export const START_MODES = Object.freeze(['web', 'tray']);
 // 卡片上的开关和下拉改完即保存；连接设置与模型清单仍走「保存并同步」。
-export const INSTANT_FIELDS = Object.freeze(['autoStart', 'autoUpdate', 'closeOnExit', 'autoLightweight', 'sidebarEntry', 'syncEnabled', 'autoRoute', 'hideSmallContext', 'smallContextLimit', 'hideNonVision']);
+export const INSTANT_FIELDS = Object.freeze(['startMode', 'autoStart', 'autoUpdate', 'closeOnExit', 'autoLightweight', 'sidebarEntry', 'syncEnabled', 'autoRoute', 'hideSmallContext', 'smallContextLimit', 'hideNonVision']);
 export const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 
 export function gatewayURL(value = DEFAULT_URL) {
@@ -85,6 +86,7 @@ export function resolveConfig(raw = {}) {
   if (![200_000, 500_000].includes(smallContextLimit)) throw new Error('小上下文屏蔽阈值只能是 200000 或 500000');
   if (value.closeOnExit !== undefined && typeof value.closeOnExit !== 'boolean') throw new Error('退出时关闭 Magpie 开关必须是布尔值');
   if (value.autoStart !== undefined && typeof value.autoStart !== 'boolean') throw new Error('启动时打开 Magpie 开关必须是布尔值');
+  if (value.startMode !== undefined && !START_MODES.includes(value.startMode)) throw new Error(`启动方式只能是 ${START_MODES.join('、')}`);
   if (value.autoUpdate !== undefined && typeof value.autoUpdate !== 'boolean') throw new Error('自动更新 Magpie 开关必须是布尔值');
   if (value.autoLightweight !== undefined && typeof value.autoLightweight !== 'boolean') throw new Error('自动开启轻量模式开关必须是布尔值');
   if (value.manualOrder !== undefined && typeof value.manualOrder !== 'boolean') throw new Error('手动排序标记必须是布尔值');
@@ -96,7 +98,7 @@ export function resolveConfig(raw = {}) {
   if (magpiePath && (!isAbsolute(magpiePath) || !/\.exe$/i.test(magpiePath))) throw new Error('Magpie 程序路径必须是 exe 文件的绝对路径');
   // 同步与自动路由默认开启：空清单不会生成 provider，首次同步目录后即可直接用；旧配置里显式保存的 false 不受影响。
   // 排序只有「按模型」和「手动」两种：没有手动排序标记时，全量同步一律按模型名称排好（旧的目录顺序标记直接忽略）。
-  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled !== false, autoRoute: value.autoRoute !== false, hideSmallContext: value.hideSmallContext !== false, smallContextLimit, hideNonVision: value.hideNonVision === true, closeOnExit: value.closeOnExit === true, autoStart: value.autoStart !== false, autoUpdate: value.autoUpdate !== false, autoLightweight: value.autoLightweight !== false, manualOrder: value.manualOrder === true, sidebarEntry: value.sidebarEntry ?? 'auto', models, ...(magpiePath ? { magpiePath } : {}) };
+  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled !== false, autoRoute: value.autoRoute !== false, hideSmallContext: value.hideSmallContext !== false, smallContextLimit, hideNonVision: value.hideNonVision === true, closeOnExit: value.closeOnExit === true, autoStart: value.autoStart !== false, startMode: value.startMode ?? 'web', autoUpdate: value.autoUpdate !== false, autoLightweight: value.autoLightweight !== false, manualOrder: value.manualOrder === true, sidebarEntry: value.sidebarEntry ?? 'auto', models, ...(magpiePath ? { magpiePath } : {}) };
 }
 
 export function revision(config) {

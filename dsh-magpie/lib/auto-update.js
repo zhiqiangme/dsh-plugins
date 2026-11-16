@@ -31,7 +31,7 @@ export async function autoUpdateMagpie(manager, { now = Date.now } = {}) {
   const local = await backend.local(path);
   // Automatic updates never perform a first installation or overwrite an unrecognized file.
   if (!local.installed || !local.version || backend.pending || !autoUpdateEnabled(manager, path)) return;
-  backend.install(path, { lightweight: config.autoLightweight, automatic: true, minimumAgeMs: RELEASE_DELAY, now,
+  backend.install(path, { lightweight: config.autoLightweight, startMode: config.startMode, getStartMode: () => manager.current().startMode, automatic: true, minimumAgeMs: RELEASE_DELAY, now,
     guard: () => {
       if (!autoUpdateEnabled(manager, path)) return 'cancelled';
       return manager.conversationBlock();

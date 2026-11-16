@@ -35,16 +35,18 @@ export async function autoStartMagpie(manager, { platform = process.platform, fe
   if (config.autoLightweight) backend.ensureLightweight();
   if (await portBusy(config.baseURL, fetchImpl) || await findRunning(path)) return { state: 'running', path };
   if (manager.disposed || backend.pending) return { state: 'busy' };
-  // 只在托盘启动，不弹窗口；需要界面时由卡片的「打开 Magpie 界面」唤出同一进程的窗口。
-  return { state: 'started', path, pid: await backend.launch(path, ['tray']) };
+  return { state: 'started', path, pid: await backend.launchConfigured(path, { startMode: config.startMode }) };
 }
 
 export function registerAutoStart(ctx, manager, { start = autoStartMagpie } = {}) {
   const logger = ctx.logger ?? console;
-  start(manager).then((result) => {
+  const run = () => start(manager).then((result) => {
     if (result.state === 'started') logger.info(`[dsh-magpie] 本机未运行 Magpie，已启动 ${result.path}（PID ${result.pid}）`);
     else if (result.state === 'unverified') logger.warn(`[dsh-magpie] ${result.path} 未能验证为 Magpie，未自动启动：${result.reason ?? ''}`);
   }, (error) => logger.warn(`[dsh-magpie] 自动启动 Magpie 失败：${error.message}`));
+  // 网页模式首次启动需要把密钥保存到宿主凭据库，等服务就绪再启动。
+  if (typeof ctx.inject === 'function') ctx.inject(['credentials'], run);
+  else run();
 }
 
 // exit 阶段不允许异步等待。固定脚本通过环境变量接收路径和端口，不拼接用户输入。

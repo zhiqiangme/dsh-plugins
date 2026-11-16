@@ -23,7 +23,7 @@ export class ModelManager {
     this.lastSyncedConfig = this.config;
     this.env = env;
     this.fetch = fetchImpl;
-    this.backend = backend ?? new MagpieBackend({ env });
+    this.backend = backend ?? new MagpieBackend({ env, credentials: () => this.credentials });
     this.pending = Promise.resolve();
     this.disposed = false;
     this.routeReady = Promise.resolve();
@@ -114,11 +114,11 @@ export class ModelManager {
   async handle(body) {
     if (['backend-status', 'backend-check', 'backend-install', 'backend-open'].includes(body.action)) {
       const path = body.magpiePath ?? this.current().magpiePath;
-      const lightweight = this.current().autoLightweight;
+      const { autoLightweight: lightweight, startMode } = this.current();
       if (body.action === 'backend-check') await this.backend.check(path);
-      if (body.action === 'backend-install') this.backend.install(path, { lightweight, guard: () => this.conversationBlock() });
-      if (body.action === 'backend-open') await this.backend.open(path, { lightweight });
-      return { ok: true, backend: await this.backend.describe(path), magpieSettings: this.backend.settings?.() };
+      if (body.action === 'backend-install') this.backend.install(path, { lightweight, startMode, getStartMode: () => this.current().startMode, guard: () => this.conversationBlock() });
+      if (body.action === 'backend-open') await this.backend.open(path, { lightweight, startMode });
+      return { ok: true, ...(body.action === 'backend-open' ? { opened: startMode } : {}), backend: await this.backend.describe(path), magpieSettings: this.backend.settings?.() };
     }
     if (body.action === 'status') {
       // 卡片标题处的网关状态：短超时，读不到就算未连接，不报错。

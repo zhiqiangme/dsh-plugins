@@ -42,7 +42,7 @@ test('下载或升级完成后启动 Magpie；已在运行不重复启动，启�
   assert.equal(installed.phase, 'installed');
   assert.equal(installed.launched, true);
   assert.deepEqual(launches, [backend.paths.exe]);
-  assert.deepEqual(launchArgs, [[]], '首次下载打开窗口供配置');
+  assert.deepEqual(launchArgs, [['serve', '--web']], '默认首次下载按网页模式后台启动');
   // 已是最新时不下载也不启动。
   backend.install();
   assert.equal((await finish(backend)).phase, 'up-to-date');
@@ -109,7 +109,7 @@ test('相同或更新版本不降级；升级运行中的程序时下载校验�
   assert.deepEqual(phases, ['stopping']);
   assert.deepEqual(stops, [backend.paths.exe]);
   assert.equal(readFileSync(backend.paths.exe, 'utf8'), 'magpie 0.1.2');
-  assert.deepEqual(launchArgs, [['tray']], '升级后只在托盘启动');
+  assert.deepEqual(launchArgs, [['serve', '--web']], '升级后按默认网页方式启动');
 });
 
 test('错误哈希、下载中断和暂存程序版本不符均保留旧文件且清理锁', async (t) => {
@@ -219,7 +219,7 @@ test('退出 Magpie 后升级失败时，在后台重新打开原程序', async 
   backend.install();
   assert.equal((await finish(backend)).phase, 'failed');
   assert.equal(readFileSync(backend.paths.exe, 'utf8'), 'magpie 0.1.1');
-  assert.deepEqual(launchArgs, [['tray']]);
+  assert.deepEqual(launchArgs, [['serve', '--web']]);
 });
 
 test('读写 Magpie 设置：只改轻量模式和防止休眠，其余字段保留；没有设置文件时不代写', async (t) => {
@@ -250,7 +250,7 @@ test('打开 Magpie 界面不带参数启动（单实例会唤出已在托盘运
   seed(backend, '0.1.1');
   mkdirSync(dirname(backend.paths.settings), { recursive: true });
   writeFileSync(backend.paths.settings, '{}');
-  assert.deepEqual(await backend.open(undefined, { lightweight: true }), { pid: 4321 });
+  assert.deepEqual(await backend.open(undefined, { lightweight: true, startMode: 'tray' }), { pid: 4321 });
   assert.deepEqual(launchArgs, [[]]);
   assert.equal(backend.settings().lightweight, true);
 });

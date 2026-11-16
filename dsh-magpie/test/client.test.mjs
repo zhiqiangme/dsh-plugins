@@ -22,6 +22,43 @@ function dragEvent(slot = 0, count = 0) {
   };
 }
 const list = (tree) => nodes(tree, (n) => n.props.className?.split(' ').includes('model-list'))[0];
+
+test('启动方式即时保存且保留模型草稿，打开按钮按已保存方式请求网页或窗口', async () => {
+  const host = fakeHost({ models: [{ id: 'original-model' }] });
+  const opened = [], installs = [];
+  const backend = {
+    describe: async () => ({ supported: true, installed: true, version: '0.1.4304' }),
+    open: async (_path, options) => { opened.push(options.startMode); },
+    install: (_path, options) => { installs.push(options.startMode); },
+  };
+  const manager = new ModelManager(host.ctx, host.own.options.config, { backend });
+  const calls = [];
+  const client = clientHarness({ ...await manager.describe(), editable: true }, async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body);
+    return response(await manager.handle(body));
+  });
+  assert.ok(button(client.render(), '打开 Magpie 网页'));
+  await button(client.render(), '手动添加模型').props.onClick();
+  client.tab('偏好');
+  assert.equal(choose(client.render(), 'Magpie 启动方式', '网页').props['aria-checked'], true);
+  await choose(client.render(), 'Magpie 启动方式', '托盘').props.onClick();
+  assert.deepEqual(calls[0].patch, { startMode: 'tray' });
+  assert.equal(host.own.options.config.startMode, 'tray');
+  assert.equal(host.own.options.config.models.length, 1, '未保存的模型草稿不能被即时设置带入');
+  assert.equal(client.states[0].config.models.length, 2);
+  assert.equal(client.states[1], true);
+  assert.deepEqual(opened, [], '切换设置不重启现有实例');
+  await button(client.render(), '打开 Magpie 窗口').props.onClick();
+  assert.deepEqual(opened, ['tray']);
+  assert.equal(client.states[3].text, '已打开 Magpie 窗口。');
+  await choose(client.render(), 'Magpie 启动方式', '网页').props.onClick();
+  await button(client.render(), '打开 Magpie 网页').props.onClick();
+  assert.deepEqual(opened, ['tray', 'web']);
+  assert.equal(client.states[3].text, '已在默认浏览器打开 Magpie 网页。');
+  await manager.handle({ action: 'backend-install' });
+  assert.deepEqual(installs, ['web']);
+});
+
 function dragModel(client, from, to, after = false) {
   const count = modelRows(client.render()).length;
   handles(client.render())[from].props.onDragStart(dragEvent(0, count));
@@ -305,9 +342,9 @@ test('防止休眠直接写入 Magpie 设置；没有设置文件时禁用；打
   });
   client.tab('偏好');
   assert.equal(choose(client.render(), '防止休眠', '开启').props.disabled, true);
-  await button(client.render(), '打开 Magpie 界面').props.onClick();
+  await button(client.render(), '打开 Magpie 网页').props.onClick();
   assert.deepEqual(calls[0], { action: 'backend-open', magpiePath: '' });
-  assert.equal(client.states[3].text, '已打开 Magpie 窗口。');
+  assert.equal(client.states[3].text, '已在默认浏览器打开 Magpie 网页。');
   assert.equal(choose(client.render(), '防止休眠', '关闭').props['aria-checked'], true);
   await choose(client.render(), '防止休眠', '屏幕也常亮').props.onClick();
   assert.deepEqual(calls[1], { action: 'magpie-settings', keepAwake: 'display' });

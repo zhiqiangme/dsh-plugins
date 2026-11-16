@@ -6,6 +6,7 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, openSync, closeSync, re
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { compareVersions, downloadRelease, fetchRelease, formatError, sha256, versionOf } from './release.js';
+import { MagpieWeb } from './web-ui.js';
 
 const exec = promisify(execFile);
 const isFile = (path) => { try { return statSync(path).isFile(); } catch { return false; } };
@@ -39,11 +40,11 @@ export async function probeVersion(path, signal) {
  * （是否随 DSH 关闭由「退出 DSH 时同时关闭 Magpie」决定）。
  * DSH 的运行时以 ELECTRON_RUN_AS_NODE 启动，继承下去会让 Electron 类程序变成 Node；启动前去掉。
  */
-export function launchDetached(path, args = []) {
+export function launchDetached(path, args = [], options = {}) {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env };
+    const env = { ...process.env, ...options.env };
     for (const name of ['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS']) delete env[name];
-    const child = spawn(path, args, { cwd: dirname(path), detached: true, stdio: 'ignore', windowsHide: false, env });
+    const child = spawn(path, args, { cwd: dirname(path), detached: true, stdio: 'ignore', windowsHide: true, env });
     child.once('error', reject);
     child.once('spawn', () => { child.unref(); resolve(child.pid); });
   });
@@ -82,9 +83,10 @@ export const KEEP_AWAKE_MODES = Object.freeze(['off', 'on', 'display']);
 
 /** 与 WB 一样把程序、备份和缓存放在 DSH home，绝不把 Magpie 的账号目录随程序搬走。 */
 export class MagpieBackend {
-  constructor({ env = process.env, platform = process.platform, arch = process.arch, fetchImpl = fetch, probe = probeVersion, isRunning = runningWindows, launch = launchDetached, stop = stopWindows, retryDelayMs, idlePollMs = 5_000 } = {}) {
+  constructor({ env = process.env, platform = process.platform, arch = process.arch, fetchImpl = fetch, probe = probeVersion, isRunning = runningWindows, launch = launchDetached, stop = stopWindows, retryDelayMs, idlePollMs = 5_000, credentials, web } = {}) {
     Object.assign(this, { env, platform, arch, fetchImpl, probe, isRunning, launch, stop, retryDelayMs, idlePollMs });
     this.paths = backendPaths(env); this.latest = null; this.operation = null; this.pending = null; this.disposed = false; this.versions = new Map();
+    this.web = web ?? new MagpieWeb({ env, settings: this.paths.settings, credentials });
   }
   get supported() { return this.platform === 'win32' && ['x64', 'arm64'].includes(this.arch); }
   async local(path, signal) {
@@ -136,8 +138,17 @@ export class MagpieBackend {
     try { const current = this.settings(); if (current.available && !current.lightweight) this.updateSettings({ lightweight: true }); return true; }
     catch { return false; }
   }
-  /** 打开 Magpie 窗口：Magpie 单实例，已在托盘运行时再启动一次只会让原进程显示窗口，不会出现第二个网关（本机实测）。 */
-  async open(value, { lightweight = false } = {}) {
+  /** 所有后台启动共用参数，升级成功、失败恢复和开机启动必须遵循同一方式。 */
+  async launchConfigured(path, { startMode = 'web' } = {}) {
+    if (this.disposed) throw new Error('插件已关闭');
+    if (startMode === 'tray') return this.launch(path, ['tray'], { env: this.env });
+    if (startMode !== 'web') throw new Error('不支持的 Magpie 启动方式');
+    const key = await this.web.key();
+    if (this.disposed) throw new Error('插件已关闭');
+    return this.launch(path, ['serve', '--web'], { env: { ...this.env, MAGPIE_WEB_KEY: key } });
+  }
+  /** 网页模式打开默认浏览器；托盘模式通过单实例交接唤出原窗口。 */
+  async open(value, { lightweight = false, startMode = 'web' } = {}) {
     if (!this.supported) throw new Error('打开 Magpie 目前支持 Windows x64 / ARM64');
     const path = targetPath(value, this.paths);
     if (this.operation?.running && this.operation.path === path) throw new Error('Magpie 正在下载或升级，请稍后再打开');
@@ -145,6 +156,7 @@ export class MagpieBackend {
     if (!local.installed) throw new Error('尚未下载 Magpie');
     if (!local.version) throw new Error(local.reason || '该程序未能验证为 Magpie');
     if (lightweight) this.ensureLightweight();
+    if (startMode === 'web') return this.web.open({ launch: () => this.launchConfigured(path, { startMode }), isRunning: () => this.isRunning(path), disposed: () => this.disposed });
     return { pid: await this.launch(path, []) };
   }
   latestView() { return this.latest ? { version: this.latest.version, url: this.latest.url, publishedAt: this.latest.publishedAt } : null; }
@@ -186,7 +198,7 @@ export class MagpieBackend {
     return () => rmSync(lock, { force: true });
   }
   /** 替换前退出运行中的目标程序；下载和校验期间不打断，尽量缩短网关不可用的时间。 */
-  async stopRunning(path, signal, guard) {
+  async stopRunning(path, signal, guard, prepare) {
     // Query processes first, then recheck conversations immediately before issuing the stop.
     // Keep the verified staged executable while busy, without repeated downloads/probes.
     let running;
@@ -195,6 +207,8 @@ export class MagpieBackend {
       let blocked = guard?.();
       if (!blocked) {
         running = isFile(path) && await this.isRunning(path);
+        signal?.throwIfAborted();
+        await prepare?.();
         signal?.throwIfAborted();
         blocked = guard?.();
       }
@@ -209,7 +223,7 @@ export class MagpieBackend {
     if (await this.isRunning(path)) throw new Error('未能退出正在运行的 Magpie，现有程序未更改；请手动退出 Magpie（包括托盘）后重试');
     return true;
   }
-  async apply(path, signal, { lightweight = false, automatic = false, minimumAgeMs = 0, now = Date.now, guard } = {}) {
+  async apply(path, signal, { lightweight = false, startMode = 'web', getStartMode, automatic = false, minimumAgeMs = 0, now = Date.now, guard } = {}) {
     signal.throwIfAborted();
     const unlock = this.acquireLock();
     let staged;
@@ -228,6 +242,8 @@ export class MagpieBackend {
         if (now() < eligibleAt) return { state: 'cooling-down', eligibleAt };
       }
       if (guard?.() === 'cancelled') return { state: 'cancelled' };
+      // 在退出旧程序前准备凭据，凭据库不可用时不能停掉原有网关。
+      if (startMode === 'web') await this.web.key();
       this.operation.phase = 'downloading';
       const download = await downloadRelease(this.latest, { fetchImpl: this.fetchImpl, signal, partialDir: join(this.paths.cache, 'downloads'), retryDelayMs: this.retryDelayMs, onProgress: (received, total) => Object.assign(this.operation, { received, total }) });
       signal.throwIfAborted();
@@ -237,7 +253,11 @@ export class MagpieBackend {
       writeFileSync(staged, download.bytes, { flag: 'wx' });
       if (versionOf(await this.probe(staged, signal)) !== this.latest.version) throw new Error('下载程序版本与 Release 不符，现有程序未更改');
       signal.throwIfAborted();
-      const stopped = await this.stopRunning(path, signal, before.installed ? guard : undefined);
+      const stopped = await this.stopRunning(path, signal, before.installed ? guard : undefined, async () => {
+        // 下载和等待对话空闲可能很久；退出旧程序前采用最新方式，并先确认凭据可用。
+        startMode = getStartMode?.() ?? startMode;
+        if (startMode === 'web') await this.web.key();
+      });
       if (stopped === null) return { state: 'cancelled' };
       try {
         signal.throwIfAborted();
@@ -247,24 +267,24 @@ export class MagpieBackend {
         await this.swap(path, staged, before, this.latest, download.sha256, signal);
       } catch (error) {
         // 是插件把它退出的，升级没成就把原程序在后台重新打开，网关不能因此一直停着。
-        if (stopped && isFile(path)) try { await this.launch(path, ['tray']); } catch { /* 原因已在升级失败里报告 */ }
+        if (stopped && isFile(path)) try { await this.launchConfigured(path, { startMode }); } catch { /* 原因已在升级失败里报告 */ }
         throw error;
       }
       staged = null; this.versions.delete(path);
       // 失败时保留已校验的下载供下次直接使用；装好后再删。
       rmSync(download.file, { force: true });
-      // 首次下载打开窗口供用户配置；升级沿用后台托盘模式，不打断当前桌面。
-      return { state: before.installed ? 'updated' : 'installed', version: this.latest.version, stopped, ...await this.start(path, { window: !before.installed, lightweight }) };
+      // 网页模式始终后台启动；托盘模式首次安装仍打开窗口，供用户完成配置。
+      return { state: before.installed ? 'updated' : 'installed', version: this.latest.version, stopped, ...await this.start(path, { window: startMode === 'tray' && !before.installed, lightweight, startMode }) };
     } finally { try { if (staged) rmSync(staged, { force: true }); } finally { unlock(); } }
   }
   /** 安装已完成，启动失败只作提示，不能把成功的安装报成失败。 */
-  async start(path, { window = false, lightweight = false } = {}) {
+  async start(path, { window = false, lightweight = false, startMode = 'web' } = {}) {
     this.operation.phase = 'starting';
     try {
       if (lightweight) this.ensureLightweight();
       // 替换前已退出目标；这里再查一次，避免重复打开用户刚手动启动的同一程序。
       if (await this.isRunning(path)) return { launched: false, alreadyRunning: true };
-      return { launched: true, window, pid: await this.launch(path, window ? [] : ['tray']) };
+      return { launched: true, window, pid: window ? await this.launch(path, []) : await this.launchConfigured(path, { startMode }) };
     } catch (error) { return { launched: false, launchError: formatError(error) }; }
   }
   async swap(path, staged, before, release, hash, signal) {

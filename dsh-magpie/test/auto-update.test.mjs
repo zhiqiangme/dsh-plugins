@@ -54,7 +54,26 @@ test('发布满 30 分钟才下载；最后一毫秒仍等待，到期立即允�
   assert.equal(readFileSync(f.path, 'utf8'), 'magpie 0.1.1');
   assert.equal((await autoUpdateMagpie(f.manager, { now: f.now })).phase, 'updated');
   assert.equal(downloads, 1);
+  assert.deepEqual(f.launchArgs, [['serve', '--web']]);
+});
+
+test('自动升级遵循已保存的托盘启动方式', async (t) => {
+  const f = setup(t, { startMode: 'tray' });
+  assert.equal((await autoUpdateMagpie(f.manager, { now: f.now })).phase, 'updated');
   assert.deepEqual(f.launchArgs, [['tray']]);
+  assert.equal(f.keys.size, 0);
+});
+
+test('等待空闲期间切换启动方式，升级重启采用最新设置', async (t) => {
+  const f = setup(t, { startMode: 'tray' });
+  f.agent.status = 'running';
+  const work = autoUpdateMagpie(f.manager, { now: f.now });
+  await phase(f.backend, 'waiting-idle');
+  f.own.options.config.startMode = 'web';
+  f.agent.status = 'idle';
+  assert.equal((await work).phase, 'updated');
+  assert.deepEqual(f.launchArgs, [['serve', '--web']]);
+  assert.match(f.launchOptions[0].env.MAGPIE_WEB_KEY, /^[0-9a-f]{64}$/);
 });
 
 test('发布时间缺失/非法不下载，未来发布时间继续等待', async (t) => {

@@ -38,12 +38,12 @@ test('仅根退出或进程退出执行关闭；普通插件停用/重载解绑�
 test('升级收尾与根退出同时发生时，等待程序任务结束再关闭新启动的 Magpie', async (t) => {
   const host = fakeHost(), hostProcess = new EventEmitter(), calls = [];
   host.ctx.root = { fiber: { state: 5 } };
-  let release, reachedStart, probes = 0;
+  let release, reachedStart;
   const hold = new Promise((resolve) => { release = resolve; });
   const starting = new Promise((resolve) => { reachedStart = resolve; });
   const { backend } = backendFixture(t, {
-    isRunning: async () => { if (++probes === 2) { reachedStart(); await hold; } return false; },
-    launch: async () => { calls.push('started'); return 4321; },
+    isRunning: async () => false,
+    launch: async () => { reachedStart(); await hold; calls.push('started'); return 4321; },
   });
   mkdirSync(backend.paths.current, { recursive: true });
   writeFileSync(backend.paths.exe, 'magpie 0.1.1');
@@ -194,7 +194,7 @@ test('开机启动默认开启；本机未运行 Magpie 时启动已下载的程
   const result = await autoStartMagpie(manager, { platform: 'win32', fetchImpl: refused, findRunning: async () => false });
   assert.equal(result.state, 'started');
   assert.deepEqual(launches, [backend.paths.exe]);
-  assert.deepEqual(launchArgs, [['tray']], '开机只在托盘启动，不弹窗口');
+  assert.deepEqual(launchArgs, [['serve', '--web']], '开机默认以网页模式启动，不弹窗口');
   assert.equal(backend.settings().lightweight, true, '默认开启 Magpie 轻量模式');
 });
 
