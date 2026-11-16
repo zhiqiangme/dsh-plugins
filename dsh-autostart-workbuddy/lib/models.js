@@ -652,7 +652,10 @@ function codeArtsName(name) {
 /** 不带区域和倍率的名称；上游名已带同款倍率时去掉，否则区域会落在倍率后面或倍率重复。 */
 function modelBaseName(model) {
   const raw = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : model.id;
-  const base = model.realm === CODEARTS_REALM ? codeArtsName(raw) : raw;
+  // 部分目录没有展示名，直接把带区域前缀的 id 填进 name；格式化只影响名称，不改调用 id。
+  const bare = raw.replace(/^(?:cn|global|codearts):/, '');
+  const bareId = model.id.replace(/^(?:cn|global|codearts):/, '');
+  const base = model.realm === CODEARTS_REALM || bare === bareId ? codeArtsName(bare) : bare;
   const suffix = modelCreditsLabel(model);
   return suffix && base.toLowerCase().endsWith(` ${suffix.toLowerCase()}`)
     ? base.slice(0, -suffix.length).trimEnd()
