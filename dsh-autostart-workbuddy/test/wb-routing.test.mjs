@@ -34,7 +34,8 @@ async function setup(t, { only = [], chat = (_req, res) => res.end('{}') } = {})
     chat(req, res, body);
   });
   await new Promise((done) => upstream.listen(0, '127.0.0.1', done));
-  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true, autoRoute: true, apiKey: 'wb-key', only, baseURL: `http://127.0.0.1:${upstream.address().port}` } }, {});
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true, apiKey: 'wb-key', only, baseURL: `http://127.0.0.1:${upstream.address().port}` } }, {});
+  assert.equal(resolved.models.autoRoute, true, '未配置开关时也使用自动路由');
   const credentials = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY: 'wb-key', WORKBUDDY_WB2API_KEY: 'wb-key', WORKBUDDY_PROXY_KEY_CN: 'hub-only-cn', WORKBUDDY_PROXY_KEY_GLOBAL: 'hub-only-gl' } });
   const editor = createFakeConfigEditor(profileRows({ models: { enabled: true, only } }));
   let now = NOW;

@@ -115,7 +115,7 @@ function freePort() {
 /** 用插件真实的配置解析拼出 spec + models，避免测试里手搓配置结构。 */
 function configFor(port, models = {}) {
   return resolvePluginConfig(
-    { gateway: 'wb2api', port, models: { enabled: true, only: ['cn:alpha'], apiKey: 'test-key', timeoutMs: 5_000, ...models } },
+    { gateway: 'wb2api', port, models: { enabled: true, autoRoute: false, only: ['cn:alpha'], apiKey: 'test-key', timeoutMs: 5_000, ...models } },
     { PATH: '' },
   );
 }
@@ -489,7 +489,7 @@ test('POST：首次开启同步，即使白名单没变也会保存开关并补�
   for (const previousEnabled of [undefined, false]) {
     const models = { only: ['cn:alpha'], exclude: ['global:beta'], efforts: ['high'] };
     if (previousEnabled !== undefined) models.enabled = previousEnabled;
-    const resolved = resolvePluginConfig({ gateway: 'wb2api', port, models: { ...models, apiKey: 'test-key' } }, { PATH: '' });
+    const resolved = resolvePluginConfig({ gateway: 'wb2api', port, models: { ...models, autoRoute: false, apiKey: 'test-key' } }, { PATH: '' });
     const editor = createFakeConfigEditor(profileRows({ models, withWorkbuddy: false }));
     const credentials = createFakeCredentials();
 
@@ -1090,7 +1090,7 @@ test('GET（hub）：行 id 是带出口前缀的白名单键，老的裸 id 回
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
   const ready = async () => ({ ok: true, servable: true, healthy: 1, total: 1 });
   const describe = (only) => {
-    const resolved = resolvePluginConfig({ gateway: 'wb2api', port: server.address().port, models: { enabled: true, apiKey: 'k', only } }, { PATH: '' });
+    const resolved = resolvePluginConfig({ gateway: 'wb2api', port: server.address().port, models: { enabled: true, autoRoute: false, apiKey: 'k', only } }, { PATH: '' });
     return describeModels({ ...resolved, env: {}, gateway: 'hub', probe: ready });
   };
 

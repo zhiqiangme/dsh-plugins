@@ -55,7 +55,7 @@ async function serve(t, backend) {
 async function setup(t, { probe = READY, credentials = createFakeCredentials(), syncBlocker } = {}) {
   const backend = { models: [ALPHA, BETA], hits: 0 };
   const url = await serve(t, backend);
-  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true, apiKey: 'gw-key', baseURL: url } }, { PATH: '' });
+  const resolved = resolvePluginConfig({ gateway: 'wb2api', models: { enabled: true, autoRoute: false, apiKey: 'gw-key', baseURL: url } }, { PATH: '' });
   const editor = createFakeConfigEditor(profileRows());
   assert.equal((await syncModels({ spec: resolved.spec, models: resolved.models, editor, credentials, env: {} })).state, 'updated');
   backend.hits = 0;

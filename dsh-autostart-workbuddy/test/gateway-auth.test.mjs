@@ -33,7 +33,7 @@ test('HUB → wb2api → HUB 重启后凭据隔离：旧共享 Key 不污染 wb2
   const panelConfig = join(dir, 'config.json');
   const savePanel = () => writeFileSync(panelConfig, JSON.stringify({ api_key: backend.wbKey }));
   savePanel();
-  const rawModels = { enabled: true, hubDual: true, baseURL: origin, panelConfig, apiKeyRef: 'WORKBUDDY_PROXY_KEY' };
+  const rawModels = { enabled: true, autoRoute: false, hubDual: true, baseURL: origin, panelConfig, apiKeyRef: 'WORKBUDDY_PROXY_KEY' };
   const editor = createFakeConfigEditor(profileRows());
   const credentials = createFakeCredentials({ stored: { WORKBUDDY_PROXY_KEY: 'hub-secret', WORKBUDDY_PROXY_KEY_CN: 'cn-saved', WORKBUDDY_PROXY_KEY_GLOBAL: 'gl-saved' } });
   const sync = async (gateway) => {

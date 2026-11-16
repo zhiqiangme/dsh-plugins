@@ -98,6 +98,7 @@ function fakeServiceConfig(port, extra = {}) {
     cwd: process.cwd(),
     args: [DUMMY],
     ...extra,
+    ...(extra.models ? { models: { autoRoute: false, ...extra.models } } : {}),
   };
 }
 
