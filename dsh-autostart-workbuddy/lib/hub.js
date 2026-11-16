@@ -1,5 +1,5 @@
 /**
- * 第二种后端网关：workbuddy2api-hub（ardeyouxipianyi/workbuddy2api-hub）的安装、版本识别、
+ * 第二种后端网关：workbuddy2api-hub（M-strange/workbuddy2api-hub）的安装、版本识别、
  * 更新 / 回滚 / 卸载与健康探针。用法与 backend.js（wb2api）一一对应，web.js 按所选网关分发。
  *
  * 与 wb2api 的根本差别：hub 是 Python 程序，release 里的便携包（workbuddy2api-hub-v<ver>.zip）
@@ -31,12 +31,13 @@ import { isFile } from './services.js';
 import { extractZipEntry, extractZipTree } from './zip.js';
 
 /** hub 的上游仓库。 */
-export const HUB_REPO = Object.freeze({ owner: 'ardeyouxipianyi', name: 'workbuddy2api-hub' });
+export const HUB_REPO = Object.freeze({ owner: 'M-strange', name: 'workbuddy2api-hub' });
+const HUB_REPOSITORY = `${HUB_REPO.owner}/${HUB_REPO.name}`;
 
-/** Windows 便携包：`workbuddy2api-hub-v1.7.14.zip`（同一 release 里另有 apk/ipk 给路由器，不要）。 */
+/** Windows 便携包：`workbuddy2api-hub-v2.2.0.zip`（同一 release 里另有 apk/ipk 给路由器，不要）。 */
 export const HUB_ASSET_PATTERN = /^workbuddy2api-hub-v[0-9][\w.-]*\.zip$/i;
 
-/** 同一 release 同时发 checksums.txt 与 SHA256SUMS，内容一致；先找前者。 */
+/** 同一 release 同时发 checksums.txt 与 SHA256SUMS；先找前者。 */
 export const HUB_CHECKSUM_NAMES = Object.freeze(['checksums.txt', 'SHA256SUMS']);
 
 /** 包顶层的版本清单（打包器写死 tag / root / 受保护目录）。 */
@@ -200,7 +201,8 @@ export async function probeHubHealth({ host = '127.0.0.1', port, timeoutMs = 5_0
 function readReleaseCache(paths, ttlMs, force, now) {
   if (force) return undefined;
   const cached = readJson(paths.releaseCache);
-  if (!cached?.fetchedAt || !cached?.latest?.tag) return undefined;
+  // 原版与社区分支存在同名 tag，不能复用旧仓库或未记录来源的下载地址。
+  if (cached?.repo !== HUB_REPOSITORY || !cached?.fetchedAt || !cached?.latest?.tag) return undefined;
   const age = now - Date.parse(cached.fetchedAt);
   return Number.isFinite(age) && age <= ttlMs ? cached.latest : undefined;
 }
@@ -210,7 +212,7 @@ function writeReleaseCache(paths, latest, now) {
   if (!existsSync(paths.root)) return;
   try {
     mkdirSync(paths.cache, { recursive: true });
-    writeJson(paths.releaseCache, { fetchedAt: new Date(now).toISOString(), latest });
+    writeJson(paths.releaseCache, { repo: HUB_REPOSITORY, fetchedAt: new Date(now).toISOString(), latest });
   } catch {
     /* 缓存写不进去不影响功能 */
   }
@@ -381,7 +383,7 @@ export async function prepareHubUpdate({ paths, env = process.env, apiBase, logg
   }
   const rejected = checkStagedHub(stagedDir, latest);
   if (rejected) return discardStaged(rejected);
-  return { ok: true, state: 'prepared', local, latest, staged: { path: stagedDir, asset: asset.name, sha256: verified.actual } };
+  return { ok: true, state: 'prepared', local, latest, staged: { path: stagedDir, asset: asset.name, sha256: verified.actual, repository: HUB_REPOSITORY } };
 }
 
 /**
@@ -406,6 +408,10 @@ export async function commitHubUpdate({
   };
   if (!stagedDir || !existsSync(stagedDir)) {
     return { ok: false, state: 'staged-missing', reason: `找不到暂存的新版本：${stagedDir ?? '(空)'}`, latest };
+  }
+  // 上次运行可能从旧仓库下载了同名版本；来源不符时重新下载，不能在启动时装回旧分支。
+  if (staged.repository !== HUB_REPOSITORY) {
+    return discardStaged({ ok: false, state: 'staged-source-mismatch', reason: `暂存包来自旧仓库或来源未知，请重新下载 ${HUB_REPOSITORY} 的版本`, latest });
   }
   const rejected = checkStagedHub(stagedDir, latest);
   if (rejected) return discardStaged(rejected);

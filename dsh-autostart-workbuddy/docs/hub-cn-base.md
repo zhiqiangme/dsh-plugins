@@ -1,5 +1,7 @@
 # workbuddy2api-hub：国内版上游地址需要怎么改
 
+当前插件使用 [M-strange/workbuddy2api-hub](https://github.com/M-strange/workbuddy2api-hub)，已核对 v2.2.0 的 `wb_identity.py` 支持 `WB_CN_CHAT_UPSTREAM`；插件会传入 `cnChatBase`，无需额外修改 Hub 源码。以下保留早期版本的排查与实现背景。
+
 对照版本：[ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) `59759d7`（v1.7.14，2026-10-18）。
 行号都按这个提交算。
 

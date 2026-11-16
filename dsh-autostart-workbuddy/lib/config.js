@@ -11,7 +11,7 @@ import { DEFAULT_AUTO_UPDATE_DELAY_HOURS } from './auto-update.js';
 import { backendPaths, DEFAULT_CHECK_TTL_MS, DEFAULT_KEEP_VERSIONS } from './backend.js';
 import { DEFAULT_CN_CHAT_BASE } from './backend-config.js';
 import { normalizeGateway } from './gateway.js';
-import { DEFAULT_HUB_KEEP_VERSIONS, hubPaths, readHubApiKey } from './hub.js';
+import { DEFAULT_HUB_KEEP_VERSIONS, HUB_REPO, hubPaths, readHubApiKey } from './hub.js';
 import { DEFAULT_EFFORTS, GATEWAY_KEY_REFS, HUB_KEY_REFS, panelApiKey } from './models.js';
 import { normalizeModelRules } from './model-rules.js';
 import { SERVICE_DEFAULTS, isFile, resolveDshHome } from './services.js';
@@ -128,10 +128,11 @@ function buildHubSpec(config, common, hostEnv, apiKey, cnChatBase) {
     PYTHONUNBUFFERED: '1',
     PYTHONIOENCODING: 'utf-8',
     PYTHONNOUSERSITE: '1',
+    // 社区分支的看板更新检查仍默认查原仓库；与插件的下载源保持一致。
+    WB_UPDATE_REPO: `${HUB_REPO.owner}/${HUB_REPO.name}`,
   });
   if (apiKey) env.API_KEY = apiKey;
-  // 国内版上游改址（与 wb2api 的 cn.chat_base 同一用途）。WB_CN_CHAT_UPSTREAM 是 fork 里给 hub 加的开关
-  // （zhiqiangme/workbuddy2api-hub fix/cn-chat-upstream，待合入上游）；不认它的 hub 版本会忽略，行为不变。
+  // 国内版上游改址（与 wb2api 的 cn.chat_base 同一用途），M-strange v2.2.0 已支持 WB_CN_CHAT_UPSTREAM。
   // cnChatBase 为空 = 用户关掉了这项：连宿主环境里的同名变量也不透传，免得插件说关了却仍生效。
   delete env.WB_CN_CHAT_UPSTREAM;
   if (cnChatBase) env.WB_CN_CHAT_UPSTREAM = cnChatBase;

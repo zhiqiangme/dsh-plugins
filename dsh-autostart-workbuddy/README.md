@@ -3,7 +3,7 @@
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件：DSH 启动时自动拉起
 **WorkBuddy2API Panel**（[misakano7545/workbuddy2api-panel](https://github.com/misakano7545/workbuddy2api-panel)），
 不用再手动启动它；还可以接管 DSH 里 workbuddy 的模型列表、在插件页管理后端版本。
-后端网关也可以换成 [WorkBuddy2API Hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)（见[后端网关](#后端网关)），二选一。
+后端网关也可以换成 [WorkBuddy2API Hub 社区增强版](https://github.com/M-strange/workbuddy2api-hub)（见[后端网关](#后端网关)），二选一。
 
 | 服务 | 端点 | 作用 |
 | --- | --- | --- |
@@ -28,7 +28,7 @@
 
 | | wb2api（默认） | workbuddy2api-hub |
 | --- | --- | --- |
-| 上游 | [misakano7545/workbuddy2api-panel](https://github.com/misakano7545/workbuddy2api-panel) | [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) |
+| 上游 | [misakano7545/workbuddy2api-panel](https://github.com/misakano7545/workbuddy2api-panel) | [M-strange/workbuddy2api-hub](https://github.com/M-strange/workbuddy2api-hub) |
 | 程序 | 单个 `wb2api.exe`（Go） | 便携包整目录：脚本 + 自带的 CPython 运行时（约 33MB） |
 | 目录 | `wb2api/backend/`、`wb2api/data/` | `hub/backend/`、`hub/data/`（账号与用量） |
 | 版本身份 | exe 里的 Go `vcs.revision` | 包内 `release-manifest.json` 的 tag |
@@ -40,6 +40,8 @@
 账号授权分别保存在 `wb2api/data/auths/*.json` 与 `hub/data/accounts/*.json`。首次由插件启动 hub 时，会自动读取 wb2api 授权（遵循其 `config.json` 的 `auth_dir`，缺省使用 `wb2api/data/auths/`），将 `account` / `auth` 嵌套结构转换为 hub 的扁平格式。hub 中已经存在的账号按 uid 跳过，保留后来登录的新令牌与设置。只迁移授权，之后两边各自维护文件及刷新令牌，不再自动同步；wb2api 原文件不会修改。
 
 导入在 hub 进程启动前完成，首次安装后拉起、切换网关后首次拉起均适用；端口上已有外部服务时不会改它的账号目录。成功扫描后在 `hub/data/wb2api-import.json` 记录一次性完成标记（不含令牌）；以后重启或更新不会重复导入，hub 中主动删除的账号也不会重新出现。没装过 wb2api 时暂不记完成；读取或写入失败会记脱敏警告，下次启动重试。损坏或不支持的单份授权跳过并提示数量，仍可在 hub 看板手动导入。账号授权与 hub 管理面板的密码登录是两回事，浏览器的面板登录会话不会从 wb2api 继承。
+
+Hub 的下载和更新源为 M-strange 社区分支，已核对 v2.2.0 的便携包布局。升级仍保留 `hub/data/` 中的账号、设置和用量，并保留旧程序供回滚；旧仓库的版本查询缓存和已下载待安装包会失效，重新从新源获取。Hub 看板的更新检查也通过 `WB_UPDATE_REPO` 指向同一分支。
 
 ### wb2api：CN / GL 自动路由
 
@@ -94,7 +96,7 @@ HUB 配了多把 Key 之后，启动参数里的旧 Key 可能不再有效。这
   - 当前出口在白名单里一条都没有时按「全部模型」处理（与"白名单留空 = 全部"同一语义）：第一次切到一个从没勾过的出口，DSH 换成它的全部模型，再到卡片里删减即可。
 - **跟随出口切换**：在 hub 看板顶部切换国内 / 国际 / CodeArts 后，插件约 5 秒内发现（每 5 秒探一次 hub 的 `/health`，它报当前出口，hub 不给这条请求记日志），立即按新出口的那组勾选重写 DSH 的模型列表，不用回卡片点「刷新」「保存」。这一轮跳过"移除要连续两轮确认"——模型变少是切出口的结果，不是上游抖动。与定时同步同一个开关：`models.enabled` 关着或 `resyncIntervalMs: 0` 时不跟。已经打开的卡片每 5 秒刷新后端状态，出口或同步状态改变时自动回读模型；保留未保存的勾选、开关和规则，页面隐藏时暂停。
 - hub 账号池里还没有可用账号时，它的 `/v1/models` 仍会返回内置目录，卡片按 `/health` 的 `accounts_ready` 判断（出口是 CodeArts 时看 `codearts.healthy`），为 0 就不列模型，提示先去看板登录。
-- **Clash 全局模式**：hub 的国内版上游同样写死成 `copilot.tencent.com`，海外出口下 CN 账号的对话会 TLS 失败。插件启动 hub 时传 `WB_CN_CHAT_UPSTREAM`（取 `cnChatBase`），需要 hub 认这个变量（fork 分支 `fix/cn-chat-upstream`，待合入上游）；不认的版本照旧。背景与改法见 [docs/hub-cn-base.md](https://github.com/zhiqiangme/dsh-plugins/blob/main/dsh-autostart-workbuddy/docs/hub-cn-base.md)。
+- **Clash 全局模式**：插件启动 hub 时传 `WB_CN_CHAT_UPSTREAM`（取 `cnChatBase`，默认 `https://www.workbuddy.cn`），M-strange v2.2.0 已支持，避免国内版固定走 `copilot.tencent.com` 时在部分海外出口下的 TLS 失败。显式设置 `cnChatBase: ''` 可使用 Hub 自身默认地址。背景见 [docs/hub-cn-base.md](https://github.com/zhiqiangme/dsh-plugins/blob/main/dsh-autostart-workbuddy/docs/hub-cn-base.md)。
 - **命令行**：`lib/backend-cli.js` 只管 wb2api；hub 的安装、更新与回滚在卡片里操作。
 
 ## 接管模型列表

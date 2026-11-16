@@ -215,7 +215,7 @@ async function startFakeHubRelease() {
       res.writeHead(status, { 'content-type': type, 'content-length': Buffer.byteLength(body) });
       res.end(body);
     };
-    if (url.endsWith('/releases/latest')) {
+    if (url === '/repos/M-strange/workbuddy2api-hub/releases/latest') {
       send(200, 'application/json', JSON.stringify({
         tag_name: tag,
         published_at: '2026-10-18T00:00:00Z',

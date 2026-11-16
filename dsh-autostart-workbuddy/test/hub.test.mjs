@@ -18,12 +18,14 @@ import { gatewayDriver, normalizeGateway } from '../lib/gateway.js';
 import {
   applyHubUpdate,
   checkHubUpdate,
+  commitHubUpdate,
   describeHub,
   hubKeyHooks,
   hubPaths,
   installHub,
   localHubVersion,
   probeHubHealth,
+  prepareHubUpdate,
   readHubApiKey,
   rollbackHub,
   uninstallHub,
@@ -199,6 +201,53 @@ test('applyHubUpdate：旧目录进 versions/，hub 的 data/ 原样保留；rol
   }
 });
 
+test('Hub 仓库迁移：忽略旧源与无来源的版本缓存，新源缓存仍可复用', async () => {
+  const release = startFixture({ TEST_MODE: 'http-hub-release', TEST_RELEASE_TAG: 'v2.2.0' });
+  const apiBase = `http://127.0.0.1:${await release.ready}`;
+  const { paths } = tempRoot();
+  mkdirSync(paths.cache, { recursive: true });
+  try {
+    for (const repo of [undefined, 'ardeyouxipianyi/workbuddy2api-hub']) {
+      writeFileSync(paths.releaseCache, JSON.stringify({ repo, fetchedAt: new Date().toISOString(), latest: { tag: 'v2.1.3', assets: [] } }));
+      const fresh = await checkHubUpdate({ paths, env: {}, apiBase });
+      assert.equal(fresh.latest.tag, 'v2.2.0');
+      assert.equal(fresh.fromCache, false);
+      assert.equal(JSON.parse(readFileSync(paths.releaseCache, 'utf8')).repo, 'M-strange/workbuddy2api-hub');
+      const cached = await checkHubUpdate({ paths, env: {}, apiBase: 'http://127.0.0.1:1' });
+      assert.equal(cached.fromCache, true);
+      assert.equal(cached.latest.tag, 'v2.2.0');
+    }
+  } finally {
+    release.stop();
+  }
+});
+
+test('Hub 仓库迁移：旧源或无来源的待安装包不能换上，保留当前程序与账号', async () => {
+  const release = startFixture({ TEST_MODE: 'http-hub-release', TEST_RELEASE_TAG: 'v2.2.0' });
+  const apiBase = `http://127.0.0.1:${await release.ready}`;
+  const { paths } = tempRoot();
+  fakeHubDir(paths.current, 'v2.1.3');
+  mkdirSync(paths.accounts, { recursive: true });
+  const account = join(paths.accounts, 'acc.json');
+  writeFileSync(account, '{"uid":"u1"}');
+  const service = fakeService(1);
+  try {
+    for (const repository of [undefined, 'ardeyouxipianyi/workbuddy2api-hub']) {
+      const prepared = await prepareHubUpdate({ paths, env: {}, apiBase });
+      assert.equal(prepared.state, 'prepared');
+      assert.equal(prepared.staged.repository, 'M-strange/workbuddy2api-hub');
+      const result = await commitHubUpdate({ paths, service, latest: prepared.latest, staged: { ...prepared.staged, repository } });
+      assert.equal(result.state, 'staged-source-mismatch');
+      assert.equal(localHubVersion(paths).tag, 'v2.1.3');
+      assert.equal(readFileSync(account, 'utf8'), '{"uid":"u1"}');
+      assert.equal(existsSync(prepared.staged.path), false);
+      assert.deepEqual(service.calls, [], '换源前下载的暂存包不能停服或覆盖当前版本');
+    }
+  } finally {
+    release.stop();
+  }
+});
+
 test('applyHubUpdate：新版本健康检查失败 → 停掉、换回旧目录、重新拉起', async () => {
   const release = startFixture({ TEST_MODE: 'http-hub-release', TEST_RELEASE_TAG: 'v1.8.0' });
   const foreign = startFixture({ TEST_MODE: 'http-hub-health', TEST_HUB_FOREIGN: '1' });
@@ -314,6 +363,9 @@ test('resolvePluginConfig(gateway: hub)：python 跑 wb_proxy.py，数据目录�
   assert.equal(resolved.spec.env.PYTHONHOME, undefined, '宿主的 Python 设置不能漏给自带运行时');
   assert.equal(resolved.spec.env.PYTHONPATH, undefined);
   assert.equal(resolved.spec.env.PYTHONUNBUFFERED, '1');
+  assert.equal(resolved.spec.env.WB_UPDATE_REPO, 'M-strange/workbuddy2api-hub');
+  const staleUpdateEnv = resolvePluginConfig({ gateway: 'hub', env: { WB_UPDATE_REPO: 'old/repo' } }, { ...hostEnv, WB_UPDATE_REPO: 'old/repo' });
+  assert.equal(staleUpdateEnv.spec.env.WB_UPDATE_REPO, 'M-strange/workbuddy2api-hub', 'Hub 看板更新检查与插件下载源保持一致');
   assert.equal(resolved.models.apiKey, 'sk-from-wb2api');
   assert.equal(resolved.models.panelConfig, '');
   assert.equal(resolved.backend.keepVersions, 2);
