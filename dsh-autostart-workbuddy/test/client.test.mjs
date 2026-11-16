@@ -313,7 +313,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     // 后端网关切换与 hub 专用文案
     'backendUninstalledHub', 'gatewayHub', 'gatewayHubHint', 'gatewayNotInstalled', 'gatewaySwitched', 'gatewaySwitching',
     'gatewayTimeout', 'gatewayTitle', 'gatewayWaiting', 'gatewayWb2api', 'panelPasswordChanged', 'panelPasswordCopied',
-    'gatewaySynced', 'gatewaySyncFailed', 'gatewayCredentialFailed', 'gatewayNoAccounts',
+    'gatewaySynced', 'gatewaySyncFailed', 'gatewayCredentialFailed', 'gatewayNoAccounts', 'gatewaySyncing', 'gatewayRefreshing',
     'panelPasswordCopy', 'uninstallHubConfirm', 'uninstallHubDesc', 'uninstallHubKept', 'uninstallHubTitle',
     // 插件自身更新区（与后端版本区无关）
     'updateAvailable', 'updateCancelled', 'updateCheck', 'updateCheckFailed', 'updateChecking', 'updateCurrent',
@@ -1754,26 +1754,73 @@ test('waitForGateway：新网关没装就不等；账号池为空也算网关已
   assert.equal(await stuck.module.waitForGateway('wb2api', { waitMs: 30, sleep: (ms) => new Promise((r) => setTimeout(r, 5)) }), 'timeout');
 });
 
-test('后端切换按钮：等待就绪后自动刷新、保存同步、回读，沿用宿主保存的白名单', async () => {
+test('后端切换进度：覆盖等待启动、自动同步和回读，成功后收起并沿用宿主白名单', async () => {
   const calls = [];
+  const switched = Promise.withResolvers();
+  const ready = Promise.withResolvers();
+  const refreshed = Promise.withResolvers();
+  const readback = Promise.withResolvers();
+  const response = (payload) => ({ ok: true, json: async () => payload });
+  let backendReads = 0;
+  let modelReads = 0;
   const inventory = { ok: true, enabled: true, only: ['cn:alpha', 'global:beta'], models: ROWS };
   const app = boot(gatewayStates({ ...GATEWAY_BACKEND, gateway: 'wb2api' }), {
     fetchImpl: async (path, options) => {
       const body = options.body ? JSON.parse(options.body) : undefined;
       calls.push({ path, method: options.method, body });
-      return { ok: true, json: async () => path.endsWith('/backend')
-        ? options.method === 'POST' ? { ok: true, state: 'switched' } : { ok: true, backend: { ...GATEWAY_BACKEND, gateway: 'hub' } }
-        : options.method === 'GET' ? inventory
-          : body.action === 'refresh' ? { ...inventory, sync: { state: 'deferred' } }
-            : { ok: true, sync: { state: 'updated', credential: 'kept' } } };
+      if (path.endsWith('/backend')) {
+        if (options.method === 'POST') return switched.promise;
+        return ++backendReads === 1 ? ready.promise : response({ ok: true, backend: { ...GATEWAY_BACKEND, gateway: 'hub' } });
+      }
+      if (options.method === 'GET') return ++modelReads === 1 ? response(inventory) : readback.promise;
+      return body.action === 'refresh' ? refreshed.promise : response({ ok: true, sync: { state: 'updated', credential: 'kept' } });
     },
   });
-  await button(collectByType(app.renderCard(), 'button'), 'workbuddy2api-hub').props.onClick();
+  const bar = () => collectByType(backendSection(app.renderCard()), 'progress')[0];
+  assert.equal(bar(), undefined);
+  const switching = button(collectByType(app.renderCard(), 'button'), 'workbuddy2api-hub').props.onClick();
+  assert.match(bar().props['aria-label'], /正在切换到 workbuddy2api-hub，等它启动/);
+  assert.equal('value' in bar().props, false, '不提供虚假的百分比，使用原生不定进度');
+  switched.resolve(response({ ok: true, state: 'switched' }));
+  await new Promise((done) => setImmediate(done));
+  assert.match(bar().props['aria-label'], /等它启动/);
+  ready.resolve(response({ ok: true, backend: { ...GATEWAY_BACKEND, gateway: 'hub' } }));
+  await new Promise((done) => setImmediate(done));
+  assert.match(bar().props['aria-label'], /已启动，正在同步模型/);
+  refreshed.resolve(response({ ...inventory, sync: { state: 'deferred' } }));
+  await new Promise((done) => setImmediate(done));
+  assert.match(bar().props['aria-label'], /正在刷新.*状态和模型列表/);
+  readback.resolve(response(inventory));
+  await switching;
+  assert.equal(bar(), undefined, '最终目录回读完成后才收起进度');
   assert.deepEqual(calls.filter((call) => call.method === 'POST').map((call) => call.body), [
     { action: 'gateway', gateway: 'hub' }, { action: 'refresh', gateway: 'hub' }, { gateway: 'hub', enabled: true },
   ]);
   assert.equal(calls.at(-1).method, 'GET', '保存后回读最终目录');
   assert.match(collectText(app.renderCard()).join('|'), /已切换到 workbuddy2api-hub，模型、地址和凭据已自动保存并同步/);
+});
+
+test('后端切换异常、未安装或同步失败时收起进度，保留结果提示', async () => {
+  for (const scenario of ['rejected', 'network-error', 'not-installed', 'sync-failed']) {
+    const post = Promise.withResolvers();
+    const response = (payload) => ({ ok: true, json: async () => payload });
+    const app = boot(gatewayStates({ ...GATEWAY_BACKEND, gateway: 'wb2api' }), {
+      fetchImpl: async (path, options) => {
+        if (path.endsWith('/backend')) return options.method === 'POST' ? post.promise
+          : response({ ok: true, backend: { ...GATEWAY_BACKEND, gateway: 'hub', exeExists: scenario !== 'not-installed' } });
+        return response(options.method === 'GET' ? { ok: true, models: ROWS } : { ok: false, reason: 'sync failed' });
+      },
+    });
+    const bar = () => collectByType(backendSection(app.renderCard()), 'progress')[0];
+    const switching = button(collectByType(app.renderCard(), 'button'), 'workbuddy2api-hub').props.onClick();
+    assert.ok(bar(), scenario);
+    if (scenario === 'network-error') post.reject(new Error('network failed'));
+    else post.resolve(response(scenario === 'rejected' ? { ok: false, reason: 'switch rejected' } : { ok: true, state: 'switched' }));
+    await switching;
+    assert.equal(bar(), undefined, scenario);
+    const expected = { rejected: /switch rejected/, 'network-error': /network failed/, 'not-installed': /还没安装/, 'sync-failed': /自动同步未完成.*sync failed/ }[scenario];
+    assert.match(collectText(app.renderCard()).join('|'), expected);
+  }
 });
 
 test('切换后的自动同步：关闭同步、空账号池和保存失败都有明确状态，不误报成功', async () => {

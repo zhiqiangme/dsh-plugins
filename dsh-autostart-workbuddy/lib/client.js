@@ -455,6 +455,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       gatewayCredentialFailed: '网关凭据未能保存，请检查 DSH 凭据服务后重试。',
       gatewayNoAccounts: '后端已切换，但账号池为空；添加可用账号后再同步模型。',
       gatewayWaiting: '正在切换到 {name}，等它启动…',
+      gatewaySyncing: '{name} 已启动，正在同步模型…',
+      gatewayRefreshing: '正在刷新 {name} 的状态和模型列表…',
       gatewayNotInstalled: '已切换到 {name}，但它还没安装：请在下方点「安装」。',
       gatewayTimeout: '已切换到 {name}，但 {seconds} 秒内没等到它就绪；稍后可点模型区的「重试」或「刷新」。',
       gatewayHubHint: 'hub 一次只服务一个出口（国内 / 国际），跟随 hub 看板顶部的出口开关。CN 与 GL 的勾选分开保存（与 wb2api 的 cn: / global: 共用），在看板切换出口后，DSH 的模型列表几秒内自动换成那一组。',
@@ -627,6 +629,8 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       gatewayCredentialFailed: 'Gateway credentials could not be saved. Check the DSH credentials service and retry.',
       gatewayNoAccounts: 'The gateway switched, but its account pool is empty. Add a usable account before syncing models.',
       gatewayWaiting: 'Switching to {name}, waiting for it to start…',
+      gatewaySyncing: '{name} has started; synchronizing models…',
+      gatewayRefreshing: 'Refreshing the status and model list for {name}…',
       gatewayNotInstalled: 'Switched to {name}, but it is not installed yet: click "Install" below.',
       gatewayTimeout: 'Switched to {name}, but it was not ready within {seconds} s; try "Retry" or "Refresh" in the model list later.',
       gatewayHubHint: 'The hub serves one exit at a time (China or international), following the exit switch at the top of the hub dashboard. CN and GL selections are saved separately (shared with wb2api\'s cn: / global: ids); after you switch the exit in the dashboard, the DSH model list changes to that set within seconds.',
@@ -1786,7 +1790,12 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
             return;
           }
           const outcome = payload.state === 'switched' ? await waitForGateway(gateway) : 'ready';
-          const sync = outcome === 'ready' ? await syncGatewayModels(gateway) : undefined;
+          let sync;
+          if (outcome === 'ready') {
+            setGatewaySwitch({ busy: gateway, kind: 'ok', text: t('gatewaySyncing', { name: label }) });
+            sync = await syncGatewayModels(gateway);
+          }
+          setGatewaySwitch({ busy: gateway, kind: 'ok', text: t('gatewayRefreshing', { name: label }) });
           await loadBackend();
           await load(false);
           const syncFailed = sync?.state === 'failed' || sync?.state === 'credential-failed';
@@ -2328,7 +2337,13 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
                 ),
               ),
               currentGateway === 'hub' ? h('p', { className: 'dsm-wb-hint' }, t('gatewayHubHint')) : null,
-              wbNotice('gatewayNotice', gatewaySwitch),
+              gatewaySwitch ? h('div', { key: 'gatewayStatus', className: 'dsm-wb-stack', role: 'status' },
+                wbNotice('gatewayNotice', gatewaySwitch),
+                // 切换与冷启动没有可靠的百分比，用不定进度；最终结果移除 busy 后一并收起。
+                gatewaySwitch.busy ? h('progress', {
+                  className: 'dsm-wb-backend-progress', 'aria-label': gatewaySwitch.text,
+                }) : null,
+              ) : null,
             ),
           );
         }
