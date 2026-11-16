@@ -2,7 +2,7 @@
  * GitHub Release 通道：查最新 release、挑资产、下载、核对 checksums。
  *
  * 为什么更新源是 Release 而不是 main 分支：main 随时会动，而且不带校验和；
- * release 是 CI 打包好的产物 + `checksums.txt`，能校验、能固定版本、能回滚。
+ * release 是 CI 打包好的产物，可用校验和文件或 GitHub 资产摘要校验、固定版本和回滚。
  *
  * 这一层只管网络与字节，不碰文件布局（那是 backend.js 的事），
  * 所以测试可以把它指向本地假服务器，不需要真的访问 GitHub。
@@ -13,11 +13,11 @@
 import { createHash } from 'node:crypto';
 
 /** 上游仓库（wb2api）。hub 网关用自己的仓库，经 `repo` 参数传进来（见 lib/hub.js）。 */
-export const REPO = Object.freeze({ owner: 'linguo2625469', name: 'workbuddy2api-panel' });
+export const REPO = Object.freeze({ owner: 'misakano7545', name: 'workbuddy2api-panel' });
 
 export const DEFAULT_API_BASE = 'https://api.github.com';
 
-/** 我们只吃 Windows 版产物；命名形如 `wb2api-panel-v1.13.0-windows-amd64.zip`。 */
+/** 我们只吃 Windows 版产物；兼容日期版本 `wb2api-panel-2026.11.15.2246-windows-amd64.zip`。 */
 export const WINDOWS_ASSET_PATTERN = /-windows-amd64\.zip$/i;
 
 /** 校验和文件名。 */
@@ -106,7 +106,10 @@ export async function fetchLatestRelease({ env, apiBase = DEFAULT_API_BASE, time
   const assets = Array.isArray(release.assets)
     ? release.assets
         .filter((asset) => asset && typeof asset.name === 'string' && typeof asset.browser_download_url === 'string')
-        .map((asset) => ({ name: asset.name, url: asset.browser_download_url, size: Number(asset.size) || 0 }))
+        .map((asset) => ({
+          name: asset.name, url: asset.browser_download_url, size: Number(asset.size) || 0,
+          ...(typeof asset.digest === 'string' ? { digest: asset.digest } : {}),
+        }))
     : [];
 
   return {
@@ -173,12 +176,23 @@ export async function downloadAsset(asset, { env, timeoutMs = 120_000, onProgres
 }
 
 /**
- * 取同一 release 里的校验和文件；没有就返回空表（调用方据此决定是否强制校验）。
+ * 取同一 release 的校验信息；没有文件且未允许资产摘要时返回空表，由安装器拒绝安装。
  * `names` 按先后找第一个存在的（hub 同时发 checksums.txt 与 SHA256SUMS，内容一致）。
+ * wb2api 新上游只上传 ZIP，可显式允许使用 GitHub Release API 给出的 SHA-256 摘要。
+ * 已有校验文件时仍以文件为准；下载失败或内容不全不能靠摘要绕过。
  */
-export async function fetchChecksums(release, { env, apiBase = DEFAULT_API_BASE, timeoutMs, names = [CHECKSUMS_NAME], signal } = {}) {
+export async function fetchChecksums(release, { env, apiBase = DEFAULT_API_BASE, timeoutMs, names = [CHECKSUMS_NAME], allowAssetDigests = false, signal } = {}) {
   const asset = names.map((name) => (release.assets ?? []).find((item) => item.name === name)).find(Boolean);
-  if (!asset) return new Map();
+  if (!asset) {
+    const map = new Map();
+    if (allowAssetDigests) {
+      for (const item of release.assets ?? []) {
+        const digest = /^sha256:([0-9a-f]{64})$/i.exec(item.digest ?? '');
+        if (digest) map.set(item.name, digest[1].toLowerCase());
+      }
+    }
+    return map;
+  }
   try {
     const response = await fetch(asset.url, { headers: requestHeaders(env), signal: requestSignal(signal, timeoutMs ?? 30_000) });
     if (!response.ok) throw new Error(`返回 ${response.status}`);
@@ -196,10 +210,10 @@ export async function fetchChecksums(release, { env, apiBase = DEFAULT_API_BASE,
 export function verifyChecksum(buffer, assetName, checksums) {
   const actual = sha256(buffer);
   if (!checksums || checksums.size === 0) {
-    return { ok: false, reason: 'release 没有提供 checksums.txt，拒绝安装未校验的产物', actual };
+    return { ok: false, reason: 'release 没有提供可用的 SHA-256 校验信息，拒绝安装未校验的产物', actual };
   }
   const expected = checksums.get(assetName);
-  if (!expected) return { ok: false, reason: `checksums.txt 里没有 ${assetName}`, actual };
+  if (!expected) return { ok: false, reason: `SHA-256 校验信息里没有 ${assetName}`, actual };
   if (expected !== actual) {
     return { ok: false, reason: `sha256 不匹配（期望 ${expected}，实际 ${actual}）`, actual, expected };
   }

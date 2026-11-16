@@ -97,13 +97,13 @@ test('hubPaths：hub 在插件数据根下单独一个目录，账号与用量�
   assert.equal(paths.usage, join(root, 'hub', 'data', 'usage'));
 });
 
-test('gateway：缺省及非法值退回 hub，显式 wb2api 仍可用', () => {
+test('gateway：缺省及非法值退回 wb2api，显式 hub 仍可用', () => {
   assert.equal(normalizeGateway('hub'), 'hub');
   assert.equal(normalizeGateway('wb2api'), 'wb2api');
   for (const value of [undefined, null, '', 'HUB', 'bad', 0, {}]) {
-    assert.equal(normalizeGateway(value), 'hub');
+    assert.equal(normalizeGateway(value), 'wb2api');
   }
-  assert.equal(gatewayDriver().id, 'hub');
+  assert.equal(gatewayDriver().id, 'wb2api');
   assert.equal(gatewayDriver('hub').id, 'hub');
   assert.equal(gatewayDriver({ gateway: 'wb2api' }).panelPath, '/panel');
   assert.equal(gatewayDriver('hub').panelPath, '/');

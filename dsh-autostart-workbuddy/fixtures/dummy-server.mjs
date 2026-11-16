@@ -22,6 +22,7 @@
  *                              设成别的值可模拟"资产与 tag 对不上"）
  *   TEST_RELEASE_BAD_CHECKSUM=1  故意给错的 sha256
  *   TEST_RELEASE_NO_CHECKSUMS=1  不提供 checksums.txt
+ *   TEST_RELEASE_ASSET_DIGEST=1  提供 GitHub 资产 SHA-256 摘要（新 wb2api 发布方式）
  *   TEST_RELEASE_FAIL_DOWNLOAD=1 资产下载返回 500
  *
  * http-hub-release 专用：
@@ -124,7 +125,10 @@ async function startFakeRelease() {
 
     if (url.endsWith('/releases/latest')) {
       const assets = [
-        { name: assetName, size: zip.length, browser_download_url: `${origin}/assets/${assetName}` },
+        {
+          name: assetName, size: zip.length, browser_download_url: `${origin}/assets/${assetName}`,
+          ...(process.env.TEST_RELEASE_ASSET_DIGEST === '1' ? { digest: `sha256:${servedSha}` } : {}),
+        },
         { name: `wb2api-panel-${tag}-linux-amd64.tar.gz`, size: 11, browser_download_url: `${origin}/assets/linux` },
       ];
       if (process.env.TEST_RELEASE_NO_CHECKSUMS !== '1') {

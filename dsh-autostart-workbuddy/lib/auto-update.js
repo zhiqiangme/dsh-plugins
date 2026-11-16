@@ -41,6 +41,20 @@ const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000];
 
 const HOUR_MS = 60 * 60 * 1000;
 
+/** 后端另有四段日期版本；插件自身的 npm 版本比较仍遵循三段 SemVer。 */
+export function compareBackendVersions(a, b) {
+  const dateVersion = /^v?\d+\.\d+\.\d+\.\d+$/;
+  if (!dateVersion.test(String(a ?? '').trim()) && !dateVersion.test(String(b ?? '').trim())) return compareVersions(a, b);
+  const parse = (value) => /^v?(\d+\.\d+\.\d+(?:\.\d+)?)$/.exec(String(value ?? '').trim())?.[1].split('.').map(Number);
+  const left = parse(a), right = parse(b);
+  if (!left || !right) return Number.NaN;
+  for (let index = 0; index < 4; index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference) return difference;
+  }
+  return 0;
+}
+
 /** 下载阶段的这些失败说明包本身有问题，同一版本不再自动重试；网络错误（抛异常）不在此列，下一轮照常重试。 */
 const PERMANENT_FAILURES = new Set(['verify-failed', 'extract-failed', 'binary-unknown', 'binary-mismatch']);
 
@@ -89,7 +103,7 @@ function removeStaged(staged) {
 function dropStalePending(paths, state, local) {
   const pending = state.pending;
   if (!pending) return state;
-  const order = compareVersions(pending.tag, local?.tag);
+  const order = compareBackendVersions(pending.tag, local?.tag);
   if ((Number.isNaN(order) || order > 0) && existsSync(pending.staged?.path ?? '')) return state;
   removeStaged(pending.staged);
   const next = { ...state, pending: null };
@@ -100,7 +114,7 @@ function dropStalePending(paths, state, local) {
 /** 手动检查 / 安装成功后同步自动更新状态，不联网，也不把手动安装记成自动安装。 */
 export function recordUpdateCheck(paths, { local, latest }, now = Date.now()) {
   const state = dropStalePending(paths, readAutoState(paths), local);
-  const upToDate = compareVersions(latest?.tag, local?.tag) <= 0;
+  const upToDate = compareBackendVersions(latest?.tag, local?.tag) <= 0;
   writeAutoState(paths, {
     ...state,
     failed: state.failed?.tag === local?.tag ? null : state.failed,
@@ -118,8 +132,8 @@ export function evaluateCandidate({ latest, local, autoState, delayHours = DEFAU
   const tag = latest?.tag;
   if (!tag) return { eligible: false, reason: 'no-release' };
   const skip = (reason, extra) => ({ eligible: false, reason, tag, ...extra });
-  // 版本号比不出先后（没有安装记录、tag 不是 x.y.z）就不动：宁可不装，也不能把新的换成旧的。
-  const order = compareVersions(tag, local?.tag);
+  // 同时接受旧三段版本与新上游的四段日期版本；认不出的版本仍不自动覆盖。
+  const order = compareBackendVersions(tag, local?.tag);
   if (!local?.tag || Number.isNaN(order)) return skip('unknown-local');
   if (order <= 0) return skip('up-to-date');
   if (local.drifted) return skip('drifted');

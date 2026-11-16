@@ -31,6 +31,7 @@ import {
   fetchChecksums,
   fetchLatestRelease,
   pickWindowsAsset,
+  REPO,
   verifyChecksum,
 } from './release.js';
 import { isFile, probeTcp, resolveDshHome } from './services.js';
@@ -353,7 +354,8 @@ function readReleaseCache(paths, ttlMs, force, now) {
   if (force) return undefined;
   try {
     const cached = JSON.parse(readFileSync(paths.releaseCache, 'utf8'));
-    if (!cached?.fetchedAt || !cached?.latest?.tag) return undefined;
+    // 换维护分支后不能继续使用旧仓库的 Release 缓存。
+    if (cached?.repo !== `${REPO.owner}/${REPO.name}` || !cached?.fetchedAt || !cached?.latest?.tag) return undefined;
     const age = now - Date.parse(cached.fetchedAt);
     if (!Number.isFinite(age) || age > ttlMs) return undefined;
     return cached.latest;
@@ -368,7 +370,7 @@ function writeReleaseCache(paths, latest, now) {
   if (!existsSync(paths.root)) return;
   try {
     mkdirSync(paths.cache, { recursive: true });
-    writeFileSync(paths.releaseCache, `${JSON.stringify({ fetchedAt: new Date(now).toISOString(), latest }, null, 2)}\n`);
+    writeFileSync(paths.releaseCache, `${JSON.stringify({ repo: `${REPO.owner}/${REPO.name}`, fetchedAt: new Date(now).toISOString(), latest }, null, 2)}\n`);
   } catch {
     /* 缓存写不进去不影响功能，下次重新查即可 */
   }
@@ -558,7 +560,7 @@ export async function prepareUpdate({ paths, env = process.env, apiBase, logger,
     env, signal, onProgress: onProgress && ((received, total) => onProgress({ phase: 'downloading', received, total })),
   });
   onProgress?.({ phase: 'verifying' });
-  const checksums = await fetchChecksums(latest, { env, apiBase, signal });
+  const checksums = await fetchChecksums(latest, { env, apiBase, allowAssetDigests: true, signal });
   const verified = verifyChecksum(archive, asset.name, checksums);
   if (!verified.ok) return { ok: false, state: 'verify-failed', reason: verified.reason, latest, asset: asset.name };
 

@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { autoUpdateStatus, createAutoUpdater, evaluateCandidate, readAutoState } from '../lib/auto-update.js';
+import { autoUpdateStatus, compareBackendVersions, createAutoUpdater, evaluateCandidate, readAutoState } from '../lib/auto-update.js';
 import { applyUpdate, backendPaths, readBuildInfo, readManifest, rollbackBackend, writeManifest } from '../lib/backend.js';
 import { resolvePluginConfig } from '../lib/config.js';
 import { gatewayDriver, withBackendLock } from '../lib/gateway.js';
@@ -109,6 +109,16 @@ function updaterFor(resolved, service, extra = {}) {
   return { updater, logger };
 }
 
+test('后端日期版本按数字比较，兼容旧版本升级、同日更新与跨日更新，阻止降级', () => {
+  assert.ok(compareBackendVersions('v2026.11.15.2246', 'v1.13.0') > 0);
+  assert.ok(compareBackendVersions('v2026.11.15.2246', 'v2026.11.15.930') > 0);
+  assert.ok(compareBackendVersions('v2026.11.16.0010', 'v2026.11.15.2359') > 0);
+  assert.equal(compareBackendVersions(' v2026.11.15.2246 ', '2026.11.15.2246'), 0);
+  assert.ok(Number.isNaN(compareBackendVersions('nightly', 'v2026.11.15.2246')));
+  const latest = { tag: 'v2026.11.15.2246', publishedAt: '2026-10-18T00:00:00Z' };
+  assert.equal(evaluateCandidate({ latest, local: { tag: 'v2026.11.16.0010' }, now: NOW }).reason, 'up-to-date');
+});
+
 test('evaluateCandidate：只认比当前新、发布满冷却期、没被回滚 / 失败过、当前版本可识别的正式版', () => {
   const latest = { tag: 'v1.8.0', publishedAt: '2026-10-18T00:00:00Z' };
   const local = { tag: 'v1.7.14', source: 'github-release', drifted: false };
@@ -139,8 +149,8 @@ test('evaluateCandidate：只认比当前新、发布满冷却期、没被回滚
   assert.deepEqual(evaluateCandidate({ latest, local, now: readyAt - 1, delayHours: 0 }), { eligible: true }, '冷却期可以设成 0');
 });
 
-test('wb2api：后台只下载暂存不动 current/，下次启动先换上；回滚过的版本不再自动装回去', async () => {
-  const release = startFixture({ TEST_MODE: 'http-release' });
+test('wb2api 日期版本与资产摘要：后台暂存、下次启动换上、回滚后不再自动装回去', async () => {
+  const release = startFixture({ TEST_MODE: 'http-release', TEST_RELEASE_TAG: 'v2026.11.15.2246', TEST_RELEASE_NO_CHECKSUMS: '1', TEST_RELEASE_ASSET_DIGEST: '1' });
   const health = startFixture({ TEST_MODE: 'http-health' });
   const apiBase = `http://127.0.0.1:${await release.ready}`;
   const { paths, resolved } = wb2apiSetup(apiBase);
@@ -152,10 +162,10 @@ test('wb2api：后台只下载暂存不动 current/，下次启动先换上；�
     assert.equal(readBuildInfo(paths.exe).revision, OLD_REVISION, '后台下载不碰正在用的程序');
     assert.deepEqual(service.calls, [], '后台下载不停服务');
     const pending = readAutoState(paths).pending;
-    assert.equal(pending.tag, 'v9.9.9');
+    assert.equal(pending.tag, 'v2026.11.15.2246');
     assert.ok(existsSync(pending.staged.path), '新版本暂存在 cache/');
     assert.ok(logger.lines.some((line) => line.includes('下次启动 DSH 时自动安装')), logger.lines.join('\n'));
-    assert.equal(autoUpdateStatus(resolved).pending.tag, 'v9.9.9', '面板能看到已下载待装');
+    assert.equal(autoUpdateStatus(resolved).pending.tag, 'v2026.11.15.2246', '面板能看到已下载待装');
 
     // 同一版本已经暂存：下一轮不再下载（release 服务器停了也照样答，走查询缓存）。
     release.stop();
@@ -173,11 +183,11 @@ test('wb2api：后台只下载暂存不动 current/，下次启动先换上；�
     const state = readAutoState(paths);
     assert.equal(state.pending, null);
     assert.equal(state.last.from, 'v1.0.0');
-    assert.equal(state.last.to, 'v9.9.9');
+    assert.equal(state.last.to, 'v2026.11.15.2246');
     assert.equal(state.lastCheck.reason, 'up-to-date');
     assert.equal(await updater.applyPending(), undefined, '换完就没有待装的了');
 
-    // 用户觉得新版本不好，手动回滚：之后的检查跳过 v9.9.9，不会又被自动装回去。
+    // 用户手动回滚后，之后的检查不会再次自动装回这个日期版本。
     const rolled = await rollbackBackend({ paths, service });
     assert.equal(rolled.ok, true, JSON.stringify(rolled));
     const skipped = await updater.tick();

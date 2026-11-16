@@ -41,7 +41,7 @@ const FIXTURE = fileURLToPath(new URL('../fixtures/dummy-server.mjs', import.met
 const OLD_REVISION = 'a'.repeat(40);
 const NEW_COMMIT = 'f'.repeat(40);
 
-test('wb2api 专用 CLI 在默认网关为 hub 时仍读取 wb2api 目录', () => {
+test('wb2api 专用 CLI 读取 wb2api 目录', () => {
   const root = mkdtempSync(join(tmpdir(), 'wb-cli-'));
   const result = spawnSync(process.execPath, [fileURLToPath(new URL('../lib/backend-cli.js', import.meta.url))], {
     env: { ...process.env, DSH_WORKBUDDY_BACKEND_ROOT: root }, encoding: 'utf8', timeout: 10_000,
@@ -237,6 +237,20 @@ test('checkForUpdate：识别可更新，并在 TTL 内命中缓存', async () =
   }
 });
 
+test('更换 wb2api 维护分支后忽略旧仓库的 Release 缓存', async (t) => {
+  const release = startFixture({ TEST_MODE: 'http-release' });
+  t.after(() => release.stop());
+  const { paths } = tempBackendRoot();
+  mkdirSync(paths.cache, { recursive: true });
+  for (const repo of [undefined, 'linguo2625469/workbuddy2api-panel']) {
+    writeFileSync(paths.releaseCache, JSON.stringify({ repo, fetchedAt: new Date().toISOString(), latest: { tag: 'v1.13.0', commit: OLD_REVISION } }));
+    const checked = await checkForUpdate({ paths, apiBase: `http://127.0.0.1:${await release.ready}` });
+    assert.equal(checked.fromCache, false);
+    assert.equal(checked.latest.tag, 'v9.9.9');
+    assert.equal(JSON.parse(readFileSync(paths.releaseCache, 'utf8')).repo, 'misakano7545/workbuddy2api-panel');
+  }
+});
+
 test('applyUpdate：下载→校验→切换→健康检查→写清单，旧版本进历史目录', async () => {
   const release = startFixture({ TEST_MODE: 'http-release' });
   const health = startFixture({ TEST_MODE: 'http-health' });
@@ -297,7 +311,7 @@ test('applyUpdate：release 没有 checksums → 拒绝安装未校验的产物'
     const result = await applyUpdate({ paths, env: {}, apiBase, service: fakeService(await freePort()) });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'verify-failed');
-    assert.match(result.reason, /没有提供 checksums/);
+    assert.match(result.reason, /没有提供可用的 SHA-256/);
   } finally {
     release.stop();
   }

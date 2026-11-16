@@ -1,14 +1,14 @@
 # @zhiqiangme/dsh-autostart-workbuddy
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件：DSH 启动时自动拉起
-**WorkBuddy2API Hub**（[workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)），
+**WorkBuddy2API Panel**（[misakano7545/workbuddy2api-panel](https://github.com/misakano7545/workbuddy2api-panel)），
 不用再手动启动它；还可以接管 DSH 里 workbuddy 的模型列表、在插件页管理后端版本。
-后端网关也可以换成 [workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel) 的 `wb2api.exe`（见[后端网关](#后端网关)），二选一。
+后端网关也可以换成 [WorkBuddy2API Hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)（见[后端网关](#后端网关)），二选一。
 
 | 服务 | 端点 | 作用 |
 | --- | --- | --- |
-| WorkBuddy2API Hub（默认） | `127.0.0.1:7863` | profile 里 `workbuddy` provider 的上游（`http://127.0.0.1:7863/v1/`） |
-| WorkBuddy Panel（`wb2api.exe`，可选） | `127.0.0.1:7863` | 同上；与 hub 用同一个端口，同一时刻只跑其中一个 |
+| WorkBuddy Panel（`wb2api.exe`，默认） | `127.0.0.1:7863` | profile 里 `workbuddy` provider 的上游（`http://127.0.0.1:7863/v1/`） |
+| WorkBuddy2API Hub（可选） | `127.0.0.1:7863` | 同上；与 wb2api 用同一个端口，同一时刻只跑其中一个 |
 
 ## 行为
 
@@ -26,16 +26,16 @@
 
 插件可以托管两种 OpenAI 兼容网关，在插件卡片「后端」页签最上面的「后端网关」里切换（写本插件的 `config.gateway`）：
 
-| | wb2api | workbuddy2api-hub（默认） |
+| | wb2api（默认） | workbuddy2api-hub |
 | --- | --- | --- |
-| 上游 | [linguo2625469/workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel) | [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) |
+| 上游 | [misakano7545/workbuddy2api-panel](https://github.com/misakano7545/workbuddy2api-panel) | [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) |
 | 程序 | 单个 `wb2api.exe`（Go） | 便携包整目录：脚本 + 自带的 CPython 运行时（约 33MB） |
 | 目录 | `wb2api/backend/`、`wb2api/data/` | `hub/backend/`、`hub/data/`（账号与用量） |
 | 版本身份 | exe 里的 Go `vcs.revision` | 包内 `release-manifest.json` 的 tag |
 | 模型 id | `cn:xxx` / `global:xxx`，两个出口同时列出 | 不带前缀，一次只列一个出口；国内/国际/CodeArts 跟随 hub 看板顶部的出口开关，切换后 DSH 的模型列表自动跟着换；也可以开双区域同时用多组（见下） |
 | 管理面板 | `http://127.0.0.1:7863/panel`，用 `config.json` 的 `api_key` 进 | `http://127.0.0.1:7863/`，用面板密码进（默认 `admin`，登录后请改） |
 
-新安装且未指定 `gateway` 时默认使用 hub；已有配置显式指定 `gateway: wb2api` 时继续使用 wb2api。两种网关仍可在插件卡片中切换。
+未指定 `gateway` 时默认使用 misakano7545 分支的 wb2api；显式指定 `gateway: hub` 时继续使用 Hub。两种网关仍可在插件卡片中切换。Hub 原仓库目前公开访问返回 404，保留已有安装的启动能力，安装与更新可能失败。两种网关的账号目录独立，切换后需确认账号已在目标后端中导入或登录。
 
 账号授权分别保存在 `wb2api/data/auths/*.json` 与 `hub/data/accounts/*.json`。首次由插件启动 hub 时，会自动读取 wb2api 授权（遵循其 `config.json` 的 `auth_dir`，缺省使用 `wb2api/data/auths/`），将 `account` / `auth` 嵌套结构转换为 hub 的扁平格式。hub 中已经存在的账号按 uid 跳过，保留后来登录的新令牌与设置。只迁移授权，之后两边各自维护文件及刷新令牌，不再自动同步；wb2api 原文件不会修改。
 
@@ -255,7 +255,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 - id: dsh-autostart-workbuddy
   name: '@zhiqiangme/dsh-autostart-workbuddy'   # 包名以 @ 开头，YAML 里必须加引号
   config:
-    gateway: hub                # 默认值；需要旧网关时改为 wb2api
+    gateway: wb2api             # 默认值；需要 Hub 时显式改为 hub
     enabled: true
     readinessTimeoutMs: 30000
     stopTimeoutMs: 5000
@@ -269,7 +269,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
     backend:
       autoUpdate: true          # 自动更新后端（默认开）：后台下载，下次启动 DSH 时换上
       autoUpdateDelayHours: 2   # 发布满多少小时才自动装
-      keepVersions: 2           # 保留几个历史版本供回滚（wb2api 默认 3）
+      keepVersions: 3           # 保留几个历史版本供回滚（hub 默认 2）
 ```
 
 | 字段 | 说明 |
@@ -285,7 +285,7 @@ dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
 | `logName` | 日志文件名前缀，hub 固定 `hub`，wb2api 默认 `wb2api` |
 | `readinessTimeoutMs` | 等待端口就绪的上限，默认 30000 |
 | `stopTimeoutMs` | 停止时等待退出的上限，默认 5000；超时后强制结束 |
-| `gateway` | 托管哪种网关：`hub`（默认）或 `wb2api`；非法值按 `hub` 处理。`hub` 时 `exe` / `cwd` / `args` 不生效 |
+| `gateway` | 托管哪种网关：`wb2api`（默认）或 `hub`；非法值按 `wb2api` 处理。`hub` 时 `exe` / `cwd` / `args` 不生效 |
 | `cnChatBase` | 国内版上游 base，默认 `https://www.workbuddy.cn`；空串 = 不管这一项。wb2api：拉起前写进 `config.json` 的 `cn.chat_base`；hub：经环境变量 `WB_CN_CHAT_UPSTREAM` 传入 |
 
 **为什么要写 `cn.chat_base`**：wb2api 内置的国内版上游 `copilot.tencent.com` 对海外出口（例如 Clash 全局模式 + TUN）
@@ -362,7 +362,7 @@ vcs.time=2026-10-08T00:49:09Z
 ### 更新流程
 
 1. 取最新 release → 选中 `*-windows-amd64.zip`
-2. 下载到 `wb2api/cache/`，算 sha256 与 release 的 `checksums.txt` 比对——**没有校验和就拒绝安装**
+2. 下载到 `wb2api/cache/`，算 SHA-256 与 release 的 `checksums.txt` 比对；未提供校验文件时使用 GitHub Release API 的资产 `digest`（`sha256:...`）——**两者都缺失、格式不正确或摘要不匹配均拒绝安装**
 3. 解压出 `wb2api.exe`，校验它自称的 `vcs.revision` 等于目标 tag 的 commit
 4. 停后端（Windows 下运行中的 exe 被锁）→ 旧版本归档到 `wb2api/backend/versions/<旧版本>/` → 新 exe 落到 `current/`
 5. 起后端 → 探 `/healthz`（必须返回 `service: workbuddy2api`）
@@ -387,9 +387,9 @@ vcs.time=2026-10-08T00:49:09Z
 
 什么样的版本会自动装（不满足的只写日志、卡片上说明原因；手动点「更新」不受这些限制）：
 
-- GitHub 的 `releases/latest`（本来就不含预发布），而且版本号比当前的新——不会降级；
+- GitHub 的 `releases/latest`（本来就不含预发布），而且版本号比当前的新——不会降级；兼容旧三段版本和 misakano 分支的四段日期版本（如 `v2026.11.15.2246`）；
 - 发布满 `autoUpdateDelayHours`（默认 2 小时）：给上游留出短暂的撤回或补丁时间；
-- 当前版本认得出（有安装记录、tag 是 `x.y.z`），而且没被手动换过：你自己换上的程序不会被覆盖；
+- 当前版本认得出（有安装记录、tag 是三段版本或四段日期版本），而且没被手动换过：你自己换上的程序不会被覆盖；
 - 你手动「回滚」过的那个版本不会再被自动装回去，更新的版本照常；
 - 自动安装失败过的版本（包校验不过，或换上后健康检查不过已退回）不再自动重试。下载时的网络错误不算：失败后按 1、5、15 分钟退避重试，
   连续失败时最多每 30 分钟重试（不超过 `checkTtlMs`）；成功后恢复正常检查周期。冷却期内查到的新版本会在冷却期结束时再查，更新锁被占用则约 1 分钟后再试。
