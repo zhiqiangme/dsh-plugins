@@ -122,8 +122,8 @@ test('展示名：模型名 + CN / GL + 倍率，且不重复追加同款倍率'
   assert.equal(modelDisplayName({ id: 'cn:deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash', credits: 'x0.11' }), 'Deepseek-V4.1-Flash CN 0.11');
   assert.equal(modelDisplayName({ id: 'global:hy4-preview-f', name: 'Hy4 preview', credits: 'x0.00' }), 'Hy4 preview GL Free');
   assert.equal(modelDisplayName({ id: 'cn:hy4-preview-f', name: 'Hy4 preview Free' }), 'Hy4 preview CN Free');
-  assert.equal(modelDisplayName({ id: 'cn:hy4-preview-f', name: 'cn:hy4-preview-f' }), 'Hy4-Preview-F CN Free');
-  assert.equal(modelDisplayName({ id: 'global:hy4-preview-f' }), 'Hy4-Preview-F GL Free');
+  assert.equal(modelDisplayName({ id: 'cn:hy4-preview-f', name: 'cn:hy4-preview-f' }), 'Hy4-Preview CN Free');
+  assert.equal(modelDisplayName({ id: 'global:hy4-preview-f' }), 'Hy4-Preview GL Free');
   // 没有域前缀的 id：不加区域标签，但仍补倍率。
   assert.equal(modelDisplayName({ id: 'other:thing', name: 'Thing', credits: 'x0.05' }), 'Thing 0.05');
 });

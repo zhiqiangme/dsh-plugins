@@ -688,7 +688,8 @@ function modelBaseName(model) {
   const bare = raw.replace(/^(?:cn|global|codearts):/, '');
   const bareId = model.id.replace(/^(?:cn|global|codearts):/, '');
   const fallback = !(typeof model.name === 'string' && model.name.trim()) || (raw !== bare && bare === bareId);
-  const base = model.realm === CODEARTS_REALM || fallback ? codeArtsName(bare) : bare;
+  const base = (model.realm === CODEARTS_REALM || fallback ? codeArtsName(bare) : bare)
+    .replace(/\bflash\b/gi, 'Flash').replace(/(\bpreview)-f\b/gi, '$1');
   const suffix = modelCreditsLabel(model);
   return suffix && base.toLowerCase().endsWith(` ${suffix.toLowerCase()}`)
     ? base.slice(0, -suffix.length).trimEnd()
