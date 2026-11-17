@@ -5,7 +5,7 @@ import { AUTO_PREFIX, planAutoRoute, ROUTER_BASE_PATH } from './auto-route.js';
 import { credential, modelEntries } from './models.js';
 import { prepareErrorResponse, prepareJSON, prepareSSE } from './router-stream.js';
 import { ChannelOrder, channelId } from './channel-order.js';
-import { ChannelLoad, SESSION_HEADER } from './channel-load.js';
+import { ChannelLoad, PURPOSE_HEADER, SESSION_HEADER } from './channel-load.js';
 
 export const ROUTER_PATH = `${ROUTER_BASE_PATH}/v1`;
 const MAX_CHAT_BYTES = 32 * 1024 * 1024;
@@ -86,6 +86,7 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
         if (!sameSecret(supplied, key)) return reply(res, 401, 'unauthorized');
         const rawSession = req.headers[SESSION_HEADER];
         const session = typeof rawSession === 'string' && /^[a-f0-9]{64}$/.test(rawSession) ? rawSession : undefined;
+        const title = req.headers[PURPOSE_HEADER] === 'session-title';
         const path = new URL(req.url, 'http://localhost').pathname;
         if (req.method === 'GET' && path === `${ROUTER_PATH}/models`) {
           res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -131,7 +132,8 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
           const attempt = (fresh.length ? fresh : attempts)[0];
           attempts = attempts.filter((row) => row !== attempt);
           triedProviders.add(channelId(attempt));
-          reservation = load.reserve(config.baseURL, session, channelId(attempt));
+          // 标题请求不占名额，也不能覆盖同一会话在执行工具期间保留的主对话渠道。
+          reservation = title ? undefined : load.reserve(config.baseURL, session, channelId(attempt));
           const allocated = reservation;
           const last = attempts.length === 0;
           const generation = channels.generation(order, attempt);
@@ -139,9 +141,10 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
           const failed = (_status, insufficientBalance = false) => {
             // 同一次失败可能同时被流解析和 pipeline 观察到，只后移一次；下游主动取消不算渠道失败。
             if (controller.signal.aborted) return;
-            allocated.release();
+            allocated?.release();
             if (insufficientBalance && !blocked) { blocked = true; penalized = true; channels.exhausted(order, attempt, generation); }
-            else if (!penalized) { penalized = true; channels.failed(order, attempt); }
+            // 标题普通失败只影响本次重试；明确余额不足仍代表整个渠道不可用，沿用当天停用规则。
+            else if (!title && !penalized) { penalized = true; channels.failed(order, attempt); }
           };
           let upstream, prepared;
           const waiting = new AbortController();

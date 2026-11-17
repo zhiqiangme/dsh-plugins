@@ -3,6 +3,7 @@ import { PROVIDER_ID } from './config.js';
 import { ROUTER_BASE_PATH } from './auto-route.js';
 
 export const SESSION_HEADER = 'x-dsh-magpie-session';
+export const PURPOSE_HEADER = 'x-dsh-magpie-purpose';
 export function sessionKey(id) {
   if (!['string', 'number'].includes(typeof id) || String(id).length === 0) return undefined;
   return createHash('sha256').update(String(id)).digest('hex');
@@ -62,7 +63,7 @@ export class ChannelLoad {
   clear() { this.requests.clear(); this.retained.clear(); }
 }
 
-/** 只向插件本机路由传递不可逆会话标识；不会发给 Magpie 上游或其它 provider。 */
+/** 只向插件本机路由传递会话摘要和标题用途；不会发给 Magpie 上游或其它 provider。 */
 export function registerChannelSessions(ctx, manager) {
   const headersOff = ctx.on?.('llm-pi-ai/request-headers', (request, headers, next) => {
     const result = typeof next === 'function' ? next() : headers;
@@ -70,10 +71,14 @@ export function registerChannelSessions(ctx, manager) {
     let url;
     try { url = new URL(request.baseURL); } catch { return result; }
     const id = sessionKey(request.sessionId);
-    if (!id || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    const title = request.purpose === 'session-title';
+    if ((!id && !title) || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
       || (url.pathname !== ROUTER_BASE_PATH && !url.pathname.startsWith(`${ROUTER_BASE_PATH}/`))) return result;
     const outgoing = new Headers(result);
-    outgoing.set(SESSION_HEADER, id);
+    if (id) outgoing.set(SESSION_HEADER, id);
+    // 低思考档位也可能来自正常对话，只依据 DSH 明确声明的标题用途隔离辅助请求。
+    if (title) outgoing.set(PURPOSE_HEADER, 'session-title');
+    else outgoing.delete(PURPOSE_HEADER);
     return outgoing;
   });
   const statusOff = ctx.on?.('agent/status', ({ agent, status }) => {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ChannelLoad, SESSION_HEADER, registerChannelSessions, sessionKey } from '../lib/channel-load.js';
+import { ChannelLoad, PURPOSE_HEADER, SESSION_HEADER, registerChannelSessions, sessionKey } from '../lib/channel-load.js';
 import { PROVIDER_ID } from '../lib/config.js';
 import { fakeHost } from '../fixtures/host.mjs';
 
@@ -59,13 +59,25 @@ test('沿用 DSH 请求头事件，只给插件本机路由注入会话摘要，
   const call = (patch = {}) => hook({ ...request, ...patch }, initial, () => initial);
   const headers = call();
   assert.equal(headers.get(SESSION_HEADER), sessionKey(request.sessionId));
+  assert.equal(headers.has(PURPOSE_HEADER), false);
   assert.equal(headers.get('x-other-plugin'), 'keep');
   assert.equal(initial.has(SESSION_HEADER), false, '不改其它贡献者的原始 Headers');
   assert.notEqual(sessionKey('a real session id'), sessionKey('another session id'));
   for (const patch of [{ provider: 'unrelated' }, { baseURL: 'https://remote.test/plugins/dsh-magpie/router/v1/' },
     { baseURL: 'http://127.0.0.1:3425/v1/' }, { sessionId: undefined }]) assert.equal(call(patch).has(SESSION_HEADER), false);
+  assert.equal(call({ purpose: 'session-title' }).get(PURPOSE_HEADER), 'session-title');
+  const titleWithoutSession = call({ purpose: 'session-title', sessionId: undefined });
+  assert.equal(titleWithoutSession.get(PURPOSE_HEADER), 'session-title', '缺少会话标识也能识别宿主明确声明的标题用途');
+  assert.equal(titleWithoutSession.has(SESSION_HEADER), false);
+  for (const purpose of [undefined, 'agent-loop', 'session-title-other', 'low']) assert.equal(call({ purpose }).has(PURPOSE_HEADER), false);
+  for (const patch of [{ provider: 'unrelated' }, { baseURL: 'https://remote.test/plugins/dsh-magpie/router/v1/' },
+    { baseURL: 'http://127.0.0.1:3425/v1/' }]) assert.equal(call({ purpose: 'session-title', ...patch }).has(PURPOSE_HEADER), false);
+  assert.equal(initial.has(PURPOSE_HEADER), false, '不污染其它贡献者的请求头');
+  const stale = hook(request, new Headers({ [PURPOSE_HEADER]: 'session-title' }), () => new Headers({ [PURPOSE_HEADER]: 'session-title' }));
+  assert.equal(stale.has(PURPOSE_HEADER), false, '正常会话不会继承旧的标题标记');
   enabled = false;
   assert.equal(call().has(SESSION_HEADER), false, '直连上游模式不注入内部标识');
+  assert.equal(call({ purpose: 'session-title' }).has(PURPOSE_HEADER), false);
   const status = host.events.get('agent/status')[0];
   status({ agent: { id: request.sessionId }, status: 'running' });
   assert.equal(released.length, 0);

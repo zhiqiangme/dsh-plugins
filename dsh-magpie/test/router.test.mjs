@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { createMagpieRouter, requestHasImage, requestedEffort } from '../lib/router.js';
 import { ROUTER_PATH } from '../lib/router.js';
 import { resolveConfig } from '../lib/config.js';
-import { SESSION_HEADER, sessionKey } from '../lib/channel-load.js';
+import { PURPOSE_HEADER, SESSION_HEADER, sessionKey } from '../lib/channel-load.js';
 
 const ENDPOINTS = { 'openai-completions': 'chat/completions', 'openai-responses': 'responses', 'anthropic-messages': 'messages' };
 const TWO_ROUTES = [
@@ -63,6 +63,86 @@ test('同时到达且消息相同的对话逐轮均衡分配，超过渠道总�
   for (const res of held) res.end('data: [DONE]\n\n');
   await Promise.all(responses.map((response) => response.text()));
   assert.equal((await (await send(ask())).json()).model, 'a/deepseek-flash', '完成后释放占用');
+});
+
+for (const titleHasSession of [true, false]) test(`标题请求${titleHasSession ? '带原会话标识' : '缺少会话标识'}时，不占名额或覆盖主对话渠道，普通 low 请求仍计数`, async (t) => {
+  const [main, one, two, three] = ['main', 'one', 'two', 'three'].map(sessionKey);
+  const running = new Set([main, one, two, three]);
+  const headers = (session, title = false) => ({ authorization: 'Bearer secret', 'content-type': 'application/json',
+    ...(session ? { [SESSION_HEADER]: session } : {}), ...(title ? { [PURPOSE_HEADER]: 'session-title' } : {}) });
+  let finishTitle;
+  const { calls, send, router } = await setup(t, { runningSessions: () => running, upstream: (_req, res, body) => {
+    if (body.stream) {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"title"}}]}\n\n');
+      finishTitle = () => res.end('data: [DONE]\n\n');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ model: body.model }));
+  } });
+  const low = { ...ask(), reasoning_effort: 'low' };
+  const selected = async (body, session) => (await (await send(body, { headers: headers(session) })).json()).model;
+  assert.equal(await selected({ ...low, model: 'b/deepseek-flash' }, main), 'b/deepseek-flash');
+  const title = await send({ ...low, stream: true }, { headers: headers(titleHasSession ? main : undefined, true) });
+  assert.equal(calls.at(-1).body.model, 'a/deepseek-flash');
+  assert.equal(await selected(low, one), 'a/deepseek-flash', '标题正在执行也不占用 A，主会话仍占 B');
+  running.delete(one); router.releaseSession(one);
+  finishTitle(); await title.text();
+  assert.equal(await selected(low, two), 'a/deepseek-flash', '标题完成后不留下 A 占用，也不把主会话从 B 移到 A');
+  assert.equal(await selected(low, main), 'b/deepseek-flash', '同一主会话排除自身占用，仍避开其它对话的 A');
+  running.delete(main); router.releaseSession(main);
+  assert.equal(await selected(low, three), 'b/deepseek-flash', '普通 low 对话 two 仍占用 A');
+  assert.ok(calls.every((call) => call.headers[SESSION_HEADER] === undefined && call.headers[PURPOSE_HEADER] === undefined), '会话摘要及标题用途均不转发给 Magpie 上游');
+});
+
+for (const failure of ['400', '503', 'json', 'sse-before', 'sse-after', 'disconnect', 'timeout']) test(`标题 ${failure} 失败不后移主对话渠道，保留本次重试及已输出后不重放规则`, async (t) => {
+  let titlePhase = true, finishLate;
+  const { calls, send, router } = await setup(t, { firstOutputTimeoutMs: failure === 'timeout' ? 100 : undefined, upstream: (_req, res, body) => {
+    if (titlePhase && body.model.startsWith('a/')) {
+      if (failure === 'disconnect') return res.destroy();
+      if (failure === 'timeout') return;
+      if (failure === '400' || failure === '503') { res.writeHead(Number(failure)); return res.end('bad request'); }
+      if (failure === 'json') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"error":{"status":503,"message":"title failed"}}'); }
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      if (failure === 'sse-after') {
+        res.write('data: {"choices":[{"delta":{"content":"partial title"}}]}\n\n');
+        finishLate = () => res.end('event: error\ndata: {"error":{"status":503,"message":"title failed"}}\n\n');
+        return;
+      }
+      return res.end('event: error\ndata: {"error":{"status":503,"message":"title failed"}}\n\n');
+    }
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ model: body.model }));
+  } });
+  const title = await send({ ...ask(), reasoning_effort: 'low' }, { headers: {
+    authorization: 'Bearer secret', 'content-type': 'application/json', [PURPOSE_HEADER]: 'session-title',
+  } });
+  finishLate?.();
+  const output = await title.text();
+  assert.equal(title.status, failure === '400' ? 400 : 200);
+  assert.deepEqual(calls.map((call) => call.body.model), failure === '400' || failure === 'sse-after'
+    ? ['a/deepseek-flash'] : ['a/deepseek-flash', 'b/deepseek-flash']);
+  if (failure === 'sse-after') assert.match(output, /partial title/);
+  assert.equal(router.channelStatus().blocked.length, 0);
+  titlePhase = false;
+  assert.equal((await (await send({ ...ask(), reasoning_effort: 'low' })).json()).model, 'a/deepseek-flash', '标题失败不污染下一次普通 low 对话的顺序');
+});
+
+test('标题请求仍遵守明确余额不足当天停用，并避开其它请求已停用的渠道', async (t) => {
+  let insufficient = true;
+  const { calls, send, router } = await setup(t, { upstream: (_req, res, body) => {
+    if (insufficient && body.model.startsWith('a/')) { res.writeHead(400); return res.end('余额不足'); }
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ model: body.model }));
+  } });
+  const titleHeaders = { authorization: 'Bearer secret', 'content-type': 'application/json', [PURPOSE_HEADER]: 'session-title' };
+  assert.equal((await (await send(ask(), { headers: titleHeaders })).json()).model, 'b/deepseek-flash');
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
+  const blocked = router.channelStatus().blocked[0];
+  assert.equal(blocked.id, 'a', '明确余额不足并非标题特有错误，仍停用整个渠道');
+  assert.equal((await (await send(ask())).json()).model, 'b/deepseek-flash');
+  assert.equal((await (await send(ask(), { headers: titleHeaders })).json()).model, 'b/deepseek-flash');
+  insufficient = false;
+  router.recoverChannel(blocked.id, blocked.token);
+  assert.equal((await (await send(ask())).json()).model, 'a/deepseek-flash');
 });
 
 for (const bStopped of [false, true]) test(`A 失败时，B 对话${bStopped ? '已停止则改用 B' : '仍在运行工具则改用 C'}`, async (t) => {
