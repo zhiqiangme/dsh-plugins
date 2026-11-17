@@ -258,18 +258,21 @@ test('图片屏蔽即时保存并保留草稿，可叠加上下文、搜索及�
 });
 
 test('上下文徽标只显示取整档位，实际上下文值不变', () => {
-  const client = clientHarness(view({ hideSmallContext: false, models: [
-    { id: 'a/mimo', name: 'MiMo-V2.6-Pro', contextWindow: 981504 },
-    { id: 'a/pangu', name: 'OpenPangu-2.0-Flash', contextWindow: 524300 },
-    { id: 'a/million', name: 'Million', contextWindow: 1048576 },
-    { id: 'a/k128', name: 'K128', contextWindow: 128000 },
-    { id: 'a/k32', name: 'K32', contextWindow: 32768 },
-    { id: 'a/small', name: 'Small', contextWindow: 12345 },
-  ] }));
+  const cases = [
+    [981504, '1M'], [983040, '1M'], [960000, '1M'], [900000, '1M'], [999999, '1M'],
+    [100000, '100K'], [128000, '100K'], [131072, '100K'], [199999, '100K'],
+    [200000, '200K'], [202752, '200K'], [256000, '200K'], [262144, '200K'], [299999, '200K'],
+    [300000, '300K'], [327680, '300K'], [399999, '300K'],
+    [524288, '500K'], [524300, '500K'], [899999, '800K'],
+    [1000000, '1M'], [1048576, '1M'], [2000000, '2M'],
+    [32768, '32K'], [65536, '64K'], [12345, '12K'],
+  ];
+  const client = clientHarness(view({ hideSmallContext: false, models: cases.map(([contextWindow], index) => ({
+    id: `a/context-${index}`, name: 'Context', contextWindow,
+  })) }));
   const badges = nodes(client.render(), (n) => n.props.className === 'badge' && /^[\d.]+[KM]$/.test(n.children[0]));
-  assert.deepEqual(badges.map((n) => n.children[0]), ['1M', '500K', '1M', '128K', '32K', '12K']);
-  assert.deepEqual(badges.map((n) => n.props.title), ['981504', '524300', '1048576', '128000', '32768', '12345'], '精确值放在悬停提示里');
-  assert.deepEqual(client.states[0].config.models.map((m) => m.contextWindow), [981504, 524300, 1048576, 128000, 32768, 12345], '只改展示，不改保存的上下文');
+  assert.deepEqual(badges.map((n) => [Number(n.props.title), n.children[0]]), cases, '徽标按指定档位显示，悬停仍显示原始精确值');
+  assert.deepEqual(client.states[0].config.models.map((m) => m.contextWindow), cases.map(([value]) => value), '只改展示，不改保存的上下文');
 });
 
 test('自动更新开关在更新页即时保存，等待期间也能关闭，保留未保存草稿', async () => {

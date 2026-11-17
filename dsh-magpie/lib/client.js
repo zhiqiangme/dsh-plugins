@@ -404,11 +404,11 @@ window.__ModuleLoader__.load({
       if (index >= 0 && index < next.length && target >= 0 && target < next.length) next.splice(target, 0, ...next.splice(index, 1));
       return next;
     }
-    // 徽标上的上下文只显示取整后的档位（981.5K → 1M、524.3K → 500K），保存与写入 DSH 的仍是精确值。
-    // 已经是整千或常见二进制档位（128K、200K、32K、64K）时保持原值，避免把常用数字抹成 100K。
+    // 百 K 以上按百 K 向下归档，9xxK 统一显示 1M；仅改徽标，不改保存、过滤或写入 DSH 的精确值。
     function formatTokens(value) {
       if (!value) return '';
       if (value < 1000) return String(value);
+      if (value >= 100_000 && value < 1_000_000) return value >= 900_000 ? '1M' : `${Math.floor(value / 100_000) * 100}K`;
       if (value % 1000 === 0) return value >= 1_000_000 ? `${Math.round(value / 1_000_000)}M` : `${value / 1000}K`;
       if (value % 1024 === 0 && value < 1_000_000) return `${value / 1024}K`;
       const rounded = value >= 100_000 ? Math.round(value / 100_000) * 100_000 : Math.round(value / 1000) * 1000;
