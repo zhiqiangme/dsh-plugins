@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } 
 import { dirname } from 'node:path';
 
 const RETRY_QUOTAS_MS = 5 * 60_000;
+export const REFRESH_QUOTAS_MS = 60 * 60_000;
 export const channelId = (row) => row.id.includes('/') ? row.id.slice(0, row.id.indexOf('/')) : row.id;
 // 北京时间 04:00 开始新一天：UTC+8 再减去 4 小时，完全不依赖宿主电脑的时区。
 export function routingDay(at) { return new Date(at + 4 * 3600_000).toISOString().slice(0, 10); }
@@ -34,7 +35,8 @@ export class ChannelOrder {
   stateFor(config) {
     const scope = createHash('sha256').update(config.baseURL).digest('hex'), day = routingDay(this.now());
     if (this.state?.scope !== scope || this.state.day !== day) {
-      this.state = { scope, day, base: [], deferred: [], blocked: new Map(), generations: new Map(), expiries: new Map(), loaded: false, retryAt: 0 };
+      this.state = { scope, day, base: [], deferred: [], blocked: new Map(), generations: new Map(), expiries: new Map(),
+        loaded: false, refreshedAt: 0, retryAt: 0, failureSerial: 0, failures: new Map() };
       this.restore(this.state);
     }
     const state = this.state;
@@ -44,18 +46,23 @@ export class ChannelOrder {
   }
   async prepare(config) {
     const state = this.stateFor(config);
-    if (!state.loaded && this.now() >= state.retryAt) {
+    if ((!state.loaded || this.now() - state.refreshedAt >= REFRESH_QUOTAS_MS) && this.now() >= state.retryAt) {
       state.loading ??= this.refresh(state, config).finally(() => { state.loading = undefined; });
       await state.loading;
     }
     return state;
   }
   async refresh(state, config) {
+    const reset = state.loaded, before = state.failureSerial;
     try {
       const expiries = creditExpiries(await this.loadQuotas(config), this.now());
       if (this.state !== state) return;
       state.expiries = expiries;
       state.loaded = true;
+      state.refreshedAt = this.now();
+      state.retryAt = 0;
+      // 每小时恢复到期优先级，但不能抹掉本次额度读取期间刚发生的失败，也不恢复余额不足停用。
+      if (reset) state.deferred = state.deferred.filter((id) => (state.failures.get(id) ?? 0) > before);
       this.arrange(state);
       this.save(state);
     } catch {
@@ -69,10 +76,11 @@ export class ChannelOrder {
     state.deferred = state.deferred.filter((provider) => state.providers.includes(provider));
     state.order = [...state.base.filter((provider) => !state.deferred.includes(provider)), ...state.deferred];
   }
-  rank(state, rows) {
+  rank(state, rows, loads = new Map()) {
     const positions = new Map(state.order.map((provider, index) => [provider, index]));
     return rows.filter((row) => !state.blocked.has(channelId(row)))
-      .sort((a, b) => (positions.get(channelId(a)) ?? Infinity) - (positions.get(channelId(b)) ?? Infinity));
+      .sort((a, b) => (loads.get(channelId(a)) ?? 0) - (loads.get(channelId(b)) ?? 0)
+        || (positions.get(channelId(a)) ?? Infinity) - (positions.get(channelId(b)) ?? Infinity));
   }
   generation(state, row) { return state.generations.get(channelId(row)) ?? 0; }
   exhausted(state, row, generation = this.generation(state, row)) {
@@ -107,6 +115,7 @@ export class ChannelOrder {
     const provider = channelId(row);
     if (this.state !== state || state.day !== routingDay(this.now()) || !state.providers.includes(provider)) return;
     state.deferred = [...state.deferred.filter((id) => id !== provider), provider];
+    state.failures.set(provider, ++state.failureSerial);
     this.arrange(state);
     this.save(state);
   }
@@ -123,6 +132,7 @@ export class ChannelOrder {
       state.blocked = new Map(saved.blocked.map((row) => [row.id, { id: row.id, at: row.at, token: row.token }]));
       state.expiries = new Map(Object.entries(saved.expiries ?? {}).filter(([, at]) => Number.isFinite(at)));
       state.loaded = saved.loaded === true;
+      state.refreshedAt = Number.isFinite(saved.refreshedAt) ? saved.refreshedAt : 0;
     } catch { /* 首次运行、跨日或文件损坏时，重新读取额度建立默认顺序。 */ }
   }
   save(state) {
@@ -130,7 +140,7 @@ export class ChannelOrder {
     const temporary = `${this.stateFile}.${randomUUID()}.tmp`;
     try {
       mkdirSync(dirname(this.stateFile), { recursive: true });
-      writeFileSync(temporary, JSON.stringify({ version: 2, scope: state.scope, day: state.day, loaded: state.loaded,
+      writeFileSync(temporary, JSON.stringify({ version: 2, scope: state.scope, day: state.day, loaded: state.loaded, refreshedAt: state.refreshedAt,
         expiries: Object.fromEntries(state.expiries), deferred: state.deferred, blocked: [...state.blocked.values()] }), { mode: 0o600 });
       renameSync(temporary, this.stateFile);
     } catch { this.onError('渠道顺序保存失败，本次运行继续使用内存中的顺序'); }

@@ -4,6 +4,7 @@ import { PROVIDER_NAMES, keepOrderIndexes, sortModelIndexes } from './names.js';
 import { MagpieBackend } from './backend.js';
 import { conversationBlock } from './auto-update.js';
 import { createMagpieRouter } from './router.js';
+import { sessionKey } from './channel-load.js';
 import { join } from 'node:path';
 
 // 本机网关正常时几十毫秒内应答；状态检查会定时重复，超时设短免得卡片长时间显示“检查中”。
@@ -32,6 +33,10 @@ export class ModelManager {
       orderStatePath: this.backend.paths?.cache ? join(this.backend.paths.cache, 'channel-order.json') : undefined,
       loadQuotas: async (config) => requestGateway(config.baseURL, '/v1/magpie/quotas', await credential(this.credentials, this.env, config.baseURL), this.fetch, 3_000),
       onOrderError: (message) => (this.ctx.logger ?? console).warn(`[dsh-magpie] ${message}`),
+      runningSessions: () => {
+        const agents = hostService(this.ctx, 'agents')?.list?.();
+        return Array.isArray(agents) ? new Set(agents.filter((agent) => agent?.status === 'running').map((agent) => sessionKey(agent.id)).filter(Boolean)) : undefined;
+      },
     });
   }
   get editor() { return hostService(this.ctx, 'configEditor'); }

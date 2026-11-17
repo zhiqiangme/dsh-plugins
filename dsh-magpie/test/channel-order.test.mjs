@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { ChannelOrder, creditExpiries, routingDay } from '../lib/channel-order.js';
+import { ChannelOrder, creditExpiries, routingDay, REFRESH_QUOTAS_MS } from '../lib/channel-order.js';
 
 const origin = 'http://127.0.0.1:3425';
 const rows = ['qoder-cn', 'trae-cn', 'workbuddy', 'codearts', 'custom'].map((provider) => ({ id: `${provider}/model` }));
@@ -49,6 +49,57 @@ test('所有渠道都参与轮换，失败移到末尾且保持其余相对顺�
   assert.deepEqual(ids(order, state), ['workbuddy', 'codearts', 'custom', 'trae-cn', 'qoder-cn']);
   const updated = await order.prepare({ ...config, models: [...rows, { id: 'new-provider/model' }] });
   assert.deepEqual(ids(order, updated, [...rows, { id: 'new-provider/model' }]), ['workbuddy', 'codearts', 'custom', 'new-provider', 'trae-cn', 'qoder-cn']);
+});
+
+test('优先使用其它运行对话占用最少的渠道，同占用再按到期及失败顺序，停用始终排除', async () => {
+  const order = new ChannelOrder(), state = await order.prepare(config);
+  const loads = new Map([['qoder-cn', 2], ['trae-cn', 1], ['workbuddy', 1], ['codearts', 2], ['custom', 2]]);
+  assert.deepEqual(order.rank(state, rows, loads).map((row) => row.id.split('/')[0]), ['trae-cn', 'workbuddy', 'qoder-cn', 'codearts', 'custom']);
+  order.failed(state, rows[1]);
+  assert.equal(order.rank(state, rows, loads)[0].id, rows[2].id);
+  order.exhausted(state, rows[2]);
+  assert.equal(order.rank(state, rows, loads)[0].id, rows[1].id);
+});
+
+test('每小时恢复积分到期优先级，保留余额不足停用，并缓存刷新时间供重启沿用', async (t) => {
+  let now = Date.parse('2026-11-16T12:00:00+08:00'), reads = 0;
+  const options = { now: () => now, stateFile: stateFile(t), loadQuotas: async () => { reads++; return quotas(now); } };
+  const order = new ChannelOrder(options), state = await order.prepare(config);
+  order.failed(state, rows[0]); order.exhausted(state, rows[1]);
+  const blocked = order.snapshot(config).blocked[0];
+  now += REFRESH_QUOTAS_MS - 1;
+  await order.prepare(config);
+  assert.equal(reads, 1);
+  const reopened = new ChannelOrder(options);
+  await reopened.prepare(config);
+  assert.equal(reads, 1, '重启不提前重排');
+  now++;
+  const updated = await reopened.prepare(config);
+  assert.equal(reads, 2);
+  assert.deepEqual(ids(reopened, updated), ['qoder-cn', 'workbuddy', 'codearts', 'custom']);
+  assert.deepEqual(reopened.snapshot(config).blocked, [blocked]);
+});
+
+test('小时刷新失败保留当前顺序并五分钟重试，刷新期间新失败不被抹掉', async () => {
+  let now = Date.parse('2026-11-16T12:00:00+08:00'), reads = 0, finish;
+  const order = new ChannelOrder({ now: () => now, loadQuotas: async () => {
+    reads++;
+    if (reads === 2) throw new Error('quota unavailable');
+    if (reads === 3) return new Promise((resolve) => { finish = resolve; });
+    return quotas(now);
+  } });
+  const state = await order.prepare(config);
+  order.failed(state, rows[0]);
+  now += REFRESH_QUOTAS_MS;
+  await order.prepare(config);
+  assert.equal(ids(order, state).at(-1), 'qoder-cn');
+  await order.prepare(config); assert.equal(reads, 2);
+  now += 5 * 60_000;
+  const refresh = order.prepare(config);
+  order.failed(state, rows[1]);
+  finish(quotas(now)); await refresh;
+  assert.equal(reads, 3);
+  assert.deepEqual(ids(order, state), ['qoder-cn', 'workbuddy', 'codearts', 'custom', 'trae-cn']);
 });
 
 test('当天失败顺序可持久恢复，北京时间 04:00 重读额度并重置，旧请求晚到失败不能污染新一天', async (t) => {

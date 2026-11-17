@@ -3,7 +3,7 @@ import { KEY_REF, PACKAGE_NAME, PLUGIN_ID } from '../lib/config.js';
 export function fakeHost(config = {}, llmConfig = { providers: { magpie: { models: [{ id: 'native' }] }, unrelated: { models: [{ id: 'keep' }] } } }) {
   const own = { options: { id: PLUGIN_ID, name: PACKAGE_NAME, config: structuredClone(config) } };
   const llm = { options: { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai', config: structuredClone(llmConfig) } };
-  const edits = [], hooks = [], effects = [], routes = [], keys = new Map();
+  const edits = [], hooks = [], effects = [], routes = [], keys = new Map(), events = new Map();
   const credentials = {
     resolve: async (ref) => keys.has(ref) ? { value: keys.get(ref), source: 'file' } : undefined,
     describe: async () => ({ writable: true }),
@@ -21,10 +21,15 @@ export function fakeHost(config = {}, llmConfig = { providers: { magpie: { model
   const services = { configEditor: editor, credentials, webServer: { getOrigin: () => 'http://127.0.0.1:9876', register: (route) => { routes.push(route); return () => routes.splice(routes.indexOf(route), 1); } } };
   const ctx = {
     get: (name) => services[name],
-    on: (_event, hook) => { hooks.push(hook); return () => hooks.splice(hooks.indexOf(hook), 1); },
+    on: (event, hook) => {
+      if (!events.has(event)) events.set(event, event === 'internal/update' ? hooks : []);
+      const listeners = events.get(event);
+      listeners.push(hook);
+      return () => { const index = listeners.indexOf(hook); if (index >= 0) listeners.splice(index, 1); };
+    },
     effect: (run) => { const off = run(); if (typeof off === 'function') effects.push(off); },
     logger: { info() {}, warn() {}, error() {} },
     async dispose() { for (const off of effects.reverse()) await off(); },
   };
-  return { ctx, services, editor, own, llm, keys, edits, hooks, routes, KEY_REF };
+  return { ctx, services, editor, own, llm, keys, edits, hooks, events, routes, KEY_REF };
 }

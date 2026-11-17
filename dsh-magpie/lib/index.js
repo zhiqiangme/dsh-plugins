@@ -4,6 +4,7 @@ import { registerPanel } from './web.js';
 import { registerHighestReasoning } from './reasoning.js';
 import { registerAutoStart, registerExitClose } from './lifecycle.js';
 import { registerAutoUpdate } from './auto-update.js';
+import { registerChannelSessions } from './channel-load.js';
 
 export const name = PLUGIN_ID;
 export const inject = [];
@@ -15,6 +16,7 @@ export function apply(ctx, config) {
   catch (error) { (ctx.logger ?? console).error(`[${name}] 配置无效：${error.message}`); return; }
   registerPanel(ctx, manager);
   registerHighestReasoning(ctx);
+  registerChannelSessions(ctx, manager);
   registerExitClose(ctx, manager);
   registerAutoStart(ctx, manager);
   registerAutoUpdate(ctx, manager);

@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { createMagpieRouter, requestHasImage, requestedEffort } from '../lib/router.js';
 import { ROUTER_PATH } from '../lib/router.js';
 import { resolveConfig } from '../lib/config.js';
+import { SESSION_HEADER, sessionKey } from '../lib/channel-load.js';
 
 const ENDPOINTS = { 'openai-completions': 'chat/completions', 'openai-responses': 'responses', 'anthropic-messages': 'messages' };
 const TWO_ROUTES = [
@@ -31,7 +32,7 @@ async function setup(t, options = {}) {
   const clock = { now: Date.now() };
   const credentials = { resolve: async () => ({ value: 'secret' }) };
   const router = createMagpieRouter({ current: () => config, credentials: () => credentials, env: {}, now: () => clock.now,
-    maxBodyBytes: options.maxBodyBytes, firstOutputTimeoutMs: options.firstOutputTimeoutMs, loadQuotas: options.loadQuotas });
+    maxBodyBytes: options.maxBodyBytes, firstOutputTimeoutMs: options.firstOutputTimeoutMs, loadQuotas: options.loadQuotas, runningSessions: options.runningSessions });
   const proxy = createServer((req, res) => router.handle(req, res));
   await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
   t.after(() => {
@@ -44,6 +45,67 @@ async function setup(t, options = {}) {
   });
   return { calls, send, router, url, clock, setConfig: (next) => { config = resolveConfig(next); } };
 }
+
+test('同时到达且消息相同的对话逐轮均衡分配，超过渠道总数也不会集中到一个渠道', async (t) => {
+  const models = ['a', 'b', 'c'].map((provider) => ({ id: `${provider}/deepseek-flash`, name: 'DeepSeek-Flash' }));
+  const held = [];
+  let hold = true;
+  const { calls, send } = await setup(t, { models, upstream: (_req, res, body) => {
+    if (!hold) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ model: body.model })); }
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: {"choices":[{"delta":{"content":"working"}}]}\n\n');
+    held.push(res);
+  } });
+  const responses = await Promise.all(Array.from({ length: 8 }, () => send({ ...ask(), stream: true })));
+  const counts = ['a', 'b', 'c'].map((provider) => calls.filter((call) => call.body.model.startsWith(`${provider}/`)).length);
+  assert.deepEqual(counts, [3, 3, 2], '先各占一个、再各占两个；第八个请求之后仍均衡');
+  hold = false;
+  for (const res of held) res.end('data: [DONE]\n\n');
+  await Promise.all(responses.map((response) => response.text()));
+  assert.equal((await (await send(ask())).json()).model, 'a/deepseek-flash', '完成后释放占用');
+});
+
+for (const bStopped of [false, true]) test(`A 失败时，B 对话${bStopped ? '已停止则改用 B' : '仍在运行工具则改用 C'}`, async (t) => {
+  const models = ['a', 'b', 'c'].map((provider) => ({ id: `${provider}/deepseek-flash`, name: 'DeepSeek-Flash' }));
+  const a = sessionKey('conversation-a'), b = sessionKey('conversation-b');
+  const running = new Set([a, b]);
+  const headers = (session) => ({ authorization: 'Bearer secret', 'content-type': 'application/json', [SESSION_HEADER]: session });
+  let started, fail;
+  const ready = new Promise((resolve) => { started = resolve; });
+  const { calls, send, router } = await setup(t, { models, runningSessions: () => running, upstream: (_req, res, body) => {
+    if (body.model.startsWith('a/')) {
+      fail = () => { res.writeHead(503); res.end('{}'); }; started(); return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ model: body.model }));
+  } });
+  // 内容完全相同；只靠宿主真实会话标识区分窗口。
+  const pending = send(ask(), { headers: headers(a) });
+  await ready;
+  assert.equal((await (await send(ask(), { headers: headers(b) })).json()).model, 'b/deepseek-flash');
+  if (bStopped) { running.delete(b); router.releaseSession(b); }
+  fail();
+  assert.equal((await (await pending).json()).model, `${bStopped ? 'b' : 'c'}/deepseek-flash`);
+  assert.ok(calls.every((call) => call.headers[SESSION_HEADER] === undefined), '内部会话摘要不转发给 Magpie 上游');
+});
+
+test('每小时刷新到期顺序，同时继续避开其它正在运行的对话', async (t) => {
+  const models = ['a', 'b', 'c'].map((provider) => ({ id: `${provider}/deepseek-flash`, name: 'DeepSeek-Flash' }));
+  const sessions = ['one', 'two', 'three'].map(sessionKey), running = new Set(sessions);
+  let reads = 0;
+  const { send, clock } = await setup(t, { models, runningSessions: () => running, loadQuotas: async () => {
+    const priority = ++reads === 1 ? ['a', 'b', 'c'] : ['c', 'a', 'b'];
+    return priority.map((provider, index) => ({ provider, windows: [{ runsOut: 1, runsOutAt: new Date(clock.now + (index + 1) * 86400_000).toISOString() }] }));
+  } });
+  clock.now = Date.parse('2026-11-16T12:00:00+08:00');
+  const askSession = async (id) => (await (await send(ask(), { headers: {
+    authorization: 'Bearer secret', 'content-type': 'application/json', [SESSION_HEADER]: id,
+  } })).json()).model;
+  assert.equal(await askSession(sessions[0]), 'a/deepseek-flash');
+  clock.now += 3600_000;
+  assert.equal(await askSession(sessions[1]), 'c/deepseek-flash', '到期最早且空闲的 C 被提升');
+  assert.equal(await askSession(sessions[2]), 'b/deepseek-flash', 'A、C 被其它对话占用，B 即使到期较晚也优先');
+  assert.equal(reads, 2);
+});
 
 test('正式版失败仅在正式版渠道间切换，Preview 通过独立模型 ID 调用', async (t) => {
   const models = [
@@ -298,7 +360,7 @@ test('恢复选择后，恢复前的并发余额不足结果不重新停用渠�
   } });
   const pending = send(ask('old in-flight call'));
   await ready;
-  assert.equal((await send(ask('second call'))).status, 200);
+  assert.equal((await send({ ...ask('second call'), model: 'a/deepseek-flash' })).status, 400);
   const blocked = router.channelStatus().blocked[0];
   router.recoverChannel(blocked.id, blocked.token);
   release();

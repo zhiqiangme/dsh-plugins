@@ -4,7 +4,8 @@ import { pipeline } from 'node:stream/promises';
 import { AUTO_PREFIX, planAutoRoute, ROUTER_BASE_PATH } from './auto-route.js';
 import { credential, modelEntries } from './models.js';
 import { prepareErrorResponse, prepareJSON, prepareSSE } from './router-stream.js';
-import { ChannelOrder, routingDay } from './channel-order.js';
+import { ChannelOrder, channelId } from './channel-order.js';
+import { ChannelLoad, SESSION_HEADER } from './channel-load.js';
 
 export const ROUTER_PATH = `${ROUTER_BASE_PATH}/v1`;
 const MAX_CHAT_BYTES = 32 * 1024 * 1024;
@@ -61,17 +62,20 @@ function effortRank(row, effort) {
 }
 
 /** credentials / current / fetchImpl 均现取，保存配置或 Key 后下一次调用立即使用新值。 */
-export function createMagpieRouter({ current, credentials, env = process.env, fetchImpl = fetch, maxBodyBytes = MAX_CHAT_BYTES, now = Date.now, firstOutputTimeoutMs = FIRST_OUTPUT_TIMEOUT_MS, loadQuotas, orderStatePath, onOrderError }) {
+export function createMagpieRouter({ current, credentials, env = process.env, fetchImpl = fetch, maxBodyBytes = MAX_CHAT_BYTES, now = Date.now, firstOutputTimeoutMs = FIRST_OUTPUT_TIMEOUT_MS, loadQuotas, orderStatePath, onOrderError, runningSessions }) {
   const active = new Set(), channels = new ChannelOrder({ now, loadQuotas, stateFile: orderStatePath, onError: onOrderError });
+  const load = new ChannelLoad({ runningSessions });
   let stopped = false;
   return {
     channelStatus: () => channels.snapshot(current()),
     recoverChannel: (id, token) => channels.recover(current(), id, token),
+    releaseSession: (id) => load.releaseSession(id),
     async handle(req, res) {
       if (!localRequest(req)) return reply(res, 403, 'origin-not-trusted');
       const controller = new AbortController();
       const abort = () => { if (!res.writableFinished) controller.abort(); };
       req.on('aborted', abort); res.on('close', abort); active.add(controller);
+      let reservation;
       try {
         const config = current();
         if (stopped || !config.enabled || !config.syncEnabled || !config.autoRoute) return reply(res, 503, '自动路由未启用');
@@ -80,6 +84,8 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
         const bearer = /^Bearer (.+)$/i.exec(String(req.headers.authorization ?? ''))?.[1] ?? '';
         const supplied = String(req.headers['x-api-key'] ?? '') || bearer;
         if (!sameSecret(supplied, key)) return reply(res, 401, 'unauthorized');
+        const rawSession = req.headers[SESSION_HEADER];
+        const session = typeof rawSession === 'string' && /^[a-f0-9]{64}$/.test(rawSession) ? rawSession : undefined;
         const path = new URL(req.url, 'http://localhost').pathname;
         if (req.method === 'GET' && path === `${ROUTER_PATH}/models`) {
           res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -114,18 +120,26 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
         let order = await channels.prepare(config);
         if (controller.signal.aborted) return;
         let attempts = [...ordered];
+        const triedProviders = new Set();
         while (attempts.length) {
-          if (order.day !== routingDay(now()) && current().baseURL === config.baseURL) order = await channels.prepare(config);
-          // 每次尝试都采用当前全局顺序，让其它并发调用刚记录的失败同样生效。
-          attempts = channels.rank(order, attempts);
+          if (current().baseURL === config.baseURL) order = await channels.prepare(config);
+          if (controller.signal.aborted) return;
+          // 刷新可以等待，但排名与占位之间不能 await，否则同时到达的新对话会一起抢同一渠道。
+          attempts = channels.rank(order, attempts, load.counts(config.baseURL, session));
           if (!attempts.length) return reply(res, 503, '该模型的可用渠道均因余额不足停用，请到 Magpie「渠道」页恢复，或等待北京时间 04:00 自动恢复');
-          const attempt = attempts.shift();
+          const fresh = attempts.filter((row) => !triedProviders.has(channelId(row)));
+          const attempt = (fresh.length ? fresh : attempts)[0];
+          attempts = attempts.filter((row) => row !== attempt);
+          triedProviders.add(channelId(attempt));
+          reservation = load.reserve(config.baseURL, session, channelId(attempt));
+          const allocated = reservation;
           const last = attempts.length === 0;
           const generation = channels.generation(order, attempt);
           let penalized = false, blocked = false;
           const failed = (_status, insufficientBalance = false) => {
             // 同一次失败可能同时被流解析和 pipeline 观察到，只后移一次；下游主动取消不算渠道失败。
             if (controller.signal.aborted) return;
+            allocated.release();
             if (insufficientBalance && !blocked) { blocked = true; penalized = true; channels.exhausted(order, attempt, generation); }
             else if (!penalized) { penalized = true; channels.failed(order, attempt); }
           };
@@ -178,10 +192,11 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
         if (!controller.signal.aborted && !res.headersSent) reply(res, 502, 'Magpie 路由请求失败，请检查网关和 Key');
         else if (!res.writableFinished) res.destroy();
       } finally {
+        reservation?.release(!controller.signal.aborted);
         active.delete(controller);
         req.off('aborted', abort); res.off('close', abort);
       }
     },
-    stop() { stopped = true; for (const controller of active) controller.abort(); active.clear(); },
+    stop() { stopped = true; for (const controller of active) controller.abort(); active.clear(); load.clear(); },
   };
 }
