@@ -118,6 +118,7 @@ for (const status of [400, 401, 403, 499, 529]) test(`上游 HTTP ${status} 失�
   } });
   assert.equal((await f.send(ask())).status, status);
   assert.equal(f.calls.length, 1, '不可自动重放的状态仍保留本次原始错误');
+  assert.equal(f.router.channelStatus().blocked.length, 0, '没有余额不足提示时只后移，不全天停用');
   fail = false;
   await f.send(ask('new conversation'));
   assert.equal(f.calls.at(-1).body.model, 'b/deepseek-flash');
@@ -232,8 +233,8 @@ for (const [label, status, type, raw] of [
   ['200 JSON 余额错误', 200, 'application/json', '{"error":{"status":400,"message":"余额不足"}}'],
   ['200 SSE 余额错误', 200, 'text/event-stream', 'event: error\ndata: {"error":{"status":400,"message":"余额不足"}}\n\n'],
   ['200 SSE 纯文本余额错误', 200, 'text/event-stream', 'event: error\ndata: insufficient_balance\n\n'],
-]) test(`${label} 在交付前自动换渠道，并将失败渠道后移`, async (t) => {
-  const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
+]) test(`${label} 在交付前自动换渠道，并停用余额不足的渠道`, async (t) => {
+  const { calls, send, router } = await setup(t, { upstream: (_req, res, body) => {
     if (body.model.startsWith('b/')) return sse(res, answer);
     res.writeHead(status, { 'content-type': type }); res.end(raw);
   } });
@@ -241,17 +242,88 @@ for (const [label, status, type, raw] of [
   assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
   assert.match(await (await send(ask('next conversation'))).text(), /next supplier/);
   assert.equal(calls.at(-1).body.model, 'b/deepseek-flash');
+  assert.deepEqual(router.channelStatus().blocked.map((row) => row.id), ['a']);
 });
 
 test('所有渠道余额不足时只各尝试一次，保留最后一个渠道的 HTTP 状态和原始正文', async (t) => {
   const raw = '{ "error": { "code": "insufficient_balance", "message": "余额不足" } }\n';
-  const { calls, send } = await setup(t, { upstream: (_req, res) => {
+  const { calls, send, router } = await setup(t, { upstream: (_req, res) => {
     res.writeHead(400, { 'content-type': 'application/json' }); res.end(raw);
   } });
   const response = await send(ask());
   assert.equal(response.status, 400);
   assert.equal(await response.text(), raw);
   assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
+  assert.equal(router.channelStatus().blocked.length, 2);
+  assert.equal((await send(ask())).status, 503, '后续请求不再重复调用已停用的渠道');
+  assert.equal(calls.length, 2);
+});
+
+test('余额不足跳过同渠道其它出口及其它模型，手动恢复后才重新选择', async (t) => {
+  const models = [TWO_ROUTES[0], { id: 'a/alias', name: 'DeepSeek-Flash' }, TWO_ROUTES[1],
+    { id: 'a/glm-5.3', name: 'GLM-5.3' }, { id: 'b/glm-5.3', name: 'GLM-5.3' }];
+  let insufficient = true;
+  const { calls, send, router } = await setup(t, { models, upstream: (_req, res, body) => {
+    if (insufficient && body.model.startsWith('a/')) { res.writeHead(400); return res.end('余额不足'); }
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ model: body.model }));
+  } });
+  assert.equal((await send(ask())).status, 200);
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'b/deepseek-flash']);
+  assert.equal((await (await send({ ...ask(), model: 'auto:glm-5.3' })).json()).model, 'b/glm-5.3');
+  const blocked = router.channelStatus().blocked[0];
+  insufficient = false;
+  router.recoverChannel(blocked.id, blocked.token);
+  assert.equal((await (await send(ask())).json()).model, 'a/deepseek-flash');
+});
+
+test('普通 402 可以重试但不等同明确余额不足，不停用渠道', async (t) => {
+  const { send, router } = await setup(t, { upstream: (_req, res, body) => {
+    res.writeHead(body.model.startsWith('a/') ? 402 : 200, { 'content-type': 'application/json' }); res.end('{}');
+  } });
+  assert.equal((await send(ask())).status, 200);
+  assert.equal(router.channelStatus().blocked.length, 0);
+});
+
+test('恢复选择后，恢复前的并发余额不足结果不重新停用渠道', async (t) => {
+  let started, release, callsToA = 0;
+  const ready = new Promise((resolve) => { started = resolve; });
+  const { send, router } = await setup(t, { upstream: (_req, res, body) => {
+    if (body.model.startsWith('a/')) {
+      callsToA++;
+      const failure = () => { res.writeHead(400, { 'content-type': 'application/json' }); res.end('{"error":{"message":"余额不足"}}'); };
+      if (callsToA === 1) { release = failure; started(); return; }
+      if (callsToA === 2) return failure();
+    }
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ model: body.model }));
+  } });
+  const pending = send(ask('old in-flight call'));
+  await ready;
+  assert.equal((await send(ask('second call'))).status, 200);
+  const blocked = router.channelStatus().blocked[0];
+  router.recoverChannel(blocked.id, blocked.token);
+  release();
+  assert.equal((await pending).status, 200);
+  assert.equal(router.channelStatus().blocked.length, 0);
+  assert.equal((await (await send(ask('new call after recovery'))).json()).model, 'a/deepseek-flash');
+});
+
+test('余额不足停用到北京时间 04:00，跨电脑日期和北京时间午夜均不提前恢复', async (t) => {
+  let insufficient = true;
+  const { calls, send, router, clock } = await setup(t, { models: [TWO_ROUTES[0]], upstream: (_req, res) => {
+    res.writeHead(insufficient ? 400 : 200, { 'content-type': 'application/json' }); res.end(insufficient ? '{"error":{"message":"余额不足"}}' : '{}');
+  } });
+  clock.now = Date.parse('2026-11-16T23:59:59+08:00');
+  assert.equal((await send(ask())).status, 400);
+  insufficient = false;
+  clock.now = Date.parse('2026-11-17T00:00:00+08:00');
+  assert.equal((await send(ask())).status, 503);
+  clock.now = Date.parse('2026-11-17T03:59:59+08:00');
+  assert.equal((await send(ask())).status, 503);
+  assert.equal(calls.length, 1);
+  clock.now = Date.parse('2026-11-17T04:00:00+08:00');
+  assert.equal(router.channelStatus().blocked.length, 0);
+  assert.equal((await send(ask())).status, 200);
+  assert.equal(calls.length, 2);
 });
 
 test('正常 JSON 和流式回答提及余额不足不触发切换', async (t) => {
@@ -266,7 +338,7 @@ test('正常 JSON 和流式回答提及余额不足不触发切换', async (t) =
 
 test('已交付输出后出现余额不足不重放，下一次调用再换渠道', async (t) => {
   let fail;
-  const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
+  const { calls, send, router } = await setup(t, { upstream: (_req, res, body) => {
     if (body.model.startsWith('b/')) return sse(res, answer);
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.write('data: {"choices":[{"delta":{"content":"started"}}]}\n\n');
@@ -280,6 +352,7 @@ test('已交付输出后出现余额不足不重放，下一次调用再换渠�
   for (;;) { const next = await reader.read(); if (next.done) break; tail += new TextDecoder().decode(next.value); }
   assert.match(tail, /余额不足/);
   assert.equal(calls.length, 1);
+  assert.deepEqual(router.channelStatus().blocked.map((row) => row.id), ['a']);
   assert.match(await (await send(ask())).text(), /next supplier/);
   assert.equal(calls.at(-1).body.model, 'b/deepseek-flash');
 });
@@ -415,7 +488,7 @@ test('下游主动取消不当作供应商故障，也不改变全局渠道顺�
   const ready = new Promise((resolve) => { started = resolve; });
   const closed = new Promise((resolve) => { canceled = resolve; });
   let waiting = true;
-  const { calls, send } = await setup(t, { upstream: (_req, res) => {
+  const { calls, send, router } = await setup(t, { upstream: (_req, res) => {
     if (!waiting) return sse(res, answer);
     res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(': heartbeat\n\n');
     res.on('close', canceled); started();
@@ -428,6 +501,7 @@ test('下游主动取消不当作供应商故障，也不改变全局渠道顺�
   waiting = false;
   assert.match(await (await send({ ...ask(), stream: true })).text(), /next supplier/);
   assert.deepEqual(calls.map((call) => call.body.model), ['a/deepseek-flash', 'a/deepseek-flash']);
+  assert.equal(router.channelStatus().blocked.length, 0);
 });
 
 test('本机鉴权、请求来源、未知模型、非法路径与请求体上限', async (t) => {

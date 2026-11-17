@@ -15,7 +15,7 @@ window.__ModuleLoader__.load({
       check: '检查连接', connected: '已连接 Magpie {version}', catalog: '从 Magpie 同步',
       mirrored: '已按 Magpie 当前目录覆盖保存，DSH 分组现有 {count} 个模型。',
       sync: '同步到 DSH', syncHint: '勾选的模型按顺序写入 DSH 的“Magpie”分组；关闭即移除该分组。',
-      autoRoute: '自动路由（同款模型合并）', autoRouteHint: '同款模型合并为 Auto 条目。全部渠道按积分最近到期时间排序；调用失败将该渠道全局移到末尾，主动取消不调整，每日重新按到期时间排序。无到期信息的渠道保持清单顺序排后。60 秒无有效输出会切换可重试出口；图片和思考能力仍作为可用性筛选。开关立即保存并同步。',
+      autoRoute: '自动路由（同款模型合并）', autoRouteHint: '同款模型合并为 Auto 条目。全部渠道按积分最近到期时间排序；一般失败将渠道移到末尾，余额不足则当天停用，可在「渠道」页手动恢复。主动取消不调整。北京时间每日 04:00 恢复渠道并重新排序。无到期信息的渠道排后；60 秒无有效输出会切换可重试出口。开关立即保存并同步。',
       hideSmallContext: '屏蔽小上下文模型', hideSmallContextHint: '只影响本卡片列表显示，不改勾选、同步与自动路由；上下文未知的模型不屏蔽。选项即时保存。',
       contextFilterOff: '不屏蔽', contextFilter200K: '低于 200K', contextFilter500K: '低于 500K',
       hideNonVision: '屏蔽不支持图片的模型', hideNonVisionHint: '只显示支持图片输入的模型，可与上下文屏蔽叠加；只影响本卡片列表显示，不改勾选、同步与自动路由。开关即时保存。',
@@ -63,7 +63,10 @@ window.__ModuleLoader__.load({
       closeOnExitHint: '结束本机 Magpie；停用或更新插件不会触发。',
       sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动', sidebarAlways: '显示', sidebarNever: '隐藏',
       sidebarEntryHint: '左上角「插件」一栏的 Magpie 入口。自动：清单为空时显示，保存模型后隐藏。',
-      tabModels: '模型', tabSwitches: '开关', tabConnection: '连接', tabPreferences: '偏好', tabUpdates: '更新',
+      tabModels: '模型', tabChannels: '渠道', tabSwitches: '开关', tabConnection: '连接', tabPreferences: '偏好', tabUpdates: '更新',
+      channelsTitle: '余额不足的渠道', channelsHint: '这些渠道已暂停参与插件的自动路由，北京时间每日 04:00 自动恢复。充值后可手动恢复选择；再次报余额不足会重新停用。',
+      channelsEmpty: '当前没有因余额不足停用的渠道。', channelBlocked: '余额不足 · 今日停用', channelDetected: '检测时间（北京时间）：{time}',
+      channelRecover: '恢复选择', channelRecovered: '已恢复 {name}，后续请求可再次选择该渠道。', channelRefresh: '刷新状态',
       gatewayOnline: '网关在线 {version}', gatewayOffline: '网关未连接', gatewayChecking: '正在检查网关…',
       programVersion: 'Magpie {version}', programMissing: '未下载 Magpie', programUpgrade: '可升级到 {version}',
       groupProgram: 'Magpie 程序', groupMagpieSettings: 'Magpie 设置', groupMagpieSettingsHint: '直接写入 Magpie 自己的设置，与其「设置 › 常规」中的同名选项相同。', groupDsh: 'DSH',
@@ -97,7 +100,7 @@ window.__ModuleLoader__.load({
       check: 'Check connection', connected: 'Connected to Magpie {version}', catalog: 'Sync from Magpie',
       mirrored: 'Replaced and saved the list from Magpie. The DSH group now has {count} models.',
       sync: 'Sync to DSH', syncHint: 'Ticked models go into the DSH “Magpie” group in this order; turning this off removes the group.',
-      autoRoute: 'Auto route (merge identical models)', autoRouteHint: 'Merges identical models into Auto entries. All channels start in earliest-credit-expiry order. A failed call moves its channel to the end globally; client cancellation does not. The order resets daily. Channels without expiry data follow in saved list order. Retryable failures or 60 seconds without initial output try another route. Image and reasoning capabilities still filter routes. Saves and syncs immediately.',
+      autoRoute: 'Auto route (merge identical models)', autoRouteHint: 'Merges identical models into Auto entries ordered by earliest credit expiry. General failures move a channel to the end; insufficient balance pauses it until 04:00 Beijing time or manual recovery in Channels. Client cancellation does not change routing. The order resets at 04:00 Beijing time. Retryable failures or 60 seconds without initial output try another route. Saves and syncs immediately.',
       hideSmallContext: 'Hide small-context models', hideSmallContextHint: 'Only affects this card’s list; selections, sync and auto routing are unchanged. Models with unknown context stay visible. Saves immediately.',
       contextFilterOff: 'Show all', contextFilter200K: 'Under 200K', contextFilter500K: 'Under 500K',
       hideNonVision: 'Hide models without image input', hideNonVisionHint: 'Shows only models with image input and combines with the context filter. Only affects this card’s list; selections, sync and auto routing are unchanged. Saves immediately.',
@@ -145,7 +148,10 @@ window.__ModuleLoader__.load({
       closeOnExitHint: 'Ends local Magpie; disabling or updating the plugin does not.',
       sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto', sidebarAlways: 'Show', sidebarNever: 'Hide',
       sidebarEntryHint: 'The Magpie entry next to Plugins in the sidebar. Auto: shown while the list is empty, hidden once models are saved.',
-      tabModels: 'Models', tabSwitches: 'Switches', tabConnection: 'Connection', tabPreferences: 'Preferences', tabUpdates: 'Updates',
+      tabModels: 'Models', tabChannels: 'Channels', tabSwitches: 'Switches', tabConnection: 'Connection', tabPreferences: 'Preferences', tabUpdates: 'Updates',
+      channelsTitle: 'Channels with insufficient balance', channelsHint: 'These channels are excluded from the plugin’s automatic routing until 04:00 Beijing time each day. Restore a channel after topping up; another insufficient-balance error will pause it again.',
+      channelsEmpty: 'No channels are paused for insufficient balance.', channelBlocked: 'Insufficient balance · Paused today', channelDetected: 'Detected (Beijing time): {time}',
+      channelRecover: 'Restore selection', channelRecovered: '{name} is available for subsequent requests again.', channelRefresh: 'Refresh status',
       gatewayOnline: 'Gateway online {version}', gatewayOffline: 'Gateway offline', gatewayChecking: 'Checking gateway…',
       programVersion: 'Magpie {version}', programMissing: 'Magpie not downloaded', programUpgrade: 'Update to {version}',
       groupProgram: 'Magpie program', groupMagpieSettings: 'Magpie settings', groupMagpieSettingsHint: 'Written straight into Magpie’s own settings; the same options as its Settings › General.', groupDsh: 'DSH',
@@ -207,7 +213,7 @@ window.__ModuleLoader__.load({
     };
     // 排序后各行滑到新位置的时长；拖动中让位的过渡写在样式里，两者保持一致。
     const REORDER_MS = 200;
-    const TABS = [['models', 'tabModels'], ['switches', 'tabSwitches'], ['connection', 'tabConnection'], ['preferences', 'tabPreferences'], ['updates', 'tabUpdates']];
+    const TABS = [['models', 'tabModels'], ['channels', 'tabChannels'], ['switches', 'tabSwitches'], ['connection', 'tabConnection'], ['preferences', 'tabPreferences'], ['updates', 'tabUpdates']];
     // 卡片在插件设置和侧栏页面各自挂载；读取或保存后经此通知侧栏按已保存的配置重新判断入口。
     const savedConfig = { value: undefined, listeners: new Set() };
     function publishConfig(config) {
@@ -934,6 +940,7 @@ window.__ModuleLoader__.load({
       // 贴底保存栏要读 cardRef，挂载时还要回到页面顶部，两件事共用一个稳定的 ref 回调。
       const attachCard = useCallback((node) => { cardRef.current = node; showPanelFromTop(node); }, []);
       const footerSpaceRef = useRef(null);
+      const channelRequest = useRef(0);
       // 优先留在卡片末尾；原位置放不下时才贴窗口底边，并保留原位高度供滚动归位。
       useLayoutEffect(() => {
         const card = cardRef.current, space = footerSpaceRef.current, footer = space?.firstElementChild;
@@ -1022,11 +1029,18 @@ window.__ModuleLoader__.load({
       // 网关状态按已保存的地址检查；保存或程序操作结束后重新检查。
       useEffect(() => {
         let active = true;
-        const check = () => request({ action: 'status' }).then((result) => { if (active) setGateway(result.gateway); }, () => { if (active) setGateway({ online: false }); });
+        const check = () => {
+          const generation = channelRequest.current;
+          return request({ action: 'status' }).then((result) => {
+            if (!active) return;
+            setGateway(result.gateway);
+            if (result.channelStatus && generation === channelRequest.current) setView((old) => old ? { ...old, channelStatus: result.channelStatus } : old);
+          }, () => { if (active) setGateway({ online: false }); });
+        };
         check();
         const timer = setInterval(check, STATUS_POLL_MS);
         return () => { active = false; clearInterval(timer); };
-      }, [view?.revision, operation?.running]);
+      }, [view?.revision, operation?.running, tab === 'channels']);
       const perform = async (run, action = true) => {
         setBusy(action); setNotice(null);
         try { await run(); } catch (error) { setNotice(failure(error)); }
@@ -1047,6 +1061,19 @@ window.__ModuleLoader__.load({
         setView((v) => ({ ...v, savedModels: v.savedModels ?? v.config.models, config: { ...v.config, ...patch } })); setDirty(true);
       };
       const rows = config.models;
+      const blockedChannels = view.channelStatus?.blocked ?? [];
+      const channelName = (id) => view.providerNames?.[id] ?? id;
+      const refreshChannels = () => perform(async () => {
+        const generation = ++channelRequest.current;
+        const result = await request({ action: 'channel-status' });
+        if (generation === channelRequest.current) setView((old) => ({ ...old, channelStatus: result.channelStatus }));
+      }, 'channel-status');
+      const recoverChannel = (channel) => perform(async () => {
+        const generation = ++channelRequest.current;
+        const result = await request({ action: 'channel-recover', provider: channel.id, token: channel.token });
+        if (generation === channelRequest.current) setView((old) => ({ ...old, channelStatus: result.channelStatus }));
+        setNotice({ text: t('channelRecovered', { name: channelName(channel.id) }) });
+      }, `channel-recover:${channel.id}`);
       const labelFor = (row) => displayModelName(row, view.providerNames) || t('newModel');
       const updateRow = (index, patch) => update({ models: rows.map((row, i) => i === index ? keepKey(row, { ...row, ...patch }) : row) });
       const field = (label, value, change, options = {}) => h('label', { className: 'field' }, label, h('input', { value: value ?? '', disabled: busy, onChange: (e) => change(e.target.value), ...options }));
@@ -1218,6 +1245,7 @@ window.__ModuleLoader__.load({
         key: id, type: 'button', role: 'tab', className: 'tab', id: `dsm-mp-tab-${id}`, 'aria-selected': tab === id, 'aria-controls': 'dsm-mp-panel', onClick: () => setTab(id),
       }, t(label),
       id === 'models' ? h('span', { key: rows.length, className: 'count' }, rows.length) : null,
+      id === 'channels' && blockedChannels.length ? h('span', { className: 'count' }, blockedChannels.length) : null,
       id === 'updates' && (backend?.updateAvailable || pluginUpdate) ? h('span', { className: 'mark', 'aria-hidden': true }) : null)));
 
       const modelList = h('div', {
@@ -1275,6 +1303,18 @@ window.__ModuleLoader__.load({
             h('label', null, h('input', { type: 'checkbox', disabled: busy, checked: model.input.includes('image'), onChange: (e) => updateRow(index, { input: e.target.checked ? ['text', 'image'] : ['text'] }) }), t('vision'))))); }));
 
       const panels = {
+        channels: () => [
+          h('div', { className: 'bar spread' }, h('strong', null, t('channelsTitle')),
+            button(t('channelRefresh'), refreshChannels, { 'aria-busy': modelBusy === 'channel-status' })),
+          h('p', { className: 'hint' }, t('channelsHint')),
+          !blockedChannels.length ? h('p', { className: 'empty' }, t('channelsEmpty')) : null,
+          ...blockedChannels.map((channel) => h('div', { className: 'row', key: channel.id },
+            h('div', { className: 'row-text' },
+              h('span', { className: 'row-title' }, channelName(channel.id), ' ', h('span', { className: 'badge' }, t('channelBlocked'))),
+              h('span', { className: 'row-hint' }, channel.id),
+              h('span', { className: 'row-hint' }, t('channelDetected', { time: new Date(channel.at).toLocaleString(undefined, { timeZone: 'Asia/Shanghai', hour12: false }) }))),
+            button(t('channelRecover'), () => recoverChannel(channel), { 'aria-label': `${t('channelRecover')} ${channelName(channel.id)}`, 'aria-busy': modelBusy === `channel-recover:${channel.id}` }))),
+        ],
         // 总开关与屏蔽选项单独一页：模型页只留清单与筛选，避免设置挤占列表空间。
         switches: () => [
           toggle(t('sync'), t('syncHint'), config.syncEnabled, (syncEnabled) => applyNow({ syncEnabled }), busy || !view.editable),

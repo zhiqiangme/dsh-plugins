@@ -8,6 +8,8 @@ import { MagpieBackend } from '../lib/backend.js';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { ROUTER_PATH } from '../lib/router.js';
 
 const config = { syncEnabled: true, autoRoute: false, models: [{ id: 'manual/unlisted', name: '自己的目录' }] };
 function setup(options) {
@@ -15,6 +17,38 @@ function setup(options) {
   const manager = new ModelManager(host.ctx, {}, { env: {}, ...options });
   return { ...host, manager };
 }
+
+test('真实路由余额不足可通过渠道状态接口查看并恢复，读取不联网且不编辑配置', async (t) => {
+  const host = fakeHost({ models: [{ id: 'qoder-cn/model', name: 'Model' }] });
+  let reads = 0;
+  const manager = new ModelManager(host.ctx, host.own.options.config, { env: {}, backend: { describe: async () => ({}) }, fetchImpl: async (url) => {
+    reads++;
+    return url.endsWith('/v1/magpie/quotas') ? Response.json({ data: [] })
+      : Response.json({ error: { message: '余额不足' } }, { status: 400 });
+  } });
+  const server = createServer((req, res) => manager.router.handle(req, res));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { manager.router.stop(); server.closeAllConnections(); return new Promise((resolve) => server.close(resolve)); });
+  const before = await manager.describe();
+  assert.equal(reads, 0, '读取页面不拉额度和模型目录');
+  const request = () => fetch(`http://127.0.0.1:${server.address().port}${ROUTER_PATH}/chat/completions`, {
+    method: 'POST', headers: { authorization: 'Bearer magpie-dsh', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'auto:model', messages: [{ role: 'user', content: 'hello' }] }),
+  });
+  assert.equal((await request()).status, 400);
+  const blocked = (await manager.handle({ action: 'channel-status' })).channelStatus.blocked[0];
+  assert.equal(blocked.id, 'qoder-cn');
+  assert.equal((await manager.describe()).channelStatus.blocked.length, 1);
+  const failedReads = reads;
+  assert.equal((await request()).status, 503);
+  assert.equal(reads, failedReads, '停用后不再请求上游');
+  await assert.rejects(manager.handle({ action: 'channel-recover', provider: blocked.id, token: 'old-token' }), (error) => error.status === 409);
+  const recovered = await manager.handle({ action: 'channel-recover', provider: blocked.id, token: blocked.token });
+  assert.equal(recovered.channelStatus.blocked.length, 0);
+  assert.equal((await request()).status, 400);
+  assert.equal((await manager.describe()).revision, before.revision);
+  assert.deepEqual(host.edits, [], '恢复渠道不改写任何插件或 DSH 模型配置');
+});
 
 test('保存手工清单不拉 Magpie 目录，重建实例后仍保留', async () => {
   const host = setup({ fetchImpl: () => { throw new Error('手工保存不应该联网'); } });

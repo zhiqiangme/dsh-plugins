@@ -58,7 +58,7 @@ export class ModelManager {
     const saved = await this.credentials?.resolve?.(KEY_REF);
     const llm = findEntry(this.editor, '@deepseek-ai/dsh-llm-pi-ai');
     return {
-      ok: true, config, revision: revision(config), lastSync: this.lastSync, providerNames: PROVIDER_NAMES,
+      ok: true, config, revision: revision(config), lastSync: this.lastSync, providerNames: PROVIDER_NAMES, channelStatus: this.router.channelStatus(),
       backend: await this.backend.describe(config.magpiePath), magpieSettings: this.backend.settings?.(),
       keyConfigured: Boolean(this.env[KEY_REF] || (saved?.value && saved.value !== LOCAL_KEY)),
       keyWritable: !this.env[KEY_REF] && (await this.credentials?.describe?.(KEY_REF))?.writable !== false,
@@ -117,6 +117,8 @@ export class ModelManager {
     return { ...await this.describe(), config, revision: revision(config), saved: true, ...(sync ? { sync } : {}) };
   }
   async handle(body) {
+    if (body.action === 'channel-status') return { ok: true, channelStatus: this.router.channelStatus() };
+    if (body.action === 'channel-recover') return this.enqueue(() => ({ ok: true, channelStatus: this.router.recoverChannel(body.provider, body.token) }));
     if (['backend-status', 'backend-check', 'backend-install', 'backend-open'].includes(body.action)) {
       const path = body.magpiePath ?? this.current().magpiePath;
       const { autoLightweight: lightweight, startMode } = this.current();
@@ -131,8 +133,8 @@ export class ModelManager {
       try {
         const key = await credential(this.credentials, this.env, config.baseURL);
         const hello = await requestGateway(config.baseURL, '/api/hello', key, this.fetch, STATUS_TIMEOUT);
-        return { ok: true, gateway: hello?.name === 'magpie' ? { online: true, version: hello.version ?? null } : { online: false } };
-      } catch { return { ok: true, gateway: { online: false } }; }
+        return { ok: true, channelStatus: this.router.channelStatus(), gateway: hello?.name === 'magpie' ? { online: true, version: hello.version ?? null } : { online: false } };
+      } catch { return { ok: true, channelStatus: this.router.channelStatus(), gateway: { online: false } }; }
     }
     if (body.action === 'magpie-settings') {
       // 直接写 Magpie 自己的设置，不属于插件配置，也不需要版本号。

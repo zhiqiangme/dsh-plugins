@@ -83,6 +83,31 @@ test('客户端模块、两个卡片入口和中英字典符合宿主契约', ()
   assert.equal(control(client.render(), '按供应商分类').type, 'select');
 });
 
+test('渠道页显示余额不足渠道，刷新与手动恢复即时生效且不覆盖模型草稿和版本号', async () => {
+  const calls = [];
+  const blocked = { id: 'qoder-cn', at: Date.parse('2026-11-16T12:00:00+08:00'), token: 'blocked-one' };
+  const client = clientHarness({ ...view({ models: [{ id: 'qoder-cn/qmodel_latest', name: 'Qwen4-Max' }] }),
+    channelStatus: { day: '2026-11-16', blocked: [blocked] } }, async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body);
+    return response({ ok: true, channelStatus: { day: '2026-11-16', blocked: body.action === 'channel-recover' ? [] : [blocked] },
+      config: resolveConfig({ models: [] }), revision: 'do-not-adopt' });
+  });
+  field(client.render(), '显示名称').props.onChange({ target: { value: '尚未保存的模型名称' } });
+  client.tab('渠道');
+  let raw = JSON.stringify(client.render());
+  assert.match(raw, /余额不足/); assert.match(raw, /北京时间每日 04:00/); assert.match(raw, /Qoder/);
+  await control(client.render(), '恢复选择 Qoder').props.onClick();
+  assert.deepEqual(calls[0], { action: 'channel-recover', provider: 'qoder-cn', token: 'blocked-one' });
+  assert.match(JSON.stringify(client.render()), /当前没有因余额不足停用的渠道/);
+  assert.equal(client.states[0].config.models[0].name, '尚未保存的模型名称');
+  assert.equal(client.states[0].revision, 'revision-one');
+  assert.equal(client.states[1], true);
+  await button(client.render(), '刷新状态').props.onClick();
+  assert.deepEqual(calls[1], { action: 'channel-status' });
+  assert.ok(control(client.render(), '恢复选择 Qoder'));
+  assert.equal(client.states[0].config.models.length, 1);
+});
+
 test('总开关与屏蔽选项集中在开关页，默认屏蔽低于 500K，模型页只留清单与筛选', () => {
   const client = clientHarness(view({ models: [{ id: 'a/one' }] }));
   for (const label of ['同步到 DSH', '自动路由（同款模型合并）', '屏蔽小上下文模型', '屏蔽不支持图片的模型']) {
@@ -1096,11 +1121,11 @@ test('标题显示网关与程序状态，程序状态可跳到更新页；标�
   assert.match(label(chips()[0]), /网关未连接/);
   assert.match(label(chips()[1]), /Magpie 0\.1\.1.*可升级到 0\.1\.2/);
   const tabs = () => nodes(client.render(), (n) => n.props.role === 'tab');
-  assert.deepEqual(tabs().map((n) => n.props['aria-selected']), [true, false, false, false, false]);
+  assert.deepEqual(tabs().filter((n) => n.props['aria-selected']).map((n) => n.children[0]), ['模型']);
   assert.equal(tabs()[0].children[1].children[0], 2);
-  assert.ok(tabs()[4].children[2], '有可升级版本时更新页带标记');
+  assert.equal(nodes(tabs().find((n) => n.children[0] === '更新'), (n) => n.props.className === 'mark').length, 1, '有可升级版本时更新页带标记');
   chips()[1].props.onClick();
-  assert.deepEqual(tabs().map((n) => n.props['aria-selected']), [false, false, false, false, true]);
+  assert.deepEqual(tabs().filter((n) => n.props['aria-selected']).map((n) => n.children[0]), ['更新']);
   assert.ok(button(client.render(), '升级 Magpie'));
   assert.equal(button(client.render(), '从 Magpie 同步'), undefined);
 });

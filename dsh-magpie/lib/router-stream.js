@@ -25,11 +25,17 @@ export function isInsufficientBalance(value) {
     || /\b(?:balance|funds|credits?)\b[^\n.]{0,48}\b(?:insufficient|exhausted|depleted|too low)\b/i.test(value);
 }
 
+function balanceError(event, value) {
+  const explicit = event === 'error' || value?.type === 'error' || value?.type === 'response.failed' || Boolean(value?.error);
+  const error = value?.error ?? value?.response?.error ?? value;
+  return (explicit || (!value?.choices && !value?.output && !value?.content)) && isInsufficientBalance(error);
+}
+
 export function errorStatus(event, value) {
   const explicit = event === 'error' || value?.type === 'error' || value?.type === 'response.failed' || Boolean(value?.error);
   const error = value?.error ?? value?.response?.error ?? value;
   // 402 仅作为内部选路分类；转发给 DSH 时仍保留上游状态码和错误正文。
-  if ((explicit || (!value?.choices && !value?.output && !value?.content)) && isInsufficientBalance(error)) return 402;
+  if (balanceError(event, value)) return 402;
   if (!explicit) return undefined;
   for (const raw of [error?.status, error?.status_code, error?.code, value?.status, value?.status_code]) {
     const status = Number(raw);
@@ -43,7 +49,7 @@ export function errorStatus(event, value) {
 export async function prepareJSON(upstream) {
   const bytes = new Uint8Array(await upstream.arrayBuffer());
   const value = JSON.parse(new TextDecoder().decode(bytes));
-  return { body: [bytes], status: errorStatus('', value), cancel: async () => {} };
+  return { body: [bytes], status: errorStatus('', value), insufficientBalance: balanceError('', value), cancel: async () => {} };
 }
 
 /** HTTP 错误也需要读正文：普通 400 原样返回，只有明确余额不足才允许换出口。 */
@@ -53,7 +59,8 @@ export async function prepareErrorResponse(upstream) {
   let value;
   try { value = JSON.parse(raw); }
   catch { value = raw; }
-  return { body: [bytes], status: isInsufficientBalance(value) ? 402 : upstream.status, cancel: async () => {} };
+  const insufficientBalance = isInsufficientBalance(value);
+  return { body: [bytes], status: insufficientBalance ? 402 : upstream.status, insufficientBalance, cancel: async () => {} };
 }
 
 const text = (value) => typeof value === 'string' && value.length > 0;
@@ -84,6 +91,7 @@ class SSEState {
   event = '';
   ready = false;
   status;
+  insufficientBalance = false;
   ended = false;
   dataLength = 0;
   push(chunk) {
@@ -102,7 +110,10 @@ class SSEState {
           let value;
           try { value = JSON.parse(data); }
           catch { if (this.event === 'error') value = data; /* 未知心跳不代表模型输出。 */ }
-          this.status ??= errorStatus(this.event, value);
+          if (!this.status) {
+            this.status = errorStatus(this.event, value);
+            this.insufficientBalance = balanceError(this.event, value);
+          }
           if (!this.status && useful(value)) this.ready = true;
         }
         this.data = []; this.event = ''; this.dataLength = 0;
@@ -149,7 +160,7 @@ export async function prepareSSE(upstream, { onError } = {}) {
         if (next.done) return;
         const previous = state.status;
         state.push(next.value);
-        if (!previous && state.status) onError?.(state.status);
+        if (!previous && state.status) onError?.(state.status, state.insufficientBalance);
         yield next.value;
         if (state.status) return;
       }
@@ -159,5 +170,5 @@ export async function prepareSSE(upstream, { onError } = {}) {
       throw error;
     } finally { await cancel(); }
   }
-  return { body: body(), status, cancel };
+  return { body: body(), status, insufficientBalance: state.insufficientBalance, cancel };
 }
