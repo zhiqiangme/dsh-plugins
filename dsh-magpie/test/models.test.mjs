@@ -161,6 +161,35 @@ test('自动路由写入合并条目与本机地址，开关往返修复默认�
   assert.equal(anthropic.config.providers[PROVIDER_ID].baseURL, `http://127.0.0.1:9876${ROUTER_BASE_PATH}`);
 });
 
+test('旧混合分组拆开后保留原型号引用，移除该型号也不能自动改投另一版', async (t) => {
+  for (const preview of [false, true]) await t.test(preview ? '原 Preview 条目' : '原正式版条目', async () => {
+    const normal = { id: 'qoder-cn/qmodel_latest', name: 'Qwen4-Max' };
+    const experimental = { id: 'qoder-cn/qmodel_latest_preview', name: 'Qwen4-Max-Preview' };
+    const config = resolveConfig({ autoRoute: true, models: preview ? [experimental, normal] : [normal, experimental] });
+    const legacy = planAutoRoute(config, { legacyGrouping: true });
+    assert.equal(legacy.entries.length, 1);
+    const oldId = `auto:qwen4-max${preview ? '-preview' : ''}`;
+    assert.equal(legacy.entries[0].id, oldId);
+    const host = fakeHost(config);
+    host.llm.options.config.providers[PROVIDER_ID] = { apiKeyEnv: KEY_REF, models: legacy.entries };
+    host.llm.options.config.defaultModel = { provider: PROVIDER_ID, model: oldId };
+    host.llm.options.config.allowedModels = [normal, experimental].map(({ id }) => ({ provider: PROVIDER_ID, model: id }));
+    const options = { editor: host.editor, credentials: host.services.credentials, env: {}, routeOrigin: 'http://127.0.0.1:9876' };
+    for (let i = 0; i < 2; i++) {
+      await syncModels(config, options);
+      const entries = host.llm.options.config.providers[PROVIDER_ID].models;
+      assert.deepEqual(entries.map(({ id }) => id).sort(), ['auto:qwen4-max', 'auto:qwen4-max-preview']);
+      assert.deepEqual(entries.map(({ name }) => name).sort(), ['Qwen4-Max', 'Qwen4-Max-Preview']);
+      assert.equal(host.llm.options.config.defaultModel.model, oldId);
+      assert.deepEqual(host.llm.options.config.allowedModels.map(({ model }) => model), ['auto:qwen4-max', 'auto:qwen4-max-preview']);
+    }
+    const removed = preview ? experimental : normal;
+    const remaining = resolveConfig({ ...config, models: config.models.filter(({ id }) => id !== removed.id) });
+    await syncModels(remaining, { ...options, previousConfig: config });
+    assert.equal(host.llm.options.config.defaultModel.model, removed.id, '保留原始失效引用，不能因旧合并分组仍有另一版而改投');
+  });
+});
+
 test('按名合并后旧别名引用（auto: 前缀与裸 ID）反查到合并条目', async () => {
   const host = fakeHost({ syncEnabled: true, autoRoute: true, models: [
     { id: 'qwenwork/frontier-1', name: 'Qwen4-Max 预览版' },

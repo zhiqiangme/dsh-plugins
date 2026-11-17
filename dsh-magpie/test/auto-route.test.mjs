@@ -16,12 +16,53 @@ test('合并键按裸模型 ID，忽略供应商、大小写、月日快照与�
   assert.equal(routeKey('workbuddy/hy4std-1017'), 'hy4');
   assert.equal(routeKey('workbuddy/free'), 'free', '单独 free 不能变成空键');
   for (const id of ['workbuddy/model-2000', 'workbuddy/model-1301', 'workbuddy/model-0132']) assert.equal(routeKey(id), id.split('/')[1]);
-  assert.equal(routeKey('qoder-cn/qwen4-max-preview'), 'qwen4-max', 'Preview 标记不算型号差异');
-  assert.equal(routeKey('qwenwork/qwen4-max-预览版'), 'qwen4-max', '中文预览版与 Preview 等价');
+  assert.equal(routeKey('qoder-cn/qwen4-max-preview'), 'qwen4-max-preview', 'Preview 保留为独立型号');
+  assert.equal(routeKey('qwenwork/qwen4-max-预览版'), 'qwen4-max-preview', '中文预览版与 Preview 等价');
+  assert.equal(routeKey('qoder-cn/qwen4-max-preview', { legacyGrouping: true }), 'qwen4-max', '旧合并规则只用于引用迁移');
   assert.equal(routeKey('trae-cn/glm-4.7-auto'), 'glm-4.7');
   assert.equal(routeKey('trae-cn/kimi-k3-auto-max'), 'kimi-k3-max');
   assert.equal(routeKey('custom/auto'), 'auto', '独立的 auto 是路由名，不是后缀');
   assert.equal(routeKey('custom/auto-model-2'), 'auto-model-2', '名称中间的 auto 不移除');
+});
+
+test('Qwen4 Max 与 Preview 各自跨渠道合并，反排清单也不会混合出口', () => {
+  const rows = [
+    { id: 'qoder-cn/qmodel_latest', name: 'Qwen4-Max' },
+    { id: 'qoder-cn/qmodel_latest_preview', name: 'Qwen4-Max-Preview' },
+    { id: 'qoder/qmodel_latest', name: 'Qwen4-Max' },
+    { id: 'qoder/qmodel_latest_preview', name: 'Qwen4-Max-Preview' },
+    { id: 'trae-cn/qwen4-max-max', name: 'Qwen4-Max (Max)' },
+    { id: 'qwenwork/frontier-1', name: 'Qwen4-Max（预览版）' },
+  ];
+  const original = structuredClone(rows);
+  for (const models of [rows, [...rows].reverse()]) {
+    const planned = planAutoRoute(config(models));
+    assert.deepEqual(planned.entries.map((row) => row.id).sort(), ['auto:qwen4-max', 'auto:qwen4-max-preview']);
+    for (const preview of [false, true]) {
+      const id = `auto:qwen4-max${preview ? '-preview' : ''}`;
+      const expected = models.filter((row) => /preview|预览版/i.test(row.name)).map((row) => row.id);
+      const regular = models.filter((row) => !/preview|预览版/i.test(row.name)).map((row) => row.id);
+      assert.deepEqual(planned.routes.get(id).map((row) => row.id), preview ? expected : regular);
+    }
+    assert.equal(planAutoRoute(config(models), { legacyGrouping: true }).routes.size, 1, '保留历史混合分组用于升级迁移');
+  }
+  assert.deepEqual(rows, original, '不改写上游名称、完整 ID 或勾选');
+});
+
+test('同裸 ID、同名及别名关联不能跨越 Preview 边界，只有 ID 标记时也保留 Preview 名称', () => {
+  const planned = planAutoRoute(config([
+    { id: 'a/shared', name: 'Qwen4-Max', contextWindow: 1000000 },
+    { id: 'b/shared', name: 'Qwen4-Max (Preview)', contextWindow: 800000 },
+    { id: 'c/qwen4-max-preview', name: 'Qwen4-Max', contextWindow: 900000 },
+    { id: 'd/alias', name: 'Qwen4-Max 预览版', contextWindow: 700000 },
+    { id: 'e/qwen4-max-preview', name: 'Qwen4-Max-Preview', enabled: false },
+  ]));
+  assert.deepEqual(planned.entries.map(({ id, name, contextWindow }) => ({ id, name, contextWindow })), [
+    { id: 'auto:qwen4-max', name: 'Qwen4-Max', contextWindow: 1000000 },
+    { id: 'auto:qwen4-max-preview', name: 'Qwen4-Max-Preview', contextWindow: 700000 },
+  ]);
+  assert.deepEqual(planned.routes.get('auto:qwen4-max').map((row) => row.id), ['a/shared']);
+  assert.deepEqual(planned.routes.get('auto:qwen4-max-preview').map((row) => row.id), ['b/shared', 'c/qwen4-max-preview', 'd/alias']);
 });
 
 test('别名 ID 看不出同款时按带版本号的显示名合并，ID 与展示名取实际模型名', () => {

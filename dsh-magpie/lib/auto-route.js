@@ -13,8 +13,9 @@ export const DEFAULT_EFFORTS = Object.freeze(['low', 'high', 'max']);
 /** 上游快照的月日版本号与计费档位；没有这些明确标记时不猜测。 */
 const MODEL_VERSION_SUFFIX = /-(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/;
 const MODEL_TIER_SUFFIX = /(?<=[a-z0-9])[-_]?(free|std)$/i;
-/** Preview 与中文“预览版”是同一变体标记，合并时不算型号差异。 */
-const MODEL_PREVIEW_SUFFIX = /[-_\s]?(preview|预览版)$/i;
+/** Preview 与中文“预览版”互为别名，但必须与不带标记的正式型号分组。 */
+const MODEL_PREVIEW_SUFFIX = /[-_\s]*[(（]?\s*(preview|预览版)\s*[)）]?$/i;
+const MODEL_PREVIEW_MARKER = /(?:^|[-_\s(（])(?:preview|预览版)(?=$|[-_\s)）])/i;
 /** (Max) 是同一模型的推理档位变体标记（Trae 命名），合并时不算型号差异。 */
 const MODEL_TIER_MARKER = /\s*[(（]\s*max\s*[)）]$/i;
 // 已确认的无版本号模型名：仅显式列出的具体型号可按名合并，不能放开搜索代理等通用别名。
@@ -26,14 +27,15 @@ const MODEL_NAME_ALIASES = new Map([['豆包-2.1-pro', 'Seed-2.1-Pro'], ['doubao
 
 /**
  * 同款模型的合并键：供应商只看路由前缀，型号看裸 ID，不按 DeepSeek / GLM 大系列合并。
- * 月日快照、free / std 与 Auto 路由后缀不算不同型号；高速版等其它差异不能猜测合并。
+ * 月日快照、free / std 与 Auto 路由后缀不算不同型号；Preview 与正式版、高速版等差异保持独立。
  */
 export function routeKey(id, { legacyGrouping = false } = {}) {
   let text = String(id ?? '').trim();
   if (text.startsWith(AUTO_PREFIX)) text = text.slice(AUTO_PREFIX.length);
   const slash = text.indexOf('/');
   if (slash >= 0) text = text.slice(slash + 1);
-  const key = text.toLowerCase().replace(MODEL_VERSION_SUFFIX, '').replace(MODEL_TIER_SUFFIX, '').replace(MODEL_PREVIEW_SUFFIX, '');
+  const key = text.toLowerCase().replace(MODEL_VERSION_SUFFIX, '').replace(MODEL_TIER_SUFFIX, '')
+    .replace(MODEL_PREVIEW_SUFFIX, legacyGrouping ? '' : '-preview');
   return legacyGrouping ? key : key.replace(MODEL_AUTO_MARKER, '');
 }
 
@@ -48,12 +50,18 @@ function baseName(row, legacyGrouping = false) {
   // 目录里个别条目名是占位符（如 “-”）：同样退回裸 ID，避免出现 auto:- 这种没法读的 ID。
   const base = /[a-z0-9]/i.test(text) ? text : bareId(row);
   if (legacyGrouping) return base;
-  const clean = base.replace(MODEL_AUTO_MARKER, '');
+  let clean = base.replace(MODEL_AUTO_MARKER, '').replace(MODEL_PREVIEW_SUFFIX, '-Preview');
+  // 有些目录只在 ID 标记 Preview；派生条目也必须保留标记，不能在 DSH 里重新变成正式版名字。
+  if (isPreviewModel(row) && !MODEL_PREVIEW_MARKER.test(clean)) clean += '-Preview';
   return MODEL_NAME_ALIASES.get(clean.toLowerCase().replace(/[\s_]+/g, '-')) ?? clean;
 }
 
 function bareId(row) {
   return String(row.id ?? '').replace(/^.*\//, '');
+}
+
+export function isPreviewModel(row) {
+  return MODEL_PREVIEW_MARKER.test(bareId(row).replace(/^auto:/, '')) || MODEL_PREVIEW_MARKER.test(row.name ?? '');
 }
 
 /** 可读 ID 用的小写连字符形式；月日快照不算型号差异，一并去掉。 */
@@ -66,7 +74,8 @@ function entrySlug(row, legacyGrouping = false) {
  * 带版本号或已确认的具体型号才参与按名合并；search_agent_qwen_fast 这类通用别名同名也不并。
  */
 function nameKey(row, legacyGrouping = false) {
-  const text = entrySlug(row, legacyGrouping).replace(MODEL_TIER_SUFFIX, '').replace(MODEL_PREVIEW_SUFFIX, '');
+  const text = entrySlug(row, legacyGrouping).replace(MODEL_TIER_SUFFIX, '')
+    .replace(MODEL_PREVIEW_SUFFIX, legacyGrouping ? '' : '-preview');
   return /\d/.test(text) || (!legacyGrouping && VERSIONLESS_MODEL_NAMES.has(text)) ? text : '';
 }
 
@@ -110,7 +119,7 @@ function groupName(members, slug, legacyGrouping = false) {
  * ID 取实际模型名（`auto:kimi-k3.1-pro`），不再用内部别名，方便在 DSH 里对照。
  * 同名但不同款的条目使用候选原始 ID 的哈希后缀：取消、删除或重排另一组都不能让本组复用旧引用。
  * legacyIds 只用于读取本次改动前的 `-2` / `-3` 引用，新写入一律使用稳定后缀。
- * legacyGrouping 只为迁移旧版误拆分的模型引用保留旧分组规则，不用于新写入或请求选路。
+ * legacyGrouping 保留旧版误拆分或误合并的分组规则，只用于引用迁移，不用于新写入或请求选路。
  */
 export function planAutoRoute(config, { legacyIds = false, legacyGrouping = false } = {}) {
   const groups = [];
@@ -120,7 +129,9 @@ export function planAutoRoute(config, { legacyIds = false, legacyGrouping = fals
   const byKey = new Map();
   for (const row of config.models) {
     if (!row.enabled) continue;
-    const keys = [routeKey(row.id, { legacyGrouping }), nameKey(row, legacyGrouping)].filter(Boolean);
+    // ID 和名称两条合并路径都要隔离 Preview，避免同裸 ID 或别名形成跨型号的间接合并。
+    const variant = legacyGrouping ? '' : isPreviewModel(row) ? 'preview:' : 'stable:';
+    const keys = [routeKey(row.id, { legacyGrouping }), nameKey(row, legacyGrouping)].filter(Boolean).map((key) => variant + key);
     const matches = [...new Set(keys.map((key) => root(byKey.get(key))).filter(Boolean))];
     let group = legacyGrouping ? matches[0] : matches.toSorted((a, b) => a.order - b.order)[0];
     if (!group) { group = { members: [], order: groups.length }; groups.push(group); }

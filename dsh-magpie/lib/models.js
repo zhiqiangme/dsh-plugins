@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { gatewayURL, isLocal, KEY_REF, LOCAL_KEY, object, PROVIDER_ID, REASONING_LEVELS, normalizeModel } from './config.js';
 import { dshModelName, normalizeDisplayName, withoutFreeLabel } from './names.js';
-import { AUTO_PREFIX, planAutoRoute, routeKey, ROUTER_BASE_PATH } from './auto-route.js';
+import { AUTO_PREFIX, isPreviewModel, planAutoRoute, routeKey, ROUTER_BASE_PATH } from './auto-route.js';
 
 export const LLM_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai';
 export function findEntry(editor, name, id) {
@@ -93,17 +93,20 @@ export async function retargetModelRefs({ editor, entries, routes, previousRoute
   // 上一轮名称派生的 auto ID 不在原始清单里，必须通过两组共有的原始候选找回对应关系。
   // 同时接受旧数字后缀规划，升级后第一次同步也能迁移到稳定后缀。
   for (const previous of previousRoutes) for (const [oldId, oldMembers] of previous ?? []) {
-    if (!previousOwners.has(oldId)) previousOwners.set(oldId, oldMembers);
+    // 旧版可能把正式版与 Preview 混在一起；按旧条目的标记找回所属型号，不能按出口数量改投另一版。
+    const sameVariant = oldMembers.filter((row) => isPreviewModel(row) === isPreviewModel({ id: oldId }));
+    const ownedMembers = sameVariant.length ? sameVariant : oldMembers;
+    if (!previousOwners.has(oldId)) previousOwners.set(oldId, ownedMembers);
     let target;
     if (autoRoute) {
-      const oldIds = new Set(oldMembers.map((row) => row.id));
+      const oldIds = new Set(ownedMembers.map((row) => row.id));
       let best = 0;
       for (const [id, members] of currentRoutes) {
         const score = members.reduce((count, row) => count + Number(oldIds.has(row.id)), 0);
         if (score > best) { best = score; target = id; }
       }
     } else {
-      target = oldMembers.find((row) => current.has(row.id))?.id;
+      target = ownedMembers.find((row) => current.has(row.id))?.id;
     }
     if (target && !migrations.has(oldId)) migrations.set(oldId, target);
   }

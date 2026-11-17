@@ -136,7 +136,7 @@ npm 发布后可用 `dsh plugin --profile desktop add @zhiqiangme/dsh-magpie`。
 
 `-auto` 路由后缀（包括 `-auto-max` 中的 Auto）按同款处理，如 `GLM-4.7` 与 `glm-4.7-auto` 合并。`Seed-2.1-Pro`、`Doubao-Seed-2.1-Pro` 与「豆包 2.1 Pro」是已确认的同款别名，统一归入 `auto:seed-2.1-pro`。原始出口 ID 仍用于转发，合并后的旧模型引用会自动迁移；`fast` /「高速」代表不同价格的独立版本，不移除其后缀或并入普通版。
 
-「自动路由（同款模型合并）」默认开启，开关立即保存并同步。开启后，裸模型 ID 相同的已选出口合并为一条 `auto:` 条目，不会把 DeepSeek、GLM 大系列里的不同型号混在一起。月日快照后缀（如 `-1017`）和明确的 `free` / `std` 档位不算型号差异；Preview 与中文「预览版」、推理档位标记 `(Max)` 同样视为同一变体标记（带 `(Max)` 与不带后缀的同款合并）。ID 是别名（如 `frontier-1`、`qmodel_latest`、`dfmodel`）看不出同款时，按带版本号的显示名归组（Preview / 预览版归一后比较）；不带版本号的通用别名（如 `search_agent_qwen_fast`）同名也不按名称合并，避免误并不同模型。其它不同 ID 不猜测合并。
+「自动路由（同款模型合并）」默认开启，开关立即保存并同步。开启后，裸模型 ID 相同的已选出口合并为一条 `auto:` 条目，不会把 DeepSeek、GLM 大系列里的不同型号混在一起。月日快照后缀（如 `-1017`）和明确的 `free` / `std` 档位不算型号差异；Preview（含中文「预览版」）与非 Preview 型号独立分组，例如 `Qwen4-Max` 与 `Qwen4-Max-Preview` 分别生成两个 DSH 条目，只在各自的同款渠道之间切换；ID 与名称任一处带 Preview 标记都属于预览版，中文、英文及括号写法归为同一预览版。推理档位标记 `(Max)` 仍不算型号差异（带 `(Max)` 与不带后缀的同款合并）。ID 是别名（如 `frontier-1`、`qmodel_latest`、`dfmodel`）看不出同款时，按带版本号的显示名归组（Preview / 预览版归一后比较）；不带版本号的通用别名（如 `search_agent_qwen_fast`）同名也不按名称合并，避免误并不同模型。其它不同 ID 不猜测合并。
 
 条目 ID 直接取实际模型名（小写连字符形式），不再出现内部别名：`auto:qwen4-max-preview`、`auto:kimi-k3.1-pro`、`auto:longcat-2.5-free`、`auto:seed-evolving`；DSH 模型列表里的名称同样是模型本名（`Qwen4-Max-Preview`、`Kimi-K3.1-Pro`），不再拼接 `Auto` 或供应商简称。同一组内取出现最多的写法作为 ID，避免清单顺序变化导致 ID 变动；单个候选也使用同一规则。不同模型恰好同名时（例如两个 `search_agent_qwen_fast`），ID 在模型名后追加由候选原始 ID 派生的稳定哈希，展示名按出现顺序加 `2`、`3`；重排不会让候选互换 ID，取消或删除候选也不会把它的旧引用复用给同名模型，旧数字后缀引用会自动迁移。名称是占位符（如 `-`）时退回裸模型 ID。修改显示名或切换开关会把 DSH 中已有的旧 `auto:` ID（含别名 ID 和大小写不同的写法）迁移到新 ID。
 

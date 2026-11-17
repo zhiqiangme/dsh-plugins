@@ -45,6 +45,27 @@ async function setup(t, options = {}) {
   return { calls, send, router, url, clock, setConfig: (next) => { config = resolveConfig(next); } };
 }
 
+test('正式版失败仅在正式版渠道间切换，Preview 通过独立模型 ID 调用', async (t) => {
+  const models = [
+    { id: 'a/qwen4-max', name: 'Qwen4-Max' },
+    { id: 'a/qwen4-max-preview', name: 'Qwen4-Max-Preview' },
+    { id: 'b/qwen4-max', name: 'Qwen4-Max' },
+    { id: 'b/qwen4-max-preview', name: 'Qwen4-Max-Preview' },
+  ];
+  const { calls, send } = await setup(t, { models, upstream: (_req, res, body) => {
+    res.writeHead(body.model.startsWith('a/') ? 503 : 200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ model: body.model }));
+  } });
+  const normal = await send({ ...ask(), model: 'auto:qwen4-max' });
+  assert.equal(normal.status, 200);
+  assert.equal((await normal.json()).model, 'b/qwen4-max');
+  assert.deepEqual(calls.map((call) => call.body.model), ['a/qwen4-max', 'b/qwen4-max']);
+  const preview = await send({ ...ask(), model: 'auto:qwen4-max-preview' });
+  assert.equal(preview.status, 200);
+  assert.equal((await preview.json()).model, 'b/qwen4-max-preview');
+  assert.equal(calls.at(-1).body.model, 'b/qwen4-max-preview');
+});
+
 test('失败渠道全局后移，同一对话及其它对话均使用新的默认顺序', async (t) => {
   let failFirst = true;
   const { calls, send } = await setup(t, { upstream: (_req, res, body) => {
