@@ -14,6 +14,7 @@ window.__ModuleLoader__.load({
       keySaved: '已保存 Key', keyEmpty: '使用本机标识', keyReadonly: 'Key 由环境变量提供，只读',
       check: '检查连接', connected: '已连接 Magpie {version}', catalog: '从 Magpie 同步',
       mirrored: '已按 Magpie 当前目录覆盖保存，DSH 分组现有 {count} 个模型。',
+      catalogAdded: '本次导入新增 {count} 个模型。', catalogUnchanged: '本次导入没有新模型。',
       sync: '同步到 DSH', syncHint: '勾选的模型按顺序写入 DSH 的“Magpie”分组；关闭即移除该分组。',
       autoRoute: '自动路由（同款模型合并）', autoRouteHint: '同款模型合并为 Auto 条目。优先分配其它运行中对话占用较少的渠道，同占用时按积分最近到期及失败顺序选择，每小时刷新到期优先级。一般失败后移，余额不足当天停用，可在「渠道」页恢复；主动取消不调整。北京时间每日 04:00 恢复停用。60 秒无有效输出会切换可重试出口。开关立即保存并同步。',
       hideSmallContext: '屏蔽小上下文模型', hideSmallContextHint: '只影响本卡片列表显示，不改勾选、同步与自动路由；上下文未知的模型不屏蔽。选项即时保存。',
@@ -104,6 +105,7 @@ window.__ModuleLoader__.load({
       keySaved: 'Key saved', keyEmpty: 'Using local identity', keyReadonly: 'The environment supplies a read-only key',
       check: 'Check connection', connected: 'Connected to Magpie {version}', catalog: 'Sync from Magpie',
       mirrored: 'Replaced and saved the list from Magpie. The DSH group now has {count} models.',
+      catalogAdded: 'This import added {count} models.', catalogUnchanged: 'No new models in this import.',
       sync: 'Sync to DSH', syncHint: 'Ticked models go into the DSH “Magpie” group in this order; turning this off removes the group.',
       autoRoute: 'Auto route (merge identical models)', autoRouteHint: 'Merges identical models into Auto entries. Prefer channels used by fewer other running conversations, then credit expiry and failure order. Refresh expiry priority hourly. General failures move a channel back; insufficient balance pauses it until 04:00 Beijing time or manual recovery in Channels. Client cancellation does not change routing. Retryable failures or 60 seconds without initial output try another route. Saves and syncs immediately.',
       hideSmallContext: 'Hide small-context models', hideSmallContextHint: 'Only affects this card’s list; selections, sync and auto routing are unchanged. Models with unknown context stay visible. Saves immediately.',
@@ -1118,10 +1120,15 @@ window.__ModuleLoader__.load({
       }, 'open');
       const magpieSettings = view.magpieSettings;
       const syncCatalog = () => perform(async () => {
+        const previousIds = new Set((view.savedModels ?? config.models).map((model) => model.id));
         const result = await request({ action: 'sync-catalog', config, revision: view.revision, apiKey: key || undefined });
         publishConfig(result.config); setView(withSavedModels(result)); setDirty(false); setKey(''); setSearch(''); setCategoryFilters({ provider: '', model: '' }); setExpanded(new Set());
         dragSource.current = null; setDrag(null);
-        setNotice({ error: !result.sync.ok, text: result.sync.ok ? t('mirrored', { count: result.sync.count }) : t('saveFailed', { reason: result.sync.reason }) });
+        // 兼容尚未返回导入统计的旧后端；比较完整已保存清单，不用筛选后的可见行或模型总数差。
+        const added = Number.isSafeInteger(result.catalogChanges?.added) && result.catalogChanges.added >= 0
+          ? result.catalogChanges.added : new Set(result.config.models.filter((model) => !previousIds.has(model.id)).map((model) => model.id)).size;
+        const imported = added ? t('catalogAdded', { count: added }) : t('catalogUnchanged');
+        setNotice({ error: !result.sync.ok, text: `${imported} ${result.sync.ok ? t('mirrored', { count: result.sync.count }) : t('saveFailed', { reason: result.sync.reason })}` });
       }, 'sync-catalog');
       const save = () => perform(async () => {
         const result = await request({ action: 'save', config, revision: view.revision, apiKey: key || undefined });

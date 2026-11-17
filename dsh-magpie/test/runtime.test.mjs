@@ -56,6 +56,7 @@ test('保存手工清单不拉 Magpie 目录，重建实例后仍保留', async 
   const result = await host.manager.handle({ action: 'save', revision: view.revision, config });
   assert.equal(result.saved, true);
   assert.equal(result.sync.ok, true);
+  assert.equal(result.catalogChanges, undefined, '普通保存不产生导入统计');
   assert.equal(host.own.options.config.models[0].id, 'manual/unlisted');
   assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].name, '自己的目录');
   const reopened = new ModelManager(host.ctx, host.own.options.config, { env: {} });
@@ -186,6 +187,7 @@ test('全量同步覆盖目录并保留已有勾选，新出现的模型默认�
   const result = await host.manager.handle({ action: 'sync-catalog', revision: initial.revision, config: { ...initial.config, models: [{ id: '' }, { id: 'workbuddy-ai/b', enabled: true }] } });
   assert.equal(result.saved, true);
   assert.equal(result.sync.ok, true);
+  assert.deepEqual(result.catalogChanges, { added: 1 });
   // 同步后按模型名称排序保存：A 在 B 前，与上游返回顺序无关。
   assert.deepEqual(result.config.models.map((m) => m.id), ['new/a', 'workbuddy-ai/b']);
   assert.equal(result.config.models[1].name, 'B');
@@ -203,6 +205,26 @@ test('全量同步覆盖目录并保留已有勾选，新出现的模型默认�
   host.manager.fetch = async () => ({ ok: true, json: async () => ({ name: 'other-app' }) });
   await assert.rejects(host.manager.handle({ action: 'sync-catalog', revision: result.revision, config: result.config }), /身份/);
   assert.equal(host.edits.length, editsBefore);
+});
+
+test('导入新增按同步前已保存完整目录的 ID 比较，忽略草稿增删、同名更新和重复项，同步失败也保留统计', async () => {
+  let catalog = [{ id: 'p/keep', display_name: '名字已更新' }, { id: 'p/new' }, { id: 'p/new' }];
+  const host = setup({ fetchImpl: async (url) => ({ ok: true, json: async () => url.endsWith('/api/hello') ? { name: 'magpie' } : { data: catalog } }) });
+  host.own.options.config = { autoRoute: false, models: [{ id: 'p/removed' }, { id: 'p/keep' }] };
+  const initial = await host.manager.describe();
+  const imported = await host.manager.handle({ action: 'sync-catalog', revision: initial.revision,
+    config: { ...initial.config, models: [{ id: 'p/new', enabled: false }] } });
+  assert.equal(imported.config.models.length, 2, '增加一个同时删除一个，总数不变');
+  assert.deepEqual(imported.catalogChanges, { added: 1 }, '草稿已有但尚未保存的 new 仍是本次新导入的 ID');
+  const repeated = await host.manager.handle({ action: 'sync-catalog', revision: imported.revision,
+    config: { ...imported.config, models: [] } });
+  assert.deepEqual(repeated.catalogChanges, { added: 0 }, '草稿删掉的已保存模型再导入，不误报新增');
+  catalog = [...catalog, { id: 'p/another' }];
+  host.manager.sync = async () => ({ ok: false, reason: 'DSH 暂时不可写' });
+  const partial = await host.manager.handle({ action: 'sync-catalog', revision: repeated.revision, config: repeated.config });
+  assert.equal(partial.saved, true);
+  assert.equal(partial.sync.ok, false);
+  assert.deepEqual(partial.catalogChanges, { added: 1 }, '清单已导入，DSH 同步失败不丢失新增统计');
 });
 
 test('合法空目录清空清单并移除 DSH 分组；异常目录及网络失败保留原配置', async () => {
@@ -225,6 +247,7 @@ test('合法空目录清空清单并移除 DSH 分组；异常目录及网络失
   assert.deepEqual(host.own.options.config.models, []);
   assert.equal(host.llm.options.config.providers[PROVIDER_ID], undefined);
   assert.equal(cleared.sync.count, 0);
+  assert.deepEqual(cleared.catalogChanges, { added: 0 });
 });
 
 test('全量同步下载期间其他页面修改配置时，锁内拒绝旧版本，保留新清单', async () => {

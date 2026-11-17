@@ -437,6 +437,21 @@ test('从 Magpie 同步立即提交并用已保存的全量结果替换草稿，
   assert.equal(control(client.render(), '按供应商分类').props.value, '', '全量同步后恢复全部供应商');
   assert.deepEqual([...client.states[6]], []);
   assert.match(client.states[3].text, /覆盖保存.*1/);
+  assert.match(client.states[3].text, /本次导入新增 1 个模型/, '旧后端未返回统计时也能按完整清单判断，筛选和名称草稿不影响数量');
+});
+
+for (const scenario of [{ added: 0, ok: true }, { added: 2, ok: true }, { added: 1, ok: false }]) test(`同步提示本次${scenario.added ? `新增 ${scenario.added} 个模型` : '没有新模型'}，DSH ${scenario.ok ? '成功数量仍显示' : '失败仍显示错误原因'}`, async () => {
+  const models = [{ id: 'p/a' }, { id: 'p/b' }];
+  const client = clientHarness(view({ hideNonVision: true, models }), async () => response({
+    ...view({ hideNonVision: true, models }), saved: true, catalogChanges: { added: scenario.added },
+    sync: { ok: scenario.ok, count: 7, reason: 'DSH 暂时不可写' },
+  }));
+  assert.equal(modelRows(client.render()).length, 0, '所有模型被图片筛选隐藏');
+  await button(client.render(), '从 Magpie 同步').props.onClick();
+  const notice = client.states[3];
+  assert.equal(notice.error, !scenario.ok);
+  assert.ok(notice.text.includes(scenario.added ? `本次导入新增 ${scenario.added} 个模型` : '本次导入没有新模型'));
+  assert.match(notice.text, scenario.ok ? /DSH 分组现有 7 个模型/ : /DSH 暂时不可写/);
 });
 
 test('已勾选模型稳定置顶，取消已保存项后保存才下移，新勾选撤销后回到原分组', async () => {

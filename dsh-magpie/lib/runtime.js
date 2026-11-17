@@ -197,6 +197,9 @@ export class ModelManager {
       if (body.action === 'sync') return { ok: true, sync: await this.sync(), ...await this.describe() };
       if (!body.config || typeof body.config !== 'object' || Array.isArray(body.config)) throw new Error('保存需要完整的配置对象');
       const mirror = body.action === 'sync-catalog';
+      // 按同步前已保存的完整目录比较 ID，草稿删行、筛选和 DSH 同款合并都不影响新增数量。
+      const previousIds = mirror ? new Set(this.current().models.map((model) => model.id)) : undefined;
+      let catalogChanges;
       // 全量同步替换草稿模型，允许用户用同步按钮修复尚未填完的手工条目。
       let config = resolveConfig(mirror ? { ...body.config, enabled: true, syncEnabled: true, models: [] } : body.config);
       if (body.apiKey !== undefined && typeof body.apiKey !== 'string') throw new Error('Key 必须是文本');
@@ -211,6 +214,7 @@ export class ModelManager {
         const hello = await requestGateway(config.baseURL, '/api/hello', gatewayKey, this.fetch);
         if (hello?.name !== 'magpie') throw new Error('该地址没有返回 Magpie 身份信息');
         const catalog = catalogModels(await requestGateway(config.baseURL, '/v1/models', gatewayKey, this.fetch));
+        catalogChanges = { added: catalog.filter((model) => !previousIds.has(model.id)).length };
         const draft = Array.isArray(body.config.models) ? body.config.models : [];
         // 全量同步只替换目录内容，不清空用户已做的选择；新出现的模型保持目录导入时的未勾选状态。
         // 草稿里的 enabled 可能尚未保存，因此以本次卡片提交为准；缺省值沿用手工模型默认勾选的兼容规则。
@@ -232,10 +236,10 @@ export class ModelManager {
       this.config = config;
       if (key) {
         try { await this.credentials.set(KEY_REF, key); }
-        catch { return { ...await this.describe(), saved: true, sync: { ok: false, reason: '清单已保存，Key 保存失败；请重新输入 Key 后同步' } }; }
+        catch { return { ...await this.describe(), saved: true, ...(catalogChanges ? { catalogChanges } : {}), sync: { ok: false, reason: '清单已保存，Key 保存失败；请重新输入 Key 后同步' } }; }
       }
       const sync = await this.sync(config);
-      return { ...await this.describe(), saved: true, sync };
+      return { ...await this.describe(), saved: true, sync, ...(catalogChanges ? { catalogChanges } : {}) };
     });
   }
 }
