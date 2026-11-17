@@ -70,7 +70,8 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 - **更新**：源码以 `file:` 依赖**拷贝**进 profile，改了源码后再 `add`（包括 `--force`）pnpm 都认为"已是最新"。
   脚本先比对 profile 里那份拷贝和仓库的文件哈希，不一致才"先移除再添加"，一致就不动。
   移除只动 profile 的 `package.json`，插件在 `cordis.patch.yml` 里的配置（如模型白名单）原样保留。
-- 在 DSH 插件管理里**停用**过的插件，再选"安装"会重新启用。
+- **保留启用状态**：在 DSH 插件管理里停用过的插件，安装 / 更新后仍保持停用；原来启用的仍启用，首次安装默认启用。
+  每个 profile 分别保留自己的状态；迁移旧包名时也会沿用原状态。
 - 改 desktop profile 前要**完全退出桌面版**（DSH 自己的要求）；脚本检测到对应 profile 的 DSH 进程在跑会停下等你关掉，
   也可以跳过这个 profile。desktop profile 需要先打开过一次桌面版才存在；web / CLI 的 profile 第一次安装时自动创建。
 - 卸载不删 `cordis.patch.yml` 里的配置，也不删各插件自管的后端数据（如 `~/.dsh/autostart-workbuddy`）。

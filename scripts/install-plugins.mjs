@@ -7,14 +7,15 @@
 //   install-plugins.cmd --action install --plugins all --profiles desktop,web --yes
 //
 // 真正干活的是 DSH 自带的 `dsh plugin --profile <名> add|remove ...`：它在 profile 锁内跑 DSH 自带的 pnpm，
-// 同时维护 package.json 的 dependencies 和 dsh.profile.bundles，并做插件兼容性检查，所以这里不手改 package.json。
+// 同时维护 package.json 的 dependencies 和 dsh.profile.bundles，并做插件兼容性检查；依赖变更都交给 CLI，
+// 仅在重装后从最新 manifest 的 bundles 中移除原来停用的插件，恢复用户的启用选择。
 //
 // 为什么"更新"要先 remove 再 add：插件以 file: 依赖拷贝进 profile 的 node_modules，源码改动后
 // 再次 add（包括 --force）pnpm 都认为"已是最新"不会重新拷贝；只有先移除再添加才会拿到新代码。
 // 移除只动 package.json，插件写在 cordis.patch.yml 里的配置行（如模型白名单）原样保留。
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -379,31 +380,55 @@ function showStatus(profile, selected) {
   }
 }
 
-async function installInto(profile, selected) {
+/** 只恢复停用选择；重读 CLI 更新后的 manifest，保留新依赖和其它元数据。 */
+function restoreDisabledPlugins(profile, disabled) {
+  if (disabled.size === 0) return;
+  const manifest = readManifest(profile);
+  if (!manifest) throw new Error('安装后的 profile package.json 不存在');
+  const bundles = bundlesOf(manifest);
+  const enabled = bundles.filter((name) => !disabled.has(name));
+  if (enabled.length === bundles.length) return;
+  manifest.dsh.profile.bundles = enabled;
+  const file = join(profileDir(profile), 'package.json');
+  // 先完整写入再替换，避免写入中断时截断 DSH 的 profile manifest。
+  const temp = `${file}.install-plugins-${process.pid}.tmp`;
+  try {
+    writeFileSync(temp, `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
+    renameSync(temp, file);
+  } finally {
+    rmSync(temp, { force: true });
+  }
+}
+
+export async function installInto(profile, selected, { waitIdle = waitProfileIdle, runPlugin = runDshPlugin } = {}) {
   step(`安装到 ${profile}`);
+  if (!(await waitIdle(profile))) {
+    warn('已跳过');
+    return false;
+  }
+  // 等宿主退出后再取快照，包含用户退出前最后一次切换的启用状态。
   const manifest = readManifest(profile);
   if (!manifest && profile === 'desktop') {
     bad('desktop profile 还没初始化：请先打开一次 DSH 桌面版，再完全退出，然后重新运行本脚本。');
     return false;
   }
-  if (!(await waitProfileIdle(profile))) {
-    warn('已跳过');
-    return false;
-  }
-
   const dependencies = dependenciesOf(manifest);
   const bundles = bundlesOf(manifest);
   const legacy = selected.flatMap((plugin) => legacyIn(plugin, dependencies));
+  const disabled = new Set(selected.filter((plugin) => {
+    // 当前包名优先；仅有旧包时沿用旧包的状态，首次安装没有需要恢复的选择。
+    const names = plugin.name in dependencies ? [plugin.name] : legacyIn(plugin, dependencies);
+    return names.length > 0 && names.every((name) => !bundles.includes(name));
+  }).map((plugin) => plugin.name));
 
-  // 已装且来源正确、拷贝与仓库一致、在 DSH 里启用着 → 不动；否则（含被停用的）先移除再添加：
-  // 停用的插件 pnpm add 不会重新放回 bundles，用户这次明确要装，就当作重新启用。
+  // 是否需要更新只看来源和内容；停用本身不构成重装理由。
   const refresh = [];
   const add = [];
   for (const plugin of selected) {
     if (!(plugin.name in dependencies)) {
       add.push(plugin);
-    } else if (specPointsHere(dependencies[plugin.name], plugin) && bundles.includes(plugin.name) && copyIsCurrent(plugin, profile)) {
-      ok(`${plugin.name} 已是最新`);
+    } else if (specPointsHere(dependencies[plugin.name], plugin) && copyIsCurrent(plugin, profile)) {
+      ok(`${plugin.name} 已是最新${disabled.has(plugin.name) ? '（保持停用）' : ''}`);
     } else {
       refresh.push(plugin);
       add.push(plugin);
@@ -413,7 +438,7 @@ async function installInto(profile, selected) {
 
   if (legacy.length > 0) {
     console.log(`  移除旧包名：${legacy.join(', ')}`);
-    if (!runDshPlugin(profile, ['remove', ...legacy])) {
+    if (!runPlugin(profile, ['remove', ...legacy])) {
       bad('移除旧包名失败');
       return false;
     }
@@ -421,17 +446,27 @@ async function installInto(profile, selected) {
   if (refresh.length > 0) {
     const names = refresh.map((plugin) => plugin.name);
     console.log(`  更新：先移除旧拷贝 ${names.join(', ')}（cordis.patch.yml 里的插件配置会保留）`);
-    if (!runDshPlugin(profile, ['remove', ...names])) {
+    if (!runPlugin(profile, ['remove', ...names])) {
       bad('移除旧拷贝失败，profile 未改动');
       return false;
     }
   }
-  if (!runDshPlugin(profile, ['add', ...add.map((plugin) => `file:${plugin.dir}`)])) {
+  if (add.length === 0) return migrateRows(profile, selected);
+  const installed = runPlugin(profile, ['add', ...add.map((plugin) => `file:${plugin.dir}`)]);
+  // add 会自动启用新依赖；即使 CLI 后续检查失败，也要恢复可能已经写入的启用状态。
+  try {
+    restoreDisabledPlugins(profile, disabled);
+  } catch (error) {
+    bad(`恢复插件停用状态失败：${error instanceof Error ? error.message : String(error)}。请在 DSH 中检查插件开关。`);
+    return false;
+  }
+  if (!installed) {
     bad('安装失败（详见上面 pnpm / dsh 的输出）。');
     if (refresh.length > 0) bad('注意：要更新的插件已被移除，排除问题后重新运行本脚本即可装回，原有配置不受影响。');
     return false;
   }
   ok(`已安装：${add.map((plugin) => plugin.name).join(', ')}`);
+  if (disabled.size > 0) ok(`保持停用：${[...disabled].join(', ')}`);
   return migrateRows(profile, selected);
 }
 
