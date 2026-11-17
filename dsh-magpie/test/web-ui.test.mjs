@@ -15,6 +15,48 @@ const ready = (port = '3430') => new Response(null, { status: 303, headers: { 's
 const refused = async () => { throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } }); };
 function seed(backend) { mkdirSync(dirname(backend.paths.exe), { recursive: true }); writeFileSync(backend.paths.exe, 'magpie 0.1.1'); }
 
+test('模型目录 API 沿用网页认证和当前保存设置，只发送渠道 ID，不打开浏览器或泄露密钥', async (t) => {
+  const calls = [];
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname === '/') return res.writeHead(303, { 'set-cookie': `magpie_web_${server.address().port}=${key}; Path=/; HttpOnly` }).end();
+    assert.equal(req.headers.cookie, `magpie_web_${server.address().port}=${key}`);
+    assert.equal(req.headers.origin, `http://127.0.0.1:${server.address().port}`);
+    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    calls.push({ path: url.pathname, method: req.method, body: chunks.length ? JSON.parse(Buffer.concat(chunks)) : undefined });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(url.pathname === '/api/providers' ? { providers: [{ id: 'workbuddy' }] } : { count: 22 }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  const f = backendFixture(t);
+  mkdirSync(dirname(f.backend.paths.settings), { recursive: true });
+  writeFileSync(join(dirname(f.backend.paths.settings), 'web-page.json'), JSON.stringify({ mode: 'local', port: server.address().port, key }));
+  const web = new MagpieWeb({ settings: f.backend.paths.settings, env: {}, openBrowser: () => assert.fail('后台刷新不打开浏览器') });
+  const api = await web.modelAPI();
+  assert.deepEqual((await api('providers')).providers, [{ id: 'workbuddy' }]);
+  assert.deepEqual(await api('provider/models', { id: 'workbuddy' }), { count: 22 });
+  assert.deepEqual(calls, [{ path: '/api/providers', method: 'GET', body: undefined }, { path: '/api/provider/models', method: 'POST', body: { id: 'workbuddy' } }]);
+  await assert.rejects(api('../settings', {}), /不支持/);
+});
+
+test('模型目录 API 可以回退插件已有密钥；认证和上游错误不回显秘密，也不生成新密钥', async () => {
+  let generated = false, apiCalls = 0;
+  const web = new MagpieWeb({ env: {}, credentials: { resolve: async () => ({ value: key }), set: () => { generated = true; } }, fetchImpl: async (url) => {
+    if (url.includes('?k=')) return ready();
+    apiCalls++; return new Response(`secret: ${key}`, { status: 500 });
+  } });
+  web.appPage = () => ({ origin: WEB_ORIGIN, key: 'old-invalid-key-12345678' });
+  const fetchImpl = web.fetchImpl;
+  web.fetchImpl = (url, options) => url.includes('old-invalid-key') ? new Response('unauthorized', { status: 401 }) : fetchImpl(url, options);
+  const api = await web.modelAPI();
+  await assert.rejects(api('provider/models', { id: 'workbuddy' }), (error) => error.message.includes('500') && !error.message.includes(key));
+  assert.equal(apiCalls, 1);
+  assert.equal(generated, false);
+  web.fetchImpl = refused;
+  await assert.rejects(web.modelAPI(), (error) => !error.message.includes(key) && /网页管理未就绪/.test(error.message));
+});
+
 test('启动方式默认网页，严格校验；托盘启动不创建网页密钥', async (t) => {
   assert.equal(resolveConfig().startMode, 'web');
   assert.equal(resolveConfig({ startMode: 'tray' }).startMode, 'tray');

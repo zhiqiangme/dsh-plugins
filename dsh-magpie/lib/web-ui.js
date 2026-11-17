@@ -67,6 +67,47 @@ export class MagpieWeb {
       return codes.includes('ECONNREFUSED') ? 'offline' : 'unknown';
     }
   }
+  /** 沿用网页自身的登录 Cookie 调用模型目录接口；不创建密钥、不打开浏览器或启动另一个实例。 */
+  async modelAPI(signal) {
+    const pages = [], existing = this.appPage();
+    if (existing) pages.push(existing);
+    const credentials = typeof this.credentials === 'function' ? this.credentials() : this.credentials;
+    const saved = this.env.MAGPIE_WEB_KEY || (await credentials?.resolve?.(WEB_KEY_REF))?.value;
+    if (saved) pages.push({ origin: WEB_ORIGIN, key: checkedKey(saved) });
+    for (const page of pages) {
+      signal?.throwIfAborted();
+      let cookie;
+      try {
+        const login = await this.fetchImpl(`${page.origin}/?k=${encodeURIComponent(page.key)}`, {
+          redirect: 'manual', signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(3_000)]),
+        });
+        const value = login.headers.get('set-cookie');
+        if (login.status === 303 && value?.startsWith(`magpie_web_${new URL(page.origin).port}=`)) cookie = value.split(';')[0];
+        await login.body?.cancel();
+      } catch { /* 旧桌面网页密钥失效时再试插件已保存的密钥，绝不回显带密钥的 URL。 */ }
+      if (!cookie) continue;
+      return async (path, body) => {
+        if (!['providers', 'provider/models'].includes(path)) throw new Error('不支持的模型目录接口');
+        signal?.throwIfAborted();
+        let response;
+        try {
+          response = await this.fetchImpl(`${page.origin}/api/${path}`, {
+            method: body === undefined ? 'GET' : 'POST', redirect: 'error',
+            headers: { cookie, origin: page.origin, 'content-type': 'application/json' },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(45_000)]),
+          });
+        } catch { signal?.throwIfAborted(); throw new Error('Magpie 模型目录接口连接失败或超时'); }
+        if (!response.ok) { await response.body?.cancel(); throw new Error(`Magpie 模型目录接口返回 HTTP ${response.status}`); }
+        let value;
+        try { value = await response.json(); } catch { throw new Error('Magpie 模型目录接口格式无效'); }
+        if (value?.error) throw new Error('Magpie 未能刷新模型目录');
+        return value;
+      };
+    }
+    signal?.throwIfAborted();
+    throw new Error('Magpie 网页管理未就绪，请开启网页访问或使用网页启动方式');
+  }
   open(options) {
     return this.pendingOpen ??= this.openPage(options).finally(() => { this.pendingOpen = undefined; });
   }

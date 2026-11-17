@@ -122,6 +122,23 @@ test('总开关与屏蔽选项集中在开关页，默认屏蔽低于 500K，模
   assert.equal(button(client.render(), '从 Magpie 同步'), undefined, '同步目录按钮仍留在模型页');
 });
 
+test('每日重新获取模型开关位于偏好，改完立即保存并保留未保存草稿，显示后台完成状态', async () => {
+  const calls = [];
+  const client = clientHarness({ ...view({ models: [{ id: 'a/one' }] }), modelRefresh: { phase: 'completed' } }, async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body);
+    return response({ ...view({ dailyModels: false, models: [{ id: 'a/one' }] }), revision: 'next' });
+  });
+  field(client.render(), '显示名称').props.onChange({ target: { value: '未保存名称' } });
+  client.tab('偏好');
+  assert.match(JSON.stringify(client.render()), /今日已刷新并同步/);
+  const toggle = control(client.render(), '每日重新获取模型并同步');
+  assert.equal(toggle.props.checked, true);
+  await toggle.props.onChange({ target: { checked: false } });
+  assert.deepEqual(calls[0], { action: 'patch', patch: { dailyModels: false }, revision: 'revision-one' });
+  assert.equal(client.states[0].config.models[0].name, '未保存名称');
+  assert.equal(client.states[1], true);
+});
+
 test('开关和选项改完立即保存，只提交该项；未保存的连接设置与模型草稿保留，后续保存使用新版本号', async () => {
   const calls = [];
   let saved = resolveConfig({ models: [{ id: 'a/one' }] });

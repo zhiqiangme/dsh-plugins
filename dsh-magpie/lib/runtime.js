@@ -6,6 +6,7 @@ import { conversationBlock } from './auto-update.js';
 import { createMagpieRouter } from './router.js';
 import { sessionKey } from './channel-load.js';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 // 本机网关正常时几十毫秒内应答；状态检查会定时重复，超时设短免得卡片长时间显示“检查中”。
 const STATUS_TIMEOUT = 2_000;
@@ -63,13 +64,50 @@ export class ModelManager {
     const saved = await this.credentials?.resolve?.(KEY_REF);
     const llm = findEntry(this.editor, '@deepseek-ai/dsh-llm-pi-ai');
     return {
-      ok: true, config, revision: revision(config), lastSync: this.lastSync, providerNames: PROVIDER_NAMES, channelStatus: this.router.channelStatus(),
+      ok: true, config, revision: revision(config), lastSync: this.lastSync, providerNames: PROVIDER_NAMES, channelStatus: this.router.channelStatus(), modelRefresh: this.modelRefresh?.status(),
       backend: await this.backend.describe(config.magpiePath), magpieSettings: this.backend.settings?.(),
       keyConfigured: Boolean(this.env[KEY_REF] || (saved?.value && saved.value !== LOCAL_KEY)),
       keyWritable: !this.env[KEY_REF] && (await this.credentials?.describe?.(KEY_REF))?.writable !== false,
       editable: Boolean(findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID)),
       nativeProviders: Object.keys(object(llm?.options.config?.providers)).filter((id) => ['magpie', 'magpie-responses', 'magpie-anthropic'].includes(id)),
     };
+  }
+  async refreshCatalog(guard, signal) {
+    guard();
+    const config = this.current();
+    const key = await credential(this.credentials, this.env, config.baseURL);
+    const hello = await requestGateway(config.baseURL, '/api/hello', key, this.fetch, 15_000, signal);
+    if (hello?.name !== 'magpie') throw new Error('该地址没有返回 Magpie 身份信息');
+    const catalog = catalogModels(await requestGateway(config.baseURL, '/v1/models', key, this.fetch, 15_000, signal));
+    if (!catalog.length) throw new Error('Magpie 返回空目录，保留现有清单');
+    return this.enqueue(async () => {
+      guard();
+      const entry = findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID);
+      if (!entry || typeof this.editor?.edit !== 'function') throw new Error('宿主 configEditor 尚未就绪');
+      let saved;
+      await this.editor.edit(entry, (raw) => {
+        guard();
+        const latest = resolveConfig(raw);
+        if (latest.baseURL !== config.baseURL) throw new Error('网关地址已更改，稍后重新刷新');
+        const incoming = new Map(catalog.map((row) => [row.id, row]));
+        // 后台刷新保留最新勾选、显示名与顺序，以及手工/暂时不在目录中的模型；新模型只追加且不勾选。
+        const models = latest.models.map((row) => {
+          const fresh = incoming.get(row.id); incoming.delete(row.id);
+          if (!fresh) return row;
+          const merged = { ...row, ...fresh, name: row.name, enabled: row.enabled };
+          // 上下文缩小时，目录未再提供的旧输出上限可能已不合法，不能让它阻断整个每日同步。
+          if (merged.contextWindow && merged.maxTokens >= merged.contextWindow) delete merged.maxTokens;
+          return merged;
+        }).concat([...incoming.values()]);
+        saved = resolveConfig({ ...latest, models });
+        return isDeepStrictEqual(latest, saved) ? raw : { ...object(raw), ...saved };
+      });
+      this.config = saved;
+      guard();
+      const result = await this.sync(saved);
+      if (!result.ok) throw new Error('同步到 DSH 未完成');
+      return result;
+    });
   }
   async sync(config = this.current(), previousConfig = this.lastSyncedConfig) {
     try {
@@ -138,8 +176,8 @@ export class ModelManager {
       try {
         const key = await credential(this.credentials, this.env, config.baseURL);
         const hello = await requestGateway(config.baseURL, '/api/hello', key, this.fetch, STATUS_TIMEOUT);
-        return { ok: true, channelStatus: this.router.channelStatus(), gateway: hello?.name === 'magpie' ? { online: true, version: hello.version ?? null } : { online: false } };
-      } catch { return { ok: true, channelStatus: this.router.channelStatus(), gateway: { online: false } }; }
+        return { ok: true, channelStatus: this.router.channelStatus(), modelRefresh: this.modelRefresh?.status(), gateway: hello?.name === 'magpie' ? { online: true, version: hello.version ?? null } : { online: false } };
+      } catch { return { ok: true, channelStatus: this.router.channelStatus(), modelRefresh: this.modelRefresh?.status(), gateway: { online: false } }; }
     }
     if (body.action === 'magpie-settings') {
       // 直接写 Magpie 自己的设置，不属于插件配置，也不需要版本号。

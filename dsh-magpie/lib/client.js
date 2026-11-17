@@ -47,6 +47,11 @@ window.__ModuleLoader__.load({
       backendProgress: '已下载 {received} / {total} MiB', backendFailed: '操作失败：{reason}',
       autoUpdate: '自动更新 Magpie 程序',
       autoUpdateHint: '每 5 分钟检查，正式版发布满 30 分钟后下载校验；所有 DSH 对话空闲后升级，并按所选方式重启。仅更新已安装的本机程序。',
+      dailyModels: '每日重新获取模型并同步',
+      dailyModelsHint: '北京时间每日 04:00 后，所有对话空闲时刷新 Magpie 已开启渠道，再同步插件和 DSH。保留勾选、名称与顺序，新模型默认不勾选。仅本机，需开启 Magpie 网页访问；未运行时下次启动补做，失败每 5 分钟重试。',
+      dailyModelsPending: '等待每日刷新', dailyModelsRunning: '正在刷新模型并同步…', dailyModelsWaiting: '等待所有对话空闲或状态服务就绪',
+      dailyModelsDone: '今日已刷新并同步；重新载入可查看最新清单。', dailyModelsFailed: '刷新未完成，稍后自动重试；请检查 Magpie 网页访问和网关连接。',
+      dailyModelsLocal: '仅支持本机 Magpie。', dailyModelsDisabled: '每日刷新已关闭。',
       backendWaitingIdle: '下载校验完成，等待所有对话空闲后升级…', backendWaitingStatus: '下载校验完成，暂时无法确认对话状态，等待后重试…',
       backendCooling: '新版本发布未满 30 分钟，将在 {time} 后自动下载。', backendInvalidDate: '无法确认版本发布时间，已跳过自动升级。', backendCancelled: '自动升级已取消，现有程序保持不变。',
       autoStart: '启动 DSH 时打开 Magpie',
@@ -132,6 +137,11 @@ window.__ModuleLoader__.load({
       backendProgress: 'Downloaded {received} / {total} MiB', backendFailed: 'Operation failed: {reason}',
       autoUpdate: 'Automatically update Magpie',
       autoUpdateHint: 'Checks every 5 minutes. Downloads and verifies stable releases after 30 minutes, then updates and restarts in the selected mode when all DSH conversations are idle. Existing local installations only.',
+      dailyModels: 'Fetch models and sync daily',
+      dailyModelsHint: 'After 04:00 Beijing time, waits for all conversations to become idle, refreshes enabled Magpie providers, then syncs the plugin and DSH. Keeps selections, names and order; new models stay unticked. Local Magpie with web access only. Catches up on startup and retries failures every 5 minutes.',
+      dailyModelsPending: 'Waiting for the daily refresh', dailyModelsRunning: 'Refreshing models and syncing…', dailyModelsWaiting: 'Waiting for idle conversations or the status service',
+      dailyModelsDone: 'Refreshed and synced today. Reload to see the updated list.', dailyModelsFailed: 'Refresh incomplete; retries automatically. Check Magpie web access and the gateway connection.',
+      dailyModelsLocal: 'Local Magpie only.', dailyModelsDisabled: 'Daily refresh is off.',
       backendWaitingIdle: 'Download verified. Waiting for all conversations to become idle…', backendWaitingStatus: 'Download verified. Conversation status is unavailable; waiting to retry…',
       backendCooling: 'Release is less than 30 minutes old. Automatic download is eligible after {time}.', backendInvalidDate: 'Release publication time is unavailable; automatic update skipped.', backendCancelled: 'Automatic update cancelled. Existing executable unchanged.',
       autoStart: 'Open Magpie when DSH starts',
@@ -1034,6 +1044,7 @@ window.__ModuleLoader__.load({
           return request({ action: 'status' }).then((result) => {
             if (!active) return;
             setGateway(result.gateway);
+            if (result.modelRefresh) setView((old) => old ? { ...old, modelRefresh: result.modelRefresh } : old);
             if (result.channelStatus && generation === channelRequest.current) setView((old) => old ? { ...old, channelStatus: result.channelStatus } : old);
           }, () => { if (active) setGateway({ online: false }); });
         };
@@ -1362,6 +1373,11 @@ window.__ModuleLoader__.load({
             (startMode) => applyNow({ startMode }), busy || !view.editable || unsupported),
           toggle(t('autoStart'), t('autoStartHint'), config.autoStart !== false, (autoStart) => applyNow({ autoStart }), busy || !view.editable || unsupported),
           toggle(t('closeOnExit'), t('closeOnExitHint'), config.closeOnExit === true, (closeOnExit) => applyNow({ closeOnExit }), busy || !view.editable || unsupported),
+          toggle(t('dailyModels'), t('dailyModelsHint'), config.dailyModels !== false, (dailyModels) => applyNow({ dailyModels }), busy || !view.editable),
+          h('p', { className: 'hint', role: 'status' }, t(config.dailyModels === false ? 'dailyModelsDisabled'
+            : ({ completed: 'dailyModelsDone', refreshing: 'dailyModelsRunning', syncing: 'dailyModelsRunning',
+              'waiting-idle': 'dailyModelsWaiting', 'waiting-status': 'dailyModelsWaiting', 'local-only': 'dailyModelsLocal',
+              retrying: 'dailyModelsFailed', failed: 'dailyModelsFailed' }[view.modelRefresh?.phase] ?? 'dailyModelsPending'))),
           h('h4', { className: 'group' }, t('groupMagpieSettings'), h('span', null, t('groupMagpieSettingsHint'))),
           toggle(t('autoLightweight'), t('autoLightweightHint'), config.autoLightweight !== false, (autoLightweight) => applyNow({ autoLightweight }), busy || !view.editable || unsupported),
           choice(t('keepAwake'), magpieSettings?.available ? t('keepAwakeHint') : t('magpieSettingsMissing'), magpieSettings?.keepAwake ?? 'off',

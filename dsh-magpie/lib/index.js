@@ -5,11 +5,12 @@ import { registerHighestReasoning } from './reasoning.js';
 import { registerAutoStart, registerExitClose } from './lifecycle.js';
 import { registerAutoUpdate } from './auto-update.js';
 import { registerChannelSessions } from './channel-load.js';
+import { registerDailyModels } from './daily-models.js';
 
 export const name = PLUGIN_ID;
 export const inject = [];
 
-/** 清单由本插件持有，启动同步只读已保存清单，不定时拉取或覆盖上游目录。 */
+/** 清单由本插件持有；启动使用已保存清单，每日空闲时刷新上游并保守合并。 */
 export function apply(ctx, config) {
   let manager;
   try { manager = new ModelManager(ctx, config); }
@@ -20,6 +21,7 @@ export function apply(ctx, config) {
   registerExitClose(ctx, manager);
   registerAutoStart(ctx, manager);
   registerAutoUpdate(ctx, manager);
+  registerDailyModels(ctx, manager);
   const sync = () => manager.enqueue(() => manager.sync()).catch((error) => (ctx.logger ?? console).warn(`[${name}] ${error.message}`));
   // 保存表单只热更新解析结果，不注销路由或打断同步请求。
   const off = ctx.on?.('internal/update', (raw, _noSave, _next) => {

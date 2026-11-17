@@ -17,11 +17,11 @@ export async function credential(credentials, env, baseURL, explicit) {
   return isLocal(baseURL) ? LOCAL_KEY : '';
 }
 
-export async function requestGateway(baseURL, path, key, fetchImpl = fetch, timeout = 15_000) {
+export async function requestGateway(baseURL, path, key, fetchImpl = fetch, timeout = 15_000, signal) {
   const url = `${gatewayURL(baseURL)}${path}`;
   const response = await fetchImpl(url, {
     headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), 'user-agent': 'deepseek-harness/dsh-magpie' },
-    signal: AbortSignal.timeout(timeout), redirect: 'error',
+    signal: AbortSignal.any([AbortSignal.timeout(timeout), ...(signal ? [signal] : [])]), redirect: 'error',
   });
   if (!response.ok) throw new Error(`Magpie 返回 HTTP ${response.status}`);
   // 不将上游错误正文带回页面：它可能包含认证或账号信息。
