@@ -95,3 +95,17 @@ test('选用 Magpie 或恢复部署默认只修改 DSH 搜索提供方，过期�
   assert.equal((await select(false, SEARCH_PROVIDER_ID)).webSearch.provider, 'deepseek-search-api');
   assert.equal(entry.options.config.fetchProvider, 'other-fetch');
 });
+
+test('添加 Tavily Key 只转交本机 Magpie，不写 DSH 配置或凭据，远程网关不向本机写入', async () => {
+  const host = fakeHost();
+  const keys = [];
+  const manager = new ModelManager(host.ctx, {}, { env: {}, backend: { web: { addTavilyKey: async (key) => { keys.push(key); return true; } } } });
+  const add = (key) => manager.handle({ action: 'search-key-add', key });
+  assert.deepEqual(await add(' tvly-fixture '), { ok: true, added: true });
+  await assert.rejects(add('a,b'), /一个有效的/);
+  host.own.options.config.baseURL = 'https://magpie.example.test';
+  await assert.rejects(add('tvly-remote'), /对应的 Magpie 实例/);
+  assert.deepEqual(keys, ['tvly-fixture']);
+  assert.equal(host.keys.size, 0);
+  assert.deepEqual(host.edits, []);
+});

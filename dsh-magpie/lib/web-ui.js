@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 export const WEB_KEY_REF = 'DSH_MAGPIE_WEB_KEY';
 export const WEB_ORIGIN = 'http://127.0.0.1:3430';
 const exec = promisify(execFile);
+const TAVILY_NOT_CONFIGURED = Symbol('Tavily not configured');
 
 function checkedKey(key) {
   if (typeof key !== 'string' || !/^[A-Za-z0-9._~-]{16,}$/.test(key)) throw new Error('Magpie 网页密钥无效，请检查 MAGPIE_WEB_KEY 或插件凭据');
@@ -67,8 +68,23 @@ export class MagpieWeb {
       return codes.includes('ECONNREFUSED') ? 'offline' : 'unknown';
     }
   }
-  /** 沿用网页自身的登录 Cookie 调用模型目录接口；不创建密钥、不打开浏览器或启动另一个实例。 */
-  async modelAPI(signal) {
+  modelAPI(signal) {
+    return this.authenticatedAPI(['providers', 'provider/models'], '模型目录', signal);
+  }
+  async addTavilyKey(key, signal) {
+    const addPath = 'settings/search-keys', createPath = 'settings/search-api';
+    const request = await this.authenticatedAPI([addPath, createPath], 'Tavily 密钥管理', signal);
+    // 追加接口沿用已有来源地址、轮换和开关。只有网关明确表示尚未配置 Tavily 时才创建来源。
+    const result = await request(addPath, { vendor: 'tavily', add: key });
+    if (result === TAVILY_NOT_CONFIGURED) {
+      await request(createPath, { vendor: 'tavily', key, append: true });
+      return true;
+    }
+    if (result?.added === 1 || result?.had === 1) return result.added === 1;
+    throw new Error('Magpie Tavily 密钥管理接口格式无效');
+  }
+  /** 沿用已有网页登录 Cookie；调用方只能访问预先列出的接口。 */
+  async authenticatedAPI(paths, label, signal) {
     const pages = [], existing = this.appPage();
     if (existing) pages.push(existing);
     const credentials = typeof this.credentials === 'function' ? this.credentials() : this.credentials;
@@ -87,7 +103,7 @@ export class MagpieWeb {
       } catch { /* 旧桌面网页密钥失效时再试插件已保存的密钥，绝不回显带密钥的 URL。 */ }
       if (!cookie) continue;
       return async (path, body) => {
-        if (!['providers', 'provider/models'].includes(path)) throw new Error('不支持的模型目录接口');
+        if (!paths.includes(path)) throw new Error(`不支持的 Magpie ${label}接口`);
         signal?.throwIfAborted();
         let response;
         try {
@@ -97,11 +113,19 @@ export class MagpieWeb {
             ...(body === undefined ? {} : { body: JSON.stringify(body) }),
             signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(45_000)]),
           });
-        } catch { signal?.throwIfAborted(); throw new Error('Magpie 模型目录接口连接失败或超时'); }
-        if (!response.ok) { await response.body?.cancel(); throw new Error(`Magpie 模型目录接口返回 HTTP ${response.status}`); }
+        } catch { signal?.throwIfAborted(); throw new Error(`Magpie ${label}接口连接失败或超时`); }
+        if (!response.ok) {
+          if (path === 'settings/search-keys' && response.status === 400) {
+            const failure = await response.json().catch(() => undefined);
+            if (failure?.error === 'no tavily search API is set up') return TAVILY_NOT_CONFIGURED;
+          } else {
+            await response.body?.cancel().catch(() => undefined);
+          }
+          throw new Error(`Magpie ${label}接口返回 HTTP ${response.status}`);
+        }
         let value;
-        try { value = await response.json(); } catch { throw new Error('Magpie 模型目录接口格式无效'); }
-        if (value?.error) throw new Error('Magpie 未能刷新模型目录');
+        try { value = await response.json(); } catch { throw new Error(`Magpie ${label}接口格式无效`); }
+        if (value?.error) throw new Error(`Magpie ${label}操作失败`);
         return value;
       };
     }

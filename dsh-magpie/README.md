@@ -34,7 +34,7 @@ npm 发布后可用 `dsh plugin --profile desktop add @zhiqiangme/dsh-magpie`。
 
 ## 联网搜索
 
-1. 在 Magpie 本体的「设置 → 模型 → 联网搜索」配置 Tavily 或其他搜索来源。Tavily 的密钥、轮换和其它搜索来源的优先级由 Magpie 管理。
+1. 本机 Magpie 开启网页管理服务后，可在插件卡片「联网搜索」填入 Tavily API Key 并点击「添加 Tavily Key」。首次添加会创建 Tavily 来源，之后逐个追加到已有密钥列表。已有密钥、Tavily 的配置和轮换由 Magpie 管理。远程网关及其他搜索来源在对应的 Magpie 实例中配置。
 2. 在 DSH 的 Magpie 卡片打开「联网搜索」，点击「使用 Magpie 搜索」。也可以到 DSH 内置「网页搜索与获取」的搜索提供方下拉框选择 **Magpie**。需要支持原生搜索提供方的 DSH（如 0.2.2-rc.2 及更新版本）。安装或升级插件后由用户选择是否切换。
 3. 可填入关键词点「测试搜索」，确认目前保存在「连接」中的网关能返回结果。测试会执行一次真实搜索。
 

@@ -49,6 +49,22 @@ test('联网搜索页切换原生提供方，测试关键词走已保存的网�
   assert.equal(client.states[0].config.models.length, 1);
 });
 
+test('联网搜索页可添加本机 Tavily Key，写入成功后清空密码框', async () => {
+  const calls = [];
+  const client = clientHarness({ ...view(), webSearch: { localKeyEntry: true } }, async (_url, options) => {
+    calls.push(JSON.parse(options.body));
+    return response({ ok: true, added: true });
+  });
+  client.tab('联网搜索');
+  const input = field(client.render(), 'Tavily API Key');
+  assert.equal(input.props.type, 'password');
+  input.props.onChange({ target: { value: 'tvly-fixture' } });
+  await button(client.render(), '添加 Tavily Key').props.onClick();
+  assert.deepEqual(calls, [{ action: 'search-key-add', key: 'tvly-fixture' }]);
+  assert.equal(field(client.render(), 'Tavily API Key').props.value, '');
+  assert.equal(client.states[1], false);
+});
+
 test('启动方式即时保存且保留模型草稿，打开按钮按已保存方式请求网页或窗口', async () => {
   const host = fakeHost({ models: [{ id: 'original-model' }] });
   const opened = [], installs = [];

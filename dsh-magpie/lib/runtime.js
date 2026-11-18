@@ -1,4 +1,4 @@
-import { INSTANT_FIELDS, KEY_REF, LOCAL_KEY, PACKAGE_NAME, PLUGIN_ID, PROVIDER_ID, object, resolveConfig, revision } from './config.js';
+import { INSTANT_FIELDS, KEY_REF, LOCAL_KEY, PACKAGE_NAME, PLUGIN_ID, PROVIDER_ID, isLocal, object, resolveConfig, revision } from './config.js';
 import { credential, findEntry, catalogModels, requestGateway, syncModels, LLM_PACKAGE } from './models.js';
 import { PROVIDER_NAMES, keepOrderIndexes, sortModelIndexes } from './names.js';
 import { MagpieBackend } from './backend.js';
@@ -67,9 +67,11 @@ export class ModelManager {
   }
   webSearchStatus() {
     const entry = findEntry(this.editor, '@deepseek-ai/dsh-web', 'web');
+    const config = this.current();
     return {
-      available: this.searchRegistered === true && this.current().enabled,
+      available: this.searchRegistered === true && config.enabled,
       editable: Boolean(entry && typeof this.editor?.edit === 'function'),
+      localKeyEntry: config.enabled && isLocal(config.baseURL),
       provider: entry?.options.config?.searchProvider ?? this.env.DSH_WEB_SEARCH_PROVIDER ?? null,
       id: SEARCH_PROVIDER_ID,
     };
@@ -209,6 +211,17 @@ export class ModelManager {
     if (body.action === 'channel-status') return { ok: true, channelStatus: this.router.channelStatus() };
     if (body.action === 'channel-recover') return this.enqueue(() => ({ ok: true, channelStatus: this.router.recoverChannel(body.provider, body.token) }));
     if (body.action === 'search-select') return this.enqueue(() => this.selectWebSearch(body.enabled, body.previous));
+    if (body.action === 'search-key-add') {
+      const key = typeof body.key === 'string' ? body.key.trim() : '';
+      if (!/^[!-~]{1,1024}$/.test(key) || key.includes(',')) throw new Error('请输入一个有效的 Tavily API Key');
+      return this.enqueue(async () => {
+        const config = this.current();
+        if (!config.enabled || !isLocal(config.baseURL)) throw new Error('请在对应的 Magpie 实例中添加 Tavily 密钥');
+        const cancel = signal ? AbortSignal.any([signal, this.searchAbort.signal]) : this.searchAbort.signal;
+        const added = await this.backend.web.addTavilyKey(key, cancel);
+        return { ok: true, added };
+      });
+    }
     if (body.action === 'search-test') {
       const result = await this.searchProvider.search({ query: body.query, maxResults: 3 }, signal);
       return { ok: true, count: result.sources.length, textOnly: Boolean(result.content) };

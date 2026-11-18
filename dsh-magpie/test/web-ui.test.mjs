@@ -57,6 +57,30 @@ test('模型目录 API 可以回退插件已有密钥；认证和上游错误不
   await assert.rejects(web.modelAPI(), (error) => !error.message.includes(key) && /网页管理未就绪/.test(error.message));
 });
 
+test('从插件追加 Tavily Key，首次创建来源、已存在时提示，其他错误不会触发创建', async () => {
+  const tavily = 'tvly-test-secret';
+  const calls = [];
+  let reply = () => Response.json({ error: 'no tavily search API is set up' }, { status: 400 });
+  const web = new MagpieWeb({ env: { MAGPIE_WEB_KEY: key }, openBrowser: () => assert.fail('后台添加不打开浏览器'), fetchImpl: async (url, init) => {
+    if (url.includes('?k=')) return ready();
+    assert.equal(init.headers.cookie, `magpie_web_3430=${key}`);
+    assert.equal(init.redirect, 'error');
+    const path = new URL(url).pathname;
+    calls.push({ path, body: JSON.parse(init.body) });
+    return path.endsWith('search-keys') ? reply() : Response.json({ searchAPIs: [{ vendor: 'tavily' }] });
+  } });
+  assert.equal(await web.addTavilyKey(tavily), true);
+  assert.deepEqual(calls.splice(0), [
+    { path: '/api/settings/search-keys', body: { vendor: 'tavily', add: tavily } },
+    { path: '/api/settings/search-api', body: { vendor: 'tavily', key: tavily, append: true } },
+  ]);
+  reply = () => Response.json({ added: 0, had: 1 });
+  assert.equal(await web.addTavilyKey(tavily), false);
+  reply = () => Response.json({ error: tavily }, { status: 400 });
+  await assert.rejects(web.addTavilyKey(tavily), (error) => !error.message.includes(tavily));
+  assert.ok(calls.every(({ path }) => path.endsWith('search-keys')));
+});
+
 test('启动方式默认网页，严格校验；托盘启动不创建网页密钥', async (t) => {
   assert.equal(resolveConfig().startMode, 'web');
   assert.equal(resolveConfig({ startMode: 'tray' }).startMode, 'tray');

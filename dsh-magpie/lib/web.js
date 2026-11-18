@@ -48,7 +48,7 @@ export function handlerFor(ctx, manager) {
       if (req.method === 'GET') return json(res, 200, await manager.describe());
       if (req.method === 'POST') {
         const body = await bodyOf(req);
-        if (body.action !== 'search-test') return json(res, 200, await manager.handle(body));
+        if (!['search-test', 'search-key-add'].includes(body.action)) return json(res, 200, await manager.handle(body));
         const controller = new AbortController();
         const cancel = () => controller.abort();
         res.once('close', cancel);

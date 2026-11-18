@@ -70,11 +70,13 @@ window.__ModuleLoader__.load({
       sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动', sidebarAlways: '显示', sidebarNever: '隐藏',
       sidebarEntryHint: '左上角「插件」一栏的 Magpie 入口。自动：清单为空时显示，保存模型后隐藏。',
       tabModels: '模型', tabChannels: '渠道', tabSwitches: '开关', tabConnection: '连接', tabWebSearch: '联网搜索', tabPreferences: '偏好', tabUpdates: '更新',
-      webSearchHint: '使用「连接」中已保存的网关。Tavily 密钥、轮换方式及搜索来源在 Magpie 的「设置 → 模型 → 联网搜索」管理。',
+      webSearchHint: '使用「连接」中已保存的网关。轮换方式及搜索来源优先级由 Magpie 管理。',
       webSearchActive: 'DSH 正在使用 Magpie 搜索。', webSearchInactive: '可将 DSH 的网页搜索切换为 Magpie。',
       webSearchUnsupported: '当前 DSH 未提供原生搜索注册接口。', webSearchReadOnly: 'DSH 搜索设置暂不可写。',
       webSearchEnable: '使用 Magpie 搜索', webSearchRestore: '恢复默认搜索', webSearchQuery: '测试关键词', webSearchTest: '测试搜索',
       webSearchTested: '搜索成功，返回 {count} 条网页来源。', webSearchTestedText: '搜索成功，Magpie 返回了文本结果。',
+      tavilyKey: 'Tavily API Key', tavilyAdd: '添加 Tavily Key', tavilyAdded: '已添加到本机 Magpie。', tavilyExists: '本机 Magpie 已有这个 Tavily Key。',
+      tavilyKeyHint: '保存到本机 Magpie；需要 Magpie 网页管理服务在后台运行。', tavilyRemote: '远程网关请在对应的 Magpie 实例中添加搜索密钥。',
       channelsTitle: '余额不足的渠道', channelsHint: '这些渠道已暂停参与插件的自动路由，北京时间每日 04:00 自动恢复。充值后可手动恢复选择；再次报余额不足会重新停用。',
       channelsEmpty: '当前没有因余额不足停用的渠道。', channelBlocked: '余额不足 · 今日停用', channelDetected: '检测时间（北京时间）：{time}',
       channelRecover: '恢复选择', channelRecovered: '已恢复 {name}，后续请求可再次选择该渠道。', channelRefresh: '刷新状态', channelAccount: '{name} · 账号 {id}',
@@ -166,11 +168,13 @@ window.__ModuleLoader__.load({
       sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto', sidebarAlways: 'Show', sidebarNever: 'Hide',
       sidebarEntryHint: 'The Magpie entry next to Plugins in the sidebar. Auto: shown while the list is empty, hidden once models are saved.',
       tabModels: 'Models', tabChannels: 'Channels', tabSwitches: 'Switches', tabConnection: 'Connection', tabWebSearch: 'Web search', tabPreferences: 'Preferences', tabUpdates: 'Updates',
-      webSearchHint: 'Uses the saved gateway under Connection. Manage Tavily keys, rotation, and search sources in Magpie under Settings → Models → Web search.',
+      webSearchHint: 'Uses the saved gateway under Connection. Magpie manages rotation and search source priority.',
       webSearchActive: 'DSH uses Magpie for web search.', webSearchInactive: 'Switch DSH web search to Magpie here.',
       webSearchUnsupported: 'This DSH host has no native search provider registry.', webSearchReadOnly: 'DSH search settings are currently read-only.',
       webSearchEnable: 'Use Magpie search', webSearchRestore: 'Restore default search', webSearchQuery: 'Test query', webSearchTest: 'Test search',
       webSearchTested: 'Search returned {count} web sources.', webSearchTestedText: 'Search succeeded and Magpie returned text.',
+      tavilyKey: 'Tavily API Key', tavilyAdd: 'Add Tavily Key', tavilyAdded: 'Added to local Magpie.', tavilyExists: 'Local Magpie already has this Tavily Key.',
+      tavilyKeyHint: 'Saves to local Magpie and requires its web management service to be running.', tavilyRemote: 'Add search keys in the Magpie instance that runs the remote gateway.',
       channelsTitle: 'Channels with insufficient balance', channelsHint: 'These channels are excluded from the plugin’s automatic routing until 04:00 Beijing time each day. Restore a channel after topping up; another insufficient-balance error will pause it again.',
       channelsEmpty: 'No channels are paused for insufficient balance.', channelBlocked: 'Insufficient balance · Paused today', channelDetected: 'Detected (Beijing time): {time}',
       channelRecover: 'Restore selection', channelRecovered: '{name} is available for subsequent requests again.', channelRefresh: 'Refresh status', channelAccount: '{name} · account {id}',
@@ -965,6 +969,7 @@ window.__ModuleLoader__.load({
       const channelRequest = useRef(0);
       const searchRequest = useRef(0);
       const [searchQuery, setSearchQuery] = useState('');
+      const [tavilyKey, setTavilyKey] = useState('');
       // 优先留在卡片末尾；原位置放不下时才贴窗口底边，并保留原位高度供滚动归位。
       useLayoutEffect(() => {
         const card = cardRef.current, space = footerSpaceRef.current, footer = space?.firstElementChild;
@@ -1097,6 +1102,11 @@ window.__ModuleLoader__.load({
         const result = await request({ action: 'search-test', query: searchQuery.trim() });
         setNotice({ text: t(result.textOnly ? 'webSearchTestedText' : 'webSearchTested', { count: result.count }) });
       }, 'search-test');
+      const addTavilyKey = () => perform(async () => {
+        const result = await request({ action: 'search-key-add', key: tavilyKey.trim() });
+        setTavilyKey('');
+        setNotice({ text: t(result.added ? 'tavilyAdded' : 'tavilyExists') });
+      }, 'search-key-add');
       const update = (patch) => {
         if (patch.models) sanitizeCategories(patch.models);
         setView((v) => ({ ...v, savedModels: v.savedModels ?? v.config.models, config: { ...v.config, ...patch } })); setDirty(true);
@@ -1414,6 +1424,12 @@ window.__ModuleLoader__.load({
             'aria-busy': modelBusy === 'search-select',
           })),
           webSearch?.available && !webSearch.editable ? h('p', { className: 'hint' }, t('webSearchReadOnly')) : null,
+          webSearch?.localKeyEntry ? h('div', { className: 'fields' },
+            field(t('tavilyKey'), tavilyKey, setTavilyKey, { type: 'password', autoComplete: 'new-password', maxLength: 1024 }),
+            h('p', { className: 'hint' }, t('tavilyKeyHint')),
+            h('div', { className: 'bar' }, button(t('tavilyAdd'), addTavilyKey, {
+              disabled: busy || !tavilyKey.trim(), 'aria-busy': modelBusy === 'search-key-add',
+            }))) : webSearch?.localKeyEntry === false && config.enabled ? h('p', { className: 'hint' }, t('tavilyRemote')) : null,
           h('div', { className: 'fields' }, field(t('webSearchQuery'), searchQuery, setSearchQuery, { type: 'search' })),
           h('div', { className: 'bar' }, button(t('webSearchTest'), testSearch, { disabled: busy || !searchQuery.trim(), 'aria-busy': modelBusy === 'search-test' })),
         ],
