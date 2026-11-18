@@ -81,6 +81,76 @@ test('从插件追加 Tavily Key，首次创建来源、已存在时提示，其
   assert.ok(calls.every(({ path }) => path.endsWith('search-keys')));
 });
 
+test('从 Magpie 读取脱敏的 Tavily 密钥，按 ref 关联额度并允许配额读取失败', async () => {
+  const first = '0000000000000001', second = '0000000000000002', third = '0000000000000003';
+  const privateKey = 'tvly-test-secret-never-exposed';
+  let available = true;
+  const web = new MagpieWeb({ env: { MAGPIE_WEB_KEY: key }, fetchImpl: async (url, init) => {
+    if (url.includes('?k=')) return ready();
+    const path = new URL(url).pathname;
+    if (path === '/api/settings') return Response.json({ searchAPIs: [
+      { vendor: 'brave', keyList: [] },
+      { vendor: 'tavily', keyList: [
+        { ref: first, masked: 'tvly-…1234', key: privateKey },
+        { ref: second, masked: privateKey, off: true },
+        { ref: third, masked: 'tvly-…9012' },
+      ] },
+    ] });
+    assert.equal(path, '/api/settings/search-quota');
+    assert.deepEqual(JSON.parse(init.body), { vendor: 'tavily', fresh: true });
+    return available ? Response.json({ keys: [
+      { ref: third, known: true, unlimited: true },
+      { ref: second, known: false, err: privateKey },
+      { ref: first, known: true, used: 96, limit: 1000, of: 'plan', paygoLeft: 80 },
+    ] }) : Response.json({ error: privateKey }, { status: 502 });
+  } });
+  const listed = await web.tavilyKeys(true);
+  assert.deepEqual(listed, [
+    { ref: first, masked: 'tvly-…1234', off: false, quota: { remaining: 904, limit: 1000, shared: true, paygoLeft: 80 } },
+    { ref: second, masked: '…', off: true, quota: null },
+    { ref: third, masked: 'tvly-…9012', off: false, quota: { unlimited: true } },
+  ]);
+  available = false;
+  assert.deepEqual(await web.tavilyKeys(true), listed.map((row) => ({ ...row, quota: null })));
+});
+
+test('移除只按 ref 操作，最新列表只有目标密钥时才移除 Tavily 来源', async () => {
+  const first = '0000000000000001', second = '0000000000000002';
+  let refs = [first, second], rejectLastEnabled = false;
+  const settings = () => ({ searchAPIs: refs.length ? [{ vendor: 'tavily', keyList: refs.map((ref) => ({ ref })) }] : [] });
+  const calls = [];
+  const web = new MagpieWeb({ env: { MAGPIE_WEB_KEY: key }, fetchImpl: async (url, init) => {
+    if (url.includes('?k=')) return ready();
+    const path = new URL(url).pathname;
+    const body = init.body && JSON.parse(init.body);
+    calls.push({ path, body });
+    if (path === '/api/settings') return Response.json(settings());
+    if (path.endsWith('/search-api')) {
+      assert.deepEqual(body, { vendor: 'tavily', remove: true });
+      refs = [];
+      return Response.json(settings());
+    }
+    assert.equal(path, '/api/settings/search-keys');
+    assert.deepEqual(body, { vendor: 'tavily', ref: body.ref, remove: true });
+    if (refs.length === 1 || rejectLastEnabled) {
+      return Response.json({ error: 'Tavily needs a key on: switch the API off, or remove it, instead' }, { status: 400 });
+    }
+    refs = refs.filter((ref) => ref !== body.ref);
+    return Response.json({ settings: settings() });
+  } });
+  rejectLastEnabled = true;
+  await assert.rejects(web.removeTavilyKey(first), /启用另一把密钥/);
+  assert.deepEqual(refs, [first, second]);
+  assert.ok(!calls.some(({ path }) => path.endsWith('/search-api')));
+  rejectLastEnabled = false;
+  await web.removeTavilyKey(first);
+  assert.deepEqual(refs, [second]);
+  assert.deepEqual(calls.at(-1), { path: '/api/settings/search-keys', body: { vendor: 'tavily', ref: first, remove: true } });
+  await web.removeTavilyKey(second);
+  assert.deepEqual(refs, []);
+  assert.equal(calls.at(-1).path, '/api/settings/search-api');
+});
+
 test('启动方式默认网页，严格校验；托盘启动不创建网页密钥', async (t) => {
   assert.equal(resolveConfig().startMode, 'web');
   assert.equal(resolveConfig({ startMode: 'tray' }).startMode, 'tray');

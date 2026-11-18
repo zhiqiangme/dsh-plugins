@@ -29,7 +29,10 @@ test('联网搜索页切换原生提供方，测试关键词走已保存的网�
   const client = clientHarness({ ...view(), webSearch }, async (_url, options) => {
     const body = JSON.parse(options.body);
     calls.push(body);
-    if (body.action === 'search-test') return response({ ok: true, count: 2 });
+    if (body.action === 'search-test') return response({ ok: true, result: { sources: [
+      { url: 'https://example.test/one', title: '第一条', snippet: '第一段\n第二段' },
+      { url: 'https://example.test/two', title: '第二条', snippet: '摘要二' },
+    ], truncated: false } });
     return response({ ok: true, webSearch: { ...webSearch, provider: body.enabled ? webSearch.id : 'deepseek-search-api' } });
   });
   button(client.render(), '手动添加模型').props.onClick();
@@ -37,7 +40,11 @@ test('联网搜索页切换原生提供方，测试关键词走已保存的网�
   assert.equal(button(client.render(), '测试搜索').props.disabled, true);
   field(client.render(), '测试关键词').props.onChange({ target: { value: '  Magpie test  ' } });
   await button(client.render(), '测试搜索').props.onClick();
-  assert.equal(client.states[3].text, '搜索成功，返回 2 条网页来源。');
+  const tree = client.render();
+  assert.deepEqual(nodes(tree, (node) => node.type === 'a').map((node) => [node.props.href, node.children[0]]),
+    [['https://example.test/one', '第一条'], ['https://example.test/two', '第二条']]);
+  assert.ok(nodes(tree, (node) => node.children.includes('第一段\n第二段')).length);
+  assert.ok(nodes(tree, (node) => node.children.includes('摘要二')).length);
   await button(client.render(), '使用 Magpie 搜索').props.onClick();
   await button(client.render(), '恢复默认搜索').props.onClick();
   assert.deepEqual(calls, [
@@ -49,19 +56,67 @@ test('联网搜索页切换原生提供方，测试关键词走已保存的网�
   assert.equal(client.states[0].config.models.length, 1);
 });
 
-test('联网搜索页可添加本机 Tavily Key，写入成功后清空密码框', async () => {
+test('联网搜索页展示原始文本答案及空结果，查询失败时清除上一条结果', async () => {
+  let reply = response({ ok: true, result: { content: '代搜回答\n来源：https://example.test', sources: [] } });
+  const client = clientHarness({ ...view() }, async () => reply);
+  client.tab('联网搜索');
+  field(client.render(), '测试关键词').props.onChange({ target: { value: 'test' } });
+  const run = () => button(client.render(), '测试搜索').props.onClick();
+  const texts = () => nodes(client.render(), (node) => node.props.className === 'search-result-text').flatMap((node) => node.children);
+  await run();
+  assert.deepEqual(texts(), ['代搜回答\n来源：https://example.test']);
+  reply = response({ ok: true, result: { sources: [] } });
+  await run();
+  assert.ok(nodes(client.render(), (node) => node.children.includes('未找到结果。')).length);
+  reply = response({ ok: false, reason: 'Magpie 离线' }, 400);
+  await run();
+  assert.equal(nodes(client.render(), (node) => node.props.className === 'search-results').length, 0);
+});
+
+test('联网搜索页显示密钥、数量和额度，可添加密钥并逐个确认移除', async () => {
   const calls = [];
+  const ref = '0000000000000001';
+  let keys = [{ ref, masked: 'tvly-…abcd', quota: { remaining: 904, limit: 1000, shared: true } }];
   const client = clientHarness({ ...view(), webSearch: { localKeyEntry: true } }, async (_url, options) => {
-    calls.push(JSON.parse(options.body));
-    return response({ ok: true, added: true });
+    const body = JSON.parse(options.body);
+    calls.push(body);
+    if (body.action === 'search-key-list') return response({ ok: true, keys });
+    if (body.action === 'search-key-add') {
+      keys = [...keys, { ref: '0000000000000002', masked: 'tvly-…wxyz', quota: null }];
+      return response({ ok: true, added: true });
+    }
+    keys = keys.filter((key) => key.ref !== body.ref);
+    return response({ ok: true });
   });
   client.tab('联网搜索');
+  await button(client.render(), '刷新密钥和额度').props.onClick();
+  const matching = (text) => nodes(client.render(), (node) => node.children.includes(text));
+  assert.ok(matching('已添加 1 个').length);
+  assert.ok(matching('tvly-…abcd').length);
+  assert.ok(matching(`剩余额度 904 / ${(1000).toLocaleString()}`).length);
   const input = field(client.render(), 'Tavily API Key');
   assert.equal(input.props.type, 'password');
   input.props.onChange({ target: { value: 'tvly-fixture' } });
   await button(client.render(), '添加 Tavily Key').props.onClick();
-  assert.deepEqual(calls, [{ action: 'search-key-add', key: 'tvly-fixture' }]);
   assert.equal(field(client.render(), 'Tavily API Key').props.value, '');
+  assert.ok(matching('已添加 2 个').length);
+  assert.ok(matching('额度未知').length);
+  const askRemove = () => control(client.render(), '移除密钥 tvly-…abcd？').props.onClick();
+  askRemove();
+  button(client.render(), '取消').props.onClick();
+  assert.equal(button(client.render(), '确认移除'), undefined);
+  askRemove();
+  await button(client.render(), '确认移除').props.onClick();
+  assert.equal(matching('tvly-…abcd').length, 0);
+  assert.ok(matching('tvly-…wxyz').length);
+  assert.ok(matching('已添加 1 个').length);
+  assert.deepEqual(calls, [
+    { action: 'search-key-list', fresh: true },
+    { action: 'search-key-add', key: 'tvly-fixture' },
+    { action: 'search-key-list', fresh: false },
+    { action: 'search-key-remove', ref },
+    { action: 'search-key-list', fresh: false },
+  ]);
   assert.equal(client.states[1], false);
 });
 

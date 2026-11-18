@@ -6,6 +6,7 @@ import { conversationBlock } from './auto-update.js';
 import { createMagpieRouter } from './router.js';
 import { sessionKey } from './channel-load.js';
 import { createMagpieSearchProvider, SEARCH_PROVIDER_ID } from './search.js';
+import { validSearchKeyRef } from './web-ui.js';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -75,6 +76,11 @@ export class ModelManager {
       provider: entry?.options.config?.searchProvider ?? this.env.DSH_WEB_SEARCH_PROVIDER ?? null,
       id: SEARCH_PROVIDER_ID,
     };
+  }
+  tavilySignal(signal) {
+    const config = this.current();
+    if (!config.enabled || !isLocal(config.baseURL)) throw new Error('请在对应的 Magpie 实例中管理 Tavily 密钥');
+    return signal ? AbortSignal.any([signal, this.searchAbort.signal]) : this.searchAbort.signal;
   }
   async selectWebSearch(enabled, previous) {
     if (typeof enabled !== 'boolean' || (previous !== null && typeof previous !== 'string')) throw new Error('搜索提供方选择无效');
@@ -211,20 +217,27 @@ export class ModelManager {
     if (body.action === 'channel-status') return { ok: true, channelStatus: this.router.channelStatus() };
     if (body.action === 'channel-recover') return this.enqueue(() => ({ ok: true, channelStatus: this.router.recoverChannel(body.provider, body.token) }));
     if (body.action === 'search-select') return this.enqueue(() => this.selectWebSearch(body.enabled, body.previous));
+    if (body.action === 'search-key-list') {
+      const keys = await this.backend.web.tavilyKeys(body.fresh === true, this.tavilySignal(signal));
+      return { ok: true, keys };
+    }
     if (body.action === 'search-key-add') {
       const key = typeof body.key === 'string' ? body.key.trim() : '';
       if (!/^[!-~]{1,1024}$/.test(key) || key.includes(',')) throw new Error('请输入一个有效的 Tavily API Key');
       return this.enqueue(async () => {
-        const config = this.current();
-        if (!config.enabled || !isLocal(config.baseURL)) throw new Error('请在对应的 Magpie 实例中添加 Tavily 密钥');
-        const cancel = signal ? AbortSignal.any([signal, this.searchAbort.signal]) : this.searchAbort.signal;
-        const added = await this.backend.web.addTavilyKey(key, cancel);
+        const added = await this.backend.web.addTavilyKey(key, this.tavilySignal(signal));
         return { ok: true, added };
       });
     }
+    if (body.action === 'search-key-remove') {
+      if (!validSearchKeyRef(body.ref)) throw new Error('无效的 Tavily 密钥标识');
+      return this.enqueue(async () => {
+        await this.backend.web.removeTavilyKey(body.ref, this.tavilySignal(signal));
+        return { ok: true };
+      });
+    }
     if (body.action === 'search-test') {
-      const result = await this.searchProvider.search({ query: body.query, maxResults: 3 }, signal);
-      return { ok: true, count: result.sources.length, textOnly: Boolean(result.content) };
+      return { ok: true, result: await this.searchProvider.search({ query: body.query }, signal) };
     }
     if (['backend-status', 'backend-check', 'backend-install', 'backend-open'].includes(body.action)) {
       const path = body.magpiePath ?? this.current().magpiePath;

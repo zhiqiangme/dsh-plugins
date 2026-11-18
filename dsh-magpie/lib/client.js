@@ -74,9 +74,15 @@ window.__ModuleLoader__.load({
       webSearchActive: 'DSH 正在使用 Magpie 搜索。', webSearchInactive: '可将 DSH 的网页搜索切换为 Magpie。',
       webSearchUnsupported: '当前 DSH 未提供原生搜索注册接口。', webSearchReadOnly: 'DSH 搜索设置暂不可写。',
       webSearchEnable: '使用 Magpie 搜索', webSearchRestore: '恢复默认搜索', webSearchQuery: '测试关键词', webSearchTest: '测试搜索',
-      webSearchTested: '搜索成功，返回 {count} 条网页来源。', webSearchTestedText: '搜索成功，Magpie 返回了文本结果。',
+      webSearchResults: '「{query}」的搜索结果', webSearchEmpty: '未找到结果。', webSearchTruncated: '结果超出条数上限，已省略其余来源。',
       tavilyKey: 'Tavily API Key', tavilyAdd: '添加 Tavily Key', tavilyAdded: '已添加到本机 Magpie。', tavilyExists: '本机 Magpie 已有这个 Tavily Key。',
       tavilyKeyHint: '保存到本机 Magpie；需要 Magpie 网页管理服务在后台运行。', tavilyRemote: '远程网关请在对应的 Magpie 实例中添加搜索密钥。',
+      tavilyKeys: 'Tavily 密钥', tavilyCount: '已添加 {count} 个', tavilyRefresh: '刷新密钥和额度', tavilyLoading: '正在读取密钥和额度…',
+      tavilyQuota: '剩余额度 {remaining} / {limit}', tavilyUnlimited: '额度不限', tavilyQuotaUnknown: '额度未知',
+      tavilyQuotaShared: '同账号的密钥共用额度', tavilyPaygo: '按量额度剩余 {count}', tavilyKeyOff: '已停用',
+      tavilyRemove: '移除', tavilyConfirmRemove: '确认移除', tavilyCancelRemove: '取消',
+      tavilyRemovePrompt: '移除密钥 {key}？', tavilyRemoveLast: '移除最后一个密钥 {key} 会一并移除 Tavily 搜索来源。',
+      tavilyRemoved: '已移除 Tavily 密钥 {key}。',
       channelsTitle: '余额不足的渠道', channelsHint: '这些渠道已暂停参与插件的自动路由，北京时间每日 04:00 自动恢复。充值后可手动恢复选择；再次报余额不足会重新停用。',
       channelsEmpty: '当前没有因余额不足停用的渠道。', channelBlocked: '余额不足 · 今日停用', channelDetected: '检测时间（北京时间）：{time}',
       channelRecover: '恢复选择', channelRecovered: '已恢复 {name}，后续请求可再次选择该渠道。', channelRefresh: '刷新状态', channelAccount: '{name} · 账号 {id}',
@@ -172,9 +178,15 @@ window.__ModuleLoader__.load({
       webSearchActive: 'DSH uses Magpie for web search.', webSearchInactive: 'Switch DSH web search to Magpie here.',
       webSearchUnsupported: 'This DSH host has no native search provider registry.', webSearchReadOnly: 'DSH search settings are currently read-only.',
       webSearchEnable: 'Use Magpie search', webSearchRestore: 'Restore default search', webSearchQuery: 'Test query', webSearchTest: 'Test search',
-      webSearchTested: 'Search returned {count} web sources.', webSearchTestedText: 'Search succeeded and Magpie returned text.',
+      webSearchResults: 'Search results for “{query}”', webSearchEmpty: 'No results found.', webSearchTruncated: 'More sources were returned than the result limit allows.',
       tavilyKey: 'Tavily API Key', tavilyAdd: 'Add Tavily Key', tavilyAdded: 'Added to local Magpie.', tavilyExists: 'Local Magpie already has this Tavily Key.',
       tavilyKeyHint: 'Saves to local Magpie and requires its web management service to be running.', tavilyRemote: 'Add search keys in the Magpie instance that runs the remote gateway.',
+      tavilyKeys: 'Tavily keys', tavilyCount: '{count} saved', tavilyRefresh: 'Refresh keys and quotas', tavilyLoading: 'Loading keys and quotas…',
+      tavilyQuota: '{remaining} / {limit} credits remaining', tavilyUnlimited: 'Unlimited credits', tavilyQuotaUnknown: 'Quota unavailable',
+      tavilyQuotaShared: 'Shared by keys on the same account', tavilyPaygo: '{count} pay-as-you-go credits remaining', tavilyKeyOff: 'Disabled',
+      tavilyRemove: 'Remove', tavilyConfirmRemove: 'Confirm removal', tavilyCancelRemove: 'Cancel',
+      tavilyRemovePrompt: 'Remove key {key}?', tavilyRemoveLast: 'Removing the last key {key} also removes Tavily as a search source.',
+      tavilyRemoved: 'Removed Tavily key {key}.',
       channelsTitle: 'Channels with insufficient balance', channelsHint: 'These channels are excluded from the plugin’s automatic routing until 04:00 Beijing time each day. Restore a channel after topping up; another insufficient-balance error will pause it again.',
       channelsEmpty: 'No channels are paused for insufficient balance.', channelBlocked: 'Insufficient balance · Paused today', channelDetected: 'Detected (Beijing time): {time}',
       channelRecover: 'Restore selection', channelRecovered: '{name} is available for subsequent requests again.', channelRefresh: 'Refresh status', channelAccount: '{name} · account {id}',
@@ -319,6 +331,9 @@ window.__ModuleLoader__.load({
       .dsm-mp .row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--mp-border-soft)}
       .dsm-mp .row:last-child{border-bottom:0}.dsm-mp label.row{cursor:pointer}
       .dsm-mp .row-text{display:flex;flex-direction:column;gap:2px;min-width:0}.dsm-mp .row-title{font-weight:500}.dsm-mp .row-hint{color:var(--mp-muted);font-size:12px}.dsm-mp .row-control{flex:none}
+      .dsm-mp .search-results{margin-top:16px;overflow-wrap:anywhere}.dsm-mp .search-results h4{font-weight:600}
+      .dsm-mp .search-results ol{padding-inline-start:24px;margin:8px 0 0;list-style:decimal}.dsm-mp .search-results li{padding:8px 0}
+      .dsm-mp .search-results a{display:block;color:var(--mp-accent);text-decoration:underline}.dsm-mp .search-result-text{white-space:pre-wrap;margin-top:4px}
       .dsm-mp .group{display:flex;flex-direction:column;gap:2px;margin:22px 0 2px;font-size:12px;font-weight:600;color:var(--mp-faint)}.dsm-mp .group:first-child{margin-top:0}
       .dsm-mp .group span{font-weight:400}
       .dsm-mp .hint{margin-top:6px;color:var(--mp-muted);font-size:12px}
@@ -972,6 +987,26 @@ window.__ModuleLoader__.load({
       const searchRequest = useRef(0);
       const [searchQuery, setSearchQuery] = useState('');
       const [tavilyKey, setTavilyKey] = useState('');
+      const [testResult, setTestResult] = useState(null);
+      const [tavily, setTavily] = useState({ loading: false });
+      const [tavilyRemoveRef, setTavilyRemoveRef] = useState(null);
+      const tavilyRequest = useRef(0);
+      const refreshTavily = useCallback(async (fresh = false) => {
+        const generation = ++tavilyRequest.current;
+        setTavily((old) => ({ ...old, loading: true, error: null }));
+        try {
+          const { keys } = await request({ action: 'search-key-list', fresh });
+          if (generation === tavilyRequest.current) setTavily({ keys, loading: false });
+        } catch (error) {
+          if (generation === tavilyRequest.current) setTavily((old) => ({ ...old, loading: false, error: error.message }));
+        }
+      }, []);
+      const showTavily = tab === 'webSearch' && view?.webSearch?.localKeyEntry === true;
+      useEffect(() => {
+        if (!showTavily) return;
+        refreshTavily();
+        return () => { tavilyRequest.current++; };
+      }, [showTavily, refreshTavily]);
       // 优先留在卡片末尾；原位置放不下时才贴窗口底边，并保留原位高度供滚动归位。
       useLayoutEffect(() => {
         const card = cardRef.current, space = footerSpaceRef.current, footer = space?.firstElementChild;
@@ -1101,14 +1136,24 @@ window.__ModuleLoader__.load({
         }
       }, 'search-select');
       const testSearch = () => perform(async () => {
-        const result = await request({ action: 'search-test', query: searchQuery.trim() });
-        setNotice({ text: t(result.textOnly ? 'webSearchTestedText' : 'webSearchTested', { count: result.count }) });
+        const query = searchQuery.trim();
+        setTestResult(null);
+        const { result } = await request({ action: 'search-test', query });
+        setTestResult({ ...result, query });
       }, 'search-test');
       const addTavilyKey = () => perform(async () => {
         const result = await request({ action: 'search-key-add', key: tavilyKey.trim() });
         setTavilyKey('');
         setNotice({ text: t(result.added ? 'tavilyAdded' : 'tavilyExists') });
+        await refreshTavily();
       }, 'search-key-add');
+      const removeTavilyKey = ({ ref, masked }) => perform(async () => {
+        await request({ action: 'search-key-remove', ref });
+        setTavilyRemoveRef(null);
+        setTavily((old) => ({ ...old, keys: old.keys?.filter((key) => key.ref !== ref) }));
+        setNotice({ text: t('tavilyRemoved', { key: masked }) });
+        await refreshTavily();
+      }, 'search-key-remove');
       const update = (patch) => {
         if (patch.models) sanitizeCategories(patch.models);
         setView((v) => ({ ...v, savedModels: v.savedModels ?? v.config.models, config: { ...v.config, ...patch } })); setDirty(true);
@@ -1304,7 +1349,7 @@ window.__ModuleLoader__.load({
         button(t(config.startMode === 'tray' ? 'openWindow' : 'openWeb'), openMagpie, { disabled: busy || operation?.running || unsupported || !backend?.installed || !backend?.version, 'aria-busy': modelBusy === 'open' }));
 
       const tabs = h('div', { className: 'tabs', role: 'tablist' }, ...TABS.map(([id, label]) => h('button', {
-        key: id, type: 'button', role: 'tab', className: 'tab', id: `dsm-mp-tab-${id}`, 'aria-selected': tab === id, 'aria-controls': 'dsm-mp-panel', onClick: () => setTab(id),
+        key: id, type: 'button', role: 'tab', className: 'tab', id: `dsm-mp-tab-${id}`, 'aria-selected': tab === id, 'aria-controls': 'dsm-mp-panel', onClick: () => { setTab(id); setTavilyRemoveRef(null); },
       }, t(label),
       id === 'models' ? h('span', { key: rows.length, className: 'count' }, rows.length) : null,
       id === 'channels' && blockedChannels.length ? h('span', { className: 'count' }, blockedChannels.length) : null,
@@ -1426,6 +1471,28 @@ window.__ModuleLoader__.load({
             'aria-busy': modelBusy === 'search-select',
           })),
           webSearch?.available && !webSearch.editable ? h('p', { className: 'hint' }, t('webSearchReadOnly')) : null,
+          webSearch?.localKeyEntry ? h('section', { 'aria-label': t('tavilyKeys') },
+            h('div', { className: 'list-head' },
+              h('h4', { className: 'count' }, t('tavilyKeys'), ' ', tavily.keys && h('span', { className: 'chip' }, t('tavilyCount', { count: tavily.keys.length }))),
+              button(t('tavilyRefresh'), () => refreshTavily(true), { disabled: busy || tavily.loading, 'aria-busy': tavily.loading })),
+            tavily.loading && h('p', { className: 'hint', role: 'status' }, t('tavilyLoading')),
+            tavily.error && h('p', { className: 'notice error', role: 'alert' }, tavily.error),
+            tavily.keys?.map((key) => {
+              const { ref, masked, off, quota } = key;
+              const confirming = tavilyRemoveRef === ref;
+              const remaining = !quota ? t('tavilyQuotaUnknown') : quota.unlimited ? t('tavilyUnlimited') :
+                t('tavilyQuota', { remaining: quota.remaining.toLocaleString(), limit: quota.limit.toLocaleString() });
+              return h('div', { key: ref, className: 'row' },
+                h('div', { className: 'row-text' },
+                  h('span', { className: 'row-title' }, h('code', null, masked), off && h('span', { className: 'chip' }, t('tavilyKeyOff'))),
+                  h('span', { className: 'row-hint' }, remaining, quota?.shared && [' · ', t('tavilyQuotaShared')],
+                    quota?.paygoLeft && [' · ', t('tavilyPaygo', { count: quota.paygoLeft.toLocaleString() })]),
+                  confirming && h('p', { className: 'row-hint' }, t(tavily.keys.length === 1 ? 'tavilyRemoveLast' : 'tavilyRemovePrompt', { key: masked }))),
+                h('div', { className: 'bar' }, confirming ? [
+                  button(t('tavilyConfirmRemove'), () => removeTavilyKey(key), { key: 'confirm', className: 'danger', 'aria-busy': modelBusy === 'search-key-remove' }),
+                  button(t('tavilyCancelRemove'), () => setTavilyRemoveRef(null), { key: 'cancel' }),
+                ] : button(t('tavilyRemove'), () => setTavilyRemoveRef(ref), { className: 'danger', 'aria-label': t('tavilyRemovePrompt', { key: masked }) })));
+            })) : null,
           webSearch?.localKeyEntry ? h('div', { className: 'fields' },
             field(t('tavilyKey'), tavilyKey, setTavilyKey, { type: 'password', autoComplete: 'new-password', maxLength: 1024 }),
             h('p', { className: 'hint' }, t('tavilyKeyHint')),
@@ -1434,6 +1501,16 @@ window.__ModuleLoader__.load({
             }))) : webSearch?.localKeyEntry === false && config.enabled ? h('p', { className: 'hint' }, t('tavilyRemote')) : null,
           h('div', { className: 'fields' }, field(t('webSearchQuery'), searchQuery, setSearchQuery, { type: 'search' })),
           h('div', { className: 'bar' }, button(t('webSearchTest'), testSearch, { disabled: busy || !searchQuery.trim(), 'aria-busy': modelBusy === 'search-test' })),
+          testResult && h('section', { className: 'search-results', 'aria-live': 'polite' },
+            h('h4', null, t('webSearchResults', { query: testResult.query })),
+            testResult.content && h('p', { className: 'search-result-text' }, testResult.content),
+            testResult.sources.length > 0 && h('ol', null, testResult.sources.map(({ title, url, snippet }) =>
+              h('li', { key: url },
+                h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, title || url),
+                title && h('p', { className: 'row-hint' }, url),
+                snippet && h('p', { className: 'search-result-text' }, snippet)))),
+            !testResult.content && testResult.sources.length === 0 && h('p', { className: 'hint' }, t('webSearchEmpty')),
+            testResult.truncated && h('p', { className: 'hint' }, t('webSearchTruncated'))),
         ],
         preferences: () => [
           h('h4', { className: 'group' }, t('groupProgram')),

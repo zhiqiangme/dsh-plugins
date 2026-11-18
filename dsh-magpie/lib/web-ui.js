@@ -9,6 +9,41 @@ export const WEB_KEY_REF = 'DSH_MAGPIE_WEB_KEY';
 export const WEB_ORIGIN = 'http://127.0.0.1:3430';
 const exec = promisify(execFile);
 const TAVILY_NOT_CONFIGURED = Symbol('Tavily not configured');
+const TAVILY_KEY_REQUIRED = Symbol('Tavily requires an enabled key');
+const WEB_SETTINGS = 'settings';
+const SEARCH_KEYS = 'settings/search-keys';
+const SEARCH_API = 'settings/search-api';
+const SEARCH_QUOTA = 'settings/search-quota';
+const TAVILY = { vendor: 'tavily' };
+const TAVILY_MANAGEMENT = 'Tavily 密钥管理';
+
+export const validSearchKeyRef = (ref) => typeof ref === 'string' && /^[0-9a-f]{16}$/.test(ref);
+
+function tavilyKeyList(settings) {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Magpie 搜索设置格式无效');
+  const apis = settings?.searchAPIs;
+  // Magpie 省略未配置的搜索来源列表。校验列表后才能依据它移除最后一把密钥。
+  if (apis == null) return [];
+  if (!Array.isArray(apis)) throw new Error('Magpie 搜索设置格式无效');
+  const source = apis.find((api) => api?.vendor === TAVILY.vendor);
+  if (!source) return [];
+  const keys = source.keyList;
+  if (!Array.isArray(keys) || keys.some((key) => !validSearchKeyRef(key?.ref))) throw new Error('Magpie Tavily 密钥列表格式无效');
+  return keys.map(({ ref, masked, off }) => ({
+    ref, masked: typeof masked === 'string' && /^[!-~]{0,5}…[!-~]{0,4}$/.test(masked) ? masked : '…', off: off === true,
+  }));
+}
+
+function tavilyQuota(quota) {
+  if (quota?.known !== true) return null;
+  if (quota.unlimited === true) return { unlimited: true };
+  const { used, limit, of, paygoLeft } = quota;
+  if (![used, limit].every((value) => Number.isSafeInteger(value) && value >= 0)) return null;
+  return {
+    remaining: Math.max(0, limit - used), limit, shared: of === 'plan',
+    ...(Number.isSafeInteger(paygoLeft) && paygoLeft > 0 ? { paygoLeft } : {}),
+  };
+}
 
 function checkedKey(key) {
   if (typeof key !== 'string' || !/^[A-Za-z0-9._~-]{16,}$/.test(key)) throw new Error('Magpie 网页密钥无效，请检查 MAGPIE_WEB_KEY 或插件凭据');
@@ -72,16 +107,41 @@ export class MagpieWeb {
     return this.authenticatedAPI(['providers', 'provider/models'], '模型目录', signal);
   }
   async addTavilyKey(key, signal) {
-    const addPath = 'settings/search-keys', createPath = 'settings/search-api';
-    const request = await this.authenticatedAPI([addPath, createPath], 'Tavily 密钥管理', signal);
+    const request = await this.authenticatedAPI([SEARCH_KEYS, SEARCH_API], TAVILY_MANAGEMENT, signal);
     // 追加接口沿用已有来源地址、轮换和开关。只有网关明确表示尚未配置 Tavily 时才创建来源。
-    const result = await request(addPath, { vendor: 'tavily', add: key });
+    const result = await request(SEARCH_KEYS, { ...TAVILY, add: key });
     if (result === TAVILY_NOT_CONFIGURED) {
-      await request(createPath, { vendor: 'tavily', key, append: true });
+      await request(SEARCH_API, { ...TAVILY, key, append: true });
       return true;
     }
     if (result?.added === 1 || result?.had === 1) return result.added === 1;
     throw new Error('Magpie Tavily 密钥管理接口格式无效');
+  }
+  async tavilyKeys(fresh, signal) {
+    const request = await this.authenticatedAPI([WEB_SETTINGS, SEARCH_QUOTA], TAVILY_MANAGEMENT, signal);
+    const keys = tavilyKeyList(await request(WEB_SETTINGS));
+    if (keys.length === 0) return keys;
+    const data = await request(SEARCH_QUOTA, { ...TAVILY, fresh }).catch(() => {
+      signal?.throwIfAborted();
+      // Tavily 的额度接口离线时，已保存的密钥仍可查看和移除。
+      return {};
+    });
+    const quotas = new Map(Array.isArray(data?.keys) ? data.keys.map((quota) => [quota?.ref, quota]) : []);
+    return keys.map((key) => ({ ...key, quota: tavilyQuota(quotas.get(key.ref)) }));
+  }
+  async removeTavilyKey(ref, signal) {
+    const request = await this.authenticatedAPI([SEARCH_KEYS, WEB_SETTINGS, SEARCH_API], TAVILY_MANAGEMENT, signal);
+    const result = await request(SEARCH_KEYS, { ...TAVILY, ref, remove: true });
+    if (result === TAVILY_NOT_CONFIGURED) return;
+    if (result === TAVILY_KEY_REQUIRED) {
+      // Magpie 要求 Tavily 至少保留一把启用的密钥。仅当最新列表只剩目标密钥时，才能移除整个来源。
+      const keys = tavilyKeyList(await request(WEB_SETTINGS));
+      if (!keys.some((key) => key.ref === ref)) return;
+      if (keys.length !== 1) throw new Error('Magpie 要求 Tavily 至少有一个启用的密钥。请在 Magpie 网页启用另一把密钥后重试');
+      const settings = await request(SEARCH_API, { ...TAVILY, remove: true });
+      if (!tavilyKeyList(settings).some((key) => key.ref === ref)) return;
+    } else if (!tavilyKeyList(result?.settings).some((key) => key.ref === ref)) return;
+    throw new Error('Magpie 未能移除 Tavily 密钥');
   }
   /** 沿用已有网页登录 Cookie；调用方只能访问预先列出的接口。 */
   async authenticatedAPI(paths, label, signal) {
@@ -115,9 +175,10 @@ export class MagpieWeb {
           });
         } catch { signal?.throwIfAborted(); throw new Error(`Magpie ${label}接口连接失败或超时`); }
         if (!response.ok) {
-          if (path === 'settings/search-keys' && response.status === 400) {
+          if (path === SEARCH_KEYS && response.status === 400) {
             const failure = await response.json().catch(() => undefined);
             if (failure?.error === 'no tavily search API is set up') return TAVILY_NOT_CONFIGURED;
+            if (body?.remove === true && failure?.error === 'Tavily needs a key on: switch the API off, or remove it, instead') return TAVILY_KEY_REQUIRED;
           } else {
             await response.body?.cancel().catch(() => undefined);
           }

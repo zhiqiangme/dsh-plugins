@@ -34,6 +34,12 @@ test('Magpie 联网搜索使用已保存的网关、Key 和工具协议，将搜
   assert.deepEqual(JSON.parse(sent.at(-1).init.body).params.arguments, { query: '以 Magpie 自己的数量为准' });
   await assert.rejects(search({ query: '   ' }), /输入搜索关键词/);
   assert.equal(sent.length, 2);
+  const preview = await manager.handle({ action: 'search-test', query: '以 Magpie 自己的数量为准' });
+  assert.deepEqual(JSON.parse(sent.at(-1).init.body).params.arguments, { query: '以 Magpie 自己的数量为准' });
+  assert.deepEqual(preview.result.sources, [
+    { url: 'https://example.test/a?q=%E6%B5%8B%E8%AF%95', title: '标题 — 副标题', snippet: '摘要第一行\r\n摘要第二行' },
+    { url: 'https://example.test/b', title: '另一结果' },
+  ]);
 });
 
 test('区分 Magpie 文本回答、空结果、权限和工具错误，透传 DSH 取消信号', async () => {
@@ -96,16 +102,27 @@ test('选用 Magpie 或恢复部署默认只修改 DSH 搜索提供方，过期�
   assert.equal(entry.options.config.fetchProvider, 'other-fetch');
 });
 
-test('添加 Tavily Key 只转交本机 Magpie，不写 DSH 配置或凭据，远程网关不向本机写入', async () => {
+test('Tavily 密钥管理只访问本机 Magpie，不写 DSH 配置或凭据', async () => {
   const host = fakeHost();
-  const keys = [];
-  const manager = new ModelManager(host.ctx, {}, { env: {}, backend: { web: { addTavilyKey: async (key) => { keys.push(key); return true; } } } });
+  const calls = [], ref = '0000000000000001';
+  const manager = new ModelManager(host.ctx, {}, { env: {}, backend: { web: {
+    addTavilyKey: async (key) => { calls.push(key); return true; },
+    tavilyKeys: async (fresh) => { calls.push(fresh); return [{ ref, masked: 'tvly-…1234', quota: null }]; },
+    removeTavilyKey: async (target) => { calls.push(target); },
+  } } });
   const add = (key) => manager.handle({ action: 'search-key-add', key });
+  const list = () => manager.handle({ action: 'search-key-list', fresh: true });
+  const remove = (ref) => manager.handle({ action: 'search-key-remove', ref });
   assert.deepEqual(await add(' tvly-fixture '), { ok: true, added: true });
   await assert.rejects(add('a,b'), /一个有效的/);
+  assert.deepEqual((await list()).keys, [{ ref, masked: 'tvly-…1234', quota: null }]);
+  await assert.rejects(remove('tvly-entire-key'), /无效的 Tavily 密钥标识/);
+  assert.deepEqual(await remove(ref), { ok: true });
   host.own.options.config.baseURL = 'https://magpie.example.test';
   await assert.rejects(add('tvly-remote'), /对应的 Magpie 实例/);
-  assert.deepEqual(keys, ['tvly-fixture']);
+  await assert.rejects(list(), /对应的 Magpie 实例/);
+  await assert.rejects(remove(ref), /对应的 Magpie 实例/);
+  assert.deepEqual(calls, ['tvly-fixture', true, ref]);
   assert.equal(host.keys.size, 0);
   assert.deepEqual(host.edits, []);
 });
