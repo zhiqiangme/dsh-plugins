@@ -75,18 +75,20 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
       const controller = new AbortController();
       const abort = () => { if (!res.writableFinished) controller.abort(); };
       req.on('aborted', abort); res.on('close', abort); active.add(controller);
-      let reservation;
+      let reservation, turn;
       try {
         const config = current();
         if (stopped || !config.enabled || !config.syncEnabled || !config.autoRoute) return reply(res, 503, '自动路由未启用');
+        const rawSession = req.headers[SESSION_HEADER];
+        const session = typeof rawSession === 'string' && /^[a-f0-9]{64}$/.test(rawSession) ? rawSession : undefined;
+        const title = req.headers[PURPOSE_HEADER] === 'session-title';
+        // 进入路由时捕获轮次，等待额度、请求体或上游重试都可能跨过轮次边界。
+        if (session && !title) turn = load.turn(session);
         const store = credentials();
         const key = await credential(store, env, config.baseURL);
         const bearer = /^Bearer (.+)$/i.exec(String(req.headers.authorization ?? ''))?.[1] ?? '';
         const supplied = String(req.headers['x-api-key'] ?? '') || bearer;
         if (!sameSecret(supplied, key)) return reply(res, 401, 'unauthorized');
-        const rawSession = req.headers[SESSION_HEADER];
-        const session = typeof rawSession === 'string' && /^[a-f0-9]{64}$/.test(rawSession) ? rawSession : undefined;
-        const title = req.headers[PURPOSE_HEADER] === 'session-title';
         const path = new URL(req.url, 'http://localhost').pathname;
         if (req.method === 'GET' && path === `${ROUTER_PATH}/models`) {
           res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -129,11 +131,14 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
           attempts = channels.rank(order, attempts, load.counts(config.baseURL, session));
           if (!attempts.length) return reply(res, 503, '该模型的可用渠道均因余额不足停用，请到 Magpie「渠道」页恢复，或等待北京时间 04:00 自动恢复');
           const fresh = attempts.filter((row) => !triedProviders.has(channelId(row)));
-          const attempt = (fresh.length ? fresh : attempts)[0];
+          const candidates = fresh.length ? fresh : attempts;
+          // 只在能力过滤和余额停用过滤后的候选中沿用原渠道；失败后按原有队列切换。
+          const preferred = triedProviders.size ? undefined : load.preferred(config.baseURL, session, turn);
+          const attempt = candidates.find((row) => channelId(row) === preferred) ?? candidates[0];
           attempts = attempts.filter((row) => row !== attempt);
           triedProviders.add(channelId(attempt));
           // 标题请求不占名额，也不能覆盖同一会话在执行工具期间保留的主对话渠道。
-          reservation = title ? undefined : load.reserve(config.baseURL, session, channelId(attempt));
+          reservation = title ? undefined : load.reserve(config.baseURL, session, channelId(attempt), turn);
           const allocated = reservation;
           const last = attempts.length === 0;
           const generation = channels.generation(order, attempt);
@@ -195,7 +200,8 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
         if (!controller.signal.aborted && !res.headersSent) reply(res, 502, 'Magpie 路由请求失败，请检查网关和 Key');
         else if (!res.writableFinished) res.destroy();
       } finally {
-        reservation?.release(!controller.signal.aborted);
+        // 下游只取消单次请求时保留仍在进行的轮次；停轮和渠道失败各自释放占用。
+        reservation?.release(!controller.signal.aborted || turn !== undefined);
         active.delete(controller);
         req.off('aborted', abort); res.off('close', abort);
       }

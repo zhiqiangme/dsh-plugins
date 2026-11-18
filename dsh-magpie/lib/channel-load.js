@@ -17,12 +17,20 @@ export class ChannelLoad {
     this.retained = new Map();
   }
   live() {
-    try { const value = this.runningSessions(); return value instanceof Set ? value : undefined; }
+    try { const value = this.runningSessions(); return value instanceof Map ? value : undefined; }
     catch { return undefined; }
+  }
+  turn(session) { return this.live()?.get(session); }
+  preferred(scope, session, turn) {
+    if (turn === undefined) return undefined;
+    const retained = this.retained.get(scope)?.get(session);
+    return retained?.turn === turn ? retained.provider : undefined;
   }
   prune(live) {
     for (const [scope, sessions] of this.retained) {
-      for (const id of sessions.keys()) if (!live?.has(id)) sessions.delete(id);
+      for (const [id, { turn }] of sessions) {
+        if (!live?.has(id) || live.get(id) !== turn) sessions.delete(id);
+      }
       if (!sessions.size) this.retained.delete(scope);
     }
   }
@@ -38,19 +46,24 @@ export class ChannelLoad {
     for (const [token, request] of this.requests) if (request.scope === scope) add(request.provider, request.session ?? token);
     return new Map([...providers].map(([provider, ids]) => [provider, ids.size]));
   }
-  reserve(scope, session, provider) {
+  reserve(scope, session, provider, turn) {
     const token = Symbol('model request');
     this.requests.set(token, { scope, session, provider });
-    if (session && this.live()?.has(session)) {
+    const stillRunning = () => {
+      const live = this.live();
+      return live?.has(session) && live.get(session) === turn;
+    };
+    // 上一轮的慢请求仍可结束，但不能覆盖新一轮的占用。
+    if (stillRunning()) {
       // 同一会话改用网关或渠道时只保留最新位置；尚未结束的旧请求仍由 requests 单独计数。
       for (const sessions of this.retained.values()) sessions.delete(session);
       if (!this.retained.has(scope)) this.retained.set(scope, new Map());
-      this.retained.get(scope).set(session, { provider, token });
+      this.retained.get(scope).set(session, { provider, token, turn });
     }
     const release = (retain = false) => {
       if (!this.requests.delete(token)) return;
       const sessions = this.retained.get(scope);
-      if (sessions?.get(session)?.token === token && (!retain || !this.live()?.has(session))) sessions.delete(session);
+      if (sessions?.get(session)?.token === token && (!retain || !stillRunning())) sessions.delete(session);
       if (sessions && !sessions.size) this.retained.delete(scope);
     };
     return { release };

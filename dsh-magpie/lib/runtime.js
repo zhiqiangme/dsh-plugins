@@ -35,8 +35,23 @@ export class ModelManager {
       loadQuotas: async (config) => requestGateway(config.baseURL, '/v1/magpie/quotas', await credential(this.credentials, this.env, config.baseURL), this.fetch, 3_000),
       onOrderError: (message) => (this.ctx.logger ?? console).warn(`[dsh-magpie] ${message}`),
       runningSessions: () => {
-        const agents = hostService(this.ctx, 'agents')?.list?.();
-        return Array.isArray(agents) ? new Set(agents.filter((agent) => agent?.status === 'running').map((agent) => sessionKey(agent.id)).filter(Boolean)) : undefined;
+        const registry = hostService(this.ctx, 'agents');
+        const agents = registry?.list?.();
+        if (!Array.isArray(agents)) return undefined;
+        const running = new Map();
+        for (const agent of agents) {
+          if (agent?.status !== 'running') continue;
+          const id = sessionKey(agent.id);
+          if (!id) continue;
+          let turn;
+          try {
+            // DSH 会话投影使用 turn/start 的事件序号区分轮次，工具步骤只推进 step。
+            const seq = registry.turnBoundaryOf?.(agent.session)?.openTurnStartSeq;
+            if (Number.isSafeInteger(seq) && seq >= 0) turn = seq;
+          } catch { /* 宿主没有可用的轮次投影时仍按会话统计负载。 */ }
+          running.set(id, turn);
+        }
+        return running;
       },
     });
   }

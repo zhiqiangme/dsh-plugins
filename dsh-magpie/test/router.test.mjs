@@ -67,7 +67,7 @@ test('同时到达且消息相同的对话逐轮均衡分配，超过渠道总�
 
 for (const titleHasSession of [true, false]) test(`标题请求${titleHasSession ? '带原会话标识' : '缺少会话标识'}时，不占名额或覆盖主对话渠道，普通 low 请求仍计数`, async (t) => {
   const [main, one, two, three] = ['main', 'one', 'two', 'three'].map(sessionKey);
-  const running = new Set([main, one, two, three]);
+  const running = new Map([main, one, two, three].map((id) => [id, undefined]));
   const headers = (session, title = false) => ({ authorization: 'Bearer secret', 'content-type': 'application/json',
     ...(session ? { [SESSION_HEADER]: session } : {}), ...(title ? { [PURPOSE_HEADER]: 'session-title' } : {}) });
   let finishTitle;
@@ -148,7 +148,7 @@ test('标题请求仍遵守明确余额不足当天停用，并避开其它请�
 for (const bStopped of [false, true]) test(`A 失败时，B 对话${bStopped ? '已停止则改用 B' : '仍在运行工具则改用 C'}`, async (t) => {
   const models = ['a', 'b', 'c'].map((provider) => ({ id: `${provider}/deepseek-flash`, name: 'DeepSeek-Flash' }));
   const a = sessionKey('conversation-a'), b = sessionKey('conversation-b');
-  const running = new Set([a, b]);
+  const running = new Map([[a, undefined], [b, undefined]]);
   const headers = (session) => ({ authorization: 'Bearer secret', 'content-type': 'application/json', [SESSION_HEADER]: session });
   let started, fail;
   const ready = new Promise((resolve) => { started = resolve; });
@@ -170,7 +170,7 @@ for (const bStopped of [false, true]) test(`A 失败时，B 对话${bStopped ? '
 
 test('每小时刷新到期顺序，同时继续避开其它正在运行的对话', async (t) => {
   const models = ['a', 'b', 'c'].map((provider) => ({ id: `${provider}/deepseek-flash`, name: 'DeepSeek-Flash' }));
-  const sessions = ['one', 'two', 'three'].map(sessionKey), running = new Set(sessions);
+  const sessions = ['one', 'two', 'three'].map(sessionKey), running = new Map(sessions.map((id, turn) => [id, turn]));
   let reads = 0;
   const { send, clock } = await setup(t, { models, runningSessions: () => running, loadQuotas: async () => {
     const priority = ++reads === 1 ? ['a', 'b', 'c'] : ['c', 'a', 'b'];
@@ -182,6 +182,7 @@ test('每小时刷新到期顺序，同时继续避开其它正在运行的对�
   } })).json()).model;
   assert.equal(await askSession(sessions[0]), 'a/deepseek-flash');
   clock.now += 3600_000;
+  assert.equal(await askSession(sessions[0]), 'a/deepseek-flash', '额度顺序刷新后，同一轮仍沿用 A');
   assert.equal(await askSession(sessions[1]), 'c/deepseek-flash', '到期最早且空闲的 C 被提升');
   assert.equal(await askSession(sessions[2]), 'b/deepseek-flash', 'A、C 被其它对话占用，B 即使到期较晚也优先');
   assert.equal(reads, 2);

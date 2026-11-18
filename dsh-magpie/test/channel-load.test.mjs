@@ -7,7 +7,7 @@ import { fakeHost } from '../fixtures/host.mjs';
 const scope = 'http://127.0.0.1:3425';
 
 test('按真实会话计数，模型请求结束后的工具间隔保留占用，同一会话不会重复计数', () => {
-  const running = new Set(['a', 'b']);
+  const running = new Map([['a', undefined], ['b', undefined]]);
   const load = new ChannelLoad({ runningSessions: () => running });
   const one = load.reserve(scope, 'a', 'qoder');
   const two = load.reserve(scope, 'a', 'qoder');
@@ -35,7 +35,7 @@ test('没有宿主状态或会话标识时只统计在途请求，不根据相�
 });
 
 test('停止、跨网关与并发旧请求的释放不会清掉新占用', () => {
-  const load = new ChannelLoad({ runningSessions: () => new Set(['a']) });
+  const load = new ChannelLoad({ runningSessions: () => new Map([['a', undefined]]) });
   const old = load.reserve(scope, 'a', 'qoder');
   load.releaseSession('a');
   const fresh = load.reserve(scope, 'a', 'trae');
@@ -47,6 +47,22 @@ test('停止、跨网关与并发旧请求的释放不会清掉新占用', () =>
   assert.deepEqual([...load.counts('http://127.0.0.1:3426')], [['workbuddy', 1]]);
   other.release(); load.clear();
   assert.equal(load.counts('http://127.0.0.1:3426').size, 0);
+});
+
+test('旧轮次在途请求重试或结束时不能覆盖新轮次渠道', () => {
+  const running = new Map([['a', 0]]);
+  const load = new ChannelLoad({ runningSessions: () => running });
+  const old = load.reserve(scope, 'a', 'qoder', 0);
+  assert.equal(load.preferred(scope, 'a', 0), 'qoder');
+  running.set('a', 42);
+  load.reserve(scope, 'a', 'trae', 42).release(true);
+  const retry = load.reserve(scope, 'a', 'workbuddy', 0);
+  old.release(true);
+  retry.release(true);
+  assert.equal(load.preferred(scope, 'a', 42), 'trae');
+  assert.deepEqual([...load.counts(scope)], [['trae', 1]]);
+  running.set('a', undefined);
+  assert.equal(load.counts(scope).size, 0, '轮次结束即释放，即使宿主还在处理队列');
 });
 
 test('沿用 DSH 请求头事件，只给插件本机路由注入会话摘要，空闲事件与卸载释放监听', async () => {

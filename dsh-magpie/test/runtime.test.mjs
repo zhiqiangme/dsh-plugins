@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROUTER_PATH } from '../lib/router.js';
+import { registerChannelSessions, SESSION_HEADER } from '../lib/channel-load.js';
 
 const config = { syncEnabled: true, autoRoute: false, models: [{ id: 'manual/unlisted', name: '自己的目录' }] };
 function setup(options) {
@@ -17,6 +18,63 @@ function setup(options) {
   const manager = new ModelManager(host.ctx, {}, { env: {}, ...options });
   return { ...host, manager };
 }
+
+test('DSH 的同一轮沿用渠道，故障后采用新渠道，同一会话的新一轮重新分配', async (t) => {
+  const config = { models: [
+    { id: 'a/model', name: 'Model', input: ['text', 'image'] },
+    { id: 'b/model', name: 'Model' },
+  ] };
+  const host = fakeHost(config);
+  const main = { id: 'main', status: 'running', session: { id: 'main', openTurnStartSeq: 0 } };
+  const other = { id: 'other', status: 'running', session: { id: 'other', openTurnStartSeq: 17 } };
+  host.services.agents = {
+    list: () => [main, other],
+    turnBoundaryOf: (session) => ({ openTurnStartSeq: session.openTurnStartSeq }),
+  };
+  let failB = false;
+  const attempts = [];
+  const manager = new ModelManager(host.ctx, config, { env: {}, backend: {}, fetchImpl: async (url, init) => {
+    if (url.endsWith('/v1/magpie/quotas')) return Response.json({ data: [] });
+    assert.equal(init.headers[SESSION_HEADER], undefined);
+    const { model } = JSON.parse(init.body);
+    attempts.push(model);
+    if (failB && model === 'b/model') return Response.json({ error: { message: 'unavailable' } }, { status: 503 });
+    return Response.json({ model });
+  } });
+  registerChannelSessions(host.ctx, manager);
+  const hook = host.events.get('llm-pi-ai/request-headers')[0];
+  const server = createServer((req, res) => manager.router.handle(req, res));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { manager.router.stop(); server.closeAllConnections(); return new Promise((resolve) => server.close(resolve)); });
+  const baseURL = `http://127.0.0.1:${server.address().port}${ROUTER_PATH}`;
+  const select = async (agent, { purpose, image = false } = {}) => {
+    const headers = hook({ provider: PROVIDER_ID, baseURL, sessionId: agent.id, purpose },
+      new Headers({ authorization: 'Bearer magpie-dsh', 'content-type': 'application/json' }));
+    const content = image ? [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } }] : 'hello';
+    const response = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST', headers, body: JSON.stringify({ model: 'auto:model', messages: [{ role: 'user', content }] }),
+    });
+    assert.equal(response.status, 200);
+    return (await response.json()).model;
+  };
+
+  assert.equal(await select(other), 'a/model');
+  assert.equal(await select(main), 'b/model');
+  other.session.openTurnStartSeq = null;
+  assert.equal(await select(main, { purpose: 'session-title' }), 'a/model');
+  assert.equal(await select(main), 'b/model', '其它对话结束、A 重新空闲后，主对话仍接着用 B');
+  failB = true;
+  assert.equal(await select(main), 'a/model');
+  assert.deepEqual(attempts.slice(-2), ['b/model', 'a/model'], '先尝试本轮原渠道，再在故障后切换');
+  failB = false;
+  other.session.openTurnStartSeq = 41;
+  // 保持其它对话在 A，让主对话开始新一轮后可重新选到 B。
+  assert.equal(await select(other, { image: true }), 'a/model');
+  assert.equal(await select(main), 'a/model', '切换后，本轮继续沿用 A');
+  main.session.openTurnStartSeq = 82;
+  assert.equal(await select(main), 'b/model', '同一会话仍为 running，新轮次也会重新均衡');
+  assert.equal(await select(main, { image: true }), 'a/model', '原渠道不支持本次输入时改用兼容渠道');
+});
 
 test('真实路由余额不足可通过渠道状态接口查看并恢复，读取不联网且不编辑配置', async (t) => {
   const host = fakeHost({ models: [{ id: 'qoder-cn/model', name: 'Model' }] });
