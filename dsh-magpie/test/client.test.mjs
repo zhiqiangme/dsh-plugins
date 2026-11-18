@@ -997,6 +997,22 @@ test('模型系列按版本号前的品牌识别，非通用代号统一归入�
   assert.deepEqual(options.map((option) => option.label), ['DeepSeek', 'GLM', '其他'], '所有非通用代号只占一个其他分类');
 });
 
+test('模型和供应商下拉项自动大写分隔后的字母，保留筛选值及已有品牌拼写', () => {
+  const client = clientHarness(view({ models: [
+    { id: 'minimax-code/hy', name: 'hy4-flash' },
+    { id: 'new_channel(beta)-relay/llama', name: 'llama_4' },
+    { id: 'codearts/glm', name: 'GLM-5.3' },
+  ] }));
+  const options = (label) => nodes(control(client.render(), label), (node) => node.type === 'option')
+    .map((node) => [node.props.value, node.children[0]]);
+  assert.deepEqual(options('按供应商分类'), [
+    ['', '全部供应商'], ['codearts', 'CodeArts'], ['minimax-code', 'Minimax-Code'], ['new_channel(beta)-relay', 'New_Channel(Beta)-Relay'],
+  ]);
+  assert.deepEqual(options('按模型分类'), [['', '全部模型'], ['glm', 'GLM'], ['hy', 'Hy'], ['llama', 'Llama']]);
+  control(client.render(), '按供应商分类').props.onChange({ target: { value: 'new_channel(beta)-relay' } });
+  assert.deepEqual(nodes(client.render(), (node) => node.props.className === 'model-select').map((node) => node.props.title), ['new_channel(beta)-relay/llama']);
+});
+
 test('排序识别 ID 后的模型名，忽略大小写，自然数字顺序，同键稳定且空条目在后', () => {
   const client = clientHarness();
   const rows = [

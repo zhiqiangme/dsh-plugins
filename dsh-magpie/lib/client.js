@@ -505,7 +505,9 @@ window.__ModuleLoader__.load({
       const options = new Map();
       for (const row of rows) {
         const option = modelCategory(row, mode, providers, emptyLabels);
-        if (!options.has(option.key)) options.set(option.key, option);
+        if (options.has(option.key)) continue;
+        const label = option.label.replace(/(^|[-\s_(])([a-z])/g, (_match, separator, letter) => separator + letter.toUpperCase());
+        options.set(option.key, { ...option, label });
       }
       return [...options.values()].sort((a, b) => compareModelText(a.empty || a.other ? '' : a.label, b.empty || b.other ? '' : b.label) || a.key.localeCompare(b.key));
     }
