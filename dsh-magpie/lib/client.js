@@ -69,7 +69,12 @@ window.__ModuleLoader__.load({
       closeOnExitHint: '结束本机 Magpie；停用或更新插件不会触发。',
       sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动', sidebarAlways: '显示', sidebarNever: '隐藏',
       sidebarEntryHint: '左上角「插件」一栏的 Magpie 入口。自动：清单为空时显示，保存模型后隐藏。',
-      tabModels: '模型', tabChannels: '渠道', tabSwitches: '开关', tabConnection: '连接', tabPreferences: '偏好', tabUpdates: '更新',
+      tabModels: '模型', tabChannels: '渠道', tabSwitches: '开关', tabConnection: '连接', tabWebSearch: '联网搜索', tabPreferences: '偏好', tabUpdates: '更新',
+      webSearchHint: '使用「连接」中已保存的网关。Tavily 密钥、轮换方式及搜索来源在 Magpie 的「设置 → 模型 → 联网搜索」管理。',
+      webSearchActive: 'DSH 正在使用 Magpie 搜索。', webSearchInactive: '可将 DSH 的网页搜索切换为 Magpie。',
+      webSearchUnsupported: '当前 DSH 未提供原生搜索注册接口。', webSearchReadOnly: 'DSH 搜索设置暂不可写。',
+      webSearchEnable: '使用 Magpie 搜索', webSearchRestore: '恢复默认搜索', webSearchQuery: '测试关键词', webSearchTest: '测试搜索',
+      webSearchTested: '搜索成功，返回 {count} 条网页来源。', webSearchTestedText: '搜索成功，Magpie 返回了文本结果。',
       channelsTitle: '余额不足的渠道', channelsHint: '这些渠道已暂停参与插件的自动路由，北京时间每日 04:00 自动恢复。充值后可手动恢复选择；再次报余额不足会重新停用。',
       channelsEmpty: '当前没有因余额不足停用的渠道。', channelBlocked: '余额不足 · 今日停用', channelDetected: '检测时间（北京时间）：{time}',
       channelRecover: '恢复选择', channelRecovered: '已恢复 {name}，后续请求可再次选择该渠道。', channelRefresh: '刷新状态', channelAccount: '{name} · 账号 {id}',
@@ -160,7 +165,12 @@ window.__ModuleLoader__.load({
       closeOnExitHint: 'Ends local Magpie; disabling or updating the plugin does not.',
       sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto', sidebarAlways: 'Show', sidebarNever: 'Hide',
       sidebarEntryHint: 'The Magpie entry next to Plugins in the sidebar. Auto: shown while the list is empty, hidden once models are saved.',
-      tabModels: 'Models', tabChannels: 'Channels', tabSwitches: 'Switches', tabConnection: 'Connection', tabPreferences: 'Preferences', tabUpdates: 'Updates',
+      tabModels: 'Models', tabChannels: 'Channels', tabSwitches: 'Switches', tabConnection: 'Connection', tabWebSearch: 'Web search', tabPreferences: 'Preferences', tabUpdates: 'Updates',
+      webSearchHint: 'Uses the saved gateway under Connection. Manage Tavily keys, rotation, and search sources in Magpie under Settings → Models → Web search.',
+      webSearchActive: 'DSH uses Magpie for web search.', webSearchInactive: 'Switch DSH web search to Magpie here.',
+      webSearchUnsupported: 'This DSH host has no native search provider registry.', webSearchReadOnly: 'DSH search settings are currently read-only.',
+      webSearchEnable: 'Use Magpie search', webSearchRestore: 'Restore default search', webSearchQuery: 'Test query', webSearchTest: 'Test search',
+      webSearchTested: 'Search returned {count} web sources.', webSearchTestedText: 'Search succeeded and Magpie returned text.',
       channelsTitle: 'Channels with insufficient balance', channelsHint: 'These channels are excluded from the plugin’s automatic routing until 04:00 Beijing time each day. Restore a channel after topping up; another insufficient-balance error will pause it again.',
       channelsEmpty: 'No channels are paused for insufficient balance.', channelBlocked: 'Insufficient balance · Paused today', channelDetected: 'Detected (Beijing time): {time}',
       channelRecover: 'Restore selection', channelRecovered: '{name} is available for subsequent requests again.', channelRefresh: 'Refresh status', channelAccount: '{name} · account {id}',
@@ -225,7 +235,7 @@ window.__ModuleLoader__.load({
     };
     // 排序后各行滑到新位置的时长；拖动中让位的过渡写在样式里，两者保持一致。
     const REORDER_MS = 200;
-    const TABS = [['models', 'tabModels'], ['channels', 'tabChannels'], ['switches', 'tabSwitches'], ['connection', 'tabConnection'], ['preferences', 'tabPreferences'], ['updates', 'tabUpdates']];
+    const TABS = [['models', 'tabModels'], ['channels', 'tabChannels'], ['switches', 'tabSwitches'], ['connection', 'tabConnection'], ['webSearch', 'tabWebSearch'], ['preferences', 'tabPreferences'], ['updates', 'tabUpdates']];
     // 卡片在插件设置和侧栏页面各自挂载；读取或保存后经此通知侧栏按已保存的配置重新判断入口。
     const savedConfig = { value: undefined, listeners: new Set() };
     function publishConfig(config) {
@@ -953,6 +963,8 @@ window.__ModuleLoader__.load({
       const attachCard = useCallback((node) => { cardRef.current = node; showPanelFromTop(node); }, []);
       const footerSpaceRef = useRef(null);
       const channelRequest = useRef(0);
+      const searchRequest = useRef(0);
+      const [searchQuery, setSearchQuery] = useState('');
       // 优先留在卡片末尾；原位置放不下时才贴窗口底边，并保留原位高度供滚动归位。
       useLayoutEffect(() => {
         const card = cardRef.current, space = footerSpaceRef.current, footer = space?.firstElementChild;
@@ -1043,17 +1055,19 @@ window.__ModuleLoader__.load({
         let active = true;
         const check = () => {
           const generation = channelRequest.current;
+          const searchGeneration = searchRequest.current;
           return request({ action: 'status' }).then((result) => {
             if (!active) return;
             setGateway(result.gateway);
             if (result.modelRefresh) setView((old) => old ? { ...old, modelRefresh: result.modelRefresh } : old);
             if (result.channelStatus && generation === channelRequest.current) setView((old) => old ? { ...old, channelStatus: result.channelStatus } : old);
+            if (result.webSearch && searchGeneration === searchRequest.current) setView((old) => old ? { ...old, webSearch: result.webSearch } : old);
           }, () => { if (active) setGateway({ online: false }); });
         };
         check();
         const timer = setInterval(check, STATUS_POLL_MS);
         return () => { active = false; clearInterval(timer); };
-      }, [view?.revision, operation?.running, tab === 'channels']);
+      }, [view?.revision, operation?.running, tab === 'channels', tab === 'webSearch']);
       const perform = async (run, action = true) => {
         setBusy(action); setNotice(null);
         try { await run(); } catch (error) { setNotice(failure(error)); }
@@ -1069,6 +1083,20 @@ window.__ModuleLoader__.load({
       if (!view) return h('section', { className: 'dsm-mp', ref: showPanelFromTop }, h('header', { className: 'head' }, h('div', { className: 'title' }, h(MagpieGlyph, { size: 20 }), h('h3', null, t('title')))),
         h('div', { className: 'panel' }, notice ? h('p', { className: 'notice error', role: 'alert' }, notice.text) : h('p', { className: 'muted loading' }, t('loading')), h('div', { className: 'bar', style: { marginTop: 12 } }, button(t('reload'), reload, { 'aria-busy': modelBusy === 'reload' }))));
       const config = view.config;
+      const webSearch = view.webSearch;
+      const usesMagpieSearch = Boolean(webSearch && webSearch.provider === webSearch.id);
+      const switchSearch = () => perform(async () => {
+        const generation = ++searchRequest.current;
+        const result = await request({ action: 'search-select', enabled: !usesMagpieSearch, previous: webSearch.provider });
+        if (searchRequest.current === generation) {
+          searchRequest.current++;
+          setView((old) => ({ ...old, webSearch: result.webSearch }));
+        }
+      }, 'search-select');
+      const testSearch = () => perform(async () => {
+        const result = await request({ action: 'search-test', query: searchQuery.trim() });
+        setNotice({ text: t(result.textOnly ? 'webSearchTestedText' : 'webSearchTested', { count: result.count }) });
+      }, 'search-test');
       const update = (patch) => {
         if (patch.models) sanitizeCategories(patch.models);
         setView((v) => ({ ...v, savedModels: v.savedModels ?? v.config.models, config: { ...v.config, ...patch } })); setDirty(true);
@@ -1377,6 +1405,17 @@ window.__ModuleLoader__.load({
             field(t('key'), key, (value) => { setKey(value); setDirty(true); }, { type: 'password', autoComplete: 'new-password', disabled: busy || !view.keyWritable, placeholder: t(view.keyConfigured ? 'keySaved' : 'keyEmpty') })),
           h('p', { className: 'hint' }, t(view.keyWritable ? 'keyHint' : 'keyReadonly')),
           h('div', { className: 'bar', style: { marginTop: 14 } }, button(t('check'), checkConnection, { 'aria-busy': modelBusy === 'check' })),
+        ],
+        webSearch: () => [
+          h('p', { className: 'hint' }, t('webSearchHint')),
+          h('p', { role: 'status' }, t(!webSearch?.available ? 'webSearchUnsupported' : usesMagpieSearch ? 'webSearchActive' : 'webSearchInactive')),
+          h('div', { className: 'bar' }, button(t(usesMagpieSearch ? 'webSearchRestore' : 'webSearchEnable'), switchSearch, {
+            className: usesMagpieSearch ? '' : 'primary', disabled: busy || !webSearch?.editable || (!usesMagpieSearch && !webSearch.available),
+            'aria-busy': modelBusy === 'search-select',
+          })),
+          webSearch?.available && !webSearch.editable ? h('p', { className: 'hint' }, t('webSearchReadOnly')) : null,
+          h('div', { className: 'fields' }, field(t('webSearchQuery'), searchQuery, setSearchQuery, { type: 'search' })),
+          h('div', { className: 'bar' }, button(t('webSearchTest'), testSearch, { disabled: busy || !searchQuery.trim(), 'aria-busy': modelBusy === 'search-test' })),
         ],
         preferences: () => [
           h('h4', { className: 'group' }, t('groupProgram')),

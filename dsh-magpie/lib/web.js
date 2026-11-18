@@ -46,10 +46,18 @@ export function handlerFor(ctx, manager) {
       const denied = rejection(req, hostService(ctx, 'connection'));
       if (denied !== undefined) return json(res, denied, { ok: false, reason: '请求来源或会话未获授权' });
       if (req.method === 'GET') return json(res, 200, await manager.describe());
-      if (req.method === 'POST') return json(res, 200, await manager.handle(await bodyOf(req)));
+      if (req.method === 'POST') {
+        const body = await bodyOf(req);
+        if (body.action !== 'search-test') return json(res, 200, await manager.handle(body));
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        res.once('close', cancel);
+        try { return json(res, 200, await manager.handle(body, controller.signal)); }
+        finally { res.off('close', cancel); }
+      }
       return json(res, 405, { ok: false, reason: 'method not allowed' });
     } catch (error) {
-      return json(res, error.status ?? 400, { ok: false, reason: error instanceof SyntaxError ? '请求体不是合法 JSON' : error.message });
+      if (!res.destroyed) return json(res, error.status ?? 400, { ok: false, reason: error instanceof SyntaxError ? '请求体不是合法 JSON' : error.message });
     }
   };
 }

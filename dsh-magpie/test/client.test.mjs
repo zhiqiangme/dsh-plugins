@@ -23,6 +23,32 @@ function dragEvent(slot = 0, count = 0) {
 }
 const list = (tree) => nodes(tree, (n) => n.props.className?.split(' ').includes('model-list'))[0];
 
+test('联网搜索页切换原生提供方，测试关键词走已保存的网关，保留模型草稿', async () => {
+  const webSearch = { available: true, editable: true, provider: 'dsh-tavily-search', id: 'dsh-magpie-search' };
+  const calls = [];
+  const client = clientHarness({ ...view(), webSearch }, async (_url, options) => {
+    const body = JSON.parse(options.body);
+    calls.push(body);
+    if (body.action === 'search-test') return response({ ok: true, count: 2 });
+    return response({ ok: true, webSearch: { ...webSearch, provider: body.enabled ? webSearch.id : 'deepseek-search-api' } });
+  });
+  button(client.render(), '手动添加模型').props.onClick();
+  client.tab('联网搜索');
+  assert.equal(button(client.render(), '测试搜索').props.disabled, true);
+  field(client.render(), '测试关键词').props.onChange({ target: { value: '  Magpie test  ' } });
+  await button(client.render(), '测试搜索').props.onClick();
+  assert.equal(client.states[3].text, '搜索成功，返回 2 条网页来源。');
+  await button(client.render(), '使用 Magpie 搜索').props.onClick();
+  await button(client.render(), '恢复默认搜索').props.onClick();
+  assert.deepEqual(calls, [
+    { action: 'search-test', query: 'Magpie test' },
+    { action: 'search-select', enabled: true, previous: 'dsh-tavily-search' },
+    { action: 'search-select', enabled: false, previous: 'dsh-magpie-search' },
+  ]);
+  assert.equal(client.states[1], true);
+  assert.equal(client.states[0].config.models.length, 1);
+});
+
 test('启动方式即时保存且保留模型草稿，打开按钮按已保存方式请求网页或窗口', async () => {
   const host = fakeHost({ models: [{ id: 'original-model' }] });
   const opened = [], installs = [];

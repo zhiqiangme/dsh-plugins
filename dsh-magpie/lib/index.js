@@ -1,5 +1,5 @@
 import { PLUGIN_ID, resolveConfig } from './config.js';
-import { ModelManager } from './runtime.js';
+import { hostService, ModelManager } from './runtime.js';
 import { registerPanel } from './web.js';
 import { registerHighestReasoning } from './reasoning.js';
 import { registerAutoStart, registerExitClose } from './lifecycle.js';
@@ -22,6 +22,17 @@ export function apply(ctx, config) {
   registerAutoStart(ctx, manager);
   registerAutoUpdate(ctx, manager);
   registerDailyModels(ctx, manager);
+  const registerSearch = (scoped = ctx) => {
+    const web = hostService(scoped, 'web');
+    if (typeof web?.registerSearchProvider !== 'function' || typeof web.listProviders !== 'function') return;
+    scoped.effect(() => {
+      const unregister = web.registerSearchProvider(manager.searchProvider);
+      manager.searchRegistered = true;
+      return () => { manager.searchRegistered = false; unregister(); };
+    }, `${name}: web search provider`);
+  };
+  if (typeof ctx.inject === 'function') ctx.inject(['web'], registerSearch);
+  else registerSearch();
   const sync = () => manager.enqueue(() => manager.sync()).catch((error) => (ctx.logger ?? console).warn(`[${name}] ${error.message}`));
   // 保存表单只热更新解析结果，不注销路由或打断同步请求。
   const off = ctx.on?.('internal/update', (raw, _noSave, _next) => {
@@ -31,5 +42,12 @@ export function apply(ctx, config) {
   });
   if (typeof ctx.inject === 'function') ctx.inject(['configEditor', 'credentials'], sync);
   else sync();
-  ctx.effect(() => async () => { manager.disposed = true; manager.router.stop(); if (typeof off === 'function') off(); await manager.backend.dispose(); await manager.pending; }, `${name}: lifecycle`);
+  ctx.effect(() => async () => {
+    manager.disposed = true;
+    manager.searchAbort.abort();
+    manager.router.stop();
+    if (typeof off === 'function') off();
+    await manager.backend.dispose();
+    await manager.pending;
+  }, `${name}: lifecycle`);
 }

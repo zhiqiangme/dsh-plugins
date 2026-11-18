@@ -5,6 +5,7 @@ import { MagpieBackend } from './backend.js';
 import { conversationBlock } from './auto-update.js';
 import { createMagpieRouter } from './router.js';
 import { sessionKey } from './channel-load.js';
+import { createMagpieSearchProvider, SEARCH_PROVIDER_ID } from './search.js';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -29,6 +30,8 @@ export class ModelManager {
     this.backend = backend ?? new MagpieBackend({ env, credentials: () => this.credentials });
     this.pending = Promise.resolve();
     this.disposed = false;
+    this.searchAbort = new AbortController();
+    this.searchProvider = createMagpieSearchProvider(this);
     this.routeReady = Promise.resolve();
     this.router = createMagpieRouter({ current: () => this.current(), credentials: () => this.credentials, env: this.env, fetchImpl: (...args) => this.fetch(...args),
       orderStatePath: this.backend.paths?.cache ? join(this.backend.paths.cache, 'channel-order.json') : undefined,
@@ -62,6 +65,34 @@ export class ModelManager {
     const entry = findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID);
     return entry ? resolveConfig(entry.options.config) : this.config;
   }
+  webSearchStatus() {
+    const entry = findEntry(this.editor, '@deepseek-ai/dsh-web', 'web');
+    return {
+      available: this.searchRegistered === true && this.current().enabled,
+      editable: Boolean(entry && typeof this.editor?.edit === 'function'),
+      provider: entry?.options.config?.searchProvider ?? this.env.DSH_WEB_SEARCH_PROVIDER ?? null,
+      id: SEARCH_PROVIDER_ID,
+    };
+  }
+  async selectWebSearch(enabled, previous) {
+    if (typeof enabled !== 'boolean' || (previous !== null && typeof previous !== 'string')) throw new Error('搜索提供方选择无效');
+    const editor = this.editor;
+    const entry = findEntry(editor, '@deepseek-ai/dsh-web', 'web');
+    if (!entry || typeof editor?.edit !== 'function' || (enabled && !this.webSearchStatus().available)) throw new Error('宿主网页搜索服务尚未就绪');
+    await editor.edit(entry, (raw, inherited) => {
+      // 与内置网页搜索设置共用同一把 profile 锁，避免旧卡片覆盖用户刚切换的提供方。
+      const current = raw.searchProvider ?? this.env.DSH_WEB_SEARCH_PROVIDER ?? null;
+      if (current !== previous || (!enabled && current !== SEARCH_PROVIDER_ID)) {
+        const error = new Error('DSH 搜索提供方已更改，请重新载入后再操作'); error.status = 409; throw error;
+      }
+      if (enabled) return { ...raw, searchProvider: SEARCH_PROVIDER_ID };
+      const fallback = inherited?.searchProvider ?? this.env.DSH_WEB_SEARCH_PROVIDER;
+      if (fallback === SEARCH_PROVIDER_ID) throw new Error('Magpie 是当前部署的默认搜索，请在 DSH「网页搜索与获取」中选择其它提供方');
+      const { searchProvider: _override, ...next } = raw;
+      return inherited?.searchProvider === undefined ? next : { ...next, searchProvider: inherited.searchProvider };
+    });
+    return { ok: true, webSearch: this.webSearchStatus() };
+  }
   providerIds() {
     const models = findEntry(this.editor, LLM_PACKAGE)?.options?.config?.providers?.[PROVIDER_ID]?.models ?? [];
     return models.map((row) => row?.id).filter((id) => typeof id === 'string');
@@ -80,7 +111,7 @@ export class ModelManager {
     const llm = findEntry(this.editor, '@deepseek-ai/dsh-llm-pi-ai');
     return {
       ok: true, config, revision: revision(config), lastSync: this.lastSync, providerNames: PROVIDER_NAMES, channelStatus: this.router.channelStatus(), modelRefresh: this.modelRefresh?.status(),
-      backend: await this.backend.describe(config.magpiePath), magpieSettings: this.backend.settings?.(),
+      backend: await this.backend.describe(config.magpiePath), magpieSettings: this.backend.settings?.(), webSearch: this.webSearchStatus(),
       keyConfigured: Boolean(this.env[KEY_REF] || (saved?.value && saved.value !== LOCAL_KEY)),
       keyWritable: !this.env[KEY_REF] && (await this.credentials?.describe?.(KEY_REF))?.writable !== false,
       editable: Boolean(findEntry(this.editor, PACKAGE_NAME, PLUGIN_ID)),
@@ -174,9 +205,14 @@ export class ModelManager {
     // describe 等待期间可能又有其它页面保存；只返回本次锁内写入的配置及版本给草稿续用。
     return { ...await this.describe(), config, revision: revision(config), saved: true, ...(sync ? { sync } : {}) };
   }
-  async handle(body) {
+  async handle(body, signal) {
     if (body.action === 'channel-status') return { ok: true, channelStatus: this.router.channelStatus() };
     if (body.action === 'channel-recover') return this.enqueue(() => ({ ok: true, channelStatus: this.router.recoverChannel(body.provider, body.token) }));
+    if (body.action === 'search-select') return this.enqueue(() => this.selectWebSearch(body.enabled, body.previous));
+    if (body.action === 'search-test') {
+      const result = await this.searchProvider.search({ query: body.query, maxResults: 3 }, signal);
+      return { ok: true, count: result.sources.length, textOnly: Boolean(result.content) };
+    }
     if (['backend-status', 'backend-check', 'backend-install', 'backend-open'].includes(body.action)) {
       const path = body.magpiePath ?? this.current().magpiePath;
       const { autoLightweight: lightweight, startMode } = this.current();
@@ -188,11 +224,13 @@ export class ModelManager {
     if (body.action === 'status') {
       // 卡片标题处的网关状态：短超时，读不到就算未连接，不报错。
       const config = this.current();
+      let gateway = { online: false };
       try {
         const key = await credential(this.credentials, this.env, config.baseURL);
         const hello = await requestGateway(config.baseURL, '/api/hello', key, this.fetch, STATUS_TIMEOUT);
-        return { ok: true, channelStatus: this.router.channelStatus(), modelRefresh: this.modelRefresh?.status(), gateway: hello?.name === 'magpie' ? { online: true, version: hello.version ?? null } : { online: false } };
-      } catch { return { ok: true, channelStatus: this.router.channelStatus(), modelRefresh: this.modelRefresh?.status(), gateway: { online: false } }; }
+        if (hello?.name === 'magpie') gateway = { online: true, version: hello.version ?? null };
+      } catch { /* 网关离线仍可读取插件状态。 */ }
+      return { ok: true, channelStatus: this.router.channelStatus(), modelRefresh: this.modelRefresh?.status(), webSearch: this.webSearchStatus(), gateway };
     }
     if (body.action === 'magpie-settings') {
       // 直接写 Magpie 自己的设置，不属于插件配置，也不需要版本号。
