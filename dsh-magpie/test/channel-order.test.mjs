@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { ChannelOrder, creditExpiries, routingDay, REFRESH_QUOTAS_MS } from '../lib/channel-order.js';
+import { ChannelOrder, routingDay, REFRESH_QUOTAS_MS } from '../lib/channel-order.js';
 
 const origin = 'http://127.0.0.1:3425';
 const rows = ['qoder-cn', 'trae-cn', 'workbuddy', 'codearts', 'custom'].map((provider) => ({ id: `${provider}/model` }));
@@ -22,7 +22,7 @@ function stateFile(t) {
   return join(root, 'order.json');
 }
 
-test('按积分最近到期排序，合并同渠道多个账号，忽略重置、已过期、零余额及无效时间', async () => {
+test('按积分最近到期排序，无账号标识的同渠道卡片合并，忽略重置、已过期、零余额及无效时间', async () => {
   const now = Date.now(), hour = 3600_000;
   const payload = { data: [
     { provider: 'workbuddy', windows: [{ runsOut: 4, runsOutAt: new Date(now + 3 * hour).toISOString() }] },
@@ -32,10 +32,40 @@ test('按积分最近到期排序，合并同渠道多个账号，忽略重置�
     { provider: 'custom', windows: [{ runsOut: 2, remaining: 0, runsOutAt: new Date(now + 2).toISOString() }, { runsOut: 0, runsOutAt: new Date(now + 2).toISOString() }, { runsOut: 1, runsOutAt: 'not a date' }] },
     { provider: 'codearts', windows: [{ runsOut: 5, runsOutAt: new Date(now - 1).toISOString() }] },
   ] };
-  assert.equal(creditExpiries(payload, now).size, 2);
   const order = new ChannelOrder({ now: () => now, loadQuotas: async () => payload });
   const state = await order.prepare(config);
   assert.deepEqual(ids(order, state), ['workbuddy', 'trae-cn', 'qoder-cn', 'codearts', 'custom']);
+});
+
+test('同供应商账号分别按到期排序，小时刷新时负载优先，重启保留停用并重新获取账号', async (t) => {
+  let now = Date.parse('2026-11-16T12:00:00+08:00');
+  let expiresFirst = 'a@example.test';
+  const users = ['a@example.test', 'b@example.test'];
+  const file = stateFile(t);
+  const options = { now: () => now, stateFile: file, loadQuotas: async () => ({ data: [
+    ...users.map((user) => ({ provider: 'workbuddy', kind: 'subscription', user, windows: [{
+      runsOut: 10, remaining: 90, runsOutAt: new Date(now + (user === expiresFirst ? 2 : 3) * REFRESH_QUOTAS_MS).toISOString(),
+    }] })),
+    { provider: 'workbuddy', kind: 'subscription', user: users[0].toUpperCase(), windows: [] },
+    { provider: 'workbuddy', kind: 'balance', user: 'api-key', windows: [] },
+  ] }) };
+  const model = rows[2];
+  const order = new ChannelOrder(options), state = await order.prepare(config);
+  const [first, second] = order.rank(state, order.expand(state, [model]));
+  assert.equal(decodeURIComponent(first.account).toLowerCase(), users[0]);
+  assert.equal(decodeURIComponent(second.account), users[1]);
+  assert.equal(order.expand(state, [model]).length, 2, '同一登录名的卡片合并，余额卡不发账号头');
+  assert.equal(order.rank(state, order.expand(state, [model]), new Map([[first.channel, 1]]))[0].channel, second.channel);
+  order.exhausted(state, second);
+  const [blocked] = order.snapshot(config).blocked;
+  assert.ok(users.every((user) => !readFileSync(file, 'utf8').includes(user)));
+  now += REFRESH_QUOTAS_MS;
+  expiresFirst = users[1];
+  const reopened = new ChannelOrder(options), refreshed = await reopened.prepare(config);
+  assert.deepEqual(reopened.rank(refreshed, reopened.expand(refreshed, [model])).map((row) => row.channel), [first.channel]);
+  reopened.recover(config, blocked.id, blocked.token);
+  assert.deepEqual(reopened.rank(refreshed, reopened.expand(refreshed, [model])).map((row) => row.channel), [second.channel, first.channel]);
+  assert.equal(reopened.rank(refreshed, reopened.expand(refreshed, [model]), new Map([[second.channel, 1]]))[0].channel, first.channel);
 });
 
 test('所有渠道都参与轮换，失败移到末尾且保持其余相对顺序，成功不抢回首位', async () => {

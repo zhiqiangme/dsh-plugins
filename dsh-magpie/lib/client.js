@@ -72,7 +72,7 @@ window.__ModuleLoader__.load({
       tabModels: '模型', tabChannels: '渠道', tabSwitches: '开关', tabConnection: '连接', tabPreferences: '偏好', tabUpdates: '更新',
       channelsTitle: '余额不足的渠道', channelsHint: '这些渠道已暂停参与插件的自动路由，北京时间每日 04:00 自动恢复。充值后可手动恢复选择；再次报余额不足会重新停用。',
       channelsEmpty: '当前没有因余额不足停用的渠道。', channelBlocked: '余额不足 · 今日停用', channelDetected: '检测时间（北京时间）：{time}',
-      channelRecover: '恢复选择', channelRecovered: '已恢复 {name}，后续请求可再次选择该渠道。', channelRefresh: '刷新状态',
+      channelRecover: '恢复选择', channelRecovered: '已恢复 {name}，后续请求可再次选择该渠道。', channelRefresh: '刷新状态', channelAccount: '{name} · 账号 {id}',
       gatewayOnline: '网关在线 {version}', gatewayOffline: '网关未连接', gatewayChecking: '正在检查网关…',
       programVersion: 'Magpie {version}', programMissing: '未下载 Magpie', programUpgrade: '可升级到 {version}',
       groupProgram: 'Magpie 程序', groupMagpieSettings: 'Magpie 设置', groupMagpieSettingsHint: '直接写入 Magpie 自己的设置，与其「设置 › 常规」中的同名选项相同。', groupDsh: 'DSH',
@@ -163,7 +163,7 @@ window.__ModuleLoader__.load({
       tabModels: 'Models', tabChannels: 'Channels', tabSwitches: 'Switches', tabConnection: 'Connection', tabPreferences: 'Preferences', tabUpdates: 'Updates',
       channelsTitle: 'Channels with insufficient balance', channelsHint: 'These channels are excluded from the plugin’s automatic routing until 04:00 Beijing time each day. Restore a channel after topping up; another insufficient-balance error will pause it again.',
       channelsEmpty: 'No channels are paused for insufficient balance.', channelBlocked: 'Insufficient balance · Paused today', channelDetected: 'Detected (Beijing time): {time}',
-      channelRecover: 'Restore selection', channelRecovered: '{name} is available for subsequent requests again.', channelRefresh: 'Refresh status',
+      channelRecover: 'Restore selection', channelRecovered: '{name} is available for subsequent requests again.', channelRefresh: 'Refresh status', channelAccount: '{name} · account {id}',
       gatewayOnline: 'Gateway online {version}', gatewayOffline: 'Gateway offline', gatewayChecking: 'Checking gateway…',
       programVersion: 'Magpie {version}', programMissing: 'Magpie not downloaded', programUpgrade: 'Update to {version}',
       groupProgram: 'Magpie program', groupMagpieSettings: 'Magpie settings', groupMagpieSettingsHint: 'Written straight into Magpie’s own settings; the same options as its Settings › General.', groupDsh: 'DSH',
@@ -1075,7 +1075,11 @@ window.__ModuleLoader__.load({
       };
       const rows = config.models;
       const blockedChannels = view.channelStatus?.blocked ?? [];
-      const channelName = (id) => view.providerNames?.[id] ?? id;
+      const channelName = (channel) => {
+        const provider = channel.provider ?? channel.id;
+        const name = view.providerNames?.[provider] ?? provider;
+        return channel.accountLabel ? t('channelAccount', { name, id: channel.accountLabel }) : name;
+      };
       const refreshChannels = () => perform(async () => {
         const generation = ++channelRequest.current;
         const result = await request({ action: 'channel-status' });
@@ -1085,7 +1089,7 @@ window.__ModuleLoader__.load({
         const generation = ++channelRequest.current;
         const result = await request({ action: 'channel-recover', provider: channel.id, token: channel.token });
         if (generation === channelRequest.current) setView((old) => ({ ...old, channelStatus: result.channelStatus }));
-        setNotice({ text: t('channelRecovered', { name: channelName(channel.id) }) });
+        setNotice({ text: t('channelRecovered', { name: channelName(channel) }) });
       }, `channel-recover:${channel.id}`);
       const labelFor = (row) => displayModelName(row, view.providerNames) || t('newModel');
       const updateRow = (index, patch) => update({ models: rows.map((row, i) => i === index ? keepKey(row, { ...row, ...patch }) : row) });
@@ -1328,10 +1332,10 @@ window.__ModuleLoader__.load({
           !blockedChannels.length ? h('p', { className: 'empty' }, t('channelsEmpty')) : null,
           ...blockedChannels.map((channel) => h('div', { className: 'row', key: channel.id },
             h('div', { className: 'row-text' },
-              h('span', { className: 'row-title' }, channelName(channel.id), ' ', h('span', { className: 'badge' }, t('channelBlocked'))),
-              h('span', { className: 'row-hint' }, channel.id),
+              h('span', { className: 'row-title' }, channelName(channel), ' ', h('span', { className: 'badge' }, t('channelBlocked'))),
+              h('span', { className: 'row-hint' }, channel.provider ?? channel.id),
               h('span', { className: 'row-hint' }, t('channelDetected', { time: new Date(channel.at).toLocaleString(undefined, { timeZone: 'Asia/Shanghai', hour12: false }) }))),
-            button(t('channelRecover'), () => recoverChannel(channel), { 'aria-label': `${t('channelRecover')} ${channelName(channel.id)}`, 'aria-busy': modelBusy === `channel-recover:${channel.id}` }))),
+            button(t('channelRecover'), () => recoverChannel(channel), { 'aria-label': `${t('channelRecover')} ${channelName(channel)}`, 'aria-busy': modelBusy === `channel-recover:${channel.id}` }))),
         ],
         // 总开关与屏蔽选项单独一页：模型页只留清单与筛选，避免设置挤占列表空间。
         switches: () => [

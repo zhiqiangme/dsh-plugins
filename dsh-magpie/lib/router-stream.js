@@ -52,7 +52,7 @@ export async function prepareJSON(upstream) {
   return { body: [bytes], status: errorStatus('', value), insufficientBalance: balanceError('', value), cancel: async () => {} };
 }
 
-/** HTTP 错误也需要读正文：普通 400 原样返回，只有明确余额不足才允许换出口。 */
+/** 保留原始 HTTP 错误，同时识别可换出口的余额不足和网关指定账号拒绝。 */
 export async function prepareErrorResponse(upstream) {
   const bytes = new Uint8Array(await upstream.arrayBuffer());
   const raw = new TextDecoder().decode(bytes);
@@ -60,7 +60,11 @@ export async function prepareErrorResponse(upstream) {
   try { value = JSON.parse(raw); }
   catch { value = raw; }
   const insufficientBalance = isInsufficientBalance(value);
-  return { body: [bytes], status: insufficientBalance ? 402 : upstream.status, insufficientBalance, cancel: async () => {} };
+  const message = value?.error?.message ?? value?.message ?? value;
+  // Magpie 在尚未联系供应商时返回此错误。普通模型请求 400 仍原样结束。
+  const accountDoesNotServeModel = typeof message === 'string' && /\bno account "(?:[^"\\]|\\.)+" serves this model\b/.test(message);
+  return { body: [bytes], status: insufficientBalance ? 402 : upstream.status, insufficientBalance, accountDoesNotServeModel,
+    cancel: async () => {} };
 }
 
 const text = (value) => typeof value === 'string' && value.length > 0;

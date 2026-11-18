@@ -120,23 +120,22 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
         const effort = requestedEffort(body);
         const compatible = effort && effort !== 'off' ? capable.filter((row) => effortRank(row, effort) < 2) : capable;
         const ordered = compatible.length ? compatible : capable;
-        let order = await channels.prepare(config);
+        const order = await channels.prepare(config, key);
         if (controller.signal.aborted) return;
-        let attempts = [...ordered];
-        const triedProviders = new Set();
+        let attempts = channels.expand(order, ordered, key);
+        const triedChannels = new Set();
         while (attempts.length) {
-          if (current().baseURL === config.baseURL) order = await channels.prepare(config);
           if (controller.signal.aborted) return;
-          // 刷新可以等待，但排名与占位之间不能 await，否则同时到达的新对话会一起抢同一渠道。
+          // 排名与占位之间不能 await，否则同时到达的新对话会一起抢同一渠道。
           attempts = channels.rank(order, attempts, load.counts(config.baseURL, session));
           if (!attempts.length) return reply(res, 503, '该模型的可用渠道均因余额不足停用，请到 Magpie「渠道」页恢复，或等待北京时间 04:00 自动恢复');
-          const fresh = attempts.filter((row) => !triedProviders.has(channelId(row)));
+          const fresh = attempts.filter((row) => !triedChannels.has(channelId(row)));
           const candidates = fresh.length ? fresh : attempts;
           // 只在能力过滤和余额停用过滤后的候选中沿用原渠道；失败后按原有队列切换。
-          const preferred = triedProviders.size ? undefined : load.preferred(config.baseURL, session, turn);
+          const preferred = triedChannels.size ? undefined : load.preferred(config.baseURL, session, turn);
           const attempt = candidates.find((row) => channelId(row) === preferred) ?? candidates[0];
           attempts = attempts.filter((row) => row !== attempt);
-          triedProviders.add(channelId(attempt));
+          triedChannels.add(channelId(attempt));
           // 标题请求不占名额，也不能覆盖同一会话在执行工具期间保留的主对话渠道。
           reservation = title ? undefined : load.reserve(config.baseURL, session, channelId(attempt), turn);
           const allocated = reservation;
@@ -148,7 +147,7 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
             if (controller.signal.aborted) return;
             allocated?.release();
             if (insufficientBalance && !blocked) { blocked = true; penalized = true; channels.exhausted(order, attempt, generation); }
-            // 标题普通失败只影响本次重试；明确余额不足仍代表整个渠道不可用，沿用当天停用规则。
+            // 标题普通失败只影响本次重试；明确余额不足仍停用该账号或未拆分的渠道。
             else if (!title && !penalized) { penalized = true; channels.failed(order, attempt); }
           };
           let upstream, prepared;
@@ -159,6 +158,7 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
             upstream = await fetchImpl(`${config.baseURL}/v1/${endpoint}`, {
               method: 'POST', signal: AbortSignal.any([controller.signal, waiting.signal]), redirect: 'error',
               headers: { 'content-type': 'application/json', authorization: `Bearer ${key}`,
+                ...(attempt.account ? { 'X-Magpie-Account': attempt.account } : {}),
                 ...(config.api === 'anthropic-messages' ? { 'x-api-key': key, 'anthropic-version': req.headers['anthropic-version'] ?? '2023-06-01', ...(req.headers['anthropic-beta'] ? { 'anthropic-beta': req.headers['anthropic-beta'] } : {}) } : {}),
                 'user-agent': 'deepseek-harness/dsh-magpie-router' },
               body: JSON.stringify({ ...body, model: attempt.id }),
@@ -180,7 +180,7 @@ export function createMagpieRouter({ current, credentials, env = process.env, fe
           if (controller.signal.aborted) { await cancel(); return; }
           const status = prepared?.status ?? upstream.status;
           if (status >= 400) failed(status, prepared?.insufficientBalance);
-          if (RETRY_STATUSES.has(status)) {
+          if (RETRY_STATUSES.has(status) || (attempt.account && prepared?.accountDoesNotServeModel)) {
             if (!last && channels.rank(order, attempts).length) { await cancel(); continue; }
           }
           res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': 'no-store' });

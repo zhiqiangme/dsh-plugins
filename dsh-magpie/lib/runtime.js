@@ -32,7 +32,7 @@ export class ModelManager {
     this.routeReady = Promise.resolve();
     this.router = createMagpieRouter({ current: () => this.current(), credentials: () => this.credentials, env: this.env, fetchImpl: (...args) => this.fetch(...args),
       orderStatePath: this.backend.paths?.cache ? join(this.backend.paths.cache, 'channel-order.json') : undefined,
-      loadQuotas: async (config) => requestGateway(config.baseURL, '/v1/magpie/quotas', await credential(this.credentials, this.env, config.baseURL), this.fetch, 3_000),
+      loadQuotas: (config, key) => requestGateway(config.baseURL, '/v1/magpie/quotas', key, this.fetch, 3_000),
       onOrderError: (message) => (this.ctx.logger ?? console).warn(`[dsh-magpie] ${message}`),
       runningSessions: () => {
         const registry = hostService(this.ctx, 'agents');
