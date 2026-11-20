@@ -65,6 +65,7 @@ window.__ModuleLoader__.load({
       keepAwakeHint: 'Magpie 运行任务时让电脑保持唤醒。',
       magpieSettingsMissing: '打开一次 Magpie 后可用。',
       openWeb: '打开 Magpie 网页', openWindow: '打开 Magpie 窗口', openedWeb: '已在默认浏览器打开 Magpie 网页。', openedWindow: '已打开 Magpie 窗口。',
+      openUpgrading: 'Magpie正在升级',
       closeOnExit: '退出 DSH 时关闭 Magpie',
       closeOnExitHint: '结束本机 Magpie；停用或更新插件不会触发。',
       sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动', sidebarAlways: '显示', sidebarNever: '隐藏',
@@ -169,6 +170,7 @@ window.__ModuleLoader__.load({
       keepAwakeHint: 'Keeps the computer awake while Magpie runs tasks.',
       magpieSettingsMissing: 'Available once Magpie has been opened.',
       openWeb: 'Open Magpie web', openWindow: 'Open Magpie window', openedWeb: 'Opened Magpie in your default browser.', openedWindow: 'Opened the Magpie window.',
+      openUpgrading: 'Updating Magpie',
       closeOnExit: 'Close Magpie when DSH exits',
       closeOnExitHint: 'Ends local Magpie; disabling or updating the plugin does not.',
       sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto', sidebarAlways: 'Show', sidebarNever: 'Hide',
@@ -1335,6 +1337,7 @@ window.__ModuleLoader__.load({
       const addModel = () => { update({ models: [...rows, { id: '', name: '', enabled: true, input: ['text'], reasoningEfforts: [] }] }); setExpanded((old) => new Set([...old, rows.length])); };
       const checkConnection = () => perform(async () => { const result = await request({ action: 'check', baseURL: config.baseURL, apiKey: key || undefined }); setNotice({ text: t('connected', { version: result.version }) }); }, 'check');
       const pluginUpdate = updater.model.version?.phase === 'ready' && updater.model.version.updateAvailable;
+      const openLabel = config.startMode === 'tray' ? 'openWindow' : 'openWeb';
 
       const header = h('header', { className: 'head' },
         h('div', null,
@@ -1346,7 +1349,10 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'chip', onClick: () => setTab('updates') },
               backend?.version ? t('programVersion', { version: backend.version }) : t(backend?.installed ? 'backendUnknown' : 'programMissing'),
               backend?.updateAvailable ? h('span', { className: 'new' }, ` · ${t('programUpgrade', { version: backend.latest.version })}`) : null))),
-        button(t(config.startMode === 'tray' ? 'openWindow' : 'openWeb'), openMagpie, { disabled: busy || operation?.running || unsupported || !backend?.installed || !backend?.version, 'aria-busy': modelBusy === 'open' }));
+        button(t(operation?.running && operation.upgrading ? 'openUpgrading' : openLabel), openMagpie, {
+          disabled: busy || operation?.running || unsupported || !backend?.installed || !backend?.version,
+          'aria-busy': modelBusy === 'open',
+        }));
 
       const tabs = h('div', { className: 'tabs', role: 'tablist' }, ...TABS.map(([id, label]) => h('button', {
         key: id, type: 'button', role: 'tab', className: 'tab', id: `dsm-mp-tab-${id}`, 'aria-selected': tab === id, 'aria-controls': 'dsm-mp-panel', onClick: () => { setTab(id); setTavilyRemoveRef(null); },

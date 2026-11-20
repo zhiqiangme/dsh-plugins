@@ -244,7 +244,8 @@ export class MagpieBackend {
       if (guard?.() === 'cancelled') return { state: 'cancelled' };
       // 在退出旧程序前准备凭据，凭据库不可用时不能停掉原有网关。
       if (startMode === 'web') await this.web.key();
-      this.operation.phase = 'downloading';
+      // 记录替换前是否已安装，首次安装在写入程序后仍属于下载操作。
+      Object.assign(this.operation, { phase: 'downloading', upgrading: before.installed });
       const download = await downloadRelease(this.latest, { fetchImpl: this.fetchImpl, signal, partialDir: join(this.paths.cache, 'downloads'), retryDelayMs: this.retryDelayMs, onProgress: (received, total) => Object.assign(this.operation, { received, total }) });
       signal.throwIfAborted();
       this.operation.phase = 'verifying';

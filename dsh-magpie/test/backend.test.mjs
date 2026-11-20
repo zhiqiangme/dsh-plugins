@@ -26,7 +26,9 @@ test('检查版本不安装；下载完成后程序、版本和可核验清单�
   assert.equal(existsSync(backend.paths.exe), false);
   const accepted = backend.install();
   assert.equal(accepted.running, true);
-  assert.equal((await finish(backend)).phase, 'installed');
+  const installed = await finish(backend);
+  assert.equal(installed.phase, 'installed');
+  assert.equal(installed.upgrading, false);
   assert.deepEqual(readFileSync(backend.paths.exe), bytes);
   assert.equal((await backend.describe()).version, '0.1.2');
   const manifest = readdirSync(backend.paths.cache).find((f) => f.endsWith('.json'));
@@ -104,6 +106,7 @@ test('相同或更新版本不降级；升级运行中的程序时下载校验�
   backend.install();
   const done = await finish(backend);
   assert.equal(done.phase, 'updated');
+  assert.equal(done.upgrading, true);
   assert.equal(done.stopped, true);
   assert.equal(downloads, 1, '下载在退出 Magpie 之前完成');
   assert.deepEqual(phases, ['stopping']);
