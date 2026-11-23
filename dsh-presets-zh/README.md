@@ -104,7 +104,7 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-presets-zh
 
 已同步 DSH `0.2.2-rc.2` 的具名子智能体、团队任务板和收件箱等待说明。三个完整模式随内置预设默认关闭 `interrupt_agent`。宿主提供新版 PTC 执行器时直接使用该执行器，支持汉化 TypeScript 和 Python SDK 说明。宿主提供 Office 工具时，中文标准和中文 PTC 按宿主规则在加载相关技能后提供这些工具。
 
-已同步 DSH `0.2.3-alpha.2` 的变更：汉化 Timeline 任务规划（含任务树语言规则与协作者说明）、`apply_patch` 工具说明、带并发上限的子智能体委派说明、新版 `run_code` SDK（`inspect(...)` 与 `Image` 返回值及 Bash 示例）、绝对路径交付物链接说明、CUA 原生应用操作指引（逐行保留方法签名与参数类型）以及运行时上下文快照、工作目录变更、技能目录不完整发现、Timeline 优先级、PTC 环境重置和 CUA 按住输入等系统提醒；同步更新三个完整预设的 `tool-fs`、`skill-filesystem`、`tool-skill`、`tool-cordis` 与 `tool-plugin-manager` 配置，并保持对旧版宿主的向下兼容。
+已同步 DSH `0.2.3-alpha.2` 的变更：汉化 Timeline 任务规划（含任务树语言规则与协作者说明）、`apply_patch` 工具说明、带并发上限的子智能体委派说明、新版 `run_code` SDK（`inspect(...)` 与 `Image` 返回值及 Bash 示例）、绝对路径交付物链接说明、CUA 原生应用操作指引（逐行保留方法签名与参数类型）以及运行时上下文快照、工作目录变更、技能目录不完整发现、Timeline 优先级、PTC 环境重置、CUA 按住输入和定时任务通知等系统提醒；同步更新三个完整预设的 `tool-fs`、`skill-filesystem`、`tool-skill`、`tool-cordis` 与 `tool-plugin-manager` 配置，并保持对旧版宿主的向下兼容。
 
 汉化仅命中已知段落名和原文；未知或变化后的说明原样保留，避免误改。特定宿主身份、源码路径和 Web 界面的系统段落按名称省略。SDK 只替换已知说明前缀，不替换动态代码声明。
 
