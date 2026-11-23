@@ -49,7 +49,10 @@
     },
     {
       "id": "tool-fs",
-      "name": "@deepseek-ai/dsh-tool-fs"
+      "name": "@deepseek-ai/dsh-tool-fs",
+      "config": {
+        "applyPatch": false
+      }
     },
     {
       "id": "tool-fs-search",
@@ -68,7 +71,14 @@
     },
     {
       "id": "skill-filesystem",
-      "name": "@deepseek-ai/dsh-skill-filesystem"
+      "name": "@deepseek-ai/dsh-skill-filesystem",
+      "config": {
+        "customSkillDirs": [
+          {
+            "__jsExpr": "process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')"
+          }
+        ]
+      }
     },
     {
       "id": "tool-skill",
@@ -208,7 +218,9 @@
     {
       "id": "tool-plugin-manager",
       "name": "@deepseek-ai/dsh-plugin-manager/tools",
-      "disabled": true
+      "disabled": {
+        "__jsExpr": "!ctx.get('profileContext')"
+      }
     },
     {
       "id": "tool-plugin-market",

@@ -49,7 +49,10 @@
     },
     {
       "id": "tool-fs",
-      "name": "@deepseek-ai/dsh-tool-fs"
+      "name": "@deepseek-ai/dsh-tool-fs",
+      "config": {
+        "applyPatch": false
+      }
     },
     {
       "id": "tool-fs-search",
@@ -201,7 +204,13 @@
     },
     {
       "id": "tool-skill",
-      "name": "@deepseek-ai/dsh-tool-skill"
+      "name": "@deepseek-ai/dsh-tool-skill",
+      "config": {
+        "excludedSkills": [
+          "official-plugins",
+          "personalized-pages"
+        ]
+      }
     },
     {
       "id": "present",

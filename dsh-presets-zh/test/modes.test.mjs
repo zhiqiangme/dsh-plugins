@@ -130,18 +130,69 @@ test('PTC 的 TypeScript 和 Python SDK 说明汉化，动态工具声明逐字�
 
 test('PTC 汉化 Bash 示例的说明并保留调用代码及 SDK 声明', () => {
   const variant = data('translations/ptc-sdk.json')[0]
-  const example = '`run_code({ code: "return await tools.bash({ description: \'Show current directory\', command: \'pwd\' })", description: "Show current directory" })`'
   const intro = ' When no separate `bash` schema is supplied, invoke a declared `bash` binding inside `run_code`:\n\n'
   const declarations = '```ts\ndeclare const tools: { bash(args: unknown): Promise<unknown> };\n```'
-  const text = variant.original.replace('\n\nInside the program:', intro + example + '\n\nInside the program:') + declarations
-  const section = { name: 'tools:sdk', text }
   const translate = section => transformAssembly({ sections: [section] }, { ptc: true }).sections[0]
-  const localized = translate(section)
-  assert.match(localized.text, /没有单独的 bash 工具 schema/)
-  assert.ok(localized.text.includes(example))
-  assert.ok(localized.text.endsWith(declarations))
-  const unknown = { ...section, text: text.replace('pwd', 'ls') }
-  assert.deepEqual(translate(unknown), unknown)
+  for (const code of [
+    "inspect(await tools.bash({ description: 'Show current directory', command: 'pwd' }))",
+    "inspect(await tools.bash({ command: 'pwd' }))",
+    "return await tools.bash({ description: 'Show current directory', command: 'pwd' })",
+  ]) {
+    const example = `\`run_code({ code: "${code}", description: "Show current directory" })\``
+    const text = variant.original.replace('\n\nInside the program:', intro + example + '\n\nInside the program:') + declarations
+    const section = { name: 'tools:sdk', text }
+    const localized = translate(section)
+    assert.match(localized.text, /没有单独的 bash 工具 schema/)
+    assert.ok(localized.text.includes(example))
+    assert.ok(localized.text.endsWith(declarations))
+    const unknown = { ...section, text: text.replace('pwd', 'ls') }
+    assert.deepEqual(translate(unknown), unknown)
+  }
+})
+
+test('同步 DSH 0.2.3 的 Timeline 语言规则、子智能体并发上限、CUA 指引与预设配置', () => {
+  const timelineBase = data('translations/standard.json').entries.find(entry => entry.name === 'timeline:planning' && entry.original.startsWith('## Task planning with Timeline')).original
+  const timelineText = `${timelineBase}\n\nFor Timeline task-tree content only, write titles, descriptions, progress notes, results, and discussion replies in 简体中文. Follow the user's language instructions for all other work and conversation.`
+  const subagentText = 'Start independent delegations with `subagent` or `subagent_fork` together in one assistant message and continue useful work while they run. The concurrency limit of all the subagents is 8. When only waiting for their results remains, end your turn instead of sleeping or polling; the next result starts a new turn. Collect the subagent results required to complete the task before giving the user a final answer.\n\nBash, formatters, code generators, and scripts can overwrite concurrent edits without conflict detection; coordinate their changes explicitly. The agent integrating the work must review the final diff and run relevant tests.'
+  const cuaText = [
+    'Windows: accessibility tree operations are available only at window level. Simulated mouse and keyboard input are available at window level. Supported modifiers: ctrl, alt, shift, win. control is an alias for ctrl. Key and mouse holds use desktop input. Keep the target in front while holding inputs. Release through the same window. After focus changes, an up releases desktop input without restoring focus; the original window may not receive that event.',
+    '',
+    'Use cua to observe and operate native applications. Always use cua.getCapabilities() to confirm whether a specific API is available on the current platform; its reported capabilities take precedence over availability statements in these instructions. All methods are async. Actions report dispatch evidence, not verified completion. If sessionLocked is true or an operation reports SESSION_LOCKED, stop UI actions and ask the user to unlock the desktop session; null or unknown means verify a usable unlocked desktop session first. cua.getApp requests user consent; if access is denied or revoked, stop using that application until the user explicitly permits another request, and never bypass a refusal or switch tools to avoid it. Never replay uncertain input without a fresh observation.',
+    '',
+    '- click(target: string | [number, number], options?: { mouseButton?: \'left\' | \'right\' | \'middle\', clickCount?: 1 | 2, modifiers?: Modifier[], holdMs?: number, relative?: boolean, useSystemInput?: boolean }) -> ActionResult — click an element id or point, or perform a left-button double-click; holdMs controls the press duration of each press.',
+    '- unknownFutureMethod() -> void — keep unknown descriptions verbatim.',
+    '',
+    'AX read defaults: maxElements=500, maxDepth=12.',
+    '',
+    'Maximum click holdMs: 5000 ms.',
+  ].join('\n')
+
+  const result = transformAssembly({
+    sections: [
+      { name: 'timeline:planning', text: timelineText },
+      { name: 'tool:subagent', text: subagentText },
+      { name: 'computer-use:dsh-cua', text: cuaText },
+    ],
+  })
+  assert.match(result.sections[0].text, /## 使用 Timeline 规划任务/)
+  assert.match(result.sections[0].text, /使用 简体中文 撰写/)
+  assert.match(result.sections[1].text, /通过 subagent 或 subagent_fork 一起启动/)
+  assert.match(result.sections[1].text, /所有子智能体的并发上限为 8/)
+  assert.match(result.sections[2].text, /Windows：无障碍树操作/)
+  assert.match(result.sections[2].text, /useSystemInput\?: boolean \}\) -> ActionResult — 点击元素 ID 或坐标点/)
+  assert.match(result.sections[2].text, /- unknownFutureMethod\(\) -> void — keep unknown descriptions verbatim\./)
+  assert.match(result.sections[2].text, /无障碍树读取默认值：maxElements=500，maxDepth=12。/)
+  assert.match(result.sections[2].text, /点击按住时长（holdMs）上限：5000 ms。/)
+  assert.deepEqual(transformAssembly(result), result)
+
+  for (const key of ['standard', 'ptc', 'creation']) {
+    const preset = mode(MODES, key).definition
+    assert.deepEqual(row(preset, 'tool-fs').config, { applyPatch: false })
+    assert.match(row(preset, 'skill-filesystem').config.customSkillDirs[0].__jsExpr, /resolve\('@deepseek-ai\/dsh-agent-preset\/package.json'\)/)
+    assert.deepEqual(row(preset, 'tool-plugin-manager').disabled, { __jsExpr: "!ctx.get('profileContext')" })
+  }
+  assert.equal(row(mode(MODES, 'standard').definition, 'tool-cordis').name, '@deepseek-ai/dsh-tool-cordis')
+  assert.deepEqual(row(mode(MODES, 'creation').definition, 'tool-skill').config.excludedSkills, ['official-plugins', 'personalized-pages'])
 })
 
 function host() {

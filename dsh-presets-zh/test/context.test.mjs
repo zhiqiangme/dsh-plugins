@@ -158,8 +158,55 @@ test('子智能体身份在首个执行步骤注册为必需上下文，并使�
   assert.equal(identity.required, true)
   assert.match(identity.text({}), /"review".*"review\/tests"。\n.*"lead"/)
   assert.match(identity.text({}), /send_message\(\{ agent: "<agent-name>"/)
+  assert.match(identity.text({}), /向委派你的智能体发送完整独立的结果/)
   visible.delete('list_agents')
   assert.doesNotMatch(identity.text({}), /list_agents/)
   subagents.namesOf = () => { throw Object.assign(new Error('detached'), { name: 'SubagentError', code: 'UNAUTHORIZED' }) }
   assert.match(identity.text({}), /"child-session"。协作树的根智能体当前不可用/)
+})
+
+test('中文化运行时上下文快照、工作目录、技能不完整发现、Timeline、PTC 重置与 CUA 提醒，且不改写去重元数据', () => {
+  const sections = [
+    { name: 'working-directory:current', text: 'Current working directory: "D:\\\\Project\\\\DSH-Plugins".' },
+    { name: 'subagent:identity', text: '你是根智能体，名称为 "lead"。' },
+    { name: 'timeline:state', text: 'Current Timeline plan (turn-start state, not a new request): {"selectedTree":"t1","trees":[]}\nAddress open discussions at a safe checkpoint. Use timeline_read with annotation set to the ID if you need the full message or context. Save replies with timeline_reply. Apply pause or continue to the requested scope before confirming it.' },
+    { name: 'timeline:maintenance', text: 'Task progress checkpoint: Save changes to the current goal’s tree, or start one if this multi-step goal has none. Use timeline_pull when choosing the next task.' },
+    { name: 'tool:subagent:depth', text: 'Delegation depth for `subagent`: current 1, maximum 1, remaining levels 0. Do not call `subagent` at this depth; carry out the work directly.' },
+  ]
+  const snapshot = message('runtime-context', `<system-reminder>\nThe following information describes your current session:\n\n${sections.map(s => s.text).join('\n\n')}\n</system-reminder>`, { form: 'snapshot', sections })
+  const localizedSnapshot = localizeMessage(snapshot)
+  assert.match(localizedSnapshot.content[0].text, /以下信息描述你的当前会话：/)
+  assert.match(localizedSnapshot.content[0].text, /当前工作目录："D:\\\\Project\\\\DSH-Plugins"。/)
+  assert.match(localizedSnapshot.content[0].text, /你是根智能体，名称为 "lead"。/)
+  assert.match(localizedSnapshot.content[0].text, /当前 Timeline 计划（本轮开始时的状态，并非新请求）：\{"selectedTree":"t1","trees":\[\]\}/)
+  assert.match(localizedSnapshot.content[0].text, /在安全检查点处理未关闭的讨论/)
+  assert.match(localizedSnapshot.content[0].text, /任务进度检查点：/)
+  assert.match(localizedSnapshot.content[0].text, /subagent 委派深度：当前 1，上限 1，剩余层级 0/)
+  // 宿主 RuntimeContextProjection 用 source.sections 做去重比对，必须保持原引用与原文。
+  assert.equal(localizedSnapshot.source, snapshot.source)
+  assert.equal(localizeMessage(localizedSnapshot), localizedSnapshot)
+
+  const cleared = localizeMessage(message('runtime-context', '<system-reminder>\nCurrent runtime context: none. Earlier runtime-context snapshots no longer apply.\n</system-reminder>', { form: 'snapshot', sections: [] }))
+  assert.match(cleared.content[0].text, /当前运行时上下文：无/)
+
+  const cwdMoved = localizeMessage(message('working-directory', 'The working directory changed from "/a" to "/b".'))
+  assert.equal(cwdMoved.content[0].text, '工作目录已从 "/a" 变更为 "/b"。')
+  const cwdRecovered = localizeMessage(message('working-directory', 'The working directory "/gone" is unavailable. The working directory is now "/orig".'))
+  assert.equal(cwdRecovered.content[0].text, '工作目录 "/gone" 不可用，当前工作目录已恢复为 "/orig"。')
+
+  const priority = localizeMessage(message('timeline-priority', 'Timeline priority update: P0 changed. At the next safe checkpoint, prefer the highest-priority eligible work within the current goal.\nEligible prioritized tasks: [{"id":"t1"}]'))
+  assert.match(priority.content[0].text, /Timeline 优先级更新：P0 已变化/)
+  assert.ok(priority.content[0].text.endsWith('[{"id":"t1"}]'))
+
+  const ptcReset = localizeMessage(message('ptc-mode', 'Program environment reset; retained variables cleared. Completed tool effects remain.'))
+  assert.match(ptcReset.content[0].text, /程序运行环境已重置/)
+
+  const cuaHeld = localizeMessage(message('cua-held-inputs', "<system-reminder>\nCUA inputs are still held:\n- Key \"Control\", appHandle \"app1\" (window input).\nThey remain pressed across programs and turns. To release them, call sendKeyEvent or toggleMouse on the same target with direction 'up' and the same input options as the down.\n</system-reminder>"))
+  assert.match(cuaHeld.content[0].text, /CUA 输入仍处于按住状态：/)
+  assert.ok(cuaHeld.content[0].text.includes('- Key "Control", appHandle "app1" (window input).'))
+
+  const incompleteSkills = localizeMessage(message('skill-catalog', '<system-reminder>\nSkill discovery is incomplete. This catalog of currently available skills replaces every earlier available-skills list in this session:\n\n<available_skills>\n- `demo`: Demo\n</available_skills>\n\nSome skills could not be checked.\n</system-reminder>', { entries: [{ name: 'demo', description: 'Demo' }], update: true, incomplete: true }))
+  assert.match(incompleteSkills.content[0].text, /技能发现未完成/)
+  assert.match(incompleteSkills.content[0].text, /部分技能未能完成检查/)
+  assert.ok(incompleteSkills.content[0].text.includes('- `demo`: Demo'))
 })
