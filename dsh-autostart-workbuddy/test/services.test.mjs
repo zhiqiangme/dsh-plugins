@@ -154,7 +154,8 @@ test('停止后重新拉起：上一轮的退出信息与停止标记不带进�
 });
 
 test('可执行文件不存在：直接失败且不 spawn', async () => {
-  const service = new ManagedService(specFor(await freePort(), { exe: 'Z:\\nope\\missing.exe' }), silent);
+  // 用端口 0 避免并行测试抢占 freePort() 刚释放的临时端口导致误判为 already-running。
+  const service = new ManagedService(specFor(0, { exe: 'Z:\\nope\\missing.exe' }), silent);
   const result = await service.ensureRunning();
   assert.equal(result.state, 'failed');
   assert.match(result.reason, /未找到可执行文件/);
@@ -162,7 +163,7 @@ test('可执行文件不存在：直接失败且不 spawn', async () => {
 
 test('缺少必需环境变量时拒绝启动并指明变量名', async () => {
   const service = new ManagedService(
-    specFor(await freePort(), { env: {}, requiredEnv: ['WB_TOKEN'], envFile: 'C:\\nope\\.env' }),
+    specFor(0, { env: {}, requiredEnv: ['WB_TOKEN'], envFile: 'C:\\nope\\.env' }),
     silent,
   );
   const result = await service.ensureRunning();
