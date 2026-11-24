@@ -207,13 +207,14 @@ test('渠道页显示余额不足渠道，刷新与手动恢复即时生效且�
 
 test('总开关与屏蔽选项集中在开关页，默认屏蔽低于 500K，模型页只留清单与筛选', () => {
   const client = clientHarness(view({ models: [{ id: 'a/one' }] }));
-  for (const label of ['同步到 DSH', '自动路由（同款模型合并）', '屏蔽小上下文模型', '屏蔽不支持图片的模型']) {
+  for (const label of ['同步到 DSH', '自动路由（同款模型合并）', '模型上下文上限', '屏蔽小上下文模型', '屏蔽不支持图片的模型']) {
     assert.equal(control(client.render(), label), undefined, `${label} 不在模型页`);
   }
   client.tab('开关');
   for (const label of ['同步到 DSH', '自动路由（同款模型合并）']) {
     assert.equal(control(client.render(), label).props.checked, true, `${label} 默认开启`);
   }
+  assert.equal(choose(client.render(), '模型上下文上限', '500K').props['aria-checked'], true);
   assert.equal(choose(client.render(), '屏蔽小上下文模型', '低于 500K').props['aria-checked'], true);
   assert.equal(control(client.render(), '屏蔽不支持图片的模型').props.checked, false, '新增图片屏蔽默认关闭');
   assert.equal(button(client.render(), '从 Magpie 同步'), undefined, '同步目录按钮仍留在模型页');
@@ -406,12 +407,87 @@ test('上下文徽标只显示取整档位，实际上下文值不变', () => {
     [1000000, '1M'], [1048576, '1M'], [2000000, '2M'],
     [32768, '32K'], [65536, '64K'], [12345, '12K'],
   ];
-  const client = clientHarness(view({ hideSmallContext: false, models: cases.map(([contextWindow], index) => ({
+  const client = clientHarness(view({ hideSmallContext: false, contextWindowLimit: 0, models: cases.map(([contextWindow], index) => ({
     id: `a/context-${index}`, name: 'Context', contextWindow,
   })) }));
   const badges = nodes(client.render(), (n) => n.props.className === 'badge' && /^[\d.]+[KM]$/.test(n.children[0]));
   assert.deepEqual(badges.map((n) => [Number(n.props.title), n.children[0]]), cases, '徽标按指定档位显示，悬停仍显示原始精确值');
   assert.deepEqual(client.states[0].config.models.map((m) => m.contextWindow), cases.map(([value]) => value), '只改展示，不改保存的上下文');
+});
+
+test('模型上下文上限支持预设档位与自定义输入，即时保存同步并保留草稿，模型徽标显示生效上限', async () => {
+  const calls = [];
+  let saved = resolveConfig({ hideSmallContext: false, models: [
+    { id: 'codearts/big', name: 'Big', contextWindow: 1000000, input: ['text', 'image'] },
+    { id: 'codearts/small', name: 'Small', contextWindow: 200000, input: ['text', 'image'] },
+    { id: 'codearts/unknown', name: 'Unknown', input: ['text', 'image'] },
+  ] });
+  const client = clientHarness(view(saved), async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body);
+    saved = resolveConfig({ ...saved, ...body.patch });
+    return response({ ...view(saved), revision: `revision-${calls.length + 1}`, sync: { ok: true, count: 3 } });
+  });
+  const contextBadges = () => modelRows(client.render()).map((row) => {
+    const badge = nodes(row, (n) => n.props.className === 'badge' && n.props.title)[0];
+    return badge ? [badge.children[0], badge.props.title] : null;
+  });
+  // 默认 500K：1M 封顶为 500K 并悬停提示原始值，200K 与未知不变，详情保留原始值。
+  assert.deepEqual(contextBadges(), [
+    ['500K', '生效上限 500000（原始 1000000）'],
+    ['200K', '200000'],
+    null,
+  ]);
+  assert.equal(field(client.render(), '上下文窗口').props.value, 1000000);
+  field(client.render(), '显示名称').props.onChange({ target: { value: '未保存草稿' } });
+
+  client.tab('开关');
+  const pick = (label) => choose(client.render(), '模型上下文上限', label);
+  assert.equal(pick('500K').props['aria-checked'], true);
+  assert.equal(control(client.render(), '自定义上下文上限'), undefined);
+
+  // 点击自定义展开输入框但不发请求；点回当前已保存的 500K 关闭输入框也不发请求。
+  pick('自定义').props.onClick();
+  assert.equal(pick('自定义').props['aria-checked'], true);
+  assert.equal(control(client.render(), '自定义上下文上限').props.value, '500000');
+  assert.equal(button(client.render(), '应用').props.disabled, true, '与当前值相同时不重复提交');
+  pick('500K').props.onClick();
+  assert.equal(calls.length, 0);
+  assert.equal(control(client.render(), '自定义上下文上限'), undefined);
+
+  // 输入非法值禁用应用按钮并提示错误；输入 350K 即时保存并同步。
+  pick('自定义').props.onClick();
+  control(client.render(), '自定义上下文上限').props.onChange({ target: { value: '0' } });
+  assert.equal(button(client.render(), '应用').props.disabled, true);
+  assert.match(JSON.stringify(client.render()), /请输入大于 0 的整数/);
+  control(client.render(), '自定义上下文上限').props.onChange({ target: { value: '350K' } });
+  assert.equal(button(client.render(), '应用').props.disabled, false);
+  await button(client.render(), '应用').props.onClick();
+  assert.deepEqual(calls[0], { action: 'patch', patch: { contextWindowLimit: 350000 }, revision: 'revision-one' });
+  assert.equal(pick('自定义').props['aria-checked'], true);
+  assert.equal(control(client.render(), '自定义上下文上限').props.value, '350000');
+  assert.equal(client.states[0].config.models[0].name, '未保存草稿', '即时修改上下文上限保留模型草稿');
+  assert.equal(client.states[1], true);
+
+  client.tab('模型');
+  assert.deepEqual(contextBadges(), [
+    ['350K', '生效上限 350000（原始 1000000）'],
+    ['200K', '200000'],
+    null,
+  ]);
+
+  // 切到不限制后自动恢复原始 1M 徽标。
+  client.tab('开关');
+  await pick('不限制').props.onClick();
+  assert.deepEqual(calls[1], { action: 'patch', patch: { contextWindowLimit: 0 }, revision: 'revision-2' });
+  assert.equal(pick('不限制').props['aria-checked'], true);
+  assert.equal(control(client.render(), '自定义上下文上限'), undefined);
+  client.tab('模型');
+  assert.deepEqual(contextBadges(), [
+    ['1M', '1000000'],
+    ['200K', '200000'],
+    null,
+  ]);
+  assert.equal(client.states[0].config.models[0].contextWindow, 1000000);
 });
 
 test('自动更新开关在更新页即时保存，等待期间也能关闭，保留未保存草稿', async () => {
@@ -825,7 +901,7 @@ test('模型行只标注不支持图片，渠道位于图片提示与上下文�
   const client = clientHarness(initial);
   const badgeTexts = () => modelRows(client.render()).map((row) => nodes(row, (n) => n.props.className === 'model-badges')[0].children.filter(Boolean).map((n) => n.children[0]));
   assert.deepEqual(badgeTexts(), [
-    ['CodeArts', '1M'], ['不支持图片', 'DoubaoWork', '1M'], ['不支持图片', 'QwenWork', '1M'], ['不支持图片', 'custom'], ['不支持图片', '未指定供应商'],
+    ['CodeArts', '500K'], ['不支持图片', 'DoubaoWork', '500K'], ['不支持图片', 'QwenWork', '500K'], ['不支持图片', 'custom'], ['不支持图片', '未指定供应商'],
   ]);
   const options = control(client.render(), '按供应商分类').children.flat().map((n) => n.children[0]);
   for (const name of ['CodeArts', 'DoubaoWork', 'QwenWork']) assert.ok(options.includes(name));
@@ -837,13 +913,13 @@ test('模型行只标注不支持图片，渠道位于图片提示与上下文�
   filter().props.onChange({ target: { value: '' } });
   assert.deepEqual(client.states[0].config.models, initial.config.models, '展示和筛选不改模型名称、ID 或勾选');
   field(client.render(), '完整模型 ID').props.onChange({ target: { value: 'qwenwork/flash' } });
-  assert.deepEqual(badgeTexts()[0], ['QwenWork', '1M']);
+  assert.deepEqual(badgeTexts()[0], ['QwenWork', '500K']);
   assert.equal(client.states[0].config.models[0].name, 'DeepSeek V4.1 Flash');
   const vision = () => nodes(client.render(), (n) => n.type === 'label' && n.children.includes('支持图片输入'))[0].children[0];
   vision().props.onChange({ target: { checked: false } });
-  assert.deepEqual(badgeTexts()[0], ['不支持图片', 'QwenWork', '1M']);
+  assert.deepEqual(badgeTexts()[0], ['不支持图片', 'QwenWork', '500K']);
   vision().props.onChange({ target: { checked: true } });
-  assert.deepEqual(badgeTexts()[0], ['QwenWork', '1M']);
+  assert.deepEqual(badgeTexts()[0], ['QwenWork', '500K']);
 });
 
 test('Flash 别名统一展示、搜索和排序，保存仍使用原始名称及路由 ID', async () => {

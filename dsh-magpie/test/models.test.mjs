@@ -23,6 +23,12 @@ test('默认清单为空、同步与路由默认开启；地址与协议严格�
   for (const smallContextLimit of [0, 199999, 200001, '200000', false]) {
     assert.throws(() => resolveConfig({ smallContextLimit }), /屏蔽阈值/);
   }
+  assert.equal(resolveConfig().contextWindowLimit, 500000, '模型上下文上限默认 500K');
+  assert.equal(resolveConfig({ contextWindowLimit: 0 }).contextWindowLimit, 0, '0 表示不限制');
+  assert.equal(resolveConfig({ contextWindowLimit: 350000 }).contextWindowLimit, 350000);
+  for (const contextWindowLimit of [-1, 12.5, '500000', false, null, NaN, Infinity]) {
+    assert.throws(() => resolveConfig({ contextWindowLimit }), /模型上下文上限/);
+  }
   assert.equal(gatewayURL('http://127.0.0.1:3425/v1/'), 'http://127.0.0.1:3425');
   assert.equal(gatewayURL('https://relay.example/magpie/v1'), 'https://relay.example/magpie');
   for (const url of ['file:///private', 'https://user:secret@example.com', 'https://example.com?key=secret', 'https://example.com/#secret']) assert.throws(() => gatewayURL(url));
@@ -40,6 +46,48 @@ test('手工模型独立规划：保留完整 ID、排序、图像能力和实�
   assert.deepEqual(entries[1].input, ['text', 'image']);
   assert.equal('enabled' in entries[0], false);
   assert.equal('maxTokens' in entries[1], false, '未知限额保持未知');
+});
+
+test('模型上下文上限仅封顶超出上限的模型，保留原始清单，并在输出不小于封顶上下文时省略最大输出', () => {
+  const models = [
+    { id: 'workbuddy/big', name: 'Big', contextWindow: 1000000, maxTokens: 128000 },
+    { id: 'workbuddy-ai/big', name: 'Big', contextWindow: 800000, maxTokens: 64000 },
+    { id: 'workbuddy/small', name: 'Small', contextWindow: 200000, maxTokens: 32000 },
+    { id: 'workbuddy/unknown', name: 'Unknown', maxTokens: 64000 },
+  ];
+  // 默认 500K 封顶：直连与自动路由均只裁剪超出上限的模型。
+  const directDefault = resolveConfig({ autoRoute: false, models });
+  const before = structuredClone(directDefault);
+  assert.deepEqual(modelEntries(directDefault).map(({ id, contextWindow, maxTokens }) => ({ id, contextWindow, maxTokens })), [
+    { id: 'workbuddy/big', contextWindow: 500000, maxTokens: 128000 },
+    { id: 'workbuddy-ai/big', contextWindow: 500000, maxTokens: 64000 },
+    { id: 'workbuddy/small', contextWindow: 200000, maxTokens: 32000 },
+    { id: 'workbuddy/unknown', contextWindow: undefined, maxTokens: 64000 },
+  ]);
+  assert.deepEqual(directDefault, before, '封顶不修改插件内保存的原始上下文');
+
+  const autoDefault = resolveConfig({ autoRoute: true, models });
+  assert.deepEqual(modelEntries(autoDefault).map(({ id, contextWindow, maxTokens }) => ({ id, contextWindow, maxTokens })), [
+    { id: 'auto:big', contextWindow: 500000, maxTokens: 64000 },
+    { id: 'auto:small', contextWindow: 200000, maxTokens: 32000 },
+    { id: 'auto:unknown', contextWindow: undefined, maxTokens: 64000 },
+  ]);
+
+  // 设为 0（不限制）自动恢复原始上游上下文。
+  const unlimited = resolveConfig({ autoRoute: false, contextWindowLimit: 0, models });
+  assert.deepEqual(modelEntries(unlimited).map((m) => m.contextWindow), [1000000, 800000, 200000, undefined]);
+
+  // 自定义上限压低到不大于原 maxTokens 时省略 maxTokens，避免 llm-pi-ai 校验失败。
+  const tight = resolveConfig({ autoRoute: false, contextWindowLimit: 100000, models });
+  const tightEntries = modelEntries(tight);
+  assert.equal(tightEntries[0].contextWindow, 100000);
+  assert.equal('maxTokens' in tightEntries[0], false, '128000 >= 100000 时省略最大输出');
+  assert.equal(tightEntries[1].contextWindow, 100000);
+  assert.equal(tightEntries[1].maxTokens, 64000, '64000 < 100000 时保留最大输出');
+  assert.equal(tightEntries[2].contextWindow, 100000);
+  assert.equal(tightEntries[2].maxTokens, 32000);
+  assert.equal(tightEntries[3].contextWindow, undefined);
+  assert.equal(tightEntries[3].maxTokens, 64000);
 });
 
 test('Magpie 全量目录保留上游限额、能力和顺序，默认不勾选并按规范化 ID 去重', () => {

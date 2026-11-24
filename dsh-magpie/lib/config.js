@@ -16,8 +16,16 @@ export const REASONING_LEVELS = Object.freeze(['off', 'minimal', 'low', 'medium'
 export const SIDEBAR_MODES = Object.freeze(['auto', 'always', 'never']);
 export const START_MODES = Object.freeze(['web', 'tray']);
 // 卡片上的开关和下拉改完即保存；连接设置与模型清单仍走「保存并同步」。
-export const INSTANT_FIELDS = Object.freeze(['startMode', 'autoStart', 'autoUpdate', 'dailyModels', 'closeOnExit', 'autoLightweight', 'sidebarEntry', 'syncEnabled', 'autoRoute', 'hideSmallContext', 'smallContextLimit', 'hideNonVision']);
+export const INSTANT_FIELDS = Object.freeze(['startMode', 'autoStart', 'autoUpdate', 'dailyModels', 'closeOnExit', 'autoLightweight', 'sidebarEntry', 'syncEnabled', 'autoRoute', 'contextWindowLimit', 'hideSmallContext', 'smallContextLimit', 'hideNonVision']);
+// 统一上下文长度上限默认值（K 按千计）；0 表示不限制。
+export const DEFAULT_CONTEXT_WINDOW_LIMIT = 500_000;
 export const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+
+/** 按统一上限封顶已知上下文窗口；0 表示不限制，小于上限或未知的模型保持原值。 */
+export function effectiveContextWindow(contextWindow, limit = DEFAULT_CONTEXT_WINDOW_LIMIT) {
+  if (!contextWindow) return undefined;
+  return limit > 0 ? Math.min(contextWindow, limit) : contextWindow;
+}
 
 export function gatewayURL(value = DEFAULT_URL) {
   const url = new URL(value);
@@ -84,6 +92,9 @@ export function resolveConfig(raw = {}) {
   // K 按千计；保留旧开关，未指定阈值的旧配置继续使用 500K。
   const smallContextLimit = value.smallContextLimit ?? 500_000;
   if (![200_000, 500_000].includes(smallContextLimit)) throw new Error('小上下文屏蔽阈值只能是 200000 或 500000');
+  // 统一上下文上限默认 500K（K 按千计）；0 表示不限制，正整数表示自定义封顶值。
+  const contextWindowLimit = value.contextWindowLimit === undefined ? DEFAULT_CONTEXT_WINDOW_LIMIT : value.contextWindowLimit;
+  if (!Number.isSafeInteger(contextWindowLimit) || contextWindowLimit < 0) throw new Error('模型上下文上限必须是 0 或正整数');
   if (value.closeOnExit !== undefined && typeof value.closeOnExit !== 'boolean') throw new Error('退出时关闭 Magpie 开关必须是布尔值');
   if (value.autoStart !== undefined && typeof value.autoStart !== 'boolean') throw new Error('启动时打开 Magpie 开关必须是布尔值');
   if (value.startMode !== undefined && !START_MODES.includes(value.startMode)) throw new Error(`启动方式只能是 ${START_MODES.join('、')}`);
@@ -99,7 +110,7 @@ export function resolveConfig(raw = {}) {
   if (magpiePath && (!isAbsolute(magpiePath) || !/\.exe$/i.test(magpiePath))) throw new Error('Magpie 程序路径必须是 exe 文件的绝对路径');
   // 同步与自动路由默认开启：空清单不会生成 provider，首次同步目录后即可直接用；旧配置里显式保存的 false 不受影响。
   // 排序只有「按模型」和「手动」两种：没有手动排序标记时，全量同步一律按模型名称排好（旧的目录顺序标记直接忽略）。
-  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled !== false, autoRoute: value.autoRoute !== false, hideSmallContext: value.hideSmallContext !== false, smallContextLimit, hideNonVision: value.hideNonVision === true, closeOnExit: value.closeOnExit === true, autoStart: value.autoStart !== false, startMode: value.startMode ?? 'web', autoUpdate: value.autoUpdate !== false, dailyModels: value.dailyModels !== false, autoLightweight: value.autoLightweight !== false, manualOrder: value.manualOrder === true, sidebarEntry: value.sidebarEntry ?? 'auto', models, ...(magpiePath ? { magpiePath } : {}) };
+  return { enabled: value.enabled !== false, baseURL: gatewayURL(value.baseURL), api, syncEnabled: value.syncEnabled !== false, autoRoute: value.autoRoute !== false, contextWindowLimit, hideSmallContext: value.hideSmallContext !== false, smallContextLimit, hideNonVision: value.hideNonVision === true, closeOnExit: value.closeOnExit === true, autoStart: value.autoStart !== false, startMode: value.startMode ?? 'web', autoUpdate: value.autoUpdate !== false, dailyModels: value.dailyModels !== false, autoLightweight: value.autoLightweight !== false, manualOrder: value.manualOrder === true, sidebarEntry: value.sidebarEntry ?? 'auto', models, ...(magpiePath ? { magpiePath } : {}) };
 }
 
 export function revision(config) {

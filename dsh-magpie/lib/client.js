@@ -17,6 +17,10 @@ window.__ModuleLoader__.load({
       catalogAdded: '本次导入新增 {count} 个模型。', catalogUnchanged: '本次导入没有新模型。',
       sync: '同步到 DSH', syncHint: '勾选的模型按顺序写入 DSH 的“Magpie”分组；关闭即移除该分组。',
       autoRoute: '自动路由（同款模型合并）', autoRouteHint: '同款模型合并为 Auto 条目。优先分配其它运行中对话占用较少的渠道，同占用时按积分最近到期及失败顺序选择，每小时刷新到期优先级。一般失败后移，余额不足当天停用，可在「渠道」页恢复；主动取消不调整。北京时间每日 04:00 恢复停用。60 秒无有效输出会切换可重试出口。开关立即保存并同步。',
+      contextWindowLimit: '模型上下文上限', contextWindowLimitHint: '统一封顶模型的最大上下文窗口，并同步到 DSH 模型目录；小于上限或未知的模型保持原值（保留原始值，调高或取消后自动恢复）。改完立即保存并同步。',
+      contextLimitUnlimited: '不限制', contextLimit200K: '200K', contextLimit500K: '500K', contextLimit1M: '1M', contextLimitCustom: '自定义',
+      contextLimitCustomInput: '自定义上下文上限', contextLimitCustomPlaceholder: '如 300000 或 300K', contextLimitApply: '应用',
+      contextLimitInvalid: '请输入大于 0 的整数（如 300000 或 300K）', contextCappedTitle: '生效上限 {effective}（原始 {original}）',
       hideSmallContext: '屏蔽小上下文模型', hideSmallContextHint: '只影响本卡片列表显示，不改勾选、同步与自动路由；上下文未知的模型不屏蔽。选项即时保存。',
       contextFilterOff: '不屏蔽', contextFilter200K: '低于 200K', contextFilter500K: '低于 500K',
       hideNonVision: '屏蔽不支持图片的模型', hideNonVisionHint: '只显示支持图片输入的模型，可与上下文屏蔽叠加；只影响本卡片列表显示，不改勾选、同步与自动路由。开关即时保存。',
@@ -122,6 +126,10 @@ window.__ModuleLoader__.load({
       catalogAdded: 'This import added {count} models.', catalogUnchanged: 'No new models in this import.',
       sync: 'Sync to DSH', syncHint: 'Ticked models go into the DSH “Magpie” group in this order; turning this off removes the group.',
       autoRoute: 'Auto route (merge identical models)', autoRouteHint: 'Merges identical models into Auto entries. Prefer channels used by fewer other running conversations, then credit expiry and failure order. Refresh expiry priority hourly. General failures move a channel back; insufficient balance pauses it until 04:00 Beijing time or manual recovery in Channels. Client cancellation does not change routing. Retryable failures or 60 seconds without initial output try another route. Saves and syncs immediately.',
+      contextWindowLimit: 'Model context limit', contextWindowLimitHint: 'Caps model context windows and syncs the same limit to the DSH model catalog. Smaller or unknown values stay unchanged, and originals are preserved if raised or disabled. Saves and syncs immediately.',
+      contextLimitUnlimited: 'Unlimited', contextLimit200K: '200K', contextLimit500K: '500K', contextLimit1M: '1M', contextLimitCustom: 'Custom',
+      contextLimitCustomInput: 'Custom context limit', contextLimitCustomPlaceholder: 'e.g. 300000 or 300K', contextLimitApply: 'Apply',
+      contextLimitInvalid: 'Enter a positive integer (e.g. 300000 or 300K)', contextCappedTitle: 'Effective cap {effective} (original {original})',
       hideSmallContext: 'Hide small-context models', hideSmallContextHint: 'Only affects this card’s list; selections, sync and auto routing are unchanged. Models with unknown context stay visible. Saves immediately.',
       contextFilterOff: 'Show all', contextFilter200K: 'Under 200K', contextFilter500K: 'Under 500K',
       hideNonVision: 'Hide models without image input', hideNonVisionHint: 'Shows only models with image input and combines with the context filter. Only affects this card’s list; selections, sync and auto routing are unchanged. Saves immediately.',
@@ -332,6 +340,9 @@ window.__ModuleLoader__.load({
       .dsm-mp .panel{padding:16px 20px 20px;min-width:0}
       .dsm-mp .row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--mp-border-soft)}
       .dsm-mp .row:last-child{border-bottom:0}.dsm-mp label.row{cursor:pointer}
+      .dsm-mp .row.has-sub{border-bottom:0;padding-bottom:8px}
+      .dsm-mp .context-limit-custom{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 0 12px;border-bottom:1px solid var(--mp-border-soft)}
+      .dsm-mp .context-limit-custom input{width:180px;max-width:100%}
       .dsm-mp .row-text{display:flex;flex-direction:column;gap:2px;min-width:0}.dsm-mp .row-title{font-weight:500}.dsm-mp .row-hint{color:var(--mp-muted);font-size:12px}.dsm-mp .row-control{flex:none}
       .dsm-mp .search-results{margin-top:16px;overflow-wrap:anywhere}.dsm-mp .search-results h4{font-weight:600}
       .dsm-mp .search-results ol{padding-inline-start:24px;margin:8px 0 0;list-style:decimal}.dsm-mp .search-results li{padding:8px 0}
@@ -452,6 +463,26 @@ window.__ModuleLoader__.load({
       const next = [...rows];
       if (index >= 0 && index < next.length && target >= 0 && target < next.length) next.splice(target, 0, ...next.splice(index, 1));
       return next;
+    }
+    const CONTEXT_LIMIT_PRESETS = [0, 200_000, 500_000, 1_000_000];
+    // 接受正整数或带 K/M 后缀的简写（K 按千计，与屏蔽阈值及 DSH 一致）。
+    function parseContextLimit(raw) {
+      const text = String(raw ?? '').trim().replace(/[,\s_]+/g, '');
+      if (!text) return null;
+      const match = /^(\d+(?:\.\d+)?)([km])?$/i.exec(text);
+      if (!match) return null;
+      const unit = match[2]?.toLowerCase();
+      if (!unit && match[1].includes('.')) return null;
+      const factor = unit === 'm' ? 1_000_000 : unit === 'k' ? 1_000 : 1;
+      const value = Math.round(Number(match[1]) * factor);
+      return Number.isSafeInteger(value) && value >= 1 ? value : null;
+    }
+    // 封顶后若为用户自定义的非整百 K 档位（如 350K / 1.5M），徽标如实显示该封顶值，不按百 K 向下归档。
+    function formatCappedTokens(value) {
+      if (!value) return '';
+      if (value >= 1_000_000 && value % 100_000 === 0) return `${value / 1_000_000}M`;
+      if (value >= 1_000 && value % 1_000 === 0) return `${value / 1_000}K`;
+      return formatTokens(value);
     }
     // 百 K 以上按百 K 向下归档，9xxK 统一显示 1M；仅改徽标，不改保存、过滤或写入 DSH 的精确值。
     function formatTokens(value) {
@@ -993,6 +1024,8 @@ window.__ModuleLoader__.load({
       const [tavily, setTavily] = useState({ loading: false });
       const [tavilyRemoveRef, setTavilyRemoveRef] = useState(null);
       const tavilyRequest = useRef(0);
+      // 追加在现有 hook 之后，避免改动测试里按顺序索引的旧状态槽位。
+      const [customContextLimit, setCustomContextLimit] = useState(null);
       const refreshTavily = useCallback(async (fresh = false) => {
         const generation = ++tavilyRequest.current;
         setTavily((old) => ({ ...old, loading: true, error: null }));
@@ -1121,7 +1154,7 @@ window.__ModuleLoader__.load({
       const reload = () => perform(async () => {
         const value = withSavedModels(await request());
         sanitizeCategories(value.config.models, value.providerNames);
-        publishConfig(value.config); setView(value); setDirty(false); setKey(''); setExpanded(new Set());
+        publishConfig(value.config); setView(value); setDirty(false); setKey(''); setExpanded(new Set()); setCustomContextLimit(null);
       }, 'reload');
       const button = (text, click, extra = {}) => h('button', { type: 'button', disabled: busy, onClick: click, ...extra }, text);
       if (!view) return h('section', { className: 'dsm-mp', ref: showPanelFromTop }, h('header', { className: 'head' }, h('div', { className: 'title' }, h(MagpieGlyph, { size: 20 }), h('h3', null, t('title')))),
@@ -1198,6 +1231,7 @@ window.__ModuleLoader__.load({
         const result = await request({ action: 'patch', patch, revision: view.revision });
         publishConfig(result.config);
         setView((old) => ({ ...withSavedModels(result, old), config: { ...old.config, ...patch } }));
+        if (Object.hasOwn(patch, 'contextWindowLimit')) setCustomContextLimit(null);
         if (result.sync && !result.sync.ok) setNotice({ error: true, text: t('saveFailed', { reason: result.sync.reason }) });
       });
       const setKeepAwake = (keepAwake) => perform(async () => {
@@ -1324,16 +1358,16 @@ window.__ModuleLoader__.load({
       const selected = rows.filter((m) => m.enabled).length;
       const unsupported = backend?.supported === false;
       // 设置行：左侧标题与一句说明，右侧控件；开关整行可点。
-      const row = (title, hint, control, as = 'div') => h(as, { className: 'row' },
+      const row = (title, hint, control, as = 'div', className = 'row') => h(as, { className },
         h('span', { className: 'row-text' }, h('span', { className: 'row-title' }, title), hint ? h('span', { className: 'row-hint' }, hint) : null),
         h('span', { className: 'row-control' }, control));
       const toggle = (title, hint, checked, change, disabled) => row(title, hint,
         h('input', { type: 'checkbox', role: 'switch', className: 'switch', 'aria-label': title, checked, disabled, onChange: (e) => change(e.target.checked) }), 'label');
-      const choice = (title, hint, value, options, change, disabled) => row(title, hint,
+      const choice = (title, hint, value, options, change, disabled, className) => row(title, hint,
         h('div', { className: 'segmented', role: 'radiogroup', 'aria-label': title }, ...options.map(([option, label]) => h('button', {
           key: option, type: 'button', role: 'radio', 'aria-checked': value === option, className: value === option ? 'active' : '', disabled,
           onClick: () => value === option ? undefined : change(option),
-        }, label))));
+        }, label))), 'div', className);
       const addModel = () => { update({ models: [...rows, { id: '', name: '', enabled: true, input: ['text'], reasoningEfforts: [] }] }); setExpanded((old) => new Set([...old, rows.length])); };
       const checkConnection = () => perform(async () => { const result = await request({ action: 'check', baseURL: config.baseURL, apiKey: key || undefined }); setNotice({ text: t('connected', { version: result.version }) }); }, 'check');
       const pluginUpdate = updater.model.version?.phase === 'ready' && updater.model.version.updateAvailable;
@@ -1373,6 +1407,13 @@ window.__ModuleLoader__.load({
         onDrop: (event) => { if (!canDrop()) return; event.preventDefault(); dropAt(slotAt(event)); },
       }, ...visible.map(({ row: model, index }, position) => {
         const shift = shiftOf(position);
+        const rawContext = Number(model.contextWindow) > 0 ? Number(model.contextWindow) : 0;
+        const contextLimit = config.contextWindowLimit ?? 500_000;
+        const cappedContext = rawContext && contextLimit > 0 ? Math.min(rawContext, contextLimit) : rawContext;
+        const contextBadge = !rawContext ? null : h('span', {
+          className: 'badge',
+          title: cappedContext < rawContext ? t('contextCappedTitle', { effective: cappedContext, original: rawContext }) : String(rawContext),
+        }, cappedContext < rawContext ? formatCappedTokens(cappedContext) : formatTokens(rawContext));
         return h('div', {
           className: `model${expanded.has(index) ? ' expanded' : ''}${drag?.source === index ? ' dragging' : ''}`, key: keyOf(model),
           'data-key': keyOf(model), 'data-shift': shift || undefined, style: shift ? { transform: `translateY(${shift}px)` } : undefined,
@@ -1405,7 +1446,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'model-badges' },
             !model.input.includes('image') ? h('span', { className: 'badge' }, t('noVision')) : null,
             h('span', { className: 'badge provider-badge' }, modelCategory(model, 'provider', view.providerNames, categoryLabels).label),
-            model.contextWindow ? h('span', { className: 'badge', title: String(model.contextWindow) }, formatTokens(model.contextWindow)) : null),
+            contextBadge),
           h('div', { className: 'model-actions' }, button(t('remove'), () => remove(index), { className: 'danger' }))),
         h('div', { className: 'model-details', id: `dsm-mp-details-${index}`, hidden: !expanded.has(index) },
           h('div', { className: 'fields' }, field(t('id'), model.id, (id) => updateRow(index, { id }), { placeholder: 'provider/model-id', spellCheck: false }), field(t('modelName'), model.name, (name) => updateRow(index, { name }), { placeholder: t('nameHint') })),
@@ -1429,15 +1470,45 @@ window.__ModuleLoader__.load({
             button(t('channelRecover'), () => recoverChannel(channel), { 'aria-label': `${t('channelRecover')} ${channelName(channel)}`, 'aria-busy': modelBusy === `channel-recover:${channel.id}` }))),
         ],
         // 总开关与屏蔽选项单独一页：模型页只留清单与筛选，避免设置挤占列表空间。
-        switches: () => [
-          toggle(t('sync'), t('syncHint'), config.syncEnabled, (syncEnabled) => applyNow({ syncEnabled }), busy || !view.editable),
-          toggle(t('autoRoute'), t('autoRouteHint'), config.autoRoute, (autoRoute) => applyNow({ autoRoute }), busy || !view.editable),
-          choice(t('hideSmallContext'), t('hideSmallContextHint'), config.hideSmallContext ? config.smallContextLimit : 0,
-            [[0, t('contextFilterOff')], [200_000, t('contextFilter200K')], [500_000, t('contextFilter500K')]],
-            (limit) => applyNow({ hideSmallContext: limit !== 0, ...(limit ? { smallContextLimit: limit } : {}) }), busy || !view.editable),
-          toggle(t('hideNonVision'), t('hideNonVisionHint'), config.hideNonVision, (hideNonVision) => applyNow({ hideNonVision }), busy || !view.editable),
-          view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
-        ],
+        switches: () => {
+          const savedContextLimit = config.contextWindowLimit ?? 500_000;
+          const customContextOpen = customContextLimit !== null || !CONTEXT_LIMIT_PRESETS.includes(savedContextLimit);
+          const customContextText = customContextLimit ?? (savedContextLimit > 0 ? String(savedContextLimit) : '');
+          const parsedCustomLimit = parseContextLimit(customContextText);
+          const applyCustomContextLimit = () => {
+            if (busy || !view.editable || !parsedCustomLimit || parsedCustomLimit === savedContextLimit) return;
+            return applyNow({ contextWindowLimit: parsedCustomLimit });
+          };
+          const selectContextLimit = (option) => {
+            if (option === 'custom') { setCustomContextLimit(savedContextLimit > 0 ? String(savedContextLimit) : ''); return; }
+            if (option === savedContextLimit) { setCustomContextLimit(null); return; }
+            return applyNow({ contextWindowLimit: option });
+          };
+          return [
+            toggle(t('sync'), t('syncHint'), config.syncEnabled, (syncEnabled) => applyNow({ syncEnabled }), busy || !view.editable),
+            toggle(t('autoRoute'), t('autoRouteHint'), config.autoRoute, (autoRoute) => applyNow({ autoRoute }), busy || !view.editable),
+            choice(t('contextWindowLimit'), t('contextWindowLimitHint'), customContextOpen ? 'custom' : savedContextLimit,
+              [[0, t('contextLimitUnlimited')], [200_000, t('contextLimit200K')], [500_000, t('contextLimit500K')], [1_000_000, t('contextLimit1M')], ['custom', t('contextLimitCustom')]],
+              selectContextLimit, busy || !view.editable, customContextOpen ? 'row has-sub' : 'row'),
+            customContextOpen ? h('div', { className: 'context-limit-custom' },
+              h('input', {
+                type: 'text', inputMode: 'numeric', 'aria-label': t('contextLimitCustomInput'), placeholder: t('contextLimitCustomPlaceholder'),
+                value: customContextText, disabled: busy || !view.editable,
+                onChange: (e) => setCustomContextLimit(e.target.value),
+                onKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); applyCustomContextLimit(); } },
+              }),
+              button(t('contextLimitApply'), applyCustomContextLimit, {
+                className: 'primary', disabled: busy || !view.editable || !parsedCustomLimit || parsedCustomLimit === savedContextLimit,
+              }),
+              customContextText.trim() && !parsedCustomLimit ? h('span', { className: 'error' }, t('contextLimitInvalid'))
+                : parsedCustomLimit ? h('span', { className: 'muted' }, `${parsedCustomLimit.toLocaleString()} tokens`) : null) : null,
+            choice(t('hideSmallContext'), t('hideSmallContextHint'), config.hideSmallContext ? config.smallContextLimit : 0,
+              [[0, t('contextFilterOff')], [200_000, t('contextFilter200K')], [500_000, t('contextFilter500K')]],
+              (limit) => applyNow({ hideSmallContext: limit !== 0, ...(limit ? { smallContextLimit: limit } : {}) }), busy || !view.editable),
+            toggle(t('hideNonVision'), t('hideNonVisionHint'), config.hideNonVision, (hideNonVision) => applyNow({ hideNonVision }), busy || !view.editable),
+            view.nativeProviders.length ? h('p', { className: 'notice' }, t('native')) : null,
+          ];
+        },
         models: () => [
           h('div', { className: 'toolbar' },
             h('input', { className: 'search', type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: search, onChange: (e) => setSearch(e.target.value) }),

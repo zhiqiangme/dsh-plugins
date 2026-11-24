@@ -208,8 +208,8 @@ export class ModelManager {
     });
     this.config = config;
     if (patch.autoLightweight === true) this.backend.ensureLightweight?.();
-    // 同步开关决定 DSH 是否保留 Magpie 分组，改完立即按已保存清单重写。
-    const sync = keys.some((key) => ['syncEnabled', 'autoRoute'].includes(key)) ? await this.sync(config) : undefined;
+    // 同步开关、自动路由和上下文上限会直接影响写入 DSH 的模型目录，改完立即按已保存清单重写。
+    const sync = keys.some((key) => ['syncEnabled', 'autoRoute', 'contextWindowLimit'].includes(key)) ? await this.sync(config) : undefined;
     // describe 等待期间可能又有其它页面保存；只返回本次锁内写入的配置及版本给草稿续用。
     return { ...await this.describe(), config, revision: revision(config), saved: true, ...(sync ? { sync } : {}) };
   }

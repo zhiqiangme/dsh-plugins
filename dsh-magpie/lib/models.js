@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { gatewayURL, isLocal, KEY_REF, LOCAL_KEY, object, PROVIDER_ID, REASONING_LEVELS, normalizeModel } from './config.js';
+import { DEFAULT_CONTEXT_WINDOW_LIMIT, effectiveContextWindow, gatewayURL, isLocal, KEY_REF, LOCAL_KEY, object, PROVIDER_ID, REASONING_LEVELS, normalizeModel } from './config.js';
 import { dshModelName, normalizeDisplayName, withoutFreeLabel } from './names.js';
 import { AUTO_PREFIX, isPreviewModel, planAutoRoute, routeKey, ROUTER_BASE_PATH } from './auto-route.js';
 
@@ -55,9 +55,18 @@ export function catalogModels(payload) {
 
 export function modelEntries(config) {
   const models = config.autoRoute ? planAutoRoute(config).entries : config.models.filter((m) => m.enabled);
-  return models.map(({ enabled: _enabled, reasoningEfforts, ...m }) => ({
-    ...m, name: config.autoRoute ? withoutFreeLabel(normalizeDisplayName(m.name)) : dshModelName(m), ...(reasoningEfforts.length ? { reasoningEfforts: Object.fromEntries(reasoningEfforts.map((e) => [e, e])) } : {}),
-  }));
+  const limit = config.contextWindowLimit ?? DEFAULT_CONTEXT_WINDOW_LIMIT;
+  return models.map(({ enabled: _enabled, reasoningEfforts, contextWindow: rawContext, maxTokens, ...m }) => {
+    const contextWindow = effectiveContextWindow(rawContext, limit);
+    return {
+      ...m,
+      name: config.autoRoute ? withoutFreeLabel(normalizeDisplayName(m.name)) : dshModelName(m),
+      ...(contextWindow ? { contextWindow } : {}),
+      // 封顶后的上下文窗口可能不大于原最大输出；省略该项避免 llm-pi-ai 拒绝整个 provider。
+      ...(maxTokens && (!contextWindow || maxTokens < contextWindow) ? { maxTokens } : {}),
+      ...(reasoningEfforts.length ? { reasoningEfforts: Object.fromEntries(reasoningEfforts.map((e) => [e, e])) } : {}),
+    };
+  });
 }
 
 /** 引用形如 `{ provider, model }`，开关 auto 后把旧 ID 映射到同款新 ID；未改动时返回原对象。 */

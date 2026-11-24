@@ -254,7 +254,9 @@ test('全量同步覆盖目录并保留已有勾选，新出现的模型默认�
   assert.equal(result.config.models[1].enabled, true, '按 ID 保留当前草稿的勾选');
   assert.equal(result.config.syncEnabled, true);
   assert.deepEqual(host.own.options.config.models, result.config.models);
+  assert.equal(result.config.models[1].contextWindow, 1000000, '插件清单保留上游原始上下文');
   assert.deepEqual(host.llm.options.config.providers[PROVIDER_ID].models.map((m) => m.id), ['workbuddy-ai/b']);
+  assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].contextWindow, 500000, '同步到 DSH 时按默认 500K 上限封顶');
   assert.equal(host.llm.options.config.providers[PROVIDER_ID].models[0].name, 'B WorkBuddy GL');
   assert.deepEqual(host.llm.options.config.providers.magpie.models, [{ id: 'native' }]);
   assert.deepEqual(host.llm.options.config.providers.unrelated.models, [{ id: 'keep' }]);
@@ -439,6 +441,32 @@ test('列表屏蔽开关和阈值即时持久化，重建后保留且不重写 D
     assert.deepEqual((await reopened.describe()).config, current.config);
   }
   assert.equal(host.edits.length, edits + patches.length, '只写插件配置，不触发分组同步');
+});
+
+test('模型上下文上限即时保存并同步到 DSH 模型目录，调高或取消后自动恢复原始上下文', async () => {
+  const host = setup({ backend: { describe: async () => ({}), settings: () => ({ available: false }) } });
+  const before = await host.manager.describe();
+  const saved = await host.manager.handle({ action: 'save', revision: before.revision, config: {
+    syncEnabled: true, autoRoute: false, models: [
+      { id: 'a/big', name: 'Big', contextWindow: 1000000, maxTokens: 128000 },
+      { id: 'a/small', name: 'Small', contextWindow: 200000, maxTokens: 32000 },
+      { id: 'a/unknown', name: 'Unknown' },
+    ],
+  } });
+  const dshModels = () => host.llm.options.config.providers[PROVIDER_ID].models;
+  assert.equal(saved.config.contextWindowLimit, 500000);
+  assert.deepEqual(dshModels().map((m) => m.contextWindow), [500000, 200000, undefined]);
+  assert.equal(host.own.options.config.models[0].contextWindow, 1000000, '原始上限原样保留');
+
+  await assert.rejects(host.manager.handle({ action: 'patch', revision: saved.revision, patch: { contextWindowLimit: -1 } }), /模型上下文上限/);
+  const custom = await host.manager.handle({ action: 'patch', revision: saved.revision, patch: { contextWindowLimit: 100000 } });
+  assert.equal(custom.sync.ok, true);
+  assert.deepEqual(dshModels().map((m) => [m.contextWindow, m.maxTokens]), [[100000, undefined], [100000, 32000], [undefined, undefined]]);
+
+  const unlimited = await host.manager.handle({ action: 'patch', revision: custom.revision, patch: { contextWindowLimit: 0 } });
+  assert.equal(unlimited.sync.ok, true);
+  assert.deepEqual(dshModels().map((m) => [m.contextWindow, m.maxTokens]), [[1000000, 128000], [200000, 32000], [undefined, undefined]]);
+  assert.equal(host.own.options.config.models[0].contextWindow, 1000000);
 });
 
 test('webServer 已就绪时自动路由地址懒加载，无需面板先登记或手工注入', async () => {
