@@ -35,6 +35,48 @@ test('仅根退出或进程退出执行关闭；普通插件停用/重载解绑�
   }
 });
 
+test('Cordis 4.2+ 通过 Symbol.for("cordis.root") 或 fiber 父链识别根退出，不触发 ctx.root 未注入抛错', async () => {
+  const ROOT = Symbol.for('cordis.root');
+  for (const variant of ['symbol-root-exit', 'symbol-plugin-reload', 'parent-chain-root-exit', 'parent-chain-plugin-reload']) {
+    const host = fakeHost(), hostProcess = new EventEmitter(), closed = [];
+    const rootCtx = {};
+    const rootFiberObj = { state: variant.endsWith('root-exit') ? 5 : 2, parent: rootCtx };
+    rootCtx.fiber = rootFiberObj;
+    const pluginFiber = { state: 5, parent: rootCtx };
+    const proxied = new Proxy(host.ctx, {
+      get(target, prop, receiver) {
+        if (prop === 'root') throw new Error('cannot get property "root" without inject');
+        if (prop === ROOT) return variant.startsWith('symbol') ? rootCtx : undefined;
+        if (prop === 'fiber') return variant.startsWith('parent-chain') ? pluginFiber : undefined;
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const manager = { config: resolveConfig({ closeOnExit: true }), env: {} };
+    registerExitClose(proxied, manager, { hostProcess, close: (config) => { closed.push(config); return []; } });
+    await host.ctx.dispose();
+    hostProcess.emit('exit', 0);
+    assert.equal(closed.length, variant.endsWith('root-exit') ? 1 : 0, variant);
+    assert.equal(hostProcess.listenerCount('exit'), 0, variant);
+  }
+});
+
+test('根退出等待异步收尾期间若进程被强退，exit 兜底监听仍只触发一次关闭', async () => {
+  const host = fakeHost(), hostProcess = new EventEmitter(), closed = [];
+  host.ctx[Symbol.for('cordis.root')] = { fiber: { state: 5 } };
+  let release;
+  const hold = new Promise((resolve) => { release = resolve; });
+  const manager = { config: resolveConfig({ closeOnExit: true }), env: {}, pending: hold };
+  registerExitClose(host.ctx, manager, { hostProcess, close: (config) => { closed.push(config); return []; } });
+  const disposing = host.ctx.dispose();
+  // 模拟宿主超时强退，在 pending 完成前直接触发 process exit。
+  hostProcess.emit('exit', 0);
+  assert.equal(closed.length, 1);
+  release();
+  await disposing;
+  assert.equal(closed.length, 1);
+  assert.equal(hostProcess.listenerCount('exit'), 0);
+});
+
 test('升级收尾与根退出同时发生时，等待程序任务结束再关闭新启动的 Magpie', async (t) => {
   const host = fakeHost(), hostProcess = new EventEmitter(), calls = [];
   host.ctx.root = { fiber: { state: 5 } };

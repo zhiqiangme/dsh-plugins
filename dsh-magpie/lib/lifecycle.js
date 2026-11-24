@@ -115,6 +115,31 @@ export function closeMagpieSync(config, { env = process.env, platform = process.
   return JSON.parse(result.stdout.trim() || '[]');
 }
 
+const CORDIS_ROOT = Symbol.for('cordis.root');
+
+/**
+ * 兼容新旧 Cordis 获取根 Fiber：
+ * Cordis 4.2+ 将根上下文改为 `ctx[Symbol.for('cordis.root')]`，直接读 `ctx.root` 会在插件 Proxy 上抛错；
+ * 优先读该 Symbol，其次沿 `ctx.fiber.parent` 向上找到自指的根 Fiber，最后回退到旧版 `ctx.root`。
+ */
+function rootFiber(ctx) {
+  const symbolRoot = ctx?.[CORDIS_ROOT];
+  if (symbolRoot?.fiber) return symbolRoot.fiber;
+  try {
+    let fiber = ctx?.fiber;
+    const seen = new Set();
+    while (fiber && !seen.has(fiber)) {
+      seen.add(fiber);
+      const parent = fiber.parent?.fiber;
+      if (!parent) break;
+      if (parent === fiber) return fiber;
+      fiber = parent;
+    }
+  } catch { /* 兼容非标准宿主上下文。 */ }
+  try { return ctx?.root?.fiber; }
+  catch { return undefined; }
+}
+
 /** 普通插件停用/重载只解绑；根上下文关闭或进程正式退出才执行联动。 */
 export function registerExitClose(ctx, manager, { hostProcess = process, close = closeMagpieSync } = {}) {
   ctx.effect(() => {
@@ -129,14 +154,16 @@ export function registerExitClose(ctx, manager, { hostProcess = process, close =
     };
     hostProcess.once('exit', onExit);
     return async () => {
-      hostProcess.removeListener('exit', onExit);
-      // 当前 Cordis 在根 fiber.dispose() 时先进入 DISPOSING(5)，再卸载插件；插件自身重载时根仍为 ACTIVE(2)。
-      if (ctx.root?.fiber?.state === 5) {
+      // 当前 Cordis 在根 fiber.dispose() 时先进入 UNLOADING(5)，再卸载插件；插件自身重载时根仍为 ACTIVE(2)。
+      if (rootFiber(ctx)?.state === 5) {
         // 升级收尾可能还在异步启动 Magpie；先中止并等待程序任务，避免关闭后又启动一个新进程。
+        // 等待期间保留 exit 兜底监听：若宿主超时强退（process.exit），仍能在退出前同步关闭 Magpie。
         // 不依赖不同 effect 的释放顺序；普通插件重载仍只解绑，不触发关闭。
         try { await manager.backend?.dispose(); await manager.pending; }
-        finally { onExit(); }
+        finally { hostProcess.removeListener('exit', onExit); onExit(); }
+        return;
       }
+      hostProcess.removeListener('exit', onExit);
     };
   }, 'dsh-magpie: close on host exit');
 }
