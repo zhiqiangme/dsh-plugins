@@ -134,7 +134,8 @@ test('命令使用静态脚本和环境参数，保留完整路径，不对远�
   } });
   assert.deepEqual(result, [{ pid: 123 }]);
   assert.match(script, /Stop-Process -InputObject/);
-  assert.match(script, /GetFullPath\(\$current.Path\)/);
+  assert.match(script, /\$currentPath\s*=.*\$current\.Path/);
+  assert.match(script, /GetFullPath\(\$currentPath\)/);
   assert.throws(() => closeMagpieSync(config, { platform: 'win32', run: () => ({ error: new Error('timeout') }) }), /timeout/);
 });
 

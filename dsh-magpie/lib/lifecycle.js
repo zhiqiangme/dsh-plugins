@@ -91,8 +91,9 @@ foreach ($candidate in @($magpieCandidates | Sort-Object ProcessId -Unique)) {
 }
 foreach ($candidate in @($targets | Sort-Object ProcessId -Unique)) {
   $current = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
-  # 再核对 PID 当前的完整路径；没有读到路径时不按名称盲目结束。
-  if (!$current -or !$current.Path -or [IO.Path]::GetFullPath($current.Path) -ne [IO.Path]::GetFullPath($candidate.ExecutablePath)) { continue }
+  # 再核对 PID 当前的完整路径；只读一次 Path，避免进程退出瞬间二次读取变空导致 GetFullPath 抛错。
+  $currentPath = if ($current) { try { $current.Path } catch { $null } } else { $null }
+  if ([string]::IsNullOrWhiteSpace($currentPath) -or [IO.Path]::GetFullPath($currentPath) -ne [IO.Path]::GetFullPath($candidate.ExecutablePath)) { continue }
   try { Stop-Process -InputObject $current -ErrorAction Stop }
   catch { if (Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue) { throw }; continue }
   $closed += @{ pid = $candidate.ProcessId; path = $candidate.ExecutablePath }
