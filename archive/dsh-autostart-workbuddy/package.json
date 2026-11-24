@@ -10,11 +10,11 @@
     "wb2api"
   ],
   "author": "zhiqiangme",
-  "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/dsh-autostart-workbuddy#readme",
+  "homepage": "https://github.com/zhiqiangme/dsh-plugins/tree/main/archive/dsh-autostart-workbuddy#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zhiqiangme/dsh-plugins.git",
-    "directory": "dsh-autostart-workbuddy"
+    "directory": "archive/dsh-autostart-workbuddy"
   },
   "bugs": {
     "url": "https://github.com/zhiqiangme/dsh-plugins/issues"

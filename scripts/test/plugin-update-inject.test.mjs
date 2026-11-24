@@ -1,5 +1,5 @@
 /**
- * 四个插件的官方更新都靠动态 inject 读 remote.pluginManager。各插件自己的测试用假 remote，
+ * 维护中的插件官方更新都靠动态 inject 读 remote.pluginManager。各插件自己的测试用假 remote，
  * 测不出 cordis「不许读未声明服务」的限制，这里用真实 cordis 和宿主相同的服务结构跑一遍。
  * cordis 来自 dsh-presets-zh 的测试依赖，CI 在运行本目录之前已经安装。
  */
@@ -13,7 +13,6 @@ const PLUGINS = [
   ['dsh-presets-zh', '@zhiqiangme/dsh-presets-zh'],
   ['dsh-tavily-search', '@zhiqiangme/dsh-tavily-search'],
   ['dsh-magpie', '@zhiqiangme/dsh-magpie'],
-  ['dsh-autostart-workbuddy', '@zhiqiangme/dsh-autostart-workbuddy'],
 ];
 const INSTALLED = '26.1.1';
 const LATEST = '26.1.2';

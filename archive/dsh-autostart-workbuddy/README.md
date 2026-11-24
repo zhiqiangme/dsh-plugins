@@ -107,7 +107,7 @@ HUB 配了多把 Key 之后，启动参数里的旧 Key 可能不再有效。这
   - 当前出口在白名单里一条都没有时按「全部模型」处理（与"白名单留空 = 全部"同一语义）：第一次切到一个从没勾过的出口，DSH 换成它的全部模型，再到卡片里删减即可。
 - **跟随出口切换**：在 hub 看板顶部切换国内 / 国际 / CodeArts 后，插件约 5 秒内发现（每 5 秒探一次 hub 的 `/health`，它报当前出口，hub 不给这条请求记日志），立即按新出口的那组勾选重写 DSH 的模型列表，不用回卡片点「刷新」「保存」。这一轮跳过"移除要连续两轮确认"——模型变少是切出口的结果，不是上游抖动。与定时同步同一个开关：`models.enabled` 关着或 `resyncIntervalMs: 0` 时不跟。已经打开的卡片每 5 秒刷新后端状态，出口或同步状态改变时自动回读模型；保留未保存的勾选、开关和规则，页面隐藏时暂停。
 - hub 账号池里还没有可用账号时，它的 `/v1/models` 仍会返回内置目录，卡片按 `/health` 的 `accounts_ready` 判断（出口是 CodeArts 时看 `codearts.healthy`），为 0 就不列模型，提示先去看板登录。
-- **Clash 全局模式**：插件启动 hub 时传 `WB_CN_CHAT_UPSTREAM`（取 `cnChatBase`，默认 `https://www.workbuddy.cn`），M-strange v2.2.0 已支持，避免国内版固定走 `copilot.tencent.com` 时在部分海外出口下的 TLS 失败。显式设置 `cnChatBase: ''` 可使用 Hub 自身默认地址。背景见 [docs/hub-cn-base.md](https://github.com/zhiqiangme/dsh-plugins/blob/main/dsh-autostart-workbuddy/docs/hub-cn-base.md)。
+- **Clash 全局模式**：插件启动 hub 时传 `WB_CN_CHAT_UPSTREAM`（取 `cnChatBase`，默认 `https://www.workbuddy.cn`），M-strange v2.2.0 已支持，避免国内版固定走 `copilot.tencent.com` 时在部分海外出口下的 TLS 失败。显式设置 `cnChatBase: ''` 可使用 Hub 自身默认地址。背景见 [docs/hub-cn-base.md](https://github.com/zhiqiangme/dsh-plugins/blob/main/archive/dsh-autostart-workbuddy/docs/hub-cn-base.md)。
 - **命令行**：`lib/backend-cli.js` 只管 wb2api；hub 的安装、更新与回滚在卡片里操作。
 
 ## 接管模型列表
@@ -252,14 +252,18 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-autostart-workbuddy
 装到 Web / CLI 就把 `desktop` 换成 `web` / `headless`。更新要带 `--latest`：版本号按日期编排（`26.10.11`），
 跨年时主版本号会变。更多说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从-npm-安装推荐)。
 
-从源码安装：克隆[仓库](https://github.com/zhiqiangme/dsh-plugins)后双击根目录的 `install-plugins.cmd`，
-按提示选择插件和 profile（说明见[仓库 README](https://github.com/zhiqiangme/dsh-plugins#从源码安装)），完成后重启 DSH 生效。
+从源码安装：本目录自带安装脚本，只处理本插件。双击本目录的 `install-plugins.cmd`，或在本目录运行，完成后重启 DSH 生效：
+
+```powershell
+.\install-plugins.cmd --action install --profiles desktop --yes
+```
+
 改了本插件的源码后再运行一次同样的"安装 / 更新"即可换上新代码。
 
 手动安装等价于（先完全退出桌面版）：
 
 ```powershell
-dsh plugin --profile desktop add "file:<仓库路径>\dsh-autostart-workbuddy"
+dsh plugin --profile desktop add "file:<仓库路径>\archive\dsh-autostart-workbuddy"
 ```
 
 ⚠️ `file:` 依赖在 profile 里是**拷贝**，不是软链：改了本插件的源码后再 `add`（包括 `--force`）pnpm 都认为"已是最新"，

@@ -34,7 +34,6 @@ const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
  *   一并移除——旧名和新名会各自插入同一个行 id，并存会冲突；不是本地来源的同名包可能是别人发布的，不碰。
  */
 const CATALOG = [
-  { folder: 'dsh-autostart-workbuddy', alias: 'workbuddy', title: 'WorkBuddy 自动启动 + 模型同步', legacy: ['dsh-autostart-workbuddy'] },
   { folder: 'dsh-tavily-search', alias: 'tavily-search', title: 'Tavily 网页搜索', legacy: ['dsh-tavily-search', 'dsh-autostart-websearch'] },
   { folder: 'dsh-magpie', alias: 'magpie', title: 'Magpie 模型管理', legacy: [] },
   { folder: 'dsh-presets-zh', alias: 'presets-zh', title: '中文预设', legacy: [] },
@@ -538,7 +537,7 @@ function resolveProfiles(value) {
   return result;
 }
 
-const HELP = `用法：install-plugins.cmd [--action install|uninstall|status] [--plugins all|workbuddy|tavily-search|magpie|presets-zh]
+const HELP = `用法：install-plugins.cmd [--action install|uninstall|status] [--plugins all|tavily-search|magpie|presets-zh]
                            [--profiles desktop|web|cli|all|<其它 profile 名>] [--yes]
 不带参数时逐项询问；--plugins / --profiles 可用逗号分隔多个值。
 停止维护的插件不在这里，用它们目录内的 install-plugins.cmd。`;

@@ -4,7 +4,6 @@
 
 | 插件 | npm 包 | 作用 |
 | --- | --- | --- |
-| [dsh-autostart-workbuddy](dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | **停止维护**（最后版本 `26.11.24`），请改用 `@zhiqiangme/dsh-magpie`；DSH 启动时拉起 WorkBuddy2API Panel / Hub 并管理模型列表 |
 | [dsh-magpie](dsh-magpie/) | `@zhiqiangme/dsh-magpie` | 管理 Magpie 模型清单：编辑排序、全量覆盖同步；支持下载和升级 Magpie 程序 |
 | [dsh-presets-zh](dsh-presets-zh/) | `@zhiqiangme/dsh-presets-zh` | 中文标准、中文 PTC、中文极简与中文创造，可分别设置 |
 | [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 在 DSH「网页搜索与获取」中选择 Tavily，或在插件卡片里一键接入。兼容旧版 DSH 的搜索接口 |
@@ -16,7 +15,6 @@
 先**完全退出** DSH 桌面版（托盘图标里也要退出），然后在终端运行（`dsh` 命令随 DSH 桌面版一起安装）：
 
 ```powershell
-dsh plugin --profile desktop add @zhiqiangme/dsh-autostart-workbuddy
 dsh plugin --profile desktop add @zhiqiangme/dsh-magpie
 dsh plugin --profile desktop add @zhiqiangme/dsh-presets-zh
 dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search
@@ -30,7 +28,7 @@ dsh plugin --profile desktop add @zhiqiangme/dsh-tavily-search
 更新与卸载：
 
 ```powershell
-dsh plugin --profile desktop update --latest @zhiqiangme/dsh-autostart-workbuddy @zhiqiangme/dsh-magpie @zhiqiangme/dsh-presets-zh @zhiqiangme/dsh-tavily-search
+dsh plugin --profile desktop update --latest @zhiqiangme/dsh-magpie @zhiqiangme/dsh-presets-zh @zhiqiangme/dsh-tavily-search
 dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 ```
 
@@ -47,7 +45,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 双击仓库根目录的 `install-plugins.cmd`（Windows），按提示选（直接回车都是默认项）：
 
 1. 操作：**安装 / 更新**（默认）、卸载、查看安装状态
-2. 插件：**全部**（默认，即维护中的 WorkBuddy、Tavily Search、Magpie、中文预设）、或单独选择；OpenCode API 与 Minimal Prompt 已归档，不在这里，见[已归档的插件](#已归档的插件)
+2. 插件：**全部**（默认，即维护中的 Tavily Search、Magpie、中文预设）、或单独选择；WorkBuddy、OpenCode API 与 Minimal Prompt 已归档，不在这里，见[已归档的插件](#已归档的插件)
 3. 装到哪个 DSH：**Desktop**（默认）、Web（`dsh web`）、CLI（`dsh headless`）、全部三个
 
 完成后重启对应的 DSH 生效。双击交互安装到 Desktop 时，最后一步会询问「按回车启动 DSH 桌面版」：回车即启动（桌面版还在运行时会先要求完全退出，否则只会唤醒旧实例），输入其它内容跳过；启动后安装窗口自动关闭。带参数的脚本化调用不询问。也可以在终端里带参数一行跑完（参数都可省略，省略的会询问）：
@@ -74,8 +72,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
   每个 profile 分别保留自己的状态；迁移旧包名时也会沿用原状态。
 - 改 desktop profile 前要**完全退出桌面版**（DSH 自己的要求）；脚本检测到对应 profile 的 DSH 进程在跑会停下等你关掉，
   也可以跳过这个 profile。desktop profile 需要先打开过一次桌面版才存在；web / CLI 的 profile 第一次安装时自动创建。
-- 卸载不删 `cordis.patch.yml` 里的配置，也不删各插件自管的后端数据（如 `~/.dsh/autostart-workbuddy`）。
-  workbuddy 的卡片有「清除后端数据」按钮，卸载前点一下即可删掉它的数据目录；
+- 卸载不删 `cordis.patch.yml` 里的配置，也不删各插件自管的数据。
   tavily-search 的卡片有「清除插件数据」，删掉保存的 API Key 并把网页搜索接口恢复默认。
 - Magpie 可在卡片下载、升级 Windows 程序，默认独立目录并支持指定已有 exe，升级时自动退出正在运行的 Magpie，下载或升级完成后自动启动；DSH 启动时若本机没有 Magpie 在运行，在后台（托盘）打开它（可在卡片关闭），需要界面时点「打开 Magpie 界面」。可自动开启 Magpie 轻量模式、在卡片切换防止休眠；开关和下拉改完即生效，连接设置和模型清单点击「保存并同步」。可离线手工编辑；点击「从 Magpie 同步」会全量覆盖当前清单，移除上游已关闭或删除的条目，并立即保存、更新 DSH。模型写入 DSH 的 **Magpie** 分组（provider ID `dsh-magpie`）。下载中断会自动续传，再次点击也从已下载部分继续。卸载前需要移除该分组时，先在卡片关闭同步。侧边栏左上角会显示 **Magpie** 入口，默认在保存了至少一个模型后隐藏，可在卡片「偏好」页改为显示或隐藏。
 - Magpie 是新增包，npm 首次发布前请使用上述源码安装命令。
@@ -86,6 +83,7 @@ dsh plugin --profile desktop remove @zhiqiangme/dsh-tavily-search
 
 | 插件 | npm 包 | 替代 |
 | --- | --- | --- |
+| [dsh-autostart-workbuddy](archive/dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | `@zhiqiangme/dsh-magpie` |
 | [dsh-opencode2api](archive/dsh-opencode2api/) | `@zhiqiangme/dsh-opencode2api` | `@zhiqiangme/dsh-magpie` |
 | [dsh-preset-minimal-prompt](archive/dsh-preset-minimal-prompt/) | `@zhiqiangme/dsh-preset-minimal-prompt` | `@zhiqiangme/dsh-presets-zh` |
 
@@ -112,20 +110,18 @@ git tag 带插件前缀，例如 `workbuddy-v26.10.11`、`tavily-search-v26.10.1
 4. 核对 npm 包完整性后创建对应的正式 GitHub Release，记录提交、变更及安装 / 更新命令。
 
 普通代码或文档提交不发布；添加本工作流也不会自动补发现有的 `26.10.16`。
-PR 和 `main` 都会执行 [ci.yml](.github/workflows/ci.yml)：Node 22 / 24，Windows 测全部维护中的插件，
-Linux 测 Tavily Search、Magpie 和中文预设，两种系统均测试仓库脚本。测试使用内置 runner 和宿主替身，不需要安装依赖、
-DSH 桌面版或真实后端。
+PR 和 `main` 都会执行 [ci.yml](.github/workflows/ci.yml)：Node 22 / 24，Windows 和 Linux 均测全部维护中的插件
+（Tavily Search、Magpie、中文预设）与仓库脚本。测试使用内置 runner 和宿主替身，不需要安装 DSH 桌面版或真实后端。
 
 ### 首次启用
 
 先把工作流推送到 GitHub，再到以下维护中的 npm 包的 **Settings → Trusted publishing** 分别添加 GitHub Actions（新包需先完成 npm 包初始化）：
 
-- `@zhiqiangme/dsh-autostart-workbuddy`
 - `@zhiqiangme/dsh-magpie`
 - `@zhiqiangme/dsh-presets-zh`
 - `@zhiqiangme/dsh-tavily-search`
 
-四个包填写相同信息：用户 `zhiqiangme`，仓库 `dsh-plugins`，工作流文件名 **`release.yml`**
+三个包填写相同信息：用户 `zhiqiangme`，仓库 `dsh-plugins`，工作流文件名 **`release.yml`**
 （只填文件名），允许直接执行 **`npm publish`**。本工作流未使用 GitHub Environment，环境名称留空。
 只授权 `npm stage publish` 会要求人工批准，不能完成这里的全自动发布。
 
@@ -161,12 +157,12 @@ CI 使用 GitHub 托管 runner、Node 24、npm ≥11.5.1，以及 `id-token: wri
 各插件共用一个仓库，提交信息带范围前缀，`git log --oneline` 里一眼分得清是哪个插件在动：
 
 ```
-新增(workbuddy)：插件页的模型勾选面板
+新增(magpie)：插件页的模型管理面板
 修复(tavily-search)：…
 文档(repo)：…
 ```
 
-- **范围 = 改动涉及的插件**：`workbuddy` / `magpie` / `tavily-search`（旧 OpenCode 源码保留，停止维护）
+- **范围 = 改动涉及的插件**：`magpie` / `presets-zh` / `tavily-search`（已归档插件源码保留，停止维护）
 - 只涉及仓库级文件（根 `README.md`、`install-plugins.cmd`、`scripts/`），或**同时**涉及多个插件时，用 `repo`
 - 格式为 `类型(范围)：描述`，类型用 `新增 / 修复 / 文档 / 移除 / 调整 / 改进 / 测试`
 

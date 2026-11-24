@@ -46,8 +46,3 @@ jobs:
       - name: Test Chinese Presets
         working-directory: dsh-presets-zh
         run: node --test test/*.test.mjs
-      # WorkBuddy 的路径和进程测试遵循 Windows 契约。
-      - name: Test WorkBuddy
-        if: runner.os == 'Windows'
-        working-directory: dsh-autostart-workbuddy
-        run: node --test test/*.test.mjs

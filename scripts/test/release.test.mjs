@@ -55,14 +55,14 @@ test('版本比较：日期按数字排序，支持跨月跨年，拒绝非法�
 
 test('push 计划：扫描整个 push 范围，独立选择版本有变更的包', (t) => {
   const repo = repository(t);
-  repo.setVersion('workbuddy', '26.10.16');
-  repo.commit('调整(workbuddy)：发布版本');
+  repo.setVersion('magpie', '26.10.16');
+  repo.commit('调整(magpie)：发布版本');
   repo.setVersion('tavily-search', '26.10.16');
   repo.commit('调整(tavily-search)：发布版本');
   writeFileSync(join(repo.cwd, 'README.md'), '文档改动');
   const sha = repo.commit('文档(repo)：补充说明');
   assert.deepEqual(planReleases({ cwd: repo.cwd, before: repo.before }), {
-    sha, releases: [{ plugin: 'workbuddy', version: '26.10.16' }, { plugin: 'tavily-search', version: '26.10.16' }],
+    sha, releases: [{ plugin: 'tavily-search', version: '26.10.16' }, { plugin: 'magpie', version: '26.10.16' }],
   });
 });
 
@@ -84,7 +84,7 @@ test('push 计划：新增 Magpie 包在基线中不存在时只计划新包，�
 
 test('push 计划：拒绝版本倒退和没有差异基线的首次 push', (t) => {
   const repo = repository(t);
-  repo.setVersion('workbuddy', '26.10.14');
+  repo.setVersion('magpie', '26.10.14');
   repo.commit();
   assert.throws(() => planReleases({ cwd: repo.cwd, before: repo.before }), /不能倒退/);
   assert.throws(() => planReleases({ cwd: repo.cwd, before: '0'.repeat(40) }), /push.before/);
@@ -92,24 +92,24 @@ test('push 计划：拒绝版本倒退和没有差异基线的首次 push', (t) 
 
 test('手动补发：指定原始 SHA，后续 main 版本不会混入发布', (t) => {
   const repo = repository(t);
-  repo.setVersion('workbuddy', '26.10.16');
+  repo.setVersion('magpie', '26.10.16');
   const original = repo.commit();
-  repo.setVersion('workbuddy', '26.10.17');
+  repo.setVersion('magpie', '26.10.17');
   repo.commit();
-  assert.deepEqual(planReleases({ cwd: repo.cwd, manual: true, plugin: 'workbuddy', sha: original }), {
-    sha: original, releases: [{ plugin: 'workbuddy', version: '26.10.16' }],
+  assert.deepEqual(planReleases({ cwd: repo.cwd, manual: true, plugin: 'magpie', sha: original }), {
+    sha: original, releases: [{ plugin: 'magpie', version: '26.10.16' }],
   });
   assert.throws(() => planReleases({ cwd: repo.cwd, manual: true, plugin: 'unknown', sha: original }), /未知插件/);
-  assert.throws(() => planReleases({ cwd: repo.cwd, manual: true, plugin: 'workbuddy', sha: 'main' }), /40 位 SHA/);
+  assert.throws(() => planReleases({ cwd: repo.cwd, manual: true, plugin: 'magpie', sha: 'main' }), /40 位 SHA/);
 });
 
 test('手动补发：拒绝 main 之外的提交', (t) => {
   const repo = repository(t);
   git(repo.cwd, 'checkout', '-qb', 'other');
-  repo.setVersion('workbuddy', '26.10.16');
+  repo.setVersion('magpie', '26.10.16');
   const unrelated = repo.commit();
   git(repo.cwd, 'checkout', '-q', 'main');
-  assert.throws(() => planReleases({ cwd: repo.cwd, manual: true, plugin: 'workbuddy', sha: unrelated }), /merge-base 失败/);
+  assert.throws(() => planReleases({ cwd: repo.cwd, manual: true, plugin: 'magpie', sha: unrelated }), /merge-base 失败/);
 });
 
 test('发布清单：检查入口、图标、补丁、LICENSE，并拒绝测试、凭据和二进制', () => {
@@ -244,16 +244,16 @@ function publishing(t, { existing = false, later = false } = {}) {
     publish: async () => { calls.push('npm'); state.metadata.versions['26.10.15'] = { dist: { integrity: 'sha512-same' } }; },
     log: () => {},
   };
-  return { repo, state, calls, adapters, options: { cwd: repo.cwd, plugin: 'workbuddy', sha } };
+  return { repo, state, calls, adapters, options: { cwd: repo.cwd, plugin: 'magpie', sha } };
 }
 
 test('发布顺序：先锁定 tag，再发 npm，核对成功后创建 Release', async (t) => {
   const context = publishing(t);
   const result = await publishRelease(context.options, context.adapters);
-  assert.equal(result.tag, 'workbuddy-v26.10.15');
+  assert.equal(result.tag, 'magpie-v26.10.15');
   assert.equal(result.alreadyPublished, false);
   assert.deepEqual(context.calls, ['pack', 'tag', 'npm', 'release', 'cleanup']);
-  assert.match(context.state.release.body, /dsh plugin --profile desktop add @zhiqiangme\/dsh-autostart-workbuddy@26\.10\.15/);
+  assert.match(context.state.release.body, /dsh plugin --profile desktop add @zhiqiangme\/dsh-magpie@26\.10\.15/);
   assert.equal(context.state.release.draft, false);
   assert.equal(context.state.release.make_latest, 'true');
   assert.equal(result.draft, false);
