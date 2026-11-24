@@ -330,6 +330,7 @@ test('文案字典：zh/en 的每个值都必须是字符串，且两个 locale 
     'hubRealm',
     // 页签、头部状态与概览数字
     'tabModels', 'tabRegion', 'tabBackend', 'tabPlugin',
+    'retiredTitle', 'retiredBody', 'retiredUninstall',
     'statusRunning', 'statusChecking', 'statusNotInstalled', 'statusRecovering', 'statusPaused', 'statusNoAccounts', 'statusUnavailable',
     'statAccounts', 'statBalance', 'statBalanceSub', 'statModels', 'statModelsAll', 'statModelsTotal',
     'rulesTitle', 'ruleSort', 'unsaved', 'runtimeTitle', 'dangerTitle', 'diagnoseClose', 'backendLoading',
@@ -2015,4 +2016,18 @@ test('插件更新 UI：卸载被拒时说明原因与补回失败，并展开�
   assert.match(collectText(pinnedOf(refused)).join(' '), /先关闭「WorkBuddy 连接启动」组件/);
   const lost = view({ operation: { ...operation, reselectFailure: 'lock-timeout' } });
   assert.match(text(lost), /自动补回失败：lock-timeout/);
+});
+
+test('停止维护声明：卡片顶部与 summary 视图均提示改用 Magpie 插件', () => {
+  const app = boot(['ready', ROWS, { enabled: true, savedEnabled: true, only: ['cn:alpha'] }, '', new Set(['cn:alpha']), new Set(['cn:alpha']), false, undefined]);
+  const tree = app.renderCard();
+  const banner = tree.children[0];
+  assert.equal(banner.props.className, 'dsm-wb-retired');
+  const content = collectText(banner).join('\n');
+  assert.match(content, /已停止维护/);
+  assert.match(content, /@zhiqiangme\/dsh-magpie/);
+  assert.match(content, /彻底卸载/);
+  const summary = collectText(app.cards[0].component({ t: app.t, view: 'summary' })).join(' ');
+  assert.match(summary, /已停止维护/);
+  assert.match(summary, /@zhiqiangme\/dsh-magpie/);
 });

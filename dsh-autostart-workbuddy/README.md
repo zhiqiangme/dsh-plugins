@@ -1,5 +1,16 @@
 # @zhiqiangme/dsh-autostart-workbuddy
 
+> [!WARNING]
+> **本插件已停止维护。** 26.11.24 是最后一个版本，之后不再修复问题，也不再跟进 WorkBuddy 网关上游与 DSH 的变化；已安装的版本可以继续使用，但随时可能因上游或 DSH 升级失效。
+>
+> 请改用 [`@zhiqiangme/dsh-magpie`](https://www.npmjs.com/package/@zhiqiangme/dsh-magpie)（Magpie 插件），在 DSH「插件」页管理 Magpie 提供的模型：
+>
+> ```powershell
+> dsh plugin --profile desktop add @zhiqiangme/dsh-magpie
+> ```
+>
+> Magpie 插件不迁移、也不卸载本插件，两者可以同时启用。切换后不再需要本插件时，先在本插件卡片「后端」页签点击「彻底卸载」清除后端程序与数据，再到「插件」页卸载本插件。
+
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件：DSH 启动时自动拉起
 **WorkBuddy2API Panel**（[misakano7545/workbuddy2api-panel](https://github.com/misakano7545/workbuddy2api-panel)），
 不用再手动启动它；还可以接管 DSH 里 workbuddy 的模型列表、在插件页管理后端版本。

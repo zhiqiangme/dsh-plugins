@@ -4,7 +4,7 @@
 
 | 插件 | npm 包 | 作用 |
 | --- | --- | --- |
-| [dsh-autostart-workbuddy](dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | DSH 启动时默认拉起 WorkBuddy2API Panel（misakano7545，127.0.0.1:7863），可切换 Hub，可选接管 profile 里的 workbuddy 模型列表 |
+| [dsh-autostart-workbuddy](dsh-autostart-workbuddy/) | `@zhiqiangme/dsh-autostart-workbuddy` | **停止维护**（最后版本 `26.11.24`），请改用 `@zhiqiangme/dsh-magpie`；DSH 启动时拉起 WorkBuddy2API Panel / Hub 并管理模型列表 |
 | [dsh-magpie](dsh-magpie/) | `@zhiqiangme/dsh-magpie` | 管理 Magpie 模型清单：编辑排序、全量覆盖同步；支持下载和升级 Magpie 程序 |
 | [dsh-presets-zh](dsh-presets-zh/) | `@zhiqiangme/dsh-presets-zh` | 中文标准、中文 PTC、中文极简与中文创造，可分别设置 |
 | [dsh-tavily-search](dsh-tavily-search/) | `@zhiqiangme/dsh-tavily-search` | 在 DSH「网页搜索与获取」中选择 Tavily，或在插件卡片里一键接入。兼容旧版 DSH 的搜索接口 |

@@ -1,3 +1,5 @@
+> **本插件已停止维护**（最后一个版本 `26.11.24`），不再跟进上游与 DSH 变更。请改用 Magpie 插件 `@zhiqiangme/dsh-magpie`；不再需要本插件时，先在「后端」页签点击「彻底卸载」清除后端数据，再到「插件」页卸载。
+
 启动 WorkBuddy 网关，把选中的模型同步到 DSH。
 
 - 在「后端」选择 wb2api（默认，misakano7545 分支）或 WorkBuddy2API Hub，并安装或更新网关。

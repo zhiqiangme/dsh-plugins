@@ -128,6 +128,10 @@ window.__ModuleLoader__.load({
 .dsm-wb{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-2,#2c2c2e);border-radius:14px;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:1.5}
 .dsm-wb *,.dsm-wb *::before{box-sizing:border-box}
 .dsm-wb p{margin:0}
+/* 停止维护提示：已安装用户多半不看 README，打开卡片时第一眼要看到迁移入口。 */
+.dsm-wb-retired{display:flex;flex-direction:column;gap:4px;margin:14px 18px 0;padding:12px 14px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 45%,transparent);border-radius:10px;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 10%,transparent);color:var(--dsw-alias-label-primary,#e6e6e6);font-size:12px;line-height:1.6}
+.dsm-wb-retired strong{font-size:13px;font-weight:600}
+.dsm-wb-retired-pkg{align-self:flex-start;padding:1px 6px;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:6px;background:var(--dsw-alias-bg-layer-1,#232324);font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);user-select:all}
 /* 头部：网关名 + 运行状态 + 面板入口；右侧是诊断这类不属于某个页签的动作。 */
 .dsm-wb-head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px 16px;padding:16px 18px 14px}
 .dsm-wb-head-main{display:flex;flex-direction:column;gap:6px;flex:1 1 320px;min-width:0}
@@ -349,7 +353,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
     // React 拿它当 child 直接抛错，整块卡片从页面上消失——这个坑已经踩过一次。
     const zh = {
       title: 'WorkBuddy',
-      summary: '由插件接管 WorkBuddy 的模型列表（勾选 + 倍率）。',
+      summary: '已停止维护，请改用 Magpie 插件（@zhiqiangme/dsh-magpie）。',
       loading: '正在读取后端模型…',
       modelsNotInstalled: '后端还没有安装。点「安装」，装好后会自动打开同步并刷新模型列表。',
       modelsNoAccounts: 'hub 里还没有可用账号（共 {total} 个，可用 0），模型暂时用不了，所以这里不列出来。请打开上方后端面板登录或导入 WorkBuddy 账号，再点「重试」。',
@@ -518,6 +522,9 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       updateInstalling: '正在安装新版本…',
       updateRestoring: '正在恢复旧版本…',
       tabModels: '模型', tabRegion: '区域与 Key', tabBackend: '后端', tabPlugin: '插件更新',
+      retiredTitle: '本插件已停止维护',
+      retiredBody: '26.11.24 是最后一个版本，之后不再修复问题，也不再跟进上游或 DSH 变更。请在「添加插件」中改用 Magpie 插件（两者可同时启用）：',
+      retiredUninstall: '切换后不再需要本插件时，先在「后端」页签点击「彻底卸载」清除后端数据，再到「插件」页卸载本插件。',
       statusRunning: '运行中', statusChecking: '检查中', statusNotInstalled: '未安装', statusRecovering: '正在恢复', statusPaused: '已暂停', statusNoAccounts: '无可用账号', statusUnavailable: '无法连接',
       rulesTitle: '同步规则', ruleSort: 'DSH 中的顺序', unsaved: '有未保存的更改',
       runtimeTitle: '运行状态', dangerTitle: '危险操作', diagnoseClose: '收起', backendLoading: '正在读取后端状态…',
@@ -525,7 +532,7 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
 
     const en = {
       title: 'WorkBuddy',
-      summary: 'This plugin manages the WorkBuddy model list (selection + multiplier).',
+      summary: 'No longer maintained; please switch to the Magpie plugin (@zhiqiangme/dsh-magpie).',
       loading: 'Reading models from the backend…',
       modelsNotInstalled: 'The backend is not installed yet. Click "Install"; sync is turned on and the model list refreshes once it is installed.',
       modelsNoAccounts: 'The hub has no usable account yet ({total} total, 0 usable), so its models cannot be used and are not listed. Sign in or import a WorkBuddy account in the backend panel above, then click "Retry".',
@@ -694,6 +701,9 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
       updateInstalling: 'Installing the new version…',
       updateRestoring: 'Restoring the previous version…',
       tabModels: 'Models', tabRegion: 'Regions & keys', tabBackend: 'Backend', tabPlugin: 'Plugin update',
+      retiredTitle: 'This plugin is no longer maintained',
+      retiredBody: '26.11.24 is the final release and will no longer track upstream or DSH changes. Switch to the Magpie plugin in Add plugin (both can stay enabled while migrating):',
+      retiredUninstall: 'When you no longer need this plugin, click “Fully uninstall” in the Backend tab first to clear backend data, then uninstall it on the Plugins page.',
       statusRunning: 'Running', statusChecking: 'Checking', statusNotInstalled: 'Not installed', statusRecovering: 'Recovering', statusPaused: 'Paused', statusNoAccounts: 'No usable account', statusUnavailable: 'Unreachable',
       rulesTitle: 'Sync rules', ruleSort: 'Order in DSH', unsaved: 'Unsaved changes',
       runtimeTitle: 'Runtime', dangerTitle: 'Danger zone', diagnoseClose: 'Close', backendLoading: 'Reading backend status…',
@@ -2458,10 +2468,19 @@ select.dsm-wb-input{padding-right:6px;cursor:pointer}
 
       // ---- 插件更新页签：管本插件自己，与上面管后端网关的版本区无关 ----
       const pluginPanel = [h('div', { key: 'pluginUpdate', className: 'dsm-wb-group dsm-wb-plugin-update' }, renderUpdateSection(updater.model, updater.actions, t))];
+      const retiredBanner = h(
+        'div',
+        { key: 'retired', className: 'dsm-wb-retired', role: 'note' },
+        h('strong', null, t('retiredTitle')),
+        h('p', null, t('retiredBody')),
+        h('span', { className: 'dsm-wb-retired-pkg' }, '@zhiqiangme/dsh-magpie'),
+        h('p', null, t('retiredUninstall')),
+      );
 
       return h(
         'div',
         { className: 'dsm-wb', ref: showPanelFromTop },
+        retiredBanner,
         head,
         report,
         stats.length ? h('div', { key: 'stats', className: 'dsm-wb-stats' }, stats) : null,
