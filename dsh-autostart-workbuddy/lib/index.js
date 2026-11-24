@@ -152,19 +152,23 @@ export function apply(ctx, config) {
     return async () => {
       if (disposed) return;
       disposed = true;
-      process.removeListener('exit', onExit);
       unwatchConfig();
       resync.stop();
-      await recovery.stop();
-      await autoUpdater.stop();
-      // 先等启动流程落地，避免「正在启动」与「正在停止」互相打架。
-      await startup.catch(() => undefined);
       try {
-        await service.stop('插件卸载');
-      } catch (error) {
-        logger.warn(
-          `[${name}] 停止 ${service.title} 时出错：${error instanceof Error ? error.message : String(error)}`,
-        );
+        await recovery.stop();
+        await autoUpdater.stop();
+        // 先等启动流程落地，避免「正在启动」与「正在停止」互相打架。
+        await startup.catch(() => undefined);
+        try {
+          await service.stop('插件卸载');
+        } catch (error) {
+          logger.warn(
+            `[${name}] 停止 ${service.title} 时出错：${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      } finally {
+        // 异步收尾期间保留 exit 兜底监听：若宿主超时强退，仍能同步结束托管子进程。
+        process.removeListener('exit', onExit);
       }
     };
   }, `${name}: lifecycle`);
@@ -194,15 +198,18 @@ function watchConfigUpdates(ctx, resolved, hostEnv, logger, initialConfig, resyn
   if (typeof ctx?.on !== 'function') return () => undefined;
   let currentConfig = initialConfig;
   let active = true;
-  const off = ctx.on('internal/update', (config, _noSave, next) => {
-    if (!active) return next();
+  // Cordis 4.0 传 (config, noSave, next)，Cordis 4.2 移除 noSave 改为 (config, next)；
+  // 从尾部取函数参数以同时兼容两代签名。
+  const off = ctx.on('internal/update', (config, ...rest) => {
+    const next = rest.findLast((arg) => typeof arg === 'function');
+    if (!active) return next?.();
     const updated = resolvePluginConfig(config, hostEnv);
     const changed = changedFields(resolvePluginConfig(currentConfig, hostEnv), updated);
     const restartFields = changed.filter((field) => !IN_PLACE_FIELDS.has(field));
     if (restartFields.length > 0) {
       // 只记字段名不记值：spec.env 里可能有密钥。
       logger.info(`[${name}] 配置变更涉及 ${restartFields.join(', ')}，按默认流程重启插件`);
-      return next();
+      return next?.();
     }
     currentConfig = config;
     resolved.models = { ...updated.models, ...(resolved.models.hubProxyBaseURL ? { hubProxyBaseURL: resolved.models.hubProxyBaseURL } : {}) };

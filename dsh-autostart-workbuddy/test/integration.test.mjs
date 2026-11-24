@@ -40,7 +40,7 @@ function freePort() {
 }
 
 /** 最小 Cordis Context 替身：收集 effect 的 disposer，记录日志；services 供 ctx.get 软取。 */
-function fakeContext(services = {}, { removableHooks = true } = {}) {
+function fakeContext(services = {}, { removableHooks = true, updateArity = 3 } = {}) {
   services = { agents: { list: () => [] }, ...services };
   const disposers = [];
   const lines = [];
@@ -70,7 +70,7 @@ function fakeContext(services = {}, { removableHooks = true } = {}) {
       const queue = [...updateHooks];
       const next = () => {
         const hook = queue.shift();
-        if (hook) return hook(config, true, next);
+        if (hook) return updateArity === 2 ? hook(config, next) : hook(config, true, next);
         this.restarts += 1;
         return undefined;
       };
@@ -474,3 +474,30 @@ for (const removableHooks of [true, false]) {
     assert.equal(ctx.restarts, 2, ctx.lines.join('\n'));
   });
 }
+
+test('Cordis 4.2 internal/update 两参签名 (config, next)：就地更新不重启，非就地字段与过期钩子正常放行重启', async (t) => {
+  const port = await freePort();
+  const occupied = createServer();
+  await new Promise((done) => occupied.listen(port, '127.0.0.1', done));
+  t.after(() => new Promise((done) => occupied.close(done)));
+  const ctx = fakeContext({}, { removableHooks: false, updateArity: 2 });
+  t.after(() => ctx.disposeAll());
+
+  const first = { ...fakeServiceConfig(port), models: { enabled: false, only: ['cn:alpha'] } };
+  const second = { ...first, stopTimeoutMs: 4_000 };
+  apply(ctx, first);
+  assert.ok(await waitForLog(ctx, '已在'), ctx.lines.join('\n'));
+
+  ctx.update({ ...first, models: { enabled: false, only: ['global:beta'] } });
+  assert.equal(ctx.restarts, 0);
+
+  ctx.update(second);
+  assert.equal(ctx.restarts, 1);
+
+  await ctx.disposeAll();
+  ctx.disposers.length = 0;
+  apply(ctx, second);
+
+  ctx.update(first);
+  assert.equal(ctx.restarts, 2, '过期钩子在两参签名下也应调用 next() 放行');
+});
