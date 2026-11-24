@@ -7,6 +7,7 @@ import { createMagpieRouter } from './router.js';
 import { sessionKey } from './channel-load.js';
 import { createMagpieSearchProvider, SEARCH_PROVIDER_ID } from './search.js';
 import { validSearchKeyRef } from './web-ui.js';
+import { WEB_UI_ENTRY } from './web-proxy.js';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -239,13 +240,24 @@ export class ModelManager {
     if (body.action === 'search-test') {
       return { ok: true, result: await this.searchProvider.search({ query: body.query }, signal) };
     }
-    if (['backend-status', 'backend-check', 'backend-install', 'backend-open'].includes(body.action)) {
-      const path = body.magpiePath ?? this.current().magpiePath;
-      const { autoLightweight: lightweight, startMode } = this.current();
+    if (['backend-status', 'backend-check', 'backend-install', 'backend-open', 'web-ensure'].includes(body.action)) {
+      const config = this.current();
+      const path = body.magpiePath ?? config.magpiePath;
+      const { autoLightweight: lightweight, startMode } = config;
       if (body.action === 'backend-check') await this.backend.check(path);
       if (body.action === 'backend-install') this.backend.install(path, { lightweight, startMode, getStartMode: () => this.current().startMode, guard: () => this.conversationBlock() });
       if (body.action === 'backend-open') await this.backend.open(path, { lightweight, startMode });
-      return { ok: true, ...(body.action === 'backend-open' ? { opened: startMode } : {}), backend: await this.backend.describe(path), magpieSettings: this.backend.settings?.() };
+      if (body.action === 'web-ensure') {
+        if (!isLocal(config.baseURL)) throw new Error('内嵌 Magpie 页面仅支持本机 Magpie，远程网关请在浏览器中打开');
+        await this.backend.ensureWeb(path, { lightweight, startMode, signal });
+      }
+      return {
+        ok: true,
+        ...(body.action === 'backend-open' ? { opened: startMode } : {}),
+        ...(body.action === 'web-ensure' ? { ready: true, proxyPath: WEB_UI_ENTRY } : {}),
+        backend: await this.backend.describe(path),
+        magpieSettings: this.backend.settings?.(),
+      };
     }
     if (body.action === 'status') {
       // 卡片标题处的网关状态：短超时，读不到就算未连接，不报错。

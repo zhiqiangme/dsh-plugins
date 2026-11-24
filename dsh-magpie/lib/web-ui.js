@@ -143,8 +143,8 @@ export class MagpieWeb {
     } else if (!tavilyKeyList(result?.settings).some((key) => key.ref === ref)) return;
     throw new Error('Magpie 未能移除 Tavily 密钥');
   }
-  /** 沿用已有网页登录 Cookie；调用方只能访问预先列出的接口。 */
-  async authenticatedAPI(paths, label, signal) {
+  /** 解析当前可用的 Magpie 网页实例并换取登录 Cookie（供后台接口和同源反代共用，绝不对外暴露密钥）。 */
+  async session(signal) {
     const pages = [], existing = this.appPage();
     if (existing) pages.push(existing);
     const credentials = typeof this.credentials === 'function' ? this.credentials() : this.credentials;
@@ -161,58 +161,72 @@ export class MagpieWeb {
         if (login.status === 303 && value?.startsWith(`magpie_web_${new URL(page.origin).port}=`)) cookie = value.split(';')[0];
         await login.body?.cancel();
       } catch { /* 旧桌面网页密钥失效时再试插件已保存的密钥，绝不回显带密钥的 URL。 */ }
-      if (!cookie) continue;
-      return async (path, body) => {
-        if (!paths.includes(path)) throw new Error(`不支持的 Magpie ${label}接口`);
-        signal?.throwIfAborted();
-        let response;
-        try {
-          response = await this.fetchImpl(`${page.origin}/api/${path}`, {
-            method: body === undefined ? 'GET' : 'POST', redirect: 'error',
-            headers: { cookie, origin: page.origin, 'content-type': 'application/json' },
-            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-            signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(45_000)]),
-          });
-        } catch { signal?.throwIfAborted(); throw new Error(`Magpie ${label}接口连接失败或超时`); }
-        if (!response.ok) {
-          if (path === SEARCH_KEYS && response.status === 400) {
-            const failure = await response.json().catch(() => undefined);
-            if (failure?.error === 'no tavily search API is set up') return TAVILY_NOT_CONFIGURED;
-            if (body?.remove === true && failure?.error === 'Tavily needs a key on: switch the API off, or remove it, instead') return TAVILY_KEY_REQUIRED;
-          } else {
-            await response.body?.cancel().catch(() => undefined);
-          }
-          throw new Error(`Magpie ${label}接口返回 HTTP ${response.status}`);
-        }
-        let value;
-        try { value = await response.json(); } catch { throw new Error(`Magpie ${label}接口格式无效`); }
-        if (value?.error) throw new Error(`Magpie ${label}操作失败`);
-        return value;
-      };
+      if (cookie) return { origin: page.origin, cookie };
     }
     signal?.throwIfAborted();
     throw new Error('Magpie 网页管理未就绪，请开启网页访问或使用网页启动方式');
   }
-  open(options) {
-    return this.pendingOpen ??= this.openPage(options).finally(() => { this.pendingOpen = undefined; });
+  /** 沿用已有网页登录 Cookie；调用方只能访问预先列出的接口。 */
+  async authenticatedAPI(paths, label, signal) {
+    const { origin, cookie } = await this.session(signal);
+    return async (path, body) => {
+      if (!paths.includes(path)) throw new Error(`不支持的 Magpie ${label}接口`);
+      signal?.throwIfAborted();
+      let response;
+      try {
+        response = await this.fetchImpl(`${origin}/api/${path}`, {
+          method: body === undefined ? 'GET' : 'POST', redirect: 'error',
+          headers: { cookie, origin, 'content-type': 'application/json' },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(45_000)]),
+        });
+      } catch { signal?.throwIfAborted(); throw new Error(`Magpie ${label}接口连接失败或超时`); }
+      if (!response.ok) {
+        if (path === SEARCH_KEYS && response.status === 400) {
+          const failure = await response.json().catch(() => undefined);
+          if (failure?.error === 'no tavily search API is set up') return TAVILY_NOT_CONFIGURED;
+          if (body?.remove === true && failure?.error === 'Tavily needs a key on: switch the API off, or remove it, instead') return TAVILY_KEY_REQUIRED;
+        } else {
+          await response.body?.cancel().catch(() => undefined);
+        }
+        throw new Error(`Magpie ${label}接口返回 HTTP ${response.status}`);
+      }
+      let value;
+      try { value = await response.json(); } catch { throw new Error(`Magpie ${label}接口格式无效`); }
+      if (value?.error) throw new Error(`Magpie ${label}操作失败`);
+      return value;
+    };
   }
-  async openPage({ launch, isRunning, disposed = () => false }) {
+  ensure(options) {
+    return this.pendingEnsure ??= this.ensurePage(options).finally(() => { this.pendingEnsure = undefined; });
+  }
+  async ensurePage({ launch, isRunning, disposed = () => false, signal }) {
+    signal?.throwIfAborted();
     const existing = this.appPage();
-    if (existing && await this.probe(existing) === 'ready') return this.show(existing, disposed);
+    if (existing && await this.probe(existing) === 'ready') return existing;
     const page = { origin: WEB_ORIGIN, key: await this.key() };
     const state = await this.probe(page);
-    if (state === 'ready') return this.show(page, disposed);
+    if (state === 'ready') return page;
     if (state === 'occupied') throw new Error('3430 端口已有服务，但不接受插件的网页密钥；请退出该实例后重新启动 Magpie');
     if (state === 'unknown') throw new Error('无法确认 Magpie 网页状态，请稍后重试');
     // 切换设置不强制结束现有实例；已有进程可能尚在启动，也可能仍按旧方式运行。
     const running = await isRunning();
     if (!running) await launch();
     const deadline = Date.now() + this.timeoutMs;
-    while (!disposed() && Date.now() < deadline) {
-      if (await this.probe(page) === 'ready') return this.show(page, disposed);
-      await sleep(this.pollMs);
+    while (!disposed() && !signal?.aborted && Date.now() < deadline) {
+      if (await this.probe(page) === 'ready') return page;
+      await sleep(this.pollMs, undefined, { signal }).catch(() => {});
     }
+    signal?.throwIfAborted();
+    if (disposed()) throw new Error('插件已关闭');
     throw new Error(running ? 'Magpie 已在运行，但网页管理尚未就绪；若刚切换启动方式，请退出 Magpie 后重新启动' : 'Magpie 网页启动超时，请稍后重试');
+  }
+  open(options) {
+    return this.pendingOpen ??= this.openPage(options).finally(() => { this.pendingOpen = undefined; });
+  }
+  async openPage(options) {
+    const page = await this.ensure(options);
+    return this.show(page, options?.disposed);
   }
   async show(page, disposed) {
     if (disposed?.()) throw new Error('插件已关闭');

@@ -4,9 +4,11 @@ import { createRouterEndpoint } from './router-endpoint.js';
 import { ROUTER_BASE_PATH } from './auto-route.js';
 import { findEntry, LLM_PACKAGE } from './models.js';
 import { PROVIDER_ID } from './config.js';
+import { createWebProxy, WEB_UI_PREFIX } from './web-proxy.js';
 
 export const MODELS_PATH = '/plugins/dsh-magpie/models';
 export const VERSION_PATH = '/plugins/dsh-magpie/version';
+export { WEB_UI_PREFIX };
 const BODY_LIMIT = 512 * 1024;
 const local = (address = '') => address === '::1' || /^127\./.test(address.replace(/^::ffff:/, ''));
 
@@ -48,7 +50,7 @@ export function handlerFor(ctx, manager) {
       if (req.method === 'GET') return json(res, 200, await manager.describe());
       if (req.method === 'POST') {
         const body = await bodyOf(req);
-        if (!['search-test', 'search-key-add', 'search-key-list', 'search-key-remove'].includes(body.action)) return json(res, 200, await manager.handle(body));
+        if (!['search-test', 'search-key-add', 'search-key-list', 'search-key-remove', 'web-ensure'].includes(body.action)) return json(res, 200, await manager.handle(body));
         const controller = new AbortController();
         const cancel = () => controller.abort();
         res.once('close', cancel);
@@ -88,6 +90,7 @@ export function registerPanel(ctx, manager, { checkVersion = createVersionChecke
     ctx.effect(() => server.register({ kind: 'exact', path: MODELS_PATH, handler: handlerFor(ctx, manager) }), 'dsh-magpie: routes');
     ctx.effect(() => server.register({ kind: 'exact', path: VERSION_PATH, handler: versionHandlerFor(ctx, checkVersion) }), 'dsh-magpie: version route');
     ctx.effect(() => server.register({ kind: 'prefix', path: ROUTER_BASE_PATH, handler: (req, res) => manager.router.handle(req, res) }), 'dsh-magpie: auto router');
+    ctx.effect(() => server.register({ kind: 'prefix', path: WEB_UI_PREFIX, handler: createWebProxy(ctx, manager, { reject: rejection }) }), 'dsh-magpie: web ui proxy');
     ctx.effect(() => endpoint.stop, 'dsh-magpie: router endpoint');
     // webServer 可能晚于 configEditor 就绪；路由地址可用后补一轮，初次过早同步不会留下旧地址。
     manager.routeReady.then(() => { if (!manager.disposed && manager.current?.()?.autoRoute) manager.enqueue(() => manager.sync()); });

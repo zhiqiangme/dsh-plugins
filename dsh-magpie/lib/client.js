@@ -68,8 +68,10 @@ window.__ModuleLoader__.load({
       keepAwake: '防止休眠', keepAwakeOff: '关闭', keepAwakeOn: '开启', keepAwakeDisplay: '屏幕也常亮',
       keepAwakeHint: 'Magpie 运行任务时让电脑保持唤醒。',
       magpieSettingsMissing: '打开一次 Magpie 后可用。',
-      openWeb: '打开 Magpie 网页', openWindow: '打开 Magpie 窗口', openedWeb: '已在默认浏览器打开 Magpie 网页。', openedWindow: '已打开 Magpie 窗口。',
+      openWeb: '打开 Magpie 页面', openWindow: '打开 Magpie 窗口', openedWeb: '已在默认浏览器打开 Magpie 网页。', openedWindow: '已打开 Magpie 窗口。',
       openUpgrading: 'Magpie正在升级',
+      backToSettings: '返回插件设置', webRefresh: '刷新', openInBrowser: '在浏览器打开',
+      webLoading: '正在打开 Magpie 页面…', webRetry: '重试', webTitle: 'Magpie',
       closeOnExit: '退出 DSH 时关闭 Magpie',
       closeOnExitHint: '结束本机 Magpie；停用或更新插件不会触发。',
       sidebarLabel: 'Magpie', sidebarEntry: '侧边栏入口', sidebarAuto: '自动', sidebarAlways: '显示', sidebarNever: '隐藏',
@@ -177,8 +179,10 @@ window.__ModuleLoader__.load({
       keepAwake: 'Keep awake', keepAwakeOff: 'Off', keepAwakeOn: 'On', keepAwakeDisplay: 'Screen on too',
       keepAwakeHint: 'Keeps the computer awake while Magpie runs tasks.',
       magpieSettingsMissing: 'Available once Magpie has been opened.',
-      openWeb: 'Open Magpie web', openWindow: 'Open Magpie window', openedWeb: 'Opened Magpie in your default browser.', openedWindow: 'Opened the Magpie window.',
+      openWeb: 'Open Magpie page', openWindow: 'Open Magpie window', openedWeb: 'Opened Magpie in your default browser.', openedWindow: 'Opened the Magpie window.',
       openUpgrading: 'Updating Magpie',
+      backToSettings: 'Back to plugin settings', webRefresh: 'Refresh', openInBrowser: 'Open in browser',
+      webLoading: 'Opening Magpie page…', webRetry: 'Retry', webTitle: 'Magpie',
       closeOnExit: 'Close Magpie when DSH exits',
       closeOnExitHint: 'Ends local Magpie; disabling or updating the plugin does not.',
       sidebarLabel: 'Magpie', sidebarEntry: 'Sidebar entry', sidebarAuto: 'Auto', sidebarAlways: 'Show', sidebarNever: 'Hide',
@@ -240,6 +244,8 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-magpie';
     // Magpie 的入口排在宿主「插件」与「自动化任务」之间。
     const PANEL_ORDER = 2;
+    const WEB_UI_ENTRY = '/plugins/dsh-magpie/ui/';
+    const PAGE_VIEW_STORAGE_KEY = 'dsh-magpie:page-view';
     const SIDEBAR_MODES = { auto: 'sidebarAuto', always: 'sidebarAlways', never: 'sidebarNever' };
     // 客户端可能先于服务端路由就绪；读取已保存配置失败时短暂重试，仍失败则不显示入口。
     const CONFIG_RETRIES = 5;
@@ -267,6 +273,31 @@ window.__ModuleLoader__.load({
     function publishConfig(config) {
       savedConfig.value = config;
       for (const listener of savedConfig.listeners) listener();
+    }
+    function readPageView() {
+      try { return window.localStorage?.getItem(PAGE_VIEW_STORAGE_KEY) === 'web' ? 'web' : 'settings'; }
+      catch { return 'settings'; }
+    }
+    function writePageView(view) {
+      try { window.localStorage?.setItem(PAGE_VIEW_STORAGE_KEY, view === 'web' ? 'web' : 'settings'); }
+      catch { /* 忽略受限存储环境。 */ }
+    }
+    // 侧栏整页记住上次打开的是插件设置页还是内嵌 Magpie 网页，首次默认打开插件设置页。
+    const pageViewStore = { value: undefined, listeners: new Set() };
+    function getPageView() {
+      if (pageViewStore.value === undefined) pageViewStore.value = readPageView();
+      return pageViewStore.value;
+    }
+    function setPageView(next) {
+      const value = next === 'web' ? 'web' : 'settings';
+      pageViewStore.value = value;
+      writePageView(value);
+      for (const listener of pageViewStore.listeners) listener(value);
+    }
+    // Magpie 自动/手动升级重启完成后通知内嵌网页重新连接。
+    const webReloadListeners = new Set();
+    function notifyWebReload() {
+      for (const listener of webReloadListeners) listener();
     }
     /** 正在查看的页面不收起入口，避免保存后侧栏没有选中项；离开后再按设置判断。配置未知时不显示。 */
     function sidebarVisible(config, active) {
@@ -386,8 +417,26 @@ window.__ModuleLoader__.load({
       .dsm-mp .foot .notice{margin:0 0 10px}.dsm-mp .foot .error:not(.notice){margin:0 0 10px}
       .dsm-mp .state{display:inline-flex;align-items:center;gap:8px;color:var(--mp-muted)}.dsm-mp .state::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--mp-ok)}
       .dsm-mp .state.dirty{color:var(--mp-fg);font-weight:500}.dsm-mp .state.dirty::before{background:var(--mp-warn)}
-      /* 侧栏整页：顶部留出宿主标题栏，内容最宽 960px 居中，与插件市场页面一致。 */
-      .dsm-mp-page{box-sizing:border-box;height:100%;overflow-y:auto;padding:calc(28px + var(--dsh-frame-top-clearance,0px)) max(clamp(16px,4vw,48px),calc((100% - 960px) / 2)) 32px}
+      /* 侧栏整页：设置视图居中限宽 960px，内嵌 Magpie 页面铺满剩余视口并在顶部留出返回与操作栏。 */
+      .dsm-mp-page{box-sizing:border-box;height:100%;min-height:0;display:flex;flex-direction:column}
+      .dsm-mp-page-settings{box-sizing:border-box;flex:1;min-height:0;overflow-y:auto;padding:calc(28px + var(--dsh-frame-top-clearance,0px)) max(clamp(16px,4vw,48px),calc((100% - 960px) / 2)) 32px}
+      .dsm-mp-page-settings[hidden],.dsm-mp-web[hidden]{display:none}
+      .dsm-mp-web{box-sizing:border-box;flex:1;min-height:0;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#0f1115);font-size:13px}
+      .dsm-mp-web-bar{box-sizing:border-box;flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:calc(6px + var(--dsh-frame-top-clearance,0px)) 14px 6px;border-bottom:1px solid var(--dsw-alias-border-l2,#0000001a);background:var(--dsw-alias-bg-layer-2,#fff)}
+      .dsm-mp-web-bar .bar{display:flex;align-items:center;gap:8px}
+      .dsm-mp-web-title{display:inline-flex;align-items:center;gap:6px;font-weight:600;color:var(--dsw-alias-label-secondary,#61666b)}
+      .dsm-mp-web-title svg{color:var(--dsw-alias-state-business-primary,#4176e6)}
+      .dsm-mp-web button{border:1px solid var(--dsw-alias-border-l2,#0000001a);border-radius:8px;padding:4px 10px;background:transparent;color:inherit;font:inherit;line-height:20px;cursor:pointer;white-space:nowrap}
+      .dsm-mp-web button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#2631480f)}
+      .dsm-mp-web button:disabled{opacity:.45;cursor:default}
+      .dsm-mp-web button[aria-busy=true]{display:inline-flex;align-items:center;gap:6px}
+      .dsm-mp-web button[aria-busy=true]::before,.dsm-mp-web .loading::before{content:"";flex:none;width:12px;height:12px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:dsm-mp-spin .7s linear infinite}
+      .dsm-mp-web .loading{display:flex;align-items:center;gap:8px;margin:0}
+      .dsm-mp-web-body{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+      .dsm-mp-frame{flex:1;width:100%;height:100%;border:0;display:block;background:transparent}
+      .dsm-mp-web-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center;color:var(--dsw-alias-label-secondary,#61666b)}
+      .dsm-mp-web-state .bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center}
+      .dsm-mp-web-state .error{margin:0;color:var(--dsw-alias-state-error-primary,#dc2626);max-width:480px}
       @media(max-width:640px){.dsm-mp .head,.dsm-mp .panel,.dsm-mp .foot{padding-left:14px;padding-right:14px}.dsm-mp .fields{grid-template-columns:minmax(0,1fr)}
         .dsm-mp .row:has(.segmented){flex-wrap:wrap}.dsm-mp .toolbar{flex-wrap:wrap}.dsm-mp .toolbar .search{flex-basis:100%}.dsm-mp .model-badges{display:none}.dsm-mp .model-select{flex:1}}
       /* ---- 动效 ----
@@ -996,7 +1045,7 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function ModelsCard({ t, pluginUpdater }) {
+    function ModelsCard({ t, pluginUpdater, onOpenPage }) {
       const [view, setView] = useState(null);
       const [dirty, setDirty] = useState(false);
       const [modelBusy, setBusy] = useState(false);
@@ -1106,7 +1155,11 @@ window.__ModuleLoader__.load({
         const timer = setInterval(async () => {
           if (fetching) return;
           fetching = true;
-          try { const result = await request({ action: 'backend-status', magpiePath: operation.path }); if (active) setView((old) => ({ ...old, backend: result.backend })); }
+          try {
+            const result = await request({ action: 'backend-status', magpiePath: operation.path });
+            if (active) setView((old) => ({ ...old, backend: result.backend }));
+            if (!result.backend?.operation?.running && ['installed', 'updated'].includes(result.backend?.operation?.phase)) notifyWebReload();
+          }
           catch (error) { if (active) setNotice(failure(error)); }
           finally { fetching = false; }
         }, 1000);
@@ -1238,11 +1291,14 @@ window.__ModuleLoader__.load({
         const result = await request({ action: 'magpie-settings', keepAwake });
         setView((old) => ({ ...old, magpieSettings: result.magpieSettings }));
       });
-      const openMagpie = () => perform(async () => {
-        const result = await request({ action: 'backend-open', magpiePath: config.magpiePath || '' });
-        setView((old) => ({ ...old, backend: result.backend, magpieSettings: result.magpieSettings }));
-        setNotice({ text: t((result.opened ?? config.startMode ?? 'web') === 'web' ? 'openedWeb' : 'openedWindow') });
-      }, 'open');
+      const openMagpie = () => {
+        if ((config.startMode ?? 'web') !== 'tray' && typeof onOpenPage === 'function' && onOpenPage({ magpiePath: config.magpiePath || '' }) === true) return;
+        return perform(async () => {
+          const result = await request({ action: 'backend-open', magpiePath: config.magpiePath || '' });
+          setView((old) => ({ ...old, backend: result.backend, magpieSettings: result.magpieSettings }));
+          setNotice({ text: t((result.opened ?? config.startMode ?? 'web') === 'web' ? 'openedWeb' : 'openedWindow') });
+        }, 'open');
+      };
       const magpieSettings = view.magpieSettings;
       const syncCatalog = () => perform(async () => {
         const previousIds = new Set((view.savedModels ?? config.models).map((model) => model.id));
@@ -1654,7 +1710,97 @@ window.__ModuleLoader__.load({
     }
 
     function MagpiePage(props) {
-      return h('div', { className: 'dsm-mp-page' }, h(ModelsCard, props));
+      const { t } = props;
+      const [viewMode, setViewMode] = useState(getPageView);
+      const [webState, setWebState] = useState({ phase: 'idle', error: null, proxyPath: WEB_UI_ENTRY });
+      const [frameKey, setFrameKey] = useState(0);
+      const [externalBusy, setExternalBusy] = useState(false);
+      const mountedFrameRef = useRef(false);
+      const ensureSeqRef = useRef(0);
+
+      const ensureWeb = useCallback(async (forceReload = false, explicitPath) => {
+        if (!forceReload && mountedFrameRef.current) {
+          setWebState((old) => old.phase === 'ready' ? old : { phase: 'ready', error: null, proxyPath: old.proxyPath || WEB_UI_ENTRY });
+          return;
+        }
+        const seq = ++ensureSeqRef.current;
+        const magpiePath = explicitPath ?? savedConfig.value?.magpiePath;
+        setWebState((old) => ({ phase: 'loading', error: null, proxyPath: old.proxyPath || WEB_UI_ENTRY }));
+        try {
+          const result = await request({ action: 'web-ensure', ...(magpiePath ? { magpiePath } : {}) });
+          if (ensureSeqRef.current !== seq) return;
+          mountedFrameRef.current = true;
+          setWebState({ phase: 'ready', error: null, proxyPath: result.proxyPath || WEB_UI_ENTRY });
+          setFrameKey((count) => count + 1);
+        } catch (error) {
+          if (ensureSeqRef.current !== seq) return;
+          setWebState((old) => ({ phase: 'error', error: error.message || String(error), proxyPath: old.proxyPath || WEB_UI_ENTRY }));
+        }
+      }, []);
+
+      useEffect(() => {
+        const onChange = (next) => setViewMode(next);
+        pageViewStore.listeners.add(onChange);
+        return () => { pageViewStore.listeners.delete(onChange); };
+      }, []);
+
+      useEffect(() => {
+        const onReload = () => {
+          if (!mountedFrameRef.current) return;
+          mountedFrameRef.current = false;
+          if (getPageView() === 'web') ensureWeb(true);
+        };
+        webReloadListeners.add(onReload);
+        return () => { webReloadListeners.delete(onReload); };
+      }, [ensureWeb]);
+
+      useEffect(() => {
+        if (viewMode === 'web') ensureWeb(false);
+      }, [viewMode, ensureWeb]);
+
+      const openPage = () => { setPageView('web'); return true; };
+      const backToSettings = () => {
+        if (!mountedFrameRef.current) {
+          ensureSeqRef.current++;
+          setWebState((old) => old.phase === 'loading' ? { ...old, phase: 'idle', error: null } : old);
+        }
+        setPageView('settings');
+      };
+      const refreshWeb = () => ensureWeb(true);
+      const openExternal = async () => {
+        setExternalBusy(true);
+        try {
+          const magpiePath = savedConfig.value?.magpiePath;
+          await request({ action: 'backend-open', ...(magpiePath ? { magpiePath } : {}) });
+        } catch (error) {
+          setWebState((old) => ({ ...old, phase: 'error', error: error.message || String(error) }));
+        } finally {
+          setExternalBusy(false);
+        }
+      };
+
+      return h('div', { className: 'dsm-mp-page' },
+        h('div', { className: 'dsm-mp-page-settings', hidden: viewMode === 'web' },
+          h(ModelsCard, { ...props, onOpenPage: openPage })),
+        h('div', { className: 'dsm-mp-web', hidden: viewMode !== 'web' },
+          h('div', { className: 'dsm-mp-web-bar' },
+            h('div', { className: 'bar' },
+              h('button', { type: 'button', className: 'dsm-mp-back', onClick: backToSettings }, '← ', t('backToSettings')),
+              h('span', { className: 'dsm-mp-web-title' }, h(MagpieGlyph, { size: 15 }), t('webTitle'))),
+            h('div', { className: 'bar' },
+              h('button', { type: 'button', disabled: webState.phase === 'loading', onClick: refreshWeb, 'aria-busy': webState.phase === 'loading' }, t('webRefresh')),
+              h('button', { type: 'button', disabled: externalBusy, onClick: openExternal, 'aria-busy': externalBusy }, t('openInBrowser')))),
+          h('div', { className: 'dsm-mp-web-body' },
+            webState.phase === 'loading' ? h('div', { className: 'dsm-mp-web-state', role: 'status' }, h('p', { className: 'loading' }, t('webLoading'))) : null,
+            webState.phase === 'error' ? h('div', { className: 'dsm-mp-web-state', role: 'alert' },
+              h('p', { className: 'error' }, webState.error),
+              h('div', { className: 'bar' },
+                h('button', { type: 'button', onClick: refreshWeb }, t('webRetry')),
+                h('button', { type: 'button', onClick: backToSettings }, t('backToSettings')),
+                h('button', { type: 'button', disabled: externalBusy, onClick: openExternal }, t('openInBrowser')))) : null,
+            mountedFrameRef.current && webState.phase === 'ready'
+              ? h('iframe', { key: frameKey, className: 'dsm-mp-frame', src: webState.proxyPath || WEB_UI_ENTRY, title: t('webTitle'), allow: 'clipboard-read; clipboard-write' })
+              : null)));
     }
     // 宿主侧栏图标为单色，按 currentColor 跟随选中和主题；鸟身挖空腹部与眼睛，取自插件图标轮廓。
     function MagpieGlyph({ size = 16 } = {}) {
@@ -1704,6 +1850,12 @@ window.__ModuleLoader__.load({
         if (layout?.panelInfo.getSnapshot().activePanelId === PANEL_ID) layout.selectPanel(null);
         off(offRow); off(offPanel); offRow = offPanel = undefined;
       }, 'dsh-magpie: sidebar');
+      return () => {
+        if (!supported || disposed || typeof layout?.selectPanel !== 'function') return false;
+        setPageView('web');
+        layout.selectPanel(PANEL_ID);
+        return true;
+      };
     }
 
     function apply(ctx) {
@@ -1726,12 +1878,13 @@ window.__ModuleLoader__.load({
           return () => {};
         }
       }, 'dsh-magpie: plugin changes');
+      let openInSidebar = () => false;
       for (const [slot, key] of [['plugins.bundle.config', '@zhiqiangme/dsh-magpie'], ['plugins.row.config', '@zhiqiangme/dsh-magpie#dsh-magpie']]) {
-        ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, locale: namespace, inject: () => ({ t, pluginUpdater }) }, ModelsCard));
+        ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, key, priority: 30, locale: namespace, inject: () => ({ t, pluginUpdater, onOpenPage: () => openInSidebar() }) }, ModelsCard));
       }
-      registerSidebar(ctx, t, pluginUpdater);
+      openInSidebar = registerSidebar(ctx, t, pluginUpdater);
     }
     // remote 只为官方插件管理器与它的事件；pluginManager 由 connectPluginManager 动态接上，旧宿主没有它也能加载。
-    return { name: 'dsh-magpie-client', inject: ['slots', 'locale', 'remote'], apply, ModelsCard, MagpiePage, MagpieGlyph, sidebarVisible, moveModel, displayModelName, sortModelIndexes, modelFamilyName, categoryOptions, renderUpdateSection, createPluginUpdater, connectPluginManager, zh, en };
+    return { name: 'dsh-magpie-client', inject: ['slots', 'locale', 'remote'], apply, ModelsCard, MagpiePage, MagpieGlyph, sidebarVisible, getPageView, setPageView, moveModel, displayModelName, sortModelIndexes, modelFamilyName, categoryOptions, renderUpdateSection, createPluginUpdater, connectPluginManager, zh, en };
   },
 });

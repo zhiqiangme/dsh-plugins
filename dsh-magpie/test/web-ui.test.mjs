@@ -262,3 +262,37 @@ test('托盘首次安装打开原生窗口，升级及失败恢复仍按托盘�
   assert.equal((await finish(f.backend)).phase, 'failed');
   assert.deepEqual(f.launchArgs, [[], ['tray'], ['tray']], '替换失败后恢复原程序也使用托盘方式');
 });
+
+test('web-ensure 仅确保本机 Magpie 网页就绪并返回同源反代入口，不打开外部浏览器；托盘无网页或远程网关明确提示', async (t) => {
+  const f = backendFixture(t);
+  seed(f.backend);
+  const host = fakeHost({ startMode: 'web' });
+  let online = false;
+  f.backend.web = new MagpieWeb({
+    env: {},
+    settings: f.backend.paths.settings,
+    credentials: () => host.services.credentials,
+    openBrowser: () => assert.fail('内嵌准备不应打开外部浏览器'),
+    fetchImpl: async () => (online ? ready() : refused()),
+    timeoutMs: 200,
+    pollMs: 1,
+  });
+  const baseLaunch = f.backend.launch;
+  f.backend.launch = async (...args) => { online = true; return baseLaunch(...args); };
+
+  const manager = new ModelManager(host.ctx, host.own.options.config, { env: {}, backend: f.backend });
+  const ensured = await manager.handle({ action: 'web-ensure' });
+  assert.equal(ensured.ok, true);
+  assert.equal(ensured.ready, true);
+  assert.equal(ensured.proxyPath, '/plugins/dsh-magpie/ui/');
+  assert.deepEqual(f.launchArgs, [['serve', '--web']]);
+
+  // 托盘模式下没有桌面 web-page.json 时明确提示如何开启。
+  host.own.options.config.startMode = 'tray';
+  await assert.rejects(manager.handle({ action: 'web-ensure' }), /托盘启动方式.*浏览器访问/);
+
+  // 远程网关不允许走本机内嵌页面。
+  host.own.options.config.startMode = 'web';
+  host.own.options.config.baseURL = 'https://magpie.example.com';
+  await assert.rejects(manager.handle({ action: 'web-ensure' }), /仅支持本机 Magpie/);
+});

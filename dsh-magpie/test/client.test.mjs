@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { resolveConfig } from '../lib/config.js';
 import { PROVIDER_NAMES, sortModelIndexes as serverSort } from '../lib/names.js';
@@ -134,7 +135,7 @@ test('启动方式即时保存且保留模型草稿，打开按钮按已保存�
     const body = JSON.parse(options.body); calls.push(body);
     return response(await manager.handle(body));
   });
-  assert.ok(button(client.render(), '打开 Magpie 网页'));
+  assert.ok(button(client.render(), '打开 Magpie 页面'));
   await button(client.render(), '手动添加模型').props.onClick();
   client.tab('偏好');
   assert.equal(choose(client.render(), 'Magpie 启动方式', '网页').props['aria-checked'], true);
@@ -149,7 +150,7 @@ test('启动方式即时保存且保留模型草稿，打开按钮按已保存�
   assert.deepEqual(opened, ['tray']);
   assert.equal(client.states[3].text, '已打开 Magpie 窗口。');
   await choose(client.render(), 'Magpie 启动方式', '网页').props.onClick();
-  await button(client.render(), '打开 Magpie 网页').props.onClick();
+  await button(client.render(), '打开 Magpie 页面').props.onClick();
   assert.deepEqual(opened, ['tray', 'web']);
   assert.equal(client.states[3].text, '已在默认浏览器打开 Magpie 网页。');
   await manager.handle({ action: 'backend-install' });
@@ -496,7 +497,7 @@ test('自动更新开关在更新页即时保存，等待期间也能关闭，�
   const backend = { describe: async () => ({ supported: true, installed: true, version: '0.1.1', operation }), settings: () => ({ available: false }) };
   const manager = new ModelManager(host.ctx, {}, { env: {}, backend });
   const client = clientHarness(await manager.describe(), async (_url, options) => response(await manager.handle(JSON.parse(options.body))));
-  assert.ok(button(client.render(), '打开 Magpie 网页'));
+  assert.ok(button(client.render(), '打开 Magpie 页面'));
   Object.assign(operation, { phase: 'waiting-idle', upgrading: true, received: 12, total: 12 });
   assert.equal(button(client.render(), 'Magpie正在升级').props.disabled, true);
   client.tab('连接');
@@ -518,7 +519,7 @@ test('自动更新开关在更新页即时保存，等待期间也能关闭，�
     assert.ok(JSON.stringify(client.render()).includes(message));
   }
   Object.assign(operation, { phase: 'updated', running: false, version: '0.1.2' });
-  assert.equal(button(client.render(), '打开 Magpie 网页').props.disabled, false);
+  assert.equal(button(client.render(), '打开 Magpie 页面').props.disabled, false);
 });
 
 test('旧页面切换即时开关后仍拒绝保存，保留草稿和其它页面的新清单', async (t) => {
@@ -565,7 +566,7 @@ test('防止休眠直接写入 Magpie 设置；没有设置文件时禁用；打
   });
   client.tab('偏好');
   assert.equal(choose(client.render(), '防止休眠', '开启').props.disabled, true);
-  await button(client.render(), '打开 Magpie 网页').props.onClick();
+  await button(client.render(), '打开 Magpie 页面').props.onClick();
   assert.deepEqual(calls[0], { action: 'backend-open', magpiePath: '' });
   assert.equal(client.states[3].text, '已在默认浏览器打开 Magpie 网页。');
   assert.equal(choose(client.render(), '防止休眠', '关闭').props['aria-checked'], true);
@@ -1456,4 +1457,145 @@ test('详情页首次挂载面板时回到顶部，同页重新挂载不打断�
   attach(null);
   attach({ closest: () => null });
   assert.equal(scroller.scrollTop, 300, '卸载和配置页以外的挂载都不动滚动位置');
+});
+
+function memoryStorage(seed = {}) {
+  const map = new Map(Object.entries(seed));
+  return { getItem: (k) => (map.has(k) ? map.get(k) : null), setItem: (k, v) => { map.set(k, String(v)); }, map };
+}
+
+function pageHarness(fetchImpl, { localStorage = memoryStorage(), sidebar = true, layout } = {}) {
+  let registration, index = 0;
+  const states = [], effects = [], prevDeps = [];
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState: (fallback) => {
+      const i = index++;
+      if (!(i in states)) states[i] = typeof fallback === 'function' ? fallback() : fallback;
+      return [states[i], (value) => { states[i] = typeof value === 'function' ? value(states[i]) : value; }];
+    },
+    useRef: (fallback) => { const i = index++; if (!(i in states)) states[i] = { current: fallback }; return states[i]; },
+    useEffect: (fn, deps) => { const i = index++; effects.push({ i, fn, deps }); },
+    useLayoutEffect() {},
+    useCallback: (fn) => fn,
+  };
+  const window = { crypto: globalThis.crypto, localStorage, __ModuleLoader__: { load: (v) => { registration = v; } } };
+  const document = { querySelector: () => null, createElement: () => ({ dataset: {} }), head: { appendChild() {} } };
+  new Function('window', 'document', 'fetch', readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'))(window, document, fetchImpl);
+  const module = registration.factory((id) => { if (id === 'react') return React; throw new Error(`Unexpected dependency ${id}`); });
+  const t = (key, values) => module.zh[key].replace(/\{(\w+)\}/g, (m, k) => values?.[k] ?? m);
+  const cards = [];
+  module.apply({
+    effect: (run) => run(),
+    remote: { $on: () => () => {} },
+    locale: { register() {}, bind: () => t },
+    slots: { inject: (name, run) => { if (name !== 'sidebar.panellist' || sidebar) run(); }, register: (meta, component) => { cards.push({ meta, component }); } },
+    inject: (names, run) => { if (layout && names[0] === 'layout') run({ layout, effect: (run) => run() }); },
+  });
+  const { pluginUpdater } = cards[0].meta.inject();
+  const renderPage = () => {
+    index = 0;
+    effects.length = 0;
+    const tree = module.MagpiePage({ t, pluginUpdater });
+    for (const { i, fn, deps } of effects) {
+      const prev = prevDeps[i];
+      if (!prev || !deps || deps.length !== prev.length || deps.some((d, idx) => d !== prev[idx])) {
+        prevDeps[i] = deps;
+        fn();
+      }
+    }
+    return tree;
+  };
+  return { module, cards, localStorage, renderPage };
+}
+
+test('侧栏整页默认打开插件设置，点击打开 Magpie 页面切换到内嵌 iframe，带返回按钮并记住上次页面', async () => {
+  const storage = memoryStorage();
+  const requests = [];
+  const p = pageHarness(async (_url, options) => {
+    if (options?.method !== 'POST') return response(view());
+    const body = JSON.parse(options.body);
+    requests.push(body);
+    if (body.action === 'web-ensure') return response({ ok: true, ready: true, proxyPath: '/plugins/dsh-magpie/ui/' });
+    return response({ ok: true, opened: 'web' });
+  }, { localStorage: storage });
+
+  let tree = p.renderPage();
+  const settingsWrap = () => nodes(tree, (n) => n.props.className === 'dsm-mp-page-settings')[0];
+  const webWrap = () => nodes(tree, (n) => n.props.className === 'dsm-mp-web')[0];
+  assert.equal(settingsWrap().props.hidden, false, '首次默认打开插件设置');
+  assert.equal(webWrap().props.hidden, true);
+  assert.equal(nodes(tree, (n) => n.type === 'iframe').length, 0);
+
+  // 点击卡片传入的 onOpenPage 回调（即点击「打开 Magpie 页面」）切到内嵌网页并持久化。
+  const cardEl = settingsWrap().children[0];
+  assert.equal(cardEl.props.onOpenPage(), true);
+  assert.equal(storage.getItem('dsh-magpie:page-view'), 'web');
+
+  tree = p.renderPage();
+  assert.equal(settingsWrap().props.hidden, true);
+  assert.equal(webWrap().props.hidden, false);
+  await new Promise((done) => setImmediate(done));
+  tree = p.renderPage();
+  assert.deepEqual(requests, [{ action: 'web-ensure' }]);
+  const frame = nodes(tree, (n) => n.type === 'iframe')[0];
+  assert.ok(frame);
+  assert.equal(frame.props.src, '/plugins/dsh-magpie/ui/');
+
+  // 点击顶部返回按钮回到插件设置，记住 settings，且 iframe 隐藏保活。
+  button(tree, '返回插件设置').props.onClick();
+  assert.equal(storage.getItem('dsh-magpie:page-view'), 'settings');
+  tree = p.renderPage();
+  assert.equal(settingsWrap().props.hidden, false);
+  assert.equal(webWrap().props.hidden, true);
+  assert.equal(nodes(tree, (n) => n.type === 'iframe').length, 1, '切回设置后 iframe 保活');
+
+  // 切回网页视图并重新实例化（模拟重启或重进侧栏），自动记住并直接打开内嵌网页。
+  cardEl.props.onOpenPage();
+  const reopened = pageHarness(async (_url, options) => {
+    if (options?.method !== 'POST') return response(view());
+    return response({ ok: true, ready: true, proxyPath: '/plugins/dsh-magpie/ui/' });
+  }, { localStorage: storage });
+  let nextTree = reopened.renderPage();
+  assert.equal(nodes(nextTree, (n) => n.props.className === 'dsm-mp-web')[0].props.hidden, false, '记住上次停留在 Magpie 网页');
+  await new Promise((done) => setImmediate(done));
+  nextTree = reopened.renderPage();
+  assert.ok(nodes(nextTree, (n) => n.type === 'iframe')[0]);
+  assert.ok(button(nextTree, '返回插件设置'));
+});
+
+test('内嵌页面启动失败时展示错误与重试、返回、外开按钮；详情页点击打开 Magpie 页面跳到侧栏内嵌页', async () => {
+  const storage = memoryStorage({ 'dsh-magpie:page-view': 'web' });
+  const calls = [];
+  let failEnsure = true;
+  const p = pageHarness(async (_url, options) => {
+    if (options?.method !== 'POST') return response(view());
+    const body = JSON.parse(options.body);
+    calls.push(body);
+    if (body.action === 'web-ensure' && failEnsure) return response({ ok: false, reason: '当前为托盘启动方式' }, 400);
+    return response({ ok: true, ready: true, proxyPath: '/plugins/dsh-magpie/ui/' });
+  }, { localStorage: storage });
+
+  p.renderPage();
+  await new Promise((done) => setImmediate(done));
+  let tree = p.renderPage();
+  assert.match(JSON.stringify(tree), /当前为托盘启动方式/);
+  assert.ok(button(tree, '重试'));
+  assert.ok(button(tree, '返回插件设置'));
+  assert.ok(button(tree, '在浏览器打开'));
+
+  failEnsure = false;
+  await button(tree, '重试').props.onClick();
+  tree = p.renderPage();
+  assert.ok(nodes(tree, (n) => n.type === 'iframe')[0]);
+
+  // 在插件详情页卡片点击「打开 Magpie 页面」：支持侧栏时切到侧栏整页并记为 web；无侧栏时回退外部浏览器。
+  let selected = null;
+  const storage2 = memoryStorage();
+  const layout = { panelInfo: { getSnapshot: () => ({ activePanelId: selected }), subscribe: () => () => {} }, selectPanel: (id) => { selected = id; } };
+  const withSidebar = clientHarness({ ...view(), backend: { supported: true, installed: true, version: '0.1.2' } }, async () => response(view()), { sidebar: true, layout, localStorage: storage2 });
+  const detailProps = withSidebar.cards.find((c) => c.meta.name === 'plugins.bundle.config').meta.inject();
+  assert.equal(detailProps.onOpenPage(), true);
+  assert.equal(selected, 'dsh-magpie');
+  assert.equal(storage2.getItem('dsh-magpie:page-view'), 'web');
 });
