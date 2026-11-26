@@ -106,7 +106,7 @@ export class MagpieBackend {
       return { supported: this.supported, path: typeof value === 'string' ? value.trim() : '', defaultPath: this.paths.exe, installed: false, version: null, reason: formatError(error), latest: this.latestView(), updateAvailable: false, operation: this.operation };
     }
     const local = !this.supported ? { installed: isFile(path), version: null, reason: '下载升级目前支持 Windows x64 / ARM64，模型管理不受影响' }
-      : this.operation?.running && this.operation.path === path ? { installed: isFile(path), version: this.versions.get(path)?.value.version ?? null, reason: null } : await this.local(path);
+      : this.updating(path) ? { installed: isFile(path), version: this.versions.get(path)?.value.version ?? null, reason: null } : await this.local(path);
     return { supported: this.supported, path, defaultPath: this.paths.exe, ...local, latest: this.latestView(), updateAvailable: Boolean(local.version && this.latest && compareVersions(local.version, this.latest.version) < 0), operation: this.operation };
   }
   /**
@@ -139,30 +139,63 @@ export class MagpieBackend {
     catch { return false; }
   }
   /** 所有后台启动共用参数，升级成功、失败恢复和开机启动必须遵循同一方式。 */
-  async launchConfigured(path, { startMode = 'web' } = {}) {
+  async launchConfigured(path, { startMode = 'web', beforeLaunch } = {}) {
     if (this.disposed) throw new Error('插件已关闭');
     if (startMode === 'tray') return this.launch(path, ['tray'], { env: this.env });
     if (startMode !== 'web') throw new Error('不支持的 Magpie 启动方式');
     const key = await this.web.key();
     if (this.disposed) throw new Error('插件已关闭');
+    beforeLaunch?.();
     return this.launch(path, ['serve', '--web'], { env: { ...this.env, MAGPIE_WEB_KEY: key } });
+  }
+  updating(path) { return this.operation?.running && this.operation.path === path; }
+  assertCanLaunch(path) {
+    if (this.updating(path)) throw new Error('Magpie 正在更新程序，请等待当前操作结束后再启动');
+  }
+  async verifyInstalled(path, signal) {
+    const local = await this.local(path, signal);
+    if (!local.installed) throw new Error('尚未下载 Magpie');
+    if (!local.version) throw new Error(local.reason || '该程序未能验证为 Magpie');
+  }
+  async webOptions(path, { lightweight, startMode, signal }) {
+    if (lightweight) {
+      const version = this.updating(path) ? this.versions.get(path)?.value.version : (await this.local(path, signal)).version;
+      if (version) this.ensureLightweight();
+    }
+    const beforeLaunch = () => {
+      signal?.throwIfAborted();
+      this.assertCanLaunch(path);
+    };
+    return {
+      // 已就绪的网页可以直接复用。只有另起进程时才需要避开程序更新，包括校验和异步取密钥期间开始的更新。
+      launch: async () => {
+        beforeLaunch();
+        await this.verifyInstalled(path, signal);
+        if (lightweight) this.ensureLightweight();
+        return this.launchConfigured(path, { startMode, beforeLaunch });
+      },
+      isRunning: () => this.isRunning(path),
+      disposed: () => this.disposed,
+      signal,
+    };
   }
   /** 网页模式打开默认浏览器；托盘模式通过单实例交接唤出原窗口。 */
   async open(value, { lightweight = false, startMode = 'web' } = {}) {
     if (!this.supported) throw new Error('打开 Magpie 目前支持 Windows x64 / ARM64');
     const path = targetPath(value, this.paths);
-    if (this.operation?.running && this.operation.path === path) throw new Error('Magpie 正在下载或升级，请稍后再打开');
-    const local = await this.local(path);
-    if (!local.installed) throw new Error('尚未下载 Magpie');
-    if (!local.version) throw new Error(local.reason || '该程序未能验证为 Magpie');
+    if (startMode === 'web') {
+      if (!this.updating(path)) await this.verifyInstalled(path);
+      return this.web.open(await this.webOptions(path, { lightweight, startMode }));
+    }
+    this.assertCanLaunch(path);
+    await this.verifyInstalled(path);
+    this.assertCanLaunch(path);
     if (lightweight) this.ensureLightweight();
-    if (startMode === 'web') return this.web.open({ launch: () => this.launchConfigured(path, { startMode }), isRunning: () => this.isRunning(path), disposed: () => this.disposed });
     return { pid: await this.launch(path, []) };
   }
   /** 仅确保本机 Magpie 网页管理服务就绪（供 DSH 内嵌页面使用），不弹出外部浏览器。 */
   async ensureWeb(value, { lightweight = false, startMode = 'web', signal } = {}) {
     const path = this.supported ? targetPath(value, this.paths) : '';
-    if (path && this.operation?.running && this.operation.path === path) throw new Error('Magpie 正在下载或升级，请稍后再打开');
     if (startMode === 'tray') {
       const existing = this.web.appPage();
       if (existing && await this.web.probe(existing) === 'ready') return { ready: true };
@@ -172,18 +205,7 @@ export class MagpieBackend {
       await this.web.session(signal);
       return { ready: true };
     }
-    const local = await this.local(path, signal);
-    if (lightweight && local.installed && local.version) this.ensureLightweight();
-    await this.web.ensure({
-      launch: async () => {
-        if (!local.installed) throw new Error('尚未下载 Magpie');
-        if (!local.version) throw new Error(local.reason || '该程序未能验证为 Magpie');
-        return this.launchConfigured(path, { startMode });
-      },
-      isRunning: () => this.isRunning(path),
-      disposed: () => this.disposed,
-      signal,
-    });
+    await this.web.ensure(await this.webOptions(path, { lightweight, startMode, signal }));
     return { ready: true };
   }
   latestView() { return this.latest ? { version: this.latest.version, url: this.latest.url, publishedAt: this.latest.publishedAt } : null; }

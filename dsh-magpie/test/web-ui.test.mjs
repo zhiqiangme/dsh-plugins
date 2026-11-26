@@ -211,6 +211,44 @@ test('打开网页先启动服务并等认证就绪，并发打开只启动一�
   assert.equal(opened.length, 2);
 });
 
+test('下载升级时仍可内嵌或在浏览器打开现有管理页，网页离线时不另起进程', async (t) => {
+  const downloadStarted = Promise.withResolvers(), resume = Promise.withResolvers();
+  const opened = [];
+  let online = true;
+  const web = new MagpieWeb({
+    env: { MAGPIE_WEB_KEY: key }, fetchImpl: async () => online ? ready() : refused(),
+    openBrowser: async (url) => opened.push(url),
+  });
+  const f = backendFixture(t, { web });
+  seed(f.backend);
+  f.backend.fetchImpl = async (url, options) => {
+    if (url === f.asset.browser_download_url) {
+      downloadStarted.resolve();
+      await resume.promise;
+    }
+    return f.fetchImpl(url, options);
+  };
+  const host = fakeHost({ startMode: 'web' });
+  const manager = new ModelManager(host.ctx, host.own.options.config, { env: {}, backend: f.backend });
+  f.backend.install();
+  try {
+    await downloadStarted.promise;
+    assert.equal(f.backend.operation.phase, 'downloading');
+    assert.equal((await manager.handle({ action: 'web-ensure' })).proxyPath, '/plugins/dsh-magpie/ui/');
+    assert.equal((await manager.handle({ action: 'backend-open' })).opened, 'web');
+    assert.deepEqual(opened, [`${WEB_ORIGIN}/?k=${key}`]);
+
+    online = false;
+    await assert.rejects(manager.handle({ action: 'web-ensure' }), /正在更新程序/);
+    await assert.rejects(manager.handle({ action: 'backend-open' }), /正在更新程序/);
+    assert.deepEqual(f.launches, []);
+    assert.deepEqual(f.stops, []);
+  } finally {
+    resume.resolve();
+    await finish(f.backend);
+  }
+});
+
 test('既有桌面网页使用其文件中的地址和密钥，真实 HTTP 登录挑战不泄露到状态结果', async (t) => {
   const server = createServer((req, res) => {
     if (new URL(req.url, 'http://localhost').searchParams.get('k') !== key) return res.writeHead(401).end();

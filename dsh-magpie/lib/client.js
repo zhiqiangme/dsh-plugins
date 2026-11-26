@@ -1428,6 +1428,7 @@ window.__ModuleLoader__.load({
       const checkConnection = () => perform(async () => { const result = await request({ action: 'check', baseURL: config.baseURL, apiKey: key || undefined }); setNotice({ text: t('connected', { version: result.version }) }); }, 'check');
       const pluginUpdate = updater.model.version?.phase === 'ready' && updater.model.version.updateAvailable;
       const openLabel = config.startMode === 'tray' ? 'openWindow' : 'openWeb';
+      const openBlocked = operation?.running && (config.startMode === 'tray' || ['stopping', 'installing', 'starting'].includes(operation.phase));
 
       const header = h('header', { className: 'head' },
         h('div', null,
@@ -1439,8 +1440,8 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'chip', onClick: () => setTab('updates') },
               backend?.version ? t('programVersion', { version: backend.version }) : t(backend?.installed ? 'backendUnknown' : 'programMissing'),
               backend?.updateAvailable ? h('span', { className: 'new' }, ` · ${t('programUpgrade', { version: backend.latest.version })}`) : null))),
-        button(t(operation?.running && operation.upgrading ? 'openUpgrading' : openLabel), openMagpie, {
-          disabled: busy || operation?.running || unsupported || !backend?.installed || !backend?.version,
+        button(t(openBlocked && operation.upgrading ? 'openUpgrading' : openLabel), openMagpie, {
+          disabled: busy || openBlocked || unsupported || !backend?.installed || !backend?.version,
           'aria-busy': modelBusy === 'open',
         }));
 

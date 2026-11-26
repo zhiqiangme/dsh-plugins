@@ -497,9 +497,14 @@ test('自动更新开关在更新页即时保存，等待期间也能关闭，�
   const backend = { describe: async () => ({ supported: true, installed: true, version: '0.1.1', operation }), settings: () => ({ available: false }) };
   const manager = new ModelManager(host.ctx, {}, { env: {}, backend });
   const client = clientHarness(await manager.describe(), async (_url, options) => response(await manager.handle(JSON.parse(options.body))));
-  assert.ok(button(client.render(), '打开 Magpie 页面'));
-  Object.assign(operation, { phase: 'waiting-idle', upgrading: true, received: 12, total: 12 });
+  assert.equal(button(client.render(), '打开 Magpie 页面').props.disabled, false);
+  for (const phase of ['downloading', 'verifying', 'waiting-idle', 'waiting-status']) {
+    Object.assign(operation, { phase, upgrading: true });
+    assert.equal(button(client.render(), '打开 Magpie 页面').props.disabled, false);
+  }
+  operation.phase = 'installing';
   assert.equal(button(client.render(), 'Magpie正在升级').props.disabled, true);
+  Object.assign(operation, { phase: 'waiting-idle', received: 12, total: 12 });
   client.tab('连接');
   field(client.render(), 'Magpie 网关地址').props.onChange({ target: { value: 'http://127.0.0.1:4000' } });
   client.tab('更新');
